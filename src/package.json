@@ -1,0 +1,16 @@
+{
+	"name": "chess-tris-dynamic",
+	"version": "1.0.0",
+	"description": "Chess-tris prototype with dynamic board growth and home zone degradation",
+	"main": "server.js",
+	"scripts": {
+		"start": "node server.js"
+	},
+	"dependencies": {
+		"express": "^4.18.2",
+		"socket.io": "^4.5.1"
+	},
+	"devDependencies": {
+		"jest": "^29.7.0"
+	}
+}

@@ -1,0 +1,10 @@
+{
+  "require": "mocha",
+  "node-option": [
+    "experimental-vm-modules",
+    "no-warnings"
+  ],
+  "timeout": 10000,
+  "setup": "tests/setup.js#mochaGlobalSetup",
+  "teardown": "tests/setup.js#mochaGlobalTeardown"
+} 
