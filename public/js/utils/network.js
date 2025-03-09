@@ -5,7 +5,7 @@
  * and API requests.
  */
 
-import io from 'socket.io-client';
+import io from './socket.js';
 import * as Helpers from './helpers.js';
 
 // Socket.io instance

@@ -4,8 +4,8 @@
  * Handles the rendering of the game using Three.js.
  */
 
-import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import * as THREE from '../utils/three.js';
+import { OrbitControls } from '../utils/three.js';
 import * as GameState from '../core/gameState.js';
 import * as Constants from '../core/constants.js';
 import * as TetrominoManager from '../core/tetrominoManager.js';

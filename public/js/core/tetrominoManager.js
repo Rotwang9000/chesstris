@@ -8,7 +8,7 @@
 import { v4 as uuidv4 } from '../utils/uuid.js';
 import * as GameState from './gameState.js';
 import * as Constants from './constants.js';
-import { addSponsorToTetromino } from '../../utils/sponsors.js';
+import { addSponsorToTetromino } from '../utils/sponsors.js';
 
 /**
  * Spawn a new falling tetromino piece
