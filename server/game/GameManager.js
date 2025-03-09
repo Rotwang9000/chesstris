@@ -5,98 +5,244 @@
 
 class GameManager {
 	constructor() {
-		// Game state storage - keyed by game ID
+		// Store all active games
 		this.games = new Map();
 		
-		// Game settings
-		this.defaultSettings = {
-			boardSize: 24,     // Standard board size
-			homeZoneWidth: 8,  // Standard chess width
-			homeZoneHeight: 2, // Standard chess height
-			maxPlayers: 8      // Maximum players per game
-		};
+		// Constants
+		this.MAX_PLAYERS_PER_GAME = 2048;
+		this.MIN_HOME_ZONE_DISTANCE = 8;
+		this.MAX_HOME_ZONE_DISTANCE = 12;
+		this.DEFAULT_GAME_ID = 'default-game';
+		
+		// Create a default game automatically
+		this._createDefaultGame();
 	}
 	
 	/**
-	 * Create a new game instance with a unique ID
-	 * @param {Object} options - Game configuration options
-	 * @returns {string} The created game ID
+	 * Create the default game
+	 * @private
+	 */
+	_createDefaultGame() {
+		// Create the default game with no specific dimensions
+		// Board will expand dynamically as players join
+		const defaultGame = {
+			id: this.DEFAULT_GAME_ID,
+			players: {},
+			board: this._createEmptyBoard(30, 30), // Start with a minimal board
+			settings: {
+				minHomeZoneDistance: this.MIN_HOME_ZONE_DISTANCE,
+				maxHomeZoneDistance: this.MAX_HOME_ZONE_DISTANCE,
+				expandBoardAsNeeded: true,
+				cellSize: 1
+			},
+			startTime: Date.now(),
+			lastUpdate: Date.now()
+		};
+		
+		this.games.set(this.DEFAULT_GAME_ID, defaultGame);
+	}
+	
+	/**
+	 * Create a new game
+	 * @param {Object} options - Game options
+	 * @returns {Object} Game creation result with gameId
 	 */
 	createGame(options = {}) {
-		// Generate a unique game ID
-		const gameId = this._generateGameId();
-		
-		// Create a new game with merged settings
-		const settings = { ...this.defaultSettings, ...options };
-		
-		// Initialize the game board and state
-		const gameState = {
-			id: gameId,
-			settings,
-			board: this._createEmptyBoard(settings.boardSize, settings.boardSize),
-			players: {},
-			activeTurns: {},
-			createdAt: Date.now(),
-			lastUpdated: Date.now()
-		};
-		
-		// Store the game
-		this.games.set(gameId, gameState);
-		
-		return gameId;
+		try {
+			// Generate a unique game ID
+			const gameId = options.gameId || this._generateGameId();
+			
+			// Check if the game already exists
+			if (this.games.has(gameId)) {
+				return { 
+					success: false, 
+					error: 'Game with this ID already exists' 
+				};
+			}
+			
+			// Set default minimum and maximum home zone distances
+			const minHomeZoneDistance = options.minHomeZoneDistance || this.MIN_HOME_ZONE_DISTANCE;
+			const maxHomeZoneDistance = options.maxHomeZoneDistance || this.MAX_HOME_ZONE_DISTANCE;
+			
+			// Create a new game
+			const game = {
+				id: gameId,
+				players: {},
+				// Use specified dimensions or start with a minimal board that will expand
+				board: this._createEmptyBoard(
+					options.width || 30, 
+					options.height || 30
+				),
+				settings: {
+					minHomeZoneDistance,
+					maxHomeZoneDistance,
+					expandBoardAsNeeded: options.expandBoardAsNeeded !== false,
+					cellSize: options.cellSize || 1
+				},
+				startTime: Date.now(),
+				lastUpdate: Date.now()
+			};
+			
+			// Store the game
+			this.games.set(gameId, game);
+			
+			return { 
+				success: true, 
+				gameId 
+			};
+		} catch (error) {
+			console.error('Error creating game:', error);
+			return { 
+				success: false, 
+				error: error.message 
+			};
+		}
 	}
 	
 	/**
-	 * Add a player to an existing game
-	 * @param {string} gameId - The game to join
-	 * @param {string} playerId - The player's unique ID
-	 * @param {string} username - The player's display name
-	 * @returns {Object} Player data including home zone location
+	 * Add a player to a game
+	 * @param {string} gameId - Game ID (defaults to the default game)
+	 * @param {string} playerId - Player ID
+	 * @param {string} username - Player username
+	 * @returns {Object} Player addition result
 	 */
-	addPlayer(gameId, playerId, username) {
-		// Get the game state
-		const game = this.games.get(gameId);
-		if (!game) {
-			throw new Error(`Game ${gameId} not found`);
+	addPlayer(gameId = this.DEFAULT_GAME_ID, playerId, username) {
+		try {
+			// Get the game
+			const game = this.games.get(gameId);
+			
+			if (!game) {
+				return { 
+					success: false, 
+					error: `Game ${gameId} not found` 
+				};
+			}
+			
+			// Check if the player limit has been reached
+			if (Object.keys(game.players).length >= this.MAX_PLAYERS_PER_GAME) {
+				return { 
+					success: false, 
+					error: 'Maximum number of players reached for this game' 
+				};
+			}
+			
+			// Check if the player already exists
+			if (game.players[playerId]) {
+				return { 
+					success: false, 
+					error: 'Player already exists in this game' 
+				};
+			}
+			
+			// Generate a color for the player
+			const color = this._generatePlayerColor(Object.values(game.players));
+			
+			// Find a free position for the player's home zone
+			const homeZonePosition = this._findFreeHomeZoneSpot(game);
+			
+			if (!homeZonePosition) {
+				// If board is full, expand it first
+				if (game.settings.expandBoardAsNeeded) {
+					this._expandBoard(game, 10, 10); // Add 10 rows and columns
+					// Try finding a spot again
+					const expandedPosition = this._findFreeHomeZoneSpot(game);
+					
+					if (!expandedPosition) {
+						return { 
+							success: false, 
+							error: 'Could not find a free spot for player home zone' 
+						};
+					}
+					
+					homeZonePosition = expandedPosition;
+				} else {
+					return { 
+						success: false, 
+						error: 'Could not find a free spot for player home zone' 
+					};
+				}
+			}
+			
+			// Create the player
+			const player = {
+				id: playerId,
+				username: username || `Player_${playerId.substring(0, 5)}`,
+				color,
+				homeZone: homeZonePosition,
+				pieces: [],
+				score: 0,
+				joinedAt: Date.now()
+			};
+			
+			// Add player to the game
+			game.players[playerId] = player;
+			
+			// Create home zone and chess pieces for the player
+			this._createHomeZoneForPlayer(game, playerId);
+			
+			// Update last update timestamp
+			game.lastUpdate = Date.now();
+			
+			return { 
+				success: true, 
+				player 
+			};
+		} catch (error) {
+			console.error('Error adding player:', error);
+			return { 
+				success: false, 
+				error: error.message 
+			};
+		}
+	}
+	
+	/**
+	 * Expand the game board in all directions
+	 * @param {Object} game - The game object
+	 * @param {number} addWidth - Additional width to add (half on each side)
+	 * @param {number} addHeight - Additional height to add (half on each side)
+	 * @private
+	 */
+	_expandBoard(game, addWidth, addHeight) {
+		const oldWidth = game.board[0].length;
+		const oldHeight = game.board.length;
+		
+		const newWidth = oldWidth + addWidth;
+		const newHeight = oldHeight + addHeight;
+		
+		// Create a new, larger board
+		const newBoard = this._createEmptyBoard(newWidth, newHeight);
+		
+		// Calculate offsets to center the old board in the new one
+		const xOffset = Math.floor(addWidth / 2);
+		const yOffset = Math.floor(addHeight / 2);
+		
+		// Copy the old board content to the new board
+		for (let y = 0; y < oldHeight; y++) {
+			for (let x = 0; x < oldWidth; x++) {
+				if (game.board[y][x]) {
+					newBoard[y + yOffset][x + xOffset] = game.board[y][x];
+					
+					// Update piece positions if there are any
+					if (game.board[y][x].chessPiece) {
+						game.board[y][x].chessPiece.x = x + xOffset;
+						game.board[y][x].chessPiece.y = y + yOffset;
+					}
+				}
+			}
 		}
 		
-		// Check if the game is full
-		if (Object.keys(game.players).length >= game.settings.maxPlayers) {
-			throw new Error(`Game ${gameId} is full`);
+		// Update home zone positions for all players
+		for (const playerId in game.players) {
+			const player = game.players[playerId];
+			player.homeZone.x += xOffset;
+			player.homeZone.y += yOffset;
 		}
 		
-		// Check if player already exists
-		if (game.players[playerId]) {
-			return game.players[playerId]; // Player already in the game
-		}
+		// Replace the old board with the new one
+		game.board = newBoard;
 		
-		// Generate a unique color for the player
-		const color = this._generatePlayerColor(game.players);
-		
-		// Find a free home zone position
-		const homeZone = this._findFreeHomeZoneSpot(game);
-		
-		// Create the player
-		const player = {
-			id: playerId,
-			name: username,
-			color,
-			homeZone,
-			pieces: [], // Will be populated with chess pieces
-			score: 0,
-			joinedAt: Date.now()
-		};
-		
-		// Add player to the game
-		game.players[playerId] = player;
-		
-		// Create home zone cells on the board
-		this._createHomeZoneForPlayer(game, playerId);
-		
-		// Update the last updated timestamp
-		game.lastUpdated = Date.now();
-		
-		return player;
+		console.log(`Expanded board from ${oldWidth}x${oldHeight} to ${newWidth}x${newHeight}`);
 	}
 	
 	/**
@@ -183,7 +329,7 @@ class GameManager {
 		fromCell.chessPiece = null;
 		
 		// Update the last updated timestamp
-		game.lastUpdated = Date.now();
+		game.lastUpdate = Date.now();
 		
 		return result;
 	}
@@ -228,7 +374,7 @@ class GameManager {
 		const clearedRows = this._checkAndClearRows(game);
 		
 		// Update the last updated timestamp
-		game.lastUpdated = Date.now();
+		game.lastUpdate = Date.now();
 		
 		return {
 			placedCells,
@@ -312,100 +458,98 @@ class GameManager {
 	}
 	
 	/**
-	 * Find a free spot for a new player's home zone
-	 * @param {Object} game - The game state
-	 * @returns {Object} Position and dimensions for the home zone
+	 * Find a free spot for a player's home zone
+	 * @param {Object} game - The game object
+	 * @returns {Object|null} The position for the home zone, or null if no spot is available
 	 * @private
 	 */
 	_findFreeHomeZoneSpot(game) {
-		const { boardSize, homeZoneWidth, homeZoneHeight } = game.settings;
+		// Define home zone dimensions
+		const homeZoneWidth = 8;
+		const homeZoneHeight = 2;
+		const boardWidth = game.board[0].length;
+		const boardHeight = game.board.length;
 		
-		// Define potential positions for home zones
-		// Start with corners and edges
-		const potentialPositions = [
-			// Bottom center (first player usually starts here)
-			{ x: Math.floor((boardSize - homeZoneWidth) / 2), z: boardSize - homeZoneHeight - 2 },
-			
-			// Top center
-			{ x: Math.floor((boardSize - homeZoneWidth) / 2), z: 2 },
-			
-			// Left center
-			{ x: 2, z: Math.floor((boardSize - homeZoneHeight) / 2) },
-			
-			// Right center
-			{ x: boardSize - homeZoneWidth - 2, z: Math.floor((boardSize - homeZoneHeight) / 2) },
-			
-			// Corners
-			{ x: 2, z: 2 }, // Top left
-			{ x: boardSize - homeZoneWidth - 2, z: 2 }, // Top right
-			{ x: 2, z: boardSize - homeZoneHeight - 2 }, // Bottom left
-			{ x: boardSize - homeZoneWidth - 2, z: boardSize - homeZoneHeight - 2 } // Bottom right
-		];
+		// Minimum distance between home zones based on settings
+		const minDistance = game.settings.minHomeZoneDistance || this.MIN_HOME_ZONE_DISTANCE;
 		
-		// Get existing home zones
-		const existingZones = Object.values(game.players).map(p => p.homeZone);
+		// Get existing players' home zone positions
+		const existingZones = Object.values(game.players)
+			.filter(player => player.homeZone)
+			.map(player => player.homeZone);
 		
-		// Find the first non-overlapping position
-		for (const position of potentialPositions) {
-			let isOverlapping = false;
+		// If this is the first player, place them in the bottom center
+		if (existingZones.length === 0) {
+			const startX = Math.floor((boardWidth - homeZoneWidth) / 2);
+			const startY = boardHeight - homeZoneHeight - 2; // Near the bottom
 			
-			for (const zone of existingZones) {
-				// Check for overlap
-				if (this._isRectangleOverlapping(
-					position.x, position.z, homeZoneWidth, homeZoneHeight,
-					zone.x, zone.z, zone.width, zone.height
-				)) {
-					isOverlapping = true;
-					break;
+			return {
+				x: startX,
+				y: startY
+			};
+		}
+		
+		// Try a grid of potential positions
+		const gridStepX = Math.floor(boardWidth / 5);
+		const gridStepY = Math.floor(boardHeight / 5);
+		
+		// Prioritize positions farther from existing zones
+		const candidatePositions = [];
+		
+		for (let y = 2; y < boardHeight - homeZoneHeight - 2; y += gridStepY) {
+			for (let x = 2; x < boardWidth - homeZoneWidth - 2; x += gridStepX) {
+				let isValid = true;
+				
+				// Check if this position overlaps with existing home zones
+				for (const zone of existingZones) {
+					const distance = Math.sqrt(
+						Math.pow(zone.x - x, 2) + 
+						Math.pow(zone.y - y, 2)
+					);
+					
+					if (distance < minDistance) {
+						isValid = false;
+						break;
+					}
 				}
-			}
-			
-			if (!isOverlapping) {
-				return {
-					x: position.x,
-					z: position.z,
-					width: homeZoneWidth,
-					height: homeZoneHeight
-				};
+				
+				if (isValid) {
+					// Calculate the average distance to all existing zones
+					let totalDistance = 0;
+					for (const zone of existingZones) {
+						totalDistance += Math.sqrt(
+							Math.pow(zone.x - x, 2) + 
+							Math.pow(zone.y - y, 2)
+						);
+					}
+					const averageDistance = totalDistance / existingZones.length;
+					
+					candidatePositions.push({
+						x, y, 
+						score: averageDistance // Higher score means farther away
+					});
+				}
 			}
 		}
 		
-		// If all predefined positions are taken, find a random position
-		for (let attempt = 0; attempt < 100; attempt++) {
-			const x = Math.floor(Math.random() * (boardSize - homeZoneWidth - 4)) + 2;
-			const z = Math.floor(Math.random() * (boardSize - homeZoneHeight - 4)) + 2;
-			
-			let isOverlapping = false;
-			
-			for (const zone of existingZones) {
-				// Check for overlap
-				if (this._isRectangleOverlapping(
-					x, z, homeZoneWidth, homeZoneHeight,
-					zone.x, zone.z, zone.width, zone.height
-				)) {
-					isOverlapping = true;
-					break;
-				}
-			}
-			
-			if (!isOverlapping) {
-				return {
-					x,
-					z,
-					width: homeZoneWidth,
-					height: homeZoneHeight
-				};
-			}
+		// If we found valid positions, return the one with the highest score
+		if (candidatePositions.length > 0) {
+			candidatePositions.sort((a, b) => b.score - a.score);
+			return {
+				x: candidatePositions[0].x,
+				y: candidatePositions[0].y
+			};
 		}
 		
-		// If all else fails, just return a position at the center
-		// This might overlap, but at least the game won't break
-		return {
-			x: Math.floor((boardSize - homeZoneWidth) / 2),
-			z: Math.floor((boardSize - homeZoneHeight) / 2),
-			width: homeZoneWidth,
-			height: homeZoneHeight
-		};
+		// If the board is too small, we might need to expand it
+		if (game.settings.expandBoardAsNeeded) {
+			// Expand the board and try again
+			this._expandBoard(game, homeZoneWidth * 2, homeZoneHeight * 2);
+			return this._findFreeHomeZoneSpot(game);
+		}
+		
+		// No valid position found
+		return null;
 	}
 	
 	/**
@@ -434,78 +578,99 @@ class GameManager {
 	}
 	
 	/**
-	 * Create home zone cells and chess pieces for a player
-	 * @param {Object} game - The game state
+	 * Create home zone and chess pieces for a player
+	 * @param {Object} game - The game object
 	 * @param {string} playerId - The player's ID
 	 * @private
 	 */
 	_createHomeZoneForPlayer(game, playerId) {
-		const player = game.players[playerId];
-		if (!player || !player.homeZone) return;
-		
-		const { x, z, width, height } = player.homeZone;
-		
-		// Create the home zone cells
-		for (let dy = 0; dy < height; dy++) {
-			for (let dx = 0; dx < width; dx++) {
-				const cellX = x + dx;
-				const cellZ = z + dy;
-				
-				// Create a home zone cell
-				game.board[cellZ][cellX] = {
-					type: 'home_zone',
-					player: playerId,
-					chessPiece: null
-				};
+		try {
+			// Get the player
+			const player = game.players[playerId];
+			
+			if (!player || !player.homeZone) {
+				console.error('Invalid player or home zone data:', player);
+				return;
 			}
-		}
-		
-		// Add chess pieces in standard arrangement
-		// Back row (major pieces)
-		const backRowPieces = ['rook', 'knight', 'bishop', 'queen', 'king', 'bishop', 'knight', 'rook'];
-		
-		// Add the back row pieces (major pieces)
-		for (let i = 0; i < backRowPieces.length; i++) {
-			const cellX = x + i;
-			const cellZ = z + 1; // Back row
 			
-			// Create a unique ID for the piece
-			const pieceId = `${playerId}_${backRowPieces[i]}_${i}`;
+			// Extract home zone position
+			const { x: startX, y: startY } = player.homeZone;
 			
-			// Create the piece
-			const piece = {
-				type: backRowPieces[i],
-				player: playerId,
-				id: pieceId
-			};
+			// Set home zone dimensions
+			const homeZoneWidth = 8;  // Standard chess board width
+			const homeZoneHeight = 2; // Two rows for pieces
 			
-			// Add the piece to the board
-			game.board[cellZ][cellX].chessPiece = piece;
+			// Create home zone cells
+			for (let y = startY; y < startY + homeZoneHeight; y++) {
+				for (let x = startX; x < startX + homeZoneWidth; x++) {
+					// Ensure the board is big enough
+					if (y >= game.board.length || x >= game.board[0].length) {
+						this._expandBoard(game, 
+							x >= game.board[0].length ? (x - game.board[0].length + 10) : 0,
+							y >= game.board.length ? (y - game.board.length + 10) : 0
+						);
+					}
+					
+					// Create a home zone cell
+					game.board[y][x] = {
+						type: 'HOME_ZONE',
+						playerId,
+						color: player.color,
+						created: Date.now()
+					};
+				}
+			}
 			
-			// Track the piece in the player's pieces array
-			player.pieces.push(piece);
-		}
-		
-		// Add pawns in the front row
-		for (let i = 0; i < width; i++) {
-			const cellX = x + i;
-			const cellZ = z; // Front row
+			// Add chess pieces
+			const pieces = [];
 			
-			// Create a unique ID for the piece
-			const pieceId = `${playerId}_pawn_${i}`;
+			// Add pawns (front row)
+			for (let x = 0; x < homeZoneWidth; x++) {
+				const pawn = {
+					id: `${playerId}_pawn_${x}`,
+					type: 'pawn',
+					player: playerId,
+					x: startX + x,
+					y: startY,
+					moveCount: 0
+				};
+				
+				pieces.push(pawn);
+				
+				// Add pawn to the board
+				game.board[startY][startX + x].chessPiece = pawn;
+			}
 			
-			// Create the piece
-			const piece = {
-				type: 'pawn',
-				player: playerId,
-				id: pieceId
-			};
+			// Add other pieces (back row)
+			const backRow = [
+				{ type: 'rook', id: `${playerId}_rook_1` },
+				{ type: 'knight', id: `${playerId}_knight_1` },
+				{ type: 'bishop', id: `${playerId}_bishop_1` },
+				{ type: 'queen', id: `${playerId}_queen` },
+				{ type: 'king', id: `${playerId}_king` },
+				{ type: 'bishop', id: `${playerId}_bishop_2` },
+				{ type: 'knight', id: `${playerId}_knight_2` },
+				{ type: 'rook', id: `${playerId}_rook_2` }
+			];
 			
-			// Add the piece to the board
-			game.board[cellZ][cellX].chessPiece = piece;
+			for (let x = 0; x < backRow.length; x++) {
+				const piece = {
+					...backRow[x],
+					player: playerId,
+					x: startX + x,
+					y: startY + 1
+				};
+				
+				pieces.push(piece);
+				
+				// Add piece to the board
+				game.board[startY + 1][startX + x].chessPiece = piece;
+			}
 			
-			// Track the piece in the player's pieces array
-			player.pieces.push(piece);
+			// Store the pieces in the player object
+			player.pieces = pieces;
+		} catch (error) {
+			console.error('Error creating home zone:', error);
 		}
 	}
 	
@@ -899,4 +1064,4 @@ class GameManager {
 	}
 }
 
-module.exports = GameManager; 
+export default GameManager;
