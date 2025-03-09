@@ -396,21 +396,21 @@ function addChessPiece(piece, player) {
 	let pieceGeometry;
 	switch (piece.type) {
 		case Constants.CHESS_PIECE_TYPES.PAWN:
-			pieceGeometry = new THREE.CylinderGeometry(0.3, 0.4, 0.8, 8);
+			pieceGeometry = new CylinderGeometry(0.3, 0.4, 0.8, 8);
 			break;
 		case Constants.CHESS_PIECE_TYPES.ROOK:
-			pieceGeometry = new THREE.BoxGeometry(0.6, 1, 0.6);
+			pieceGeometry = new BoxGeometry(0.6, 1, 0.6);
 			break;
 		case Constants.CHESS_PIECE_TYPES.KNIGHT:
 			// Create a more complex knight shape
-			const knightGroup = new THREE.Group();
-			const baseGeometry = new THREE.CylinderGeometry(0.4, 0.5, 0.6, 8);
-			const base = new THREE.Mesh(baseGeometry, new THREE.MeshStandardMaterial({ color: player.color }));
+			const knightGroup = new Group();
+			const baseGeometry = new CylinderGeometry(0.4, 0.5, 0.6, 8);
+			const base = new Mesh(baseGeometry, new MeshStandardMaterial({ color: player.color }));
 			base.position.y = 0.3;
 			knightGroup.add(base);
 			
-			const headGeometry = new THREE.BoxGeometry(0.3, 0.5, 0.7);
-			const head = new THREE.Mesh(headGeometry, new THREE.MeshStandardMaterial({ color: player.color }));
+			const headGeometry = new BoxGeometry(0.3, 0.5, 0.7);
+			const head = new Mesh(headGeometry, new MeshStandardMaterial({ color: player.color }));
 			head.position.set(0, 0.8, 0.1);
 			head.rotation.x = Math.PI / 6;
 			knightGroup.add(head);
@@ -418,46 +418,48 @@ function addChessPiece(piece, player) {
 			pieceGeometry = knightGroup;
 			break;
 		case Constants.CHESS_PIECE_TYPES.BISHOP:
-			pieceGeometry = new THREE.ConeGeometry(0.4, 1.2, 8);
+			pieceGeometry = new ConeGeometry(0.4, 1.2, 8);
 			break;
 		case Constants.CHESS_PIECE_TYPES.QUEEN:
-			pieceGeometry = new THREE.CylinderGeometry(0.3, 0.5, 1.3, 8);
+			pieceGeometry = new CylinderGeometry(0.3, 0.5, 1.3, 8);
 			break;
 		case Constants.CHESS_PIECE_TYPES.KING:
 			// Create a more complex king shape
-			const kingGroup = new THREE.Group();
-			const kingBaseGeometry = new THREE.CylinderGeometry(0.4, 0.5, 1, 8);
-			const kingBase = new THREE.Mesh(kingBaseGeometry, new THREE.MeshStandardMaterial({ color: player.color }));
+			const kingGroup = new Group();
+			const kingBaseGeometry = new CylinderGeometry(0.4, 0.5, 1, 8);
+			const kingBase = new Mesh(kingBaseGeometry, new MeshStandardMaterial({ color: player.color }));
 			kingBase.position.y = 0.5;
 			kingGroup.add(kingBase);
 			
-			const crownGeometry = new THREE.BoxGeometry(0.8, 0.3, 0.8);
-			const crown = new THREE.Mesh(crownGeometry, new THREE.MeshStandardMaterial({ color: player.color }));
-			crown.position.y = 1.2;
+			const crownGeometry = new BoxGeometry(0.8, 0.3, 0.8);
+			const crown = new Mesh(crownGeometry, new MeshStandardMaterial({ color: player.color }));
+			crown.position.y = 1.15;
 			kingGroup.add(crown);
 			
-			const crossGeometry = new THREE.BoxGeometry(0.2, 0.4, 0.2);
-			const cross = new THREE.Mesh(crossGeometry, new THREE.MeshStandardMaterial({ color: player.color }));
-			cross.position.y = 1.55;
+			const crossGeometry = new BoxGeometry(0.2, 0.4, 0.2);
+			const cross = new Mesh(crossGeometry, new MeshStandardMaterial({ color: player.color }));
+			cross.position.y = 1.5;
 			kingGroup.add(cross);
 			
 			pieceGeometry = kingGroup;
 			break;
 		default:
-			pieceGeometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+			// Default to pawn
+			pieceGeometry = new BoxGeometry(0.5, 0.5, 0.5);
+			break;
 	}
 	
-	// Create the piece mesh or use the group
+	// Check if we need a simple or complex mesh
 	let pieceMesh;
-	if (pieceGeometry instanceof THREE.Group) {
+	if (pieceGeometry instanceof Group) {
 		pieceMesh = pieceGeometry;
 	} else {
-		const pieceMaterial = new THREE.MeshStandardMaterial({
+		const pieceMaterial = new MeshStandardMaterial({
 			color: player.color,
-			roughness: 0.5,
-			metalness: 0.5
+			roughness: 0.6,
+			metalness: 0.3
 		});
-		pieceMesh = new THREE.Mesh(pieceGeometry, pieceMaterial);
+		pieceMesh = new Mesh(pieceGeometry, pieceMaterial);
 	}
 	
 	// Position the piece
@@ -490,66 +492,52 @@ function updateFallingTetromino() {
 	}
 	
 	// Create a group for the tetromino
-	const tetrominoGroup3D = new THREE.Group();
+	const tetrominoGroup3D = new Group();
 	
 	// Add blocks to the tetromino
 	fallingPiece.blocks.forEach(block => {
-		const blockGeometry = new THREE.BoxGeometry(
+		const blockGeometry = new BoxGeometry(
 			Constants.CELL_SIZE * 0.9,
 			Constants.CELL_SIZE * 0.9,
 			Constants.CELL_SIZE * 0.9
 		);
 		
 		const blockMaterial = materials[`tetromino_${fallingPiece.type}`] || 
-			new THREE.MeshStandardMaterial({
-				color: fallingPiece.color,
+			new MeshStandardMaterial({
+				color: Constants.TETROMINO_COLORS[fallingPiece.type] || 0xCCCCCC,
 				roughness: 0.7,
 				metalness: 0.3
 			});
 		
-		const blockMesh = new THREE.Mesh(blockGeometry, blockMaterial);
+		const blockMesh = new Mesh(blockGeometry, blockMaterial);
 		
-		blockMesh.position.set(
-			(fallingPiece.x + block.x) * Constants.CELL_SIZE - (Constants.INITIAL_BOARD_WIDTH * Constants.CELL_SIZE) / 2 + Constants.CELL_SIZE / 2,
-			Constants.CELL_HEIGHT + Constants.CELL_SIZE / 2 + Constants.PIECE_HOVER_HEIGHT,
-			(fallingPiece.y + block.y) * Constants.CELL_SIZE - (Constants.INITIAL_BOARD_HEIGHT * Constants.CELL_SIZE) / 2 + Constants.CELL_SIZE / 2
-		);
+		// Position the block
+		const x = (fallingPiece.x + block.x - (gameState.board[0].length - 1) / 2) * Constants.CELL_SIZE;
+		const y = Constants.CELL_SIZE * 0.45; // Slight elevation above board
+		const z = (fallingPiece.y + block.y - (gameState.board.length - 1) / 2) * Constants.CELL_SIZE;
 		
+		blockMesh.position.set(x, y, z);
 		blockMesh.castShadow = true;
+		
 		tetrominoGroup3D.add(blockMesh);
 	});
 	
-	// Add sponsor logo if available
-	if (fallingPiece.sponsor) {
-		// This would load and display a sponsor texture
-		// For now, we'll just add a simple indicator
-		const sponsorGeometry = new THREE.PlaneGeometry(
-			Constants.CELL_SIZE * 1.5,
-			Constants.CELL_SIZE * 0.5
-		);
+	// Add the chess piece to the first block if it's a falling chess piece
+	if (fallingPiece.chessPiece) {
+		const firstBlock = fallingPiece.blocks[0];
+		const x = (fallingPiece.x + firstBlock.x - (gameState.board[0].length - 1) / 2) * Constants.CELL_SIZE;
+		const y = Constants.CELL_SIZE * 0.9; // Place on top of the block
+		const z = (fallingPiece.y + firstBlock.y - (gameState.board.length - 1) / 2) * Constants.CELL_SIZE;
 		
-		const sponsorMaterial = new THREE.MeshBasicMaterial({
-			color: 0xffffff,
-			transparent: true,
-			opacity: 0.8,
-			side: THREE.DoubleSide
-		});
+		const pieceScale = 0.8;
+		const piece = addChessPiece(fallingPiece.chessPiece, materials.chessPieceWhite);
+		piece.position.set(x, y, z);
+		piece.scale.set(pieceScale, pieceScale, pieceScale);
 		
-		const sponsorMesh = new THREE.Mesh(sponsorGeometry, sponsorMaterial);
-		
-		// Position above the tetromino
-		sponsorMesh.position.set(
-			fallingPiece.x * Constants.CELL_SIZE - (Constants.INITIAL_BOARD_WIDTH * Constants.CELL_SIZE) / 2 + Constants.CELL_SIZE / 2,
-			Constants.CELL_HEIGHT + Constants.CELL_SIZE * 2,
-			fallingPiece.y * Constants.CELL_SIZE - (Constants.INITIAL_BOARD_HEIGHT * Constants.CELL_SIZE) / 2 + Constants.CELL_SIZE / 2
-		);
-		
-		// Rotate to face the camera
-		sponsorMesh.rotation.x = -Math.PI / 2;
-		
-		tetrominoGroup3D.add(sponsorMesh);
+		tetrominoGroup3D.add(piece);
 	}
 	
+	// Add the tetromino to the scene
 	tetrominoGroup.add(tetrominoGroup3D);
 }
 
@@ -564,31 +552,33 @@ function updateGhostPiece() {
 	}
 	
 	// Create a group for the ghost piece
-	const ghostGroup = new THREE.Group();
+	const ghostGroup = new Group();
 	
 	// Add blocks to the ghost piece
 	ghostPiece.blocks.forEach(block => {
-		const blockGeometry = new THREE.BoxGeometry(
+		const blockGeometry = new BoxGeometry(
 			Constants.CELL_SIZE * 0.8,
 			Constants.CELL_SIZE * 0.8,
 			Constants.CELL_SIZE * 0.8
 		);
 		
-		const blockMaterial = new THREE.MeshStandardMaterial({
-			color: ghostPiece.color,
+		const blockMaterial = new MeshStandardMaterial({
+			color: Constants.TETROMINO_COLORS[ghostPiece.type] || 0xCCCCCC,
 			roughness: 0.7,
 			metalness: 0.3,
 			transparent: true,
 			opacity: 0.3
 		});
 		
-		const blockMesh = new THREE.Mesh(blockGeometry, blockMaterial);
+		const blockMesh = new Mesh(blockGeometry, blockMaterial);
 		
-		blockMesh.position.set(
-			(ghostPiece.x + block.x) * Constants.CELL_SIZE - (Constants.INITIAL_BOARD_WIDTH * Constants.CELL_SIZE) / 2 + Constants.CELL_SIZE / 2,
-			Constants.CELL_HEIGHT + Constants.CELL_SIZE / 2,
-			(ghostPiece.y + block.y) * Constants.CELL_SIZE - (Constants.INITIAL_BOARD_HEIGHT * Constants.CELL_SIZE) / 2 + Constants.CELL_SIZE / 2
-		);
+		// Position the block
+		const gameState = GameState.getGameState();
+		const x = (ghostPiece.x + block.x - (gameState.board[0].length - 1) / 2) * Constants.CELL_SIZE;
+		const y = Constants.CELL_SIZE * 0.4; // At board level
+		const z = (ghostPiece.y + block.y - (gameState.board.length - 1) / 2) * Constants.CELL_SIZE;
+		
+		blockMesh.position.set(x, y, z);
 		
 		ghostGroup.add(blockMesh);
 	});

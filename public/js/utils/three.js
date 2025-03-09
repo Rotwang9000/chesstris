@@ -11,6 +11,12 @@ if (typeof THREE === 'undefined') {
 	throw new Error('THREE is not defined');
 }
 
+// Check what version of Three.js we're using and log it
+console.log('Three.js Version:', THREE.REVISION);
+
+// Export the global THREE object for any additional properties
+export default THREE;
+
 // Export named constructors directly
 export const Scene = THREE.Scene;
 export const PerspectiveCamera = THREE.PerspectiveCamera;
@@ -19,6 +25,15 @@ export const BoxGeometry = THREE.BoxGeometry;
 export const PlaneGeometry = THREE.PlaneGeometry;
 export const CylinderGeometry = THREE.CylinderGeometry;
 export const SphereGeometry = THREE.SphereGeometry;
+
+// In older versions of Three.js, ConeGeometry might be called ConeBufferGeometry
+// or not be available as a separate class (might need to create a cylinder with 0 top radius)
+export const ConeGeometry = THREE.ConeGeometry || 
+                           THREE.ConeBufferGeometry || 
+                           function(radius, height, radialSegments) {
+                               return new THREE.CylinderGeometry(0, radius, height, radialSegments);
+                           };
+
 export const MeshBasicMaterial = THREE.MeshBasicMaterial;
 export const MeshStandardMaterial = THREE.MeshStandardMaterial;
 export const MeshLambertMaterial = THREE.MeshLambertMaterial;
@@ -49,7 +64,4 @@ export const FrontSide = THREE.FrontSide;
 export const BackSide = THREE.BackSide;
 
 // Export OrbitControls
-export const OrbitControls = THREE.OrbitControls;
-
-// Export the global THREE object for any additional properties
-export default THREE; 
+export const OrbitControls = THREE.OrbitControls; 
