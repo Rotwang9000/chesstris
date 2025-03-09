@@ -47,7 +47,7 @@ const textures = {};
 const materials = {};
 
 // Animation variables
-let animationFrameId = null;
+let animationFrameId;
 let lastRenderTime = 0;
 
 /**
@@ -57,57 +57,78 @@ let lastRenderTime = 0;
  * @returns {Object} The renderer instance
  */
 export function init(container, options = {}) {
-	// Create the scene
-	scene = new Scene();
-	scene.background = new Color(0x121212);
-	
-	// Create the camera
-	const width = container.clientWidth;
-	const height = container.clientHeight;
-	const aspect = width / height;
-	camera = new PerspectiveCamera(60, aspect, 0.1, 1000);
-	camera.position.set(0, 10, 20);
-	
-	// Create the renderer
-	renderer = new WebGLRenderer({ antialias: true });
-	renderer.setSize(width, height);
-	renderer.setPixelRatio(window.devicePixelRatio);
-	renderer.shadowMap.enabled = true;
-	container.appendChild(renderer.domElement);
-	
-	// Add orbit controls
-	controls = new OrbitControls(camera, renderer.domElement);
-	controls.enableDamping = true;
-	controls.dampingFactor = 0.05;
-	controls.screenSpacePanning = false;
-	controls.minDistance = 5;
-	controls.maxDistance = 50;
-	controls.maxPolarAngle = Math.PI / 2;
-	
-	// Create groups
-	boardGroup = new Group();
-	piecesGroup = new Group();
-	tetrominoGroup = new Group();
-	uiGroup = new Group();
-	
-	scene.add(boardGroup);
-	scene.add(piecesGroup);
-	scene.add(tetrominoGroup);
-	scene.add(uiGroup);
-	
-	// Add lights
-	addLights();
-	
-	// Load textures
-	loadTextures();
-	
-	// Add event listeners
-	window.addEventListener('resize', onWindowResize);
-	
-	// Start the animation loop
-	animate();
-	
-	return { scene, camera, renderer };
+	try {
+		// Create the scene
+		scene = new Scene();
+		scene.background = new Color(0x121212);
+		
+		// Create the camera
+		const width = container.clientWidth;
+		const height = container.clientHeight;
+		const aspect = width / height;
+		camera = new PerspectiveCamera(60, aspect, 0.1, 1000);
+		camera.position.set(0, 10, 20);
+		
+		// Create the renderer
+		renderer = new WebGLRenderer({ antialias: true });
+		renderer.setSize(width, height);
+		renderer.setPixelRatio(window.devicePixelRatio);
+		renderer.shadowMap.enabled = true;
+		container.appendChild(renderer.domElement);
+		
+		// Add orbit controls
+		controls = new OrbitControls(camera, renderer.domElement);
+		controls.enableDamping = true;
+		controls.dampingFactor = 0.05;
+		controls.screenSpacePanning = false;
+		controls.minDistance = 5;
+		controls.maxDistance = 50;
+		controls.maxPolarAngle = Math.PI / 2;
+		
+		// Create groups
+		boardGroup = new Group();
+		piecesGroup = new Group();
+		tetrominoGroup = new Group();
+		uiGroup = new Group();
+		
+		scene.add(boardGroup);
+		scene.add(piecesGroup);
+		scene.add(tetrominoGroup);
+		scene.add(uiGroup);
+		
+		// Add lights
+		addLights();
+		
+		// Load textures
+		loadTextures();
+		
+		// Initialize game state if it doesn't exist
+		const gameState = GameState.getGameState();
+		if (!gameState || !gameState.board) {
+			console.log('Initializing default game state for rendering');
+			// Create a minimal game state with an empty board if none exists
+			GameState.initGameState({
+				board: Array(Constants.INITIAL_BOARD_HEIGHT).fill().map(() => 
+					Array(Constants.INITIAL_BOARD_WIDTH).fill(null)
+				)
+			});
+		}
+		
+		// Add event listeners
+		window.addEventListener('resize', onWindowResize);
+		
+		// Reset render timing
+		lastRenderTime = performance.now();
+		
+		// Start the animation loop
+		animate();
+		
+		console.log('Renderer initialized successfully');
+		return { scene, camera, renderer };
+	} catch (error) {
+		console.error('Error initializing renderer:', error);
+		throw error;
+	}
 }
 
 /**
@@ -235,20 +256,29 @@ function onWindowResize() {
  * Animation loop
  */
 function animate(time = 0) {
-	animationFrameId = requestAnimationFrame(animate);
-	
-	// Calculate delta time
-	const deltaTime = time - lastRenderTime;
-	lastRenderTime = time;
-	
-	// Update controls
-	controls.update();
-	
-	// Update the scene
-	updateScene(deltaTime);
-	
-	// Render the scene
-	renderer.render(scene, camera);
+	try {
+		animationFrameId = requestAnimationFrame(animate);
+		
+		// Calculate delta time
+		const deltaTime = time - lastRenderTime;
+		lastRenderTime = time;
+		
+		// Update controls
+		if (controls) {
+			controls.update();
+		}
+		
+		// Update the scene
+		updateScene(deltaTime);
+		
+		// Render the scene
+		if (renderer && scene && camera) {
+			renderer.render(scene, camera);
+		}
+	} catch (error) {
+		console.error('Error in animation loop:', error);
+		// Don't stop the animation loop on error
+	}
 }
 
 /**
@@ -256,22 +286,24 @@ function animate(time = 0) {
  * @param {number} deltaTime - Time since last update in ms
  */
 function updateScene(deltaTime) {
-	const gameState = GameState.getGameState();
-	
-	// Update board
-	updateBoard();
-	
-	// Update chess pieces
-	updateChessPieces();
-	
-	// Update falling tetromino
-	updateFallingTetromino();
-	
-	// Update ghost piece
-	updateGhostPiece();
-	
-	// Update UI elements
-	updateUI();
+	try {
+		// Update board
+		updateBoard();
+		
+		// Update chess pieces
+		updateChessPieces();
+		
+		// Update falling tetromino
+		updateFallingTetromino();
+		
+		// Update ghost piece
+		updateGhostPiece();
+		
+		// Update UI
+		updateUI();
+	} catch (error) {
+		console.error('Error updating scene:', error);
+	}
 }
 
 /**
@@ -284,7 +316,38 @@ function updateBoard() {
 	}
 	
 	const gameState = GameState.getGameState();
-	if (!gameState || !gameState.board) return;
+	if (!gameState || !gameState.board) {
+		console.warn('No game state or board available for rendering');
+		return;
+	}
+	
+	if (!Array.isArray(gameState.board) || gameState.board.length === 0) {
+		console.warn('Game board is empty or not an array');
+		return;
+	}
+	
+	// For empty rows, initialize board with default dimensions
+	if (!gameState.board[0] || !Array.isArray(gameState.board[0])) {
+		console.warn('First row of board is empty or not an array');
+		
+		// Create a fallback board with minimum dimensions
+		const fallbackWidth = Constants.INITIAL_BOARD_WIDTH * Constants.CELL_SIZE;
+		const fallbackHeight = Constants.INITIAL_BOARD_HEIGHT * Constants.CELL_SIZE;
+		const boardDepth = Constants.CELL_SIZE * 0.5;
+		
+		const boardGeometry = new BoxGeometry(
+			fallbackWidth,
+			boardDepth,
+			fallbackHeight
+		);
+		
+		const boardMesh = new Mesh(boardGeometry, materials.board);
+		boardMesh.position.set(0, -boardDepth / 2, 0);
+		boardMesh.receiveShadow = true;
+		boardGroup.add(boardMesh);
+		
+		return;
+	}
 	
 	// Create the main board
 	const boardWidth = gameState.board[0].length * Constants.CELL_SIZE;
@@ -312,34 +375,43 @@ function updateBoard() {
 	);
 	
 	// Add all cells to the board
-	gameState.board.forEach((row, y) => {
-		row.forEach((cell, x) => {
-			if (!cell) return; // Skip empty cells
-			
-			const cellMaterial = materials.cell.clone();
-			const playerColor = cell.color || 0xCCCCCC;
-			cellMaterial.color = new Color(playerColor);
-			
-			// If this is a home zone cell, use a different material
-			if (cell.isHomeZone) {
-				cellMaterial.opacity = 0.7;
-				cellMaterial.transparent = true;
+	try {
+		gameState.board.forEach((row, y) => {
+			if (!Array.isArray(row)) {
+				console.warn(`Row ${y} is not an array, skipping`);
+				return;
 			}
 			
-			const cellX = (x - (row.length - 1) / 2) * cellSize;
-			const cellZ = (y - (gameState.board.length - 1) / 2) * cellSize;
-			
-			const cellMesh = new Mesh(cellGeometry, cellMaterial);
-			cellMesh.position.set(cellX, 0, cellZ);
-			cellMesh.receiveShadow = true;
-			boardGroup.add(cellMesh);
-			
-			// Add potion if this cell has one
-			if (cell.potion) {
-				addPotionToCell(cell);
-			}
+			row.forEach((cell, x) => {
+				if (!cell) return; // Skip empty cells
+				
+				const cellMaterial = materials.cell.clone();
+				const playerColor = cell.color || 0xCCCCCC;
+				cellMaterial.color = new Color(playerColor);
+				
+				// If this is a home zone cell, use a different material
+				if (cell.isHomeZone) {
+					cellMaterial.opacity = 0.7;
+					cellMaterial.transparent = true;
+				}
+				
+				const cellX = (x - (row.length - 1) / 2) * cellSize;
+				const cellZ = (y - (gameState.board.length - 1) / 2) * cellSize;
+				
+				const cellMesh = new Mesh(cellGeometry, cellMaterial);
+				cellMesh.position.set(cellX, 0, cellZ);
+				cellMesh.receiveShadow = true;
+				boardGroup.add(cellMesh);
+				
+				// Add potion if this cell has one
+				if (cell.potion) {
+					addPotionToCell(cell);
+				}
+			});
 		});
-	});
+	} catch (error) {
+		console.error('Error rendering board cells:', error);
+	}
 }
 
 /**

@@ -70,17 +70,24 @@ export function generateId() {
 
 /**
  * Initialize the game state
+ * @param {Object} initialState - Optional initial state values
  * @returns {Object} The initialized game state
  */
-export function initGameState() {
-	// Reset the game state
-	gameState.board = {};
-	gameState.players = {};
-	gameState.homeZones = {};
-	gameState.fallingPiece = null;
-	gameState.potions = {};
-	gameState.lastDegradation = null;
-	gameState.lastSnapshot = null;
+export function initGameState(initialState = {}) {
+	// Reset the game state with default values
+	gameState = {
+		board: {},
+		players: {},
+		homeZones: {},
+		fallingPiece: null,
+		potions: {},
+		lastDegradation: null,
+		lastSnapshot: null,
+		gameId: generateId(),
+		gameStatus: 'waiting',
+		difficulty: 'normal',
+		...initialState
+	};
 	
 	return gameState;
 }
