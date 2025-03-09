@@ -1631,6 +1631,321 @@ function addMushroomDecoration(x, z, cellSize) {
 	}
 }
 
+/**
+ * Add a chess piece to the scene
+ * @param {Object} piece - The piece object
+ * @param {string} playerId - The player ID who owns the piece
+ * @param {number} x - X coordinate
+ * @param {number} z - Z coordinate
+ * @returns {Object} The created piece mesh
+ */
+function addChessPiece(piece, playerId, x, z) {
+	try {
+		const gameState = GameState.getGameState();
+		if (!gameState || !gameState.players) return null;
+		
+		// Get player data
+		const player = gameState.players[playerId];
+		if (!player) {
+			console.warn(`Player ${playerId} not found for chess piece`);
+			return null;
+		}
+		
+		// Create a group for the piece
+		const pieceGroup = new Group();
+		pieceGroup.name = `piece_${piece.type}_${playerId}_${x}_${z}`;
+		
+		// Calculate position
+		const cellSize = 1; // Default cell size
+		const yOffset = 0.5; // Height above the cell
+		
+		// Get the floating height for this cell position
+		const cellY = getFloatingHeight(x, z);
+		
+		// Position the piece
+		pieceGroup.position.set(
+			x * cellSize,
+			cellY + yOffset, // Position above the cell
+			z * cellSize
+		);
+		
+		// Create a material based on player color
+		const playerColor = new Color(player.color || 0xffffff);
+		const darkened = playerColor.clone().multiplyScalar(0.7);
+		
+		const baseMaterial = new MeshStandardMaterial({
+			color: playerColor,
+			roughness: 0.7,
+			metalness: 0.3
+		});
+		
+		const darkMaterial = new MeshStandardMaterial({
+			color: darkened,
+			roughness: 0.7,
+			metalness: 0.3
+		});
+		
+		// Create the appropriate geometry based on piece type
+		let pieceGeometry;
+		let pieceMesh;
+		
+		switch (piece.type.toLowerCase()) {
+			case 'pawn':
+				// Create pawn geometry - simple cylinder with sphere on top
+				const pawnBase = new CylinderGeometry(0.2, 0.25, 0.5, 8);
+				const pawnBaseMesh = new Mesh(pawnBase, baseMaterial);
+				pawnBaseMesh.position.y = 0.25;
+				pieceGroup.add(pawnBaseMesh);
+				
+				const pawnHead = new SphereGeometry(0.18, 8, 8);
+				const pawnHeadMesh = new Mesh(pawnHead, baseMaterial);
+				pawnHeadMesh.position.y = 0.6;
+				pieceGroup.add(pawnHeadMesh);
+				break;
+				
+			case 'rook':
+				// Create rook geometry - rectangular prism with battlements
+				const rookBase = new BoxGeometry(0.4, 0.6, 0.4);
+				const rookBaseMesh = new Mesh(rookBase, baseMaterial);
+				rookBaseMesh.position.y = 0.3;
+				pieceGroup.add(rookBaseMesh);
+				
+				// Top battlements
+				const rookTop = new BoxGeometry(0.5, 0.15, 0.5);
+				const rookTopMesh = new Mesh(rookTop, darkMaterial);
+				rookTopMesh.position.y = 0.675;
+				pieceGroup.add(rookTopMesh);
+				
+				// Corner battlements
+				[-1, 1].forEach(xPos => {
+					[-1, 1].forEach(zPos => {
+						const cornerGeometry = new BoxGeometry(0.1, 0.1, 0.1);
+						const cornerMesh = new Mesh(cornerGeometry, darkMaterial);
+						cornerMesh.position.set(xPos * 0.2, 0.8, zPos * 0.2);
+						pieceGroup.add(cornerMesh);
+					});
+				});
+				break;
+				
+			case 'knight':
+				// Create knight geometry - base with angled head
+				const knightBase = new CylinderGeometry(0.25, 0.3, 0.3, 8);
+				const knightBaseMesh = new Mesh(knightBase, baseMaterial);
+				knightBaseMesh.position.y = 0.15;
+				pieceGroup.add(knightBaseMesh);
+				
+				// Knight neck
+				const knightNeck = new BoxGeometry(0.25, 0.4, 0.25);
+				const knightNeckMesh = new Mesh(knightNeck, baseMaterial);
+				knightNeckMesh.position.set(0, 0.45, 0);
+				pieceGroup.add(knightNeckMesh);
+				
+				// Knight head
+				const knightHead = new BoxGeometry(0.3, 0.25, 0.5);
+				const knightHeadMesh = new Mesh(knightHead, darkMaterial);
+				knightHeadMesh.position.set(0, 0.75, 0.1);
+				knightHeadMesh.rotation.x = Math.PI / 8;
+				pieceGroup.add(knightHeadMesh);
+				
+				// Knight ears/horns
+				const earGeometry = new ConeGeometry(0.1, 0.2, 4);
+				
+				const leftEar = new Mesh(earGeometry, darkMaterial);
+				leftEar.position.set(-0.15, 0.85, 0);
+				leftEar.rotation.z = -Math.PI / 6;
+				pieceGroup.add(leftEar);
+				
+				const rightEar = new Mesh(earGeometry, darkMaterial);
+				rightEar.position.set(0.15, 0.85, 0);
+				rightEar.rotation.z = Math.PI / 6;
+				pieceGroup.add(rightEar);
+				break;
+				
+			case 'bishop':
+				// Create bishop geometry - base with pointed top
+				const bishopBase = new CylinderGeometry(0.25, 0.3, 0.5, 8);
+				const bishopBaseMesh = new Mesh(bishopBase, baseMaterial);
+				bishopBaseMesh.position.y = 0.25;
+				pieceGroup.add(bishopBaseMesh);
+				
+				const bishopMiddle = new SphereGeometry(0.2, 8, 8);
+				const bishopMiddleMesh = new Mesh(bishopMiddle, baseMaterial);
+				bishopMiddleMesh.position.y = 0.6;
+				pieceGroup.add(bishopMiddleMesh);
+				
+				const bishopTop = new ConeGeometry(0.1, 0.3, 8);
+				const bishopTopMesh = new Mesh(bishopTop, darkMaterial);
+				bishopTopMesh.position.y = 0.85;
+				pieceGroup.add(bishopTopMesh);
+				break;
+				
+			case 'queen':
+				// Create queen geometry - elegant with crown
+				const queenBase = new CylinderGeometry(0.3, 0.35, 0.5, 8);
+				const queenBaseMesh = new Mesh(queenBase, baseMaterial);
+				queenBaseMesh.position.y = 0.25;
+				pieceGroup.add(queenBaseMesh);
+				
+				const queenMiddle = new SphereGeometry(0.25, 8, 8);
+				const queenMiddleMesh = new Mesh(queenMiddle, baseMaterial);
+				queenMiddleMesh.position.y = 0.6;
+				pieceGroup.add(queenMiddleMesh);
+				
+				const crownGeometry = new CylinderGeometry(0.3, 0.2, 0.2, 8);
+				const crownMesh = new Mesh(crownGeometry, darkMaterial);
+				crownMesh.position.y = 0.85;
+				pieceGroup.add(crownMesh);
+				
+				// Add points to the crown
+				for (let i = 0; i < 5; i++) {
+					const angle = (i / 5) * Math.PI * 2;
+					const pointGeometry = new ConeGeometry(0.05, 0.15, 4);
+					const pointMesh = new Mesh(pointGeometry, darkMaterial);
+					pointMesh.position.set(
+						Math.sin(angle) * 0.2,
+						1,
+						Math.cos(angle) * 0.2
+					);
+					pieceGroup.add(pointMesh);
+				}
+				break;
+				
+			case 'king':
+				// Create king geometry - majestic with crown and cross
+				const kingBase = new CylinderGeometry(0.3, 0.35, 0.5, 8);
+				const kingBaseMesh = new Mesh(kingBase, baseMaterial);
+				kingBaseMesh.position.y = 0.25;
+				pieceGroup.add(kingBaseMesh);
+				
+				const kingMiddle = new SphereGeometry(0.25, 8, 8);
+				const kingMiddleMesh = new Mesh(kingMiddle, baseMaterial);
+				kingMiddleMesh.position.y = 0.6;
+				pieceGroup.add(kingMiddleMesh);
+				
+				const kingCrownGeometry = new CylinderGeometry(0.3, 0.2, 0.2, 8);
+				const kingCrownMesh = new Mesh(kingCrownGeometry, darkMaterial);
+				kingCrownMesh.position.y = 0.85;
+				pieceGroup.add(kingCrownMesh);
+				
+				// Cross on top
+				const crossVerticalGeometry = new BoxGeometry(0.08, 0.3, 0.08);
+				const crossVerticalMesh = new Mesh(crossVerticalGeometry, darkMaterial);
+				crossVerticalMesh.position.y = 1.1;
+				pieceGroup.add(crossVerticalMesh);
+				
+				const crossHorizontalGeometry = new BoxGeometry(0.25, 0.08, 0.08);
+				const crossHorizontalMesh = new Mesh(crossHorizontalGeometry, darkMaterial);
+				crossHorizontalMesh.position.y = 1.05;
+				pieceGroup.add(crossHorizontalMesh);
+				
+				// Add a player name label above the king
+				createPlayerNameLabel(playerId, player.name || `Player ${playerId}`, pieceGroup.position.x, pieceGroup.position.y + 1, pieceGroup.position.z);
+				break;
+				
+			default:
+				// Default fallback - simple cube
+				pieceGeometry = new BoxGeometry(0.4, 0.4, 0.4);
+				pieceMesh = new Mesh(pieceGeometry, baseMaterial);
+				pieceMesh.position.y = 0.2;
+				pieceGroup.add(pieceMesh);
+				break;
+		}
+		
+		// Add a subtle glow effect
+		const glowGeometry = new SphereGeometry(0.4, 8, 8);
+		const glowMaterial = new MeshBasicMaterial({
+			color: playerColor,
+			transparent: true,
+			opacity: 0.2,
+			side: DoubleSide
+		});
+		const glowMesh = new Mesh(glowGeometry, glowMaterial);
+		glowMesh.position.y = 0.4;
+		pieceGroup.add(glowMesh);
+		
+		// Add piece to the scene
+		piecesGroup.add(pieceGroup);
+		
+		return pieceGroup;
+	} catch (error) {
+		console.error('Error adding chess piece:', error);
+		return null;
+	}
+}
+
+/**
+ * Create a player name label to display above their king
+ * @param {string} playerId - The ID of the player
+ * @param {string} playerName - The name to display
+ * @param {number} x - X position
+ * @param {number} y - Y position
+ * @param {number} z - Z position
+ * @returns {HTMLElement} The created label element
+ */
+function createPlayerNameLabel(playerId, playerName, x, y, z) {
+	try {
+		// Create a DOM element for the label
+		const labelElement = document.createElement('div');
+		labelElement.className = 'player-name-label';
+		labelElement.textContent = playerName;
+		labelElement.style.position = 'absolute';
+		labelElement.style.color = '#ffffff';
+		labelElement.style.backgroundColor = 'rgba(0, 0, 0, 0.6)';
+		labelElement.style.padding = '3px 8px';
+		labelElement.style.borderRadius = '4px';
+		labelElement.style.fontFamily = 'Arial, sans-serif';
+		labelElement.style.fontSize = '14px';
+		labelElement.style.fontWeight = 'bold';
+		labelElement.style.pointerEvents = 'none';
+		labelElement.style.whiteSpace = 'nowrap';
+		labelElement.style.zIndex = '1000';
+		labelElement.style.transform = 'translate(-50%, -100%)';
+		
+		// Store position data for label updates
+		labelElement.userData = {
+			playerId: playerId,
+			x: x,
+			y: y,
+			z: z
+		};
+		
+		// Add to DOM and track in playerLabels array
+		document.body.appendChild(labelElement);
+		playerLabels.push(labelElement);
+		
+		return labelElement;
+	} catch (error) {
+		console.error('Error creating player name label:', error);
+		return null;
+	}
+}
+
+/**
+ * Calculate a floating height value for a cell at a given position
+ * Creates a subtle floating island effect
+ * @param {number} x - X position on the board
+ * @param {number} z - Z position on the board 
+ * @returns {number} The calculated height for the position
+ */
+function getFloatingHeight(x, z) {
+	// Use a simple sine wave pattern to create floating effect
+	// This makes cells have different heights based on position
+	const baseHeight = 0;
+	const floatAmplitude = 0.2; // How much height varies
+	
+	// Convert board positions to world space for better wave pattern
+	const worldX = x * 1.0; // Multiply by cell size
+	const worldZ = z * 1.0;
+	
+	// Create a natural-looking height pattern using sine waves
+	// Different frequencies create a more organic look
+	const height = baseHeight + 
+		floatAmplitude * 0.7 * Math.sin(worldX * 0.5 + worldZ * 0.3) + 
+		floatAmplitude * 0.3 * Math.sin(worldX * 0.2 - worldZ * 0.7);
+	
+	return height;
+}
+
 export default {
 	init,
 	cleanup
