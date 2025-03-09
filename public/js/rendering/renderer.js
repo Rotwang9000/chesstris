@@ -168,8 +168,8 @@ function initializeGameWorld(playerId, username) {
 		gameState.board = [];
 		gameState.players = {};
 		
-		// Create a 21x21 board (10 cells radius from center)
-		const boardSize = 21;
+		// Create a 24x24 board (standard size)
+		const boardSize = 24;
 		for (let z = 0; z < boardSize; z++) {
 			gameState.board[z] = [];
 			for (let x = 0; x < boardSize; x++) {
@@ -182,20 +182,66 @@ function initializeGameWorld(playerId, username) {
 		const playerColor = new Color().setHSL(hue, 0.8, 0.5);
 		const colorHex = playerColor.getHex();
 		
+		// Set up home zone position - player starts at the bottom center
+		const homeZoneWidth = 8;  // Standard chess width
+		const homeZoneHeight = 2; // Standard chess height
+		const startX = Math.floor((boardSize - homeZoneWidth) / 2); // Center horizontally
+		const startZ = boardSize - homeZoneHeight - 2; // Near bottom of board
+		
 		// Add player to the game state
 		gameState.players[playerId] = {
 			id: playerId,
 			name: username,
 			color: colorHex,
 			homeZone: {
-				x: 5,
-				z: 5,
-				size: 3
+				x: startX,
+				z: startZ,
+				width: homeZoneWidth,
+				height: homeZoneHeight
 			}
 		};
 		
-		// Create home zone for the player
-		createPlayerHomeZone(playerId);
+		// Create home zone cells
+		for (let dz = 0; dz < homeZoneHeight; dz++) {
+			for (let dx = 0; dx < homeZoneWidth; dx++) {
+				const cellX = startX + dx;
+				const cellZ = startZ + dz;
+				
+				gameState.board[cellZ][cellX] = {
+					type: 'home_zone',
+					player: playerId,
+					chessPiece: null
+				};
+			}
+		}
+		
+		// Add chess pieces in standard chess board arrangement
+		// Back row (major pieces)
+		const backRowPieces = ['rook', 'knight', 'bishop', 'queen', 'king', 'bishop', 'knight', 'rook'];
+		// Front row (pawns)
+		const frontRowPieces = Array(8).fill('pawn');
+		
+		// Add the back row pieces (major pieces)
+		for (let i = 0; i < backRowPieces.length; i++) {
+			const cellX = startX + i;
+			const cellZ = startZ + 1; // Back row
+			
+			gameState.board[cellZ][cellX].chessPiece = {
+				type: backRowPieces[i],
+				player: playerId
+			};
+		}
+		
+		// Add the front row pieces (pawns)
+		for (let i = 0; i < frontRowPieces.length; i++) {
+			const cellX = startX + i;
+			const cellZ = startZ; // Front row
+			
+			gameState.board[cellZ][cellX].chessPiece = {
+				type: frontRowPieces[i],
+				player: playerId
+			};
+		}
 		
 		console.log('Initialized game world with player:', playerId);
 	} catch (error) {
@@ -359,58 +405,92 @@ function createPlayerHomeZone(playerId) {
 		}
 		
 		const player = gameState.players[playerId];
-		const { x, z, size } = player.homeZone;
+		
+		// Update the home zone to use 8x2 dimensions (standard chess layout)
+		// Use the center of the existing home zone as the starting point
+		const oldZone = player.homeZone;
+		const centerX = oldZone.x + Math.floor(oldZone.size / 2);
+		const centerZ = oldZone.z + Math.floor(oldZone.size / 2);
+		
+		// Create new homeZone with 8x2 dimensions
+		const homeZoneWidth = 8;
+		const homeZoneHeight = 2;
+		const startX = centerX - Math.floor(homeZoneWidth / 2);
+		const startZ = centerZ - Math.floor(homeZoneHeight / 2);
+		
+		// Update the player's home zone in the game state
+		player.homeZone = {
+			x: startX,
+			z: startZ,
+			width: homeZoneWidth,
+			height: homeZoneHeight
+		};
+		
+		// Clear any existing cells in this area
+		for (let z = 0; z < gameState.board.length; z++) {
+			for (let x = 0; x < gameState.board[z].length; x++) {
+				if (gameState.board[z][x] && 
+					gameState.board[z][x].player === playerId) {
+					gameState.board[z][x] = null;
+				}
+			}
+		}
 		
 		// Create home zone cells
-		for (let dz = 0; dz < size; dz++) {
-			for (let dx = 0; dx < size; dx++) {
-				const cellX = x + dx;
-				const cellZ = z + dz;
+		for (let dz = 0; dz < homeZoneHeight; dz++) {
+			for (let dx = 0; dx < homeZoneWidth; dx++) {
+				const cellX = startX + dx;
+				const cellZ = startZ + dz;
 				
-				gameState.board[cellZ][cellX] = {
-					type: 'home_zone',
-					player: player.id,
-					chessPiece: null
+				// Make sure we don't go out of bounds
+				if (cellX >= 0 && cellX < gameState.board[0].length &&
+					cellZ >= 0 && cellZ < gameState.board.length) {
+					gameState.board[cellZ][cellX] = {
+						type: 'home_zone',
+						player: player.id,
+						chessPiece: null
+					};
+				}
+			}
+		}
+		
+		// Add chess pieces in standard chess board arrangement
+		// Back row (major pieces)
+		const backRowPieces = ['rook', 'knight', 'bishop', 'queen', 'king', 'bishop', 'knight', 'rook'];
+		// Front row (pawns)
+		const frontRowPieces = Array(8).fill('pawn');
+		
+		// Add the back row pieces (major pieces)
+		for (let i = 0; i < backRowPieces.length; i++) {
+			const cellX = startX + i;
+			const cellZ = startZ + 1; // Back row
+			
+			if (cellX >= 0 && cellX < gameState.board[0].length &&
+				cellZ >= 0 && cellZ < gameState.board.length) {
+				
+				gameState.board[cellZ][cellX].chessPiece = {
+					type: backRowPieces[i],
+					player: playerId
 				};
 			}
 		}
 		
-		// Add chess pieces - let's place them strategically in the home zone
-		// King in the center, pawns on the front, other pieces in the remaining cells
-		const chessPieces = [
-			// Center piece is the king
-			{ type: 'king', x: x + Math.floor(size/2), z: z + Math.floor(size/2) },
+		// Add the front row pieces (pawns)
+		for (let i = 0; i < frontRowPieces.length; i++) {
+			const cellX = startX + i;
+			const cellZ = startZ; // Front row
 			
-			// Corner pieces are rooks
-			{ type: 'rook', x: x, z: z },
-			{ type: 'rook', x: x + size - 1, z: z + size - 1 },
-			
-			// Other edge pieces
-			{ type: 'knight', x: x + size - 1, z: z },
-			{ type: 'bishop', x: x, z: z + size - 1 },
-			
-			// A couple of pawns
-			{ type: 'pawn', x: x + 1, z: z },
-			{ type: 'pawn', x: x, z: z + 1 },
-			
-			// If size is 3 or larger, add a queen
-			...(size >= 3 ? [{ type: 'queen', x: x + 1, z: z + 1 }] : [])
-		];
-		
-		// Add the chess pieces to the board
-		chessPieces.forEach(pieceInfo => {
-			if (pieceInfo.x >= 0 && pieceInfo.x < gameState.board[0].length &&
-				pieceInfo.z >= 0 && pieceInfo.z < gameState.board.length &&
-				gameState.board[pieceInfo.z][pieceInfo.x]) {
+			if (cellX >= 0 && cellX < gameState.board[0].length &&
+				cellZ >= 0 && cellZ < gameState.board.length) {
 				
-				gameState.board[pieceInfo.z][pieceInfo.x].chessPiece = {
-					type: pieceInfo.type,
+				gameState.board[cellZ][cellX].chessPiece = {
+					type: frontRowPieces[i],
 					player: playerId
 				};
 			}
-		});
+		}
 		
-		console.log(`Created home zone for player ${playerId} with ${chessPieces.length} chess pieces`);
+		console.log(`Created home zone for player ${playerId} with standard chess layout`);
 	} catch (error) {
 		console.error('Error creating player home zone:', error);
 	}
@@ -685,121 +765,139 @@ function animatePotionsAndParticles(deltaTime) {
 }
 
 /**
- * Update the board visualization
+ * Update the game board based on the current game state
  */
 function updateBoard() {
-	// Clear existing board
-	while (boardGroup.children.length > 0) {
-		boardGroup.remove(boardGroup.children[0]);
-	}
-	
-	const gameState = GameState.getGameState();
-	if (!gameState || !gameState.board) {
-		console.warn('No game state or board available for rendering');
-		return;
-	}
-	
-	if (!Array.isArray(gameState.board) || gameState.board.length === 0) {
-		console.warn('Game board is empty or not an array');
-		return;
-	}
-	
-	// For empty rows, initialize board with default dimensions
-	if (!gameState.board[0] || !Array.isArray(gameState.board[0])) {
-		console.warn('First row of board is empty or not an array');
-		return;
-	}
-	
-	// In this game, there's no solid board - just floating cells
-	// The board gets built up as tetris pieces are added
-	
-	// Create cells
-	const cellSize = Constants.CELL_SIZE;
-	const cellHeight = Constants.CELL_SIZE * 0.3; // Thicker cells for visibility
-	const cellGeometry = new BoxGeometry(
-		cellSize * 0.95,
-		cellHeight,
-		cellSize * 0.95
-	);
-	
-	// Add all cells to the board
 	try {
-		// Count non-empty cells
-		let nonEmptyCells = 0;
+		// Clear existing board elements
+		while (boardGroup.children.length > 0) {
+			boardGroup.remove(boardGroup.children[0]);
+		}
 		
-		gameState.board.forEach((row, y) => {
-			if (!Array.isArray(row)) {
-				console.warn(`Row ${y} is not an array, skipping`);
-				return;
-			}
-			
+		// Get the current game state
+		const gameState = GameState.getGameState();
+		if (!gameState || !gameState.board) {
+			console.warn('No game state or board available');
+			return;
+		}
+		
+		// Check if the board is a valid 2D array
+		if (!Array.isArray(gameState.board) || gameState.board.length === 0) {
+			console.warn('Game board is not a valid array');
+			return;
+		}
+		
+		// Check if the first row is a valid array
+		if (!gameState.board[0] || !Array.isArray(gameState.board[0])) {
+			console.warn('Game board rows are not valid arrays');
+			return;
+		}
+		
+		// Create cell geometry (reusable for all cells)
+		const cellSize = 1;
+		const topGeometry = new BoxGeometry(cellSize, 0.1, cellSize);
+		
+		// Track active cells for debugging
+		let activeCellCount = 0;
+		
+		// Render only active cells
+		gameState.board.forEach((row, z) => {
 			row.forEach((cell, x) => {
-				if (!cell) return; // Skip empty (null) cells, this is normal
+				// Skip empty cells
+				if (!cell || !cell.type) return;
 				
-				nonEmptyCells++;
+				// Create a floating cell for this position
+				const cellGroup = createFloatingCell(cell, x, z, cellSize, topGeometry);
 				
-				// Create a floating island cell for each active cell
-				createFloatingCell(cell, x, y, cellSize, cellGeometry);
+				if (cellGroup) {
+					boardGroup.add(cellGroup);
+					activeCellCount++;
+				}
 			});
 		});
 		
-		// Only log a warning if we find no active cells at all
-		if (nonEmptyCells === 0) {
-			console.log('Board initialized with all empty cells - waiting for game to start');
-		} else {
-			console.log(`Rendered ${nonEmptyCells} active cells`);
-		}
+		console.log(`Rendered ${activeCellCount} active cells`);
 	} catch (error) {
-		console.error('Error rendering board cells:', error);
+		console.error('Error updating board:', error);
 	}
 }
 
 /**
- * Create a floating cell with island-like appearance
- * @param {Object} cell - The cell data
- * @param {number} x - X coordinate
- * @param {number} y - Y coordinate
- * @param {number} cellSize - Size of each cell 
- * @param {Object} topGeometry - Geometry for the top of the cell
+ * Create a floating cell with top and bottom parts
+ * @param {Object} cell - Cell data
+ * @param {number} x - X position
+ * @param {number} z - Z position
+ * @param {number} cellSize - Size of the cell
+ * @param {Object} topGeometry - Geometry for the top part
+ * @returns {Group} Cell group
  */
-function createFloatingCell(cell, x, y, cellSize, topGeometry) {
-	// Get the game state
-	const gameState = GameState.getGameState();
-	
-	// Calculate position
-	const cellX = (x - (gameState.board[0].length - 1) / 2) * cellSize;
-	const cellZ = (y - (gameState.board.length - 1) / 2) * cellSize;
-	
-	// Create the top flat part of the cell
-	const cellMaterial = materials.cell.clone();
-	const playerColor = cell.color || 0xCCCCCC;
-	cellMaterial.color = new Color(playerColor);
-	
-	// If this is a home zone cell, use a different material
-	if (cell.isHomeZone) {
-		cellMaterial.opacity = 0.7;
-		cellMaterial.transparent = true;
-	}
-	
-	const cellMesh = new Mesh(topGeometry, cellMaterial);
-	cellMesh.position.set(cellX, 0, cellZ);
-	cellMesh.receiveShadow = true;
-	cellMesh.castShadow = true;
-	boardGroup.add(cellMesh);
-	
-	// Add bottom part for a floating island effect
-	addCellBottom(cellX, cellZ, cellSize, playerColor);
-	
-	// Add potion if this cell has one
-	if (cell.potion) {
-		// Update the potion cell reference to include coordinates
-		const potionCell = { ...cell, x, y };
-		addPotionToCell(potionCell);
-	}
-	
-	// Add decorative elements with low probability
-	if (Math.random() > 0.8) {
-		addCellDecoration(cellX, cellZ, cellSize);
+function createFloatingCell(cell, x, z, cellSize, topGeometry) {
+	try {
+		const gameState = GameState.getGameState();
+		
+		// Create a normalized position from the board coordinates
+		// This centers the board so (0,0) is at the center
+		const boardWidth = gameState.board[0].length;
+		const boardHeight = gameState.board.length;
+		const centerX = (boardWidth - 1) / 2;
+		const centerZ = (boardHeight - 1) / 2;
+		
+		const normalizedX = (x - centerX) * cellSize;
+		const normalizedZ = (z - centerZ) * cellSize;
+		
+		// Get the floating height for this cell
+		const cellY = getFloatingHeight(x, z);
+		
+		// Create a group for the cell
+		const cellGroup = new Group();
+		cellGroup.name = `cell_${x}_${z}`;
+		cellGroup.position.set(normalizedX, cellY, normalizedZ);
+		
+		// Get the appropriate cell color based on cell data
+		let cellColor;
+		
+		if (cell.player && gameState.players[cell.player]) {
+			// Use player color
+			cellColor = new Color(gameState.players[cell.player].color);
+		} else if (cell.type === 'home_zone') {
+			// Default home zone color
+			cellColor = new Color(0x8e44ad); // Purple
+		} else if (cell.type === 'tetris') {
+			// Tetris piece color
+			cellColor = new Color(0x2ecc71); // Green
+		} else {
+			// Default cell color
+			cellColor = new Color(0xecf0f1); // Light gray
+		}
+		
+		// Create the top part of the cell
+		const topMaterial = new MeshStandardMaterial({
+			color: cellColor,
+			roughness: 0.7,
+			metalness: 0.2
+		});
+		
+		const topMesh = new Mesh(topGeometry, topMaterial);
+		topMesh.position.y = 0;
+		cellGroup.add(topMesh);
+		
+		// Add a bottom part (stalactite-like structure) to the cell
+		addCellBottom(x, z, cellSize, cellColor);
+		
+		// Randomly add decorations to the cell
+		if (Math.random() < 0.7) {
+			addCellDecoration(x, z, cellSize);
+		}
+		
+		// If this cell has a potion, add it
+		if (cell.potion) {
+			addPotionToCell(cell);
+		}
+		
+		return cellGroup;
+	} catch (error) {
+		console.error('Error creating floating cell:', error);
+		return null;
 	}
 }
 
@@ -1426,209 +1524,308 @@ function addClouds() {
 }
 
 /**
- * Add a bottom part to a cell to create a floating island effect
+ * Add a bottom part to a cell (stalactite-like structure)
  * @param {number} x - X position
  * @param {number} z - Z position
  * @param {number} cellSize - Size of the cell
- * @param {number} color - Color of the cell (player color)
+ * @param {Color|number} color - Color for the bottom part
  */
 function addCellBottom(x, z, cellSize, color) {
-	// Create the bottom part of the cell
-	const bottomDepth = cellSize * 1.5; // Deeper than the top
-	
-	// Create a slightly smaller bottom to give a ledge effect
-	const bottomWidth = cellSize * 0.85;
-	const bottomGeometry = new BoxGeometry(
-		bottomWidth,
-		bottomDepth,
-		bottomWidth
-	);
-	
-	// Create a slightly darker version of the cell color for the bottom
-	const bottomColor = new Color(color).multiplyScalar(0.8);
-	
-	const bottomMaterial = new MeshStandardMaterial({
-		color: bottomColor,
-		roughness: 0.9,
-		metalness: 0.1
-	});
-	
-	const bottomMesh = new Mesh(bottomGeometry, bottomMaterial);
-	bottomMesh.position.set(x, -bottomDepth / 2 - 0.15, z);
-	bottomMesh.receiveShadow = true;
-	bottomMesh.castShadow = true;
-	boardGroup.add(bottomMesh);
-	
-	// Add a small hanging "stalactite" with low probability
-	if (Math.random() > 0.7) {
-		const stalactiteHeight = Math.random() * cellSize + cellSize * 0.5;
-		const stalactiteRadius = Math.random() * (cellSize * 0.15) + cellSize * 0.05;
+	try {
+		const gameState = GameState.getGameState();
 		
-		const stalactiteGeometry = new CylinderGeometry(
-			stalactiteRadius * 0.2, // Narrow at the bottom
-			stalactiteRadius,       // Wider at the top
-			stalactiteHeight,
-			6
-		);
+		// Create a normalized position from the board coordinates
+		// This centers the board so (0,0) is at the center
+		const boardWidth = gameState.board[0].length;
+		const boardHeight = gameState.board.length;
+		const centerX = (boardWidth - 1) / 2;
+		const centerZ = (boardHeight - 1) / 2;
 		
-		const stalactiteMaterial = new MeshStandardMaterial({
-			color: bottomColor.clone().multiplyScalar(0.7), // Even darker
+		const normalizedX = (x - centerX) * cellSize;
+		const normalizedZ = (z - centerZ) * cellSize;
+		
+		// Get the floating height for this cell
+		const cellY = getFloatingHeight(x, z);
+		
+		// Create a material for the bottom part
+		const bottomColor = new Color(color).multiplyScalar(0.7); // Darker version of cell color
+		const bottomMaterial = new MeshStandardMaterial({
+			color: bottomColor,
 			roughness: 0.9,
-			metalness: 0.05
+			metalness: 0.1
 		});
 		
-		const stalactiteMesh = new Mesh(stalactiteGeometry, stalactiteMaterial);
-		stalactiteMesh.position.set(
-			x + (Math.random() - 0.5) * cellSize * 0.4,
-			-stalactiteHeight / 2 - bottomDepth - 0.15,
-			z + (Math.random() - 0.5) * cellSize * 0.4
+		// Create a group for the bottom part
+		const bottomGroup = new Group();
+		bottomGroup.position.set(normalizedX, cellY, normalizedZ);
+		
+		// Create a shorter, narrower stalactite-like structure
+		const height = 0.5 + Math.random() * 0.5; // Variable height
+		const topWidth = cellSize * 0.9;
+		const bottomWidth = cellSize * 0.3; // Narrower at the bottom
+		
+		// Create a pyramid-like shape for the bottom
+		const bottomGeometry = new CylinderGeometry(
+			bottomWidth / 2, // Top radius (narrower)
+			0.05, // Bottom radius (very narrow point)
+			height, // Height of the stalactite
+			5 // Lower polygon count for performance
 		);
 		
-		stalactiteMesh.receiveShadow = true;
-		stalactiteMesh.castShadow = true;
-		boardGroup.add(stalactiteMesh);
+		// Position it below the cell
+		const bottomMesh = new Mesh(bottomGeometry, bottomMaterial);
+		bottomMesh.position.y = -height / 2;
+		bottomMesh.castShadow = true;
+		bottomGroup.add(bottomMesh);
+		
+		// Add some small details to make it more interesting
+		if (Math.random() > 0.5) {
+			// Add a small secondary stalactite
+			const smallHeight = height * 0.6;
+			const smallGeometry = new CylinderGeometry(
+				bottomWidth / 3,
+				0.02,
+				smallHeight,
+				4
+			);
+			
+			const smallMesh = new Mesh(smallGeometry, bottomMaterial);
+			// Position it randomly offset from the center
+			smallMesh.position.set(
+				(Math.random() - 0.5) * 0.2,
+				-height * 0.7,
+				(Math.random() - 0.5) * 0.2
+			);
+			// Random slight tilt
+			smallMesh.rotation.x = (Math.random() - 0.5) * 0.2;
+			smallMesh.rotation.z = (Math.random() - 0.5) * 0.2;
+			bottomGroup.add(smallMesh);
+		}
+		
+		// Add the bottom group to the board
+		boardGroup.add(bottomGroup);
+	} catch (error) {
+		console.error('Error adding cell bottom:', error);
 	}
 }
 
 /**
- * Add decorative elements to a cell
+ * Add a decorative element to a cell
  * @param {number} x - X position
- * @param {number} z - Z position
+ * @param {number} z - Z position 
  * @param {number} cellSize - Size of the cell
  */
 function addCellDecoration(x, z, cellSize) {
-	// Choose decoration type: 1=stone, 2=grass, 3=mushroom
-	const decorationType = Math.floor(Math.random() * 3) + 1;
-	
-	switch (decorationType) {
-		case 1: // Stone
-			addStoneDecoration(x, z, cellSize);
-			break;
-		case 2: // Grass tuft
-			addGrassTuft(x, z, cellSize * 0.4);
-			break;
-		case 3: // Mushroom
-			addMushroomDecoration(x, z, cellSize);
-			break;
-	}
-}
-
-/**
- * Add a small stone decoration to a cell
- * @param {number} x - X position
- * @param {number} z - Z position
- * @param {number} cellSize - Size of the cell
- */
-function addStoneDecoration(x, z, cellSize) {
-	const stoneRadius = Math.random() * (cellSize * 0.15) + cellSize * 0.05;
-	const stoneGeometry = new SphereGeometry(stoneRadius, 6, 4);
-	
-	const stoneMaterial = new MeshStandardMaterial({
-		color: new Color(0xAAAAAA).offsetHSL(0, 0, (Math.random() - 0.5) * 0.2),
-		roughness: 0.8,
-		metalness: 0.2
-	});
-	
-	const stoneMesh = new Mesh(stoneGeometry, stoneMaterial);
-	stoneMesh.position.set(
-		x + (Math.random() - 0.5) * cellSize * 0.6,
-		stoneRadius * 0.5,
-		z + (Math.random() - 0.5) * cellSize * 0.6
-	);
-	
-	// Deform the stone slightly
-	stoneMesh.scale.set(
-		1 + Math.random() * 0.4,
-		0.5 + Math.random() * 0.3,
-		1 + Math.random() * 0.4
-	);
-	
-	stoneMesh.rotation.y = Math.random() * Math.PI;
-	stoneMesh.receiveShadow = true;
-	stoneMesh.castShadow = true;
-	boardGroup.add(stoneMesh);
-}
-
-/**
- * Add a mushroom decoration to a cell
- * @param {number} x - X position
- * @param {number} z - Z position
- * @param {number} cellSize - Size of the cell
- */
-function addMushroomDecoration(x, z, cellSize) {
-	// Create stem
-	const stemHeight = cellSize * (0.2 + Math.random() * 0.15);
-	const stemRadius = cellSize * (0.02 + Math.random() * 0.02);
-	const stemGeometry = new CylinderGeometry(stemRadius, stemRadius, stemHeight, 8);
-	const stemMaterial = new MeshStandardMaterial({
-		color: 0xECEFEF,
-		roughness: 0.7,
-		metalness: 0.1
-	});
-	
-	const stemMesh = new Mesh(stemGeometry, stemMaterial);
-	
-	// Position with some randomness
-	const mushX = x + (Math.random() - 0.5) * cellSize * 0.6;
-	const mushZ = z + (Math.random() - 0.5) * cellSize * 0.6;
-	
-	stemMesh.position.set(mushX, stemHeight / 2, mushZ);
-	stemMesh.receiveShadow = true;
-	stemMesh.castShadow = true;
-	boardGroup.add(stemMesh);
-	
-	// Create cap
-	const capRadius = stemRadius * (2.5 + Math.random() * 1.5);
-	const capHeight = stemHeight * (0.3 + Math.random() * 0.2);
-	const capGeometry = new SphereGeometry(capRadius, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2);
-	
-	// Choose from a few mushroom cap colors
-	const capColors = [0xE53935, 0x4CAF50, 0xFFC107, 0x42A5F5];
-	const capColor = capColors[Math.floor(Math.random() * capColors.length)];
-	
-	const capMaterial = new MeshStandardMaterial({
-		color: capColor,
-		roughness: 0.8,
-		metalness: 0.1
-	});
-	
-	const capMesh = new Mesh(capGeometry, capMaterial);
-	capMesh.position.set(mushX, stemHeight, mushZ);
-	capMesh.rotation.x = Math.PI; // Flip to get the dome shape facing up
-	capMesh.receiveShadow = true;
-	capMesh.castShadow = true;
-	boardGroup.add(capMesh);
-	
-	// Add small white dots on red caps
-	if (capColor === 0xE53935 && Math.random() > 0.5) {
-		const dotCount = Math.floor(Math.random() * 5) + 3;
+	try {
+		const gameState = GameState.getGameState();
 		
-		for (let i = 0; i < dotCount; i++) {
-			const dotSize = capRadius * (0.1 + Math.random() * 0.1);
-			const dotGeometry = new SphereGeometry(dotSize, 4, 4);
-			const dotMaterial = new MeshStandardMaterial({
-				color: 0xFFFFFF,
-				roughness: 0.7,
-				metalness: 0.1
-			});
-			
-			const dotMesh = new Mesh(dotGeometry, dotMaterial);
-			
-			// Position on the cap surface
-			const angle = Math.random() * Math.PI * 2;
-			const distance = Math.random() * capRadius * 0.6;
-			
-			dotMesh.position.set(
-				mushX + Math.cos(angle) * distance,
-				stemHeight + capHeight * 0.5,
-				mushZ + Math.sin(angle) * distance
-			);
-			
-			dotMesh.receiveShadow = true;
-			dotMesh.castShadow = true;
-			boardGroup.add(dotMesh);
+		// Create a normalized position from the board coordinates
+		// This centers the board so (0,0) is at the center
+		const boardWidth = gameState.board[0].length;
+		const boardHeight = gameState.board.length;
+		const centerX = (boardWidth - 1) / 2;
+		const centerZ = (boardHeight - 1) / 2;
+		
+		const normalizedX = (x - centerX) * cellSize;
+		const normalizedZ = (z - centerZ) * cellSize;
+		
+		// Get the floating height for this cell
+		const cellY = getFloatingHeight(x, z);
+		
+		// Choose a random decoration type
+		const decorationType = Math.random();
+		
+		if (decorationType < 0.4) {
+			// Stone decorations
+			addStoneDecoration(normalizedX, normalizedZ, cellY, cellSize);
+		} else if (decorationType < 0.7) {
+			// Grass tufts
+			addGrassTuft(normalizedX, normalizedZ, cellY, cellSize);
+		} else {
+			// Mushroom decorations
+			addMushroomDecoration(normalizedX, normalizedZ, cellY, cellSize);
 		}
+	} catch (error) {
+		console.error('Error adding cell decoration:', error);
 	}
+}
+
+/**
+ * Add stone decoration to a cell
+ * @param {number} x - Normalized X position
+ * @param {number} z - Normalized Z position
+ * @param {number} y - Y position (height)
+ * @param {number} cellSize - Size of the cell
+ */
+function addStoneDecoration(x, z, y, cellSize) {
+	// Create a small group of stones
+	const stoneGroup = new Group();
+	stoneGroup.position.set(x, y, z);
+	
+	// Random number of stones (1-3)
+	const stoneCount = Math.floor(Math.random() * 3) + 1;
+	
+	for (let i = 0; i < stoneCount; i++) {
+		// Create a random stone shape
+		const stoneSize = Math.random() * 0.15 + 0.05;
+		const stoneGeometry = new SphereGeometry(stoneSize, 4, 4);
+		
+		// Create a gray material with random shade
+		const stoneBrightness = Math.random() * 0.2 + 0.4; // 0.4-0.6 range
+		const stoneMaterial = new MeshStandardMaterial({
+			color: new Color(stoneBrightness, stoneBrightness, stoneBrightness),
+			roughness: 0.9,
+			metalness: 0.1
+		});
+		
+		const stone = new Mesh(stoneGeometry, stoneMaterial);
+		
+		// Position randomly on the cell
+		const posX = (Math.random() - 0.5) * 0.6 * cellSize;
+		const posZ = (Math.random() - 0.5) * 0.6 * cellSize;
+		
+		stone.position.set(posX, 0.05 + stoneSize * 0.5, posZ);
+		
+		// Apply random rotation
+		stone.rotation.set(
+			Math.random() * Math.PI,
+			Math.random() * Math.PI,
+			Math.random() * Math.PI
+		);
+		
+		stoneGroup.add(stone);
+	}
+	
+	boardGroup.add(stoneGroup);
+}
+
+/**
+ * Add grass tufts to a cell
+ * @param {number} x - Normalized X position
+ * @param {number} z - Normalized Z position
+ * @param {number} y - Y position (height) 
+ * @param {number} cellSize - Size of the cell
+ */
+function addGrassTuft(x, z, y, cellSize) {
+	// Create a group for the grass
+	const grassGroup = new Group();
+	grassGroup.position.set(x, y, z);
+	
+	// Random number of grass tufts
+	const tuftsCount = Math.floor(Math.random() * 5) + 3;
+	
+	for (let i = 0; i < tuftsCount; i++) {
+		// Create a single blade of grass
+		const height = Math.random() * 0.2 + 0.1;
+		const width = 0.03 + Math.random() * 0.02;
+		
+		const grassGeometry = new PlaneGeometry(width, height);
+		
+		// Create a green material with random shade
+		const greenValue = Math.random() * 0.4 + 0.3; // 0.3-0.7 range
+		const grassMaterial = new MeshBasicMaterial({
+			color: new Color(0.1, greenValue, 0.1),
+			side: DoubleSide,
+			transparent: true
+		});
+		
+		const grassBlade = new Mesh(grassGeometry, grassMaterial);
+		
+		// Position randomly on the cell
+		const posX = (Math.random() - 0.5) * 0.7 * cellSize;
+		const posZ = (Math.random() - 0.5) * 0.7 * cellSize;
+		
+		grassBlade.position.set(posX, height * 0.5, posZ);
+		
+		// Random rotation around Y axis
+		grassBlade.rotation.y = Math.random() * Math.PI;
+		
+		// Slight lean in random direction
+		grassBlade.rotation.x = (Math.random() - 0.5) * 0.2;
+		grassBlade.rotation.z = (Math.random() - 0.5) * 0.2;
+		
+		grassGroup.add(grassBlade);
+	}
+	
+	boardGroup.add(grassGroup);
+}
+
+/**
+ * Add mushroom decoration to a cell
+ * @param {number} x - Normalized X position
+ * @param {number} z - Normalized Z position
+ * @param {number} y - Y position (height)
+ * @param {number} cellSize - Size of the cell
+ */
+function addMushroomDecoration(x, z, y, cellSize) {
+	// Create a group for the mushrooms
+	const mushroomGroup = new Group();
+	mushroomGroup.position.set(x, y, z);
+	
+	// Random number of mushrooms (1-3)
+	const mushroomCount = Math.floor(Math.random() * 2) + 1;
+	
+	for (let i = 0; i < mushroomCount; i++) {
+		// Create a mushroom group
+		const mushroom = new Group();
+		
+		// Random size
+		const scale = Math.random() * 0.5 + 0.5;
+		mushroom.scale.set(scale, scale, scale);
+		
+		// Stem
+		const stemHeight = 0.12;
+		const stemRadius = 0.02;
+		const stemGeometry = new CylinderGeometry(stemRadius, stemRadius * 1.2, stemHeight, 8);
+		
+		const stemMaterial = new MeshStandardMaterial({
+			color: new Color(0.9, 0.9, 0.8),
+			roughness: 0.8
+		});
+		
+		const stem = new Mesh(stemGeometry, stemMaterial);
+		stem.position.y = stemHeight * 0.5;
+		
+		// Cap
+		const capRadius = stemRadius * 3;
+		const capHeight = stemHeight * 0.5;
+		const capGeometry = new SphereGeometry(capRadius, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.5);
+		
+		// Choose a random mushroom color
+		let capColor;
+		if (Math.random() > 0.5) {
+			// Red mushroom
+			capColor = new Color(0.8, 0.1, 0.1);
+		} else {
+			// Brown mushroom
+			capColor = new Color(0.6, 0.3, 0.1);
+		}
+		
+		const capMaterial = new MeshStandardMaterial({
+			color: capColor,
+			roughness: 0.7
+		});
+		
+		const cap = new Mesh(capGeometry, capMaterial);
+		cap.position.y = stemHeight;
+		cap.rotation.x = Math.PI; // Flip to create a cap shape
+		
+		mushroom.add(stem);
+		mushroom.add(cap);
+		
+		// Position randomly on the cell
+		const posX = (Math.random() - 0.5) * 0.6 * cellSize;
+		const posZ = (Math.random() - 0.5) * 0.6 * cellSize;
+		
+		mushroom.position.set(posX, 0, posZ);
+		
+		// Slight random rotation
+		mushroom.rotation.y = Math.random() * Math.PI * 2;
+		
+		mushroomGroup.add(mushroom);
+	}
+	
+	boardGroup.add(mushroomGroup);
 }
 
 /**
@@ -1657,16 +1854,26 @@ function addChessPiece(piece, playerId, x, z) {
 		
 		// Calculate position
 		const cellSize = 1; // Default cell size
-		const yOffset = 0.5; // Height above the cell
+		const yOffset = 0.25; // Height above the cell
+		
+		// Create a normalized position from the board coordinates
+		// This centers the board so (0,0) is at the center
+		const boardWidth = gameState.board[0].length;
+		const boardHeight = gameState.board.length;
+		const centerX = (boardWidth - 1) / 2;
+		const centerZ = (boardHeight - 1) / 2;
+		
+		const normalizedX = (x - centerX) * cellSize;
+		const normalizedZ = (z - centerZ) * cellSize;
 		
 		// Get the floating height for this cell position
 		const cellY = getFloatingHeight(x, z);
 		
 		// Position the piece
 		pieceGroup.position.set(
-			x * cellSize,
+			normalizedX,
 			cellY + yOffset, // Position above the cell
-			z * cellSize
+			normalizedZ
 		);
 		
 		// Create a material based on player color
@@ -1839,7 +2046,7 @@ function addChessPiece(piece, playerId, x, z) {
 				pieceGroup.add(crossHorizontalMesh);
 				
 				// Add a player name label above the king
-				createPlayerNameLabel(playerId, player.name || `Player ${playerId}`, pieceGroup.position.x, pieceGroup.position.y + 1, pieceGroup.position.z);
+				createPlayerNameLabel(playerId, player.name || `Player ${playerId}`, pieceGroup.position.x, pieceGroup.position.y + 1.5, pieceGroup.position.z);
 				break;
 				
 			default:
