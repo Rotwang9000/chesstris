@@ -777,82 +777,71 @@ function animatePotionsAndParticles(deltaTime) {
  * Update the game board based on the current game state
  */
 function updateBoard() {
-	try {
-		// Clear existing board elements
-		while (boardGroup.children.length > 0) {
-			boardGroup.remove(boardGroup.children[0]);
-		}
-		
-		// Get the current game state
-		const gameState = GameState.getGameState();
-		if (!gameState || !gameState.board) {
-			console.warn('No game state or board available');
-			return;
-		}
-		
-		// Check if the board is a valid 2D array
-		if (!Array.isArray(gameState.board) || gameState.board.length === 0) {
-			console.warn('Game board is not a valid array');
-			return;
-		}
-		
-		// Check if the first row is a valid array
-		if (!gameState.board[0] || !Array.isArray(gameState.board[0])) {
-			console.warn('Game board rows are not valid arrays');
-			return;
-		}
-		
-		// Create cell geometry (reusable for all cells)
-		const cellSize = 1;
-		const topGeometry = new BoxGeometry(cellSize, 0.1, cellSize);
-		
-		// Cache for cell decorations to avoid regenerating them
-		if (!gameState.cellDecorations) {
-			gameState.cellDecorations = new Map();
-		}
-		
-		// Track active cells for debugging
-		let activeCellCount = 0;
-		
-		// Render only active cells
-		gameState.board.forEach((row, z) => {
-			row.forEach((cell, x) => {
-				// Skip empty cells
-				if (!cell || !cell.type) return;
+	const gameState = GameState.getGameState();
+	if (!gameState || !gameState.board) return;
+
+	// Only clear and rebuild board if something has changed
+	// Use a static variable to track if we need to rebuild
+	updateBoard.lastBoardState = updateBoard.lastBoardState || "";
+	const currentBoardState = JSON.stringify(gameState.board);
+	
+	if (updateBoard.lastBoardState === currentBoardState) {
+		return; // No change in the board, skip rebuilding
+	}
+	
+	// Update the last board state
+	updateBoard.lastBoardState = currentBoardState;
+	
+	// Clear existing board cells
+	while (boardGroup.children.length > 0) {
+		boardGroup.remove(boardGroup.children[0]);
+	}
+
+	let activeCellsCount = 0;
+	const topGeometry = new THREE.BoxGeometry(1, 0.2, 1);
+
+	// Add cells based on the game state
+	for (let z = 0; z < gameState.board.length; z++) {
+		for (let x = 0; x < gameState.board[z].length; x++) {
+			const cell = gameState.board[z][x];
+			if (cell && cell.type) {
+				// Create a unique ID for this cell based on its position
+				const cellId = `${x},${z}`;
 				
-				// Create a cell ID for decoration consistency
-				const cellId = `${x}_${z}`;
+				// Check if we have decoration data for this cell
+				if (!gameState.cellDecorations) {
+					gameState.cellDecorations = new Map();
+				}
 				
-				// If no decoration state exists for this cell, create it
+				// If we don't have decoration data for this cell yet, create it
 				if (!gameState.cellDecorations.has(cellId)) {
-					// Create a deterministic "random" decoration state based on the cell position
-					// This ensures the decorations remain consistent between renders
-					const hasDecoration = (x * 13 + z * 17) % 10 < 7; // 70% chance of decoration
+					// Generate a seed based on cell position for consistent randomness
+					const seed = x * 1000 + z;
 					
-					const decorationType = (x * 7 + z * 11) % 3; // 0, 1, or 2 for decoration type
-					
+					// Create decoration data with consistent positioning
 					gameState.cellDecorations.set(cellId, {
-						hasDecoration,
-						decorationType,
-						seed: x * 1000 + z // Use this for position randomization
+						hasStone: Math.floor((Math.sin(seed * 0.1) + 1) * 3.5) === 0,
+						hasMushroom: Math.floor((Math.cos(seed * 0.2) + 1) * 4.5) === 0,
+						hasGrass: Math.floor((Math.sin(seed * 0.3) + 1) * 2.5) > 0,
+						seed: seed
 					});
 				}
 				
-				// Create a floating cell for this position
-				const cellGroup = createFloatingCell(cell, x, z, cellSize, topGeometry, 
+				// Add the floating cell with its decorations
+				createFloatingCell(cell, x, z, gameState.cellSize, topGeometry, 
 					gameState.cellDecorations.get(cellId));
+				activeCellsCount++;
 				
-				if (cellGroup) {
-					boardGroup.add(cellGroup);
-					activeCellCount++;
+				// Add a potion if the cell has one
+				if (cell.potion) {
+					addPotionToCell(cell, x, z);
 				}
-			});
-		});
-		
-		console.log(`Rendered ${activeCellCount} active cells`);
-	} catch (error) {
-		console.error('Error updating board:', error);
+			}
+		}
 	}
+	
+	// Log rendered cells only when they change, not every frame
+	console.log(`Rendered ${activeCellsCount} active cells`);
 }
 
 /**
@@ -867,67 +856,56 @@ function updateBoard() {
  */
 function createFloatingCell(cell, x, z, cellSize, topGeometry, decorationData) {
 	try {
-		const gameState = GameState.getGameState();
+		// Create a group to hold all cell components
+		const cellGroup = new THREE.Group();
 		
-		// Create a normalized position from the board coordinates
-		// This centers the board so (0,0) is at the center
-		const boardWidth = gameState.board[0].length;
-		const boardHeight = gameState.board.length;
-		const centerX = (boardWidth - 1) / 2;
-		const centerZ = (boardHeight - 1) / 2;
-		
-		const normalizedX = (x - centerX) * cellSize;
-		const normalizedZ = (z - centerZ) * cellSize;
-		
-		// Get the floating height for this cell
-		const cellY = getFloatingHeight(x, z);
-		
-		// Create a group for the cell
-		const cellGroup = new Group();
-		cellGroup.name = `cell_${x}_${z}`;
-		cellGroup.position.set(normalizedX, cellY, normalizedZ);
-		
-		// Get the appropriate cell color based on cell data
-		let cellColor;
-		
-		if (cell.player && gameState.players[cell.player]) {
-			// Use player color
-			cellColor = new Color(gameState.players[cell.player].color);
-		} else if (cell.type === 'home_zone') {
-			// Default home zone color
-			cellColor = new Color(0x8e44ad); // Purple
-		} else if (cell.type === 'tetris') {
-			// Tetris piece color
-			cellColor = new Color(0x2ecc71); // Green
+		// Get material based on cell type and player
+		let material;
+		if (cell.type === 'HOME_ZONE') {
+			const color = cell.playerId ? playerColors[cell.playerId] : 0xCCCCCC;
+			material = new THREE.MeshPhongMaterial({ 
+				color: color,
+				transparent: true,
+				opacity: 0.85,
+				side: THREE.DoubleSide
+			});
 		} else {
-			// Default cell color
-			cellColor = new Color(0xecf0f1); // Light gray
+			material = new THREE.MeshPhongMaterial({ 
+				color: 0xFFFFFF,
+				transparent: true,
+				opacity: 0.7,
+				side: THREE.DoubleSide
+			});
 		}
 		
-		// Create the top part of the cell
-		const topMaterial = new MeshStandardMaterial({
-			color: cellColor,
-			roughness: 0.7,
-			metalness: 0.2
-		});
+		// Create cell top
+		const topMesh = new THREE.Mesh(topGeometry, material);
 		
-		const topMesh = new Mesh(topGeometry, topMaterial);
-		topMesh.position.y = 0;
+		// Set position with slight random offset for natural look
+		const height = getFloatingHeight(x, z);
+		topMesh.position.set(x, height, z);
 		cellGroup.add(topMesh);
 		
-		// Add a bottom part (stalactite-like structure) to the cell
-		addCellBottom(x, z, cellSize, cellColor);
+		// Add cell bottom (decorative elements)
+		addCellBottom(x, z, cellSize, material.color);
 		
-		// Add decorations based on persistent decoration data
-		if (decorationData && decorationData.hasDecoration) {
-			addPersistentDecoration(x, z, cellSize, decorationData);
+		// Add decorations if the data indicates they should be present
+		if (decorationData) {
+			if (decorationData.hasStone) {
+				addStoneDecoration(x, z, height + 0.1, cellSize, decorationData.seed);
+			}
+			
+			if (decorationData.hasMushroom) {
+				addMushroomDecoration(x, z, height + 0.1, cellSize, decorationData.seed);
+			}
+			
+			if (decorationData.hasGrass) {
+				addGrassTuft(x, z, cellSize * 0.4, decorationData.seed);
+			}
 		}
 		
-		// If this cell has a potion, add it
-		if (cell.potion) {
-			addPotionToCell(cell);
-		}
-		
+		// Add cell to the board group
+		boardGroup.add(cellGroup);
 		return cellGroup;
 	} catch (error) {
 		console.error('Error creating floating cell:', error);
@@ -1171,51 +1149,67 @@ function addIslandDecorations(width, height) {
  * @param {number} seed - Seed for deterministic randomness
  */
 function addGrassTuft(x, z, radius, seed = 0) {
-	// Use the seed to create pseudo-random values
-	const pseudoRandom = (multiplier = 1, offset = 0) => {
-		// Simple LCG-based deterministic random number generator
-		seed = (seed * 1664525 + 1013904223) % 4294967296;
-		return ((seed / 4294967296) * multiplier + offset);
-	};
-	
-	const bladeCount = Math.floor(pseudoRandom(5) + 3);
-	
-	for (let i = 0; i < bladeCount; i++) {
-		// Create a single blade of grass
-		const bladeHeight = pseudoRandom(Constants.CELL_SIZE * 0.6, Constants.CELL_SIZE * 0.3);
-		const bladeWidth = pseudoRandom(Constants.CELL_SIZE * 0.1, Constants.CELL_SIZE * 0.03);
-		const bladeGeometry = new PlaneGeometry(bladeWidth, bladeHeight);
+	try {
+		// Create a pseudo-random function based on the seed
+		const pseudoRandom = (multiplier = 1, offset = 0) => {
+			const value = Math.sin(seed * 0.1 + offset) * 10000;
+			return (value - Math.floor(value)) * multiplier;
+		};
 		
-		// Random shade of green
-		const bladeColor = new Color(0x4CAF50).offsetHSL(
-			(pseudoRandom(1, -0.5)) * 0.1,  // Slight hue variation
-			pseudoRandom(0.2),          // Saturation variation
-			(pseudoRandom(1, -0.5)) * 0.2   // Lightness variation
-		);
+		// Create a group for the grass
+		const grassGroup = new THREE.Group();
 		
-		const bladeMaterial = new MeshBasicMaterial({
-			color: bladeColor,
-			transparent: true,
-			opacity: 0.9,
-			side: DoubleSide
-		});
+		// Get the cell height
+		const height = getFloatingHeight(x, z);
 		
-		const blade = new Mesh(bladeGeometry, bladeMaterial);
+		// Determine number of grass blades (3-7)
+		const bladeCount = Math.floor(pseudoRandom(5, 0.3)) + 3;
 		
-		// Position with some randomness
-		const offsetX = (pseudoRandom(1, -0.5)) * radius * 1.5;
-		const offsetZ = (pseudoRandom(1, -0.5)) * radius * 1.5;
-		blade.position.set(x + offsetX, bladeHeight / 2, z + offsetZ);
+		// Create grass blades
+		for (let i = 0; i < bladeCount; i++) {
+			// Deterministic random position within radius
+			const angle = pseudoRandom(Math.PI * 2, i * 0.4);
+			const distance = pseudoRandom(radius, i * 0.5);
+			
+			const posX = x + Math.cos(angle) * distance;
+			const posZ = z + Math.sin(angle) * distance;
+			
+			// Create blade height (0.1 to 0.25)
+			const bladeHeight = pseudoRandom(0.15, i * 0.6) + 0.1;
+			
+			// Create a simple blade of grass using a narrow box
+			const bladeGeometry = new THREE.BoxGeometry(0.02, bladeHeight, 0.02);
+			
+			// Green color with slight variation
+			const greenHue = 0.3 + pseudoRandom(0.1, i);
+			const greenSaturation = 0.7 + pseudoRandom(0.3, i + 0.1);
+			const greenLightness = 0.4 + pseudoRandom(0.2, i + 0.2);
+			
+			const grassColor = new THREE.Color().setHSL(greenHue, greenSaturation, greenLightness);
+			const grassMaterial = new THREE.MeshStandardMaterial({
+				color: grassColor,
+				roughness: 0.9
+			});
+			
+			const blade = new THREE.Mesh(bladeGeometry, grassMaterial);
+			
+			// Position at bottom of cell and slight tilt
+			blade.position.set(posX, height + bladeHeight / 2, posZ);
+			
+			// Tilt in random direction
+			const tiltX = pseudoRandom(0.3, i + 0.7) - 0.15;
+			const tiltZ = pseudoRandom(0.3, i + 0.8) - 0.15;
+			blade.rotation.set(tiltX, 0, tiltZ);
+			
+			// Add to the group and the board
+			grassGroup.add(blade);
+			boardGroup.add(blade);
+		}
 		
-		// Random rotation
-		blade.rotation.y = pseudoRandom(Math.PI);
-		
-		// Random lean
-		blade.rotation.x = (pseudoRandom(1, -0.5)) * 0.3;
-		blade.rotation.z = (pseudoRandom(1, -0.5)) * 0.3;
-		
-		blade.castShadow = true;
-		boardGroup.add(blade);
+		return grassGroup;
+	} catch (error) {
+		console.error('Error adding grass tuft:', error);
+		return null;
 	}
 }
 
@@ -1320,41 +1314,41 @@ function addPotionParticles(x, z, color) {
  * Update chess pieces based on game state
  */
 function updateChessPieces() {
-	try {
-		// Clear all existing pieces
-		while (piecesGroup.children.length > 0) {
-			piecesGroup.remove(piecesGroup.children[0]);
-		}
-		
-		// Get the current game state
-		const gameState = GameState.getGameState();
-		if (!gameState || !gameState.board) return;
-		
-		const board = gameState.board;
-		let piecesAdded = 0;
-		
-		// Iterate through the board
-		for (let z = 0; z < board.length; z++) {
-			for (let x = 0; x < board[z].length; x++) {
-				const cell = board[z][x];
-				
-				// Skip empty cells
-				if (!cell || !cell.type) continue;
-				
-				// Skip cells that don't have chess pieces
-				if (!cell.chessPiece) continue;
-				
-				// Add the chess piece
-				const piece = cell.chessPiece;
-				const result = addChessPiece(piece, piece.player, x, z);
-				if (result) piecesAdded++;
+	const gameState = GameState.getGameState();
+	if (!gameState || !gameState.board) return;
+
+	// Only clear and rebuild pieces if something has changed
+	// Use a static variable to track if we need to rebuild
+	updateChessPieces.lastBoardState = updateChessPieces.lastBoardState || "";
+	const currentBoardState = JSON.stringify(gameState.board);
+	
+	if (updateChessPieces.lastBoardState === currentBoardState) {
+		return; // No change in the board, skip rebuilding
+	}
+	
+	// Update the last board state
+	updateChessPieces.lastBoardState = currentBoardState;
+	
+	// Clear existing pieces
+	while (piecesGroup.children.length > 0) {
+		piecesGroup.remove(piecesGroup.children[0]);
+	}
+
+	let piecesAdded = 0;
+
+	// Add pieces based on the game state
+	for (let y = 0; y < gameState.board.length; y++) {
+		for (let x = 0; x < gameState.board[y].length; x++) {
+			const cell = gameState.board[y][x];
+			if (cell && cell.chessPiece) {
+				addChessPiece(cell.chessPiece, cell.playerId, x, y);
+				piecesAdded++;
 			}
 		}
-		
-		console.log(`Added ${piecesAdded} chess pieces to the scene`);
-	} catch (error) {
-		console.error('Error updating chess pieces:', error);
 	}
+
+	// Log added pieces only when they change, not every frame
+	console.log(`Added ${piecesAdded} chess pieces to the scene`);
 }
 
 /**
@@ -1472,8 +1466,21 @@ function updateGhostPiece() {
  * Update UI elements
  */
 function updateUI() {
-	// This would update any 3D UI elements
-	// For now, we'll leave it empty as UI is typically handled in HTML/CSS
+	const gameState = GameState.getGameState();
+	const playerId = SessionManager.getSession().playerId;
+	
+	// Update the info panel
+	const infoPanel = document.getElementById('info-panel');
+	if (infoPanel) {
+		let message = 'Chesstris - Game in Progress';
+		
+		// Check if the player can make chess moves
+		if (!canPlayerMakeChessMoves()) {
+			message = 'Place Tetris pieces to build the board before moving chess pieces';
+		}
+		
+		infoPanel.textContent = message;
+	}
 }
 
 /**
@@ -1615,80 +1622,63 @@ function addClouds() {
  */
 function addCellBottom(x, z, cellSize, color) {
 	try {
-		const gameState = GameState.getGameState();
+		// Create a deterministic seed based on position
+		const seed = x * 1000 + z;
 		
-		// Create a normalized position from the board coordinates
-		// This centers the board so (0,0) is at the center
-		const boardWidth = gameState.board[0].length;
-		const boardHeight = gameState.board.length;
-		const centerX = (boardWidth - 1) / 2;
-		const centerZ = (boardHeight - 1) / 2;
+		// Create a pseudo-random function based on the seed
+		const pseudoRandom = (multiplier = 1, offset = 0) => {
+			const value = Math.sin(seed * 0.1 + offset) * 10000;
+			return (value - Math.floor(value)) * multiplier;
+		};
 		
-		const normalizedX = (x - centerX) * cellSize;
-		const normalizedZ = (z - centerZ) * cellSize;
+		// Create a group for the bottom structures
+		const bottomGroup = new THREE.Group();
 		
-		// Get the floating height for this cell
-		const cellY = getFloatingHeight(x, z);
+		// Create 3-5 triangular stalactites of varying sizes
+		const numStalactites = Math.floor(pseudoRandom(3, 0.1)) + 3;
 		
-		// Create a material for the bottom part
-		const bottomColor = new Color(color).multiplyScalar(0.7); // Darker version of cell color
-		const bottomMaterial = new MeshStandardMaterial({
-			color: bottomColor,
-			roughness: 0.9,
-			metalness: 0.1
-		});
-		
-		// Create a group for the bottom part
-		const bottomGroup = new Group();
-		bottomGroup.position.set(normalizedX, cellY, normalizedZ);
-		
-		// Create a shorter, narrower stalactite-like structure
-		const height = 0.5 + Math.random() * 0.5; // Variable height
-		const topWidth = cellSize * 0.9;
-		const bottomWidth = cellSize * 0.3; // Narrower at the bottom
-		
-		// Create a pyramid-like shape for the bottom
-		const bottomGeometry = new CylinderGeometry(
-			bottomWidth / 2, // Top radius (narrower)
-			0.05, // Bottom radius (very narrow point)
-			height, // Height of the stalactite
-			5 // Lower polygon count for performance
-		);
-		
-		// Position it below the cell
-		const bottomMesh = new Mesh(bottomGeometry, bottomMaterial);
-		bottomMesh.position.y = -height / 2;
-		bottomMesh.castShadow = true;
-		bottomGroup.add(bottomMesh);
-		
-		// Add some small details to make it more interesting
-		if (Math.random() > 0.5) {
-			// Add a small secondary stalactite
-			const smallHeight = height * 0.6;
-			const smallGeometry = new CylinderGeometry(
-				bottomWidth / 3,
-				0.02,
-				smallHeight,
-				4
+		for (let i = 0; i < numStalactites; i++) {
+			// Calculate position with deterministic randomness
+			const offsetX = pseudoRandom(0.8, i * 0.1) - 0.4;
+			const offsetZ = pseudoRandom(0.8, i * 0.2) - 0.4;
+			const length = pseudoRandom(1.5, i * 0.3) + 0.5;
+			
+			// Create stalactite geometry
+			const stalactiteGeometry = new THREE.ConeGeometry(
+				cellSize * 0.2, // radius at base
+				length, // height/length
+				3, // triangular (3 segments)
+				1, // height segments
+				false // no top
 			);
 			
-			const smallMesh = new Mesh(smallGeometry, bottomMaterial);
-			// Position it randomly offset from the center
-			smallMesh.position.set(
-				(Math.random() - 0.5) * 0.2,
-				-height * 0.7,
-				(Math.random() - 0.5) * 0.2
+			// Darken the color for the bottom
+			const darkerColor = new THREE.Color(color).multiplyScalar(0.7);
+			const stalactiteMaterial = new THREE.MeshStandardMaterial({
+				color: darkerColor,
+				roughness: 0.9,
+				metalness: 0.1
+			});
+			
+			const stalactite = new THREE.Mesh(stalactiteGeometry, stalactiteMaterial);
+			
+			// Position and rotate the stalactite
+			stalactite.position.set(
+				x + offsetX,
+				getFloatingHeight(x, z) - length / 2,
+				z + offsetZ
 			);
-			// Random slight tilt
-			smallMesh.rotation.x = (Math.random() - 0.5) * 0.2;
-			smallMesh.rotation.z = (Math.random() - 0.5) * 0.2;
-			bottomGroup.add(smallMesh);
+			stalactite.rotation.x = Math.PI; // Flip to point downward
+			
+			// Add to the scene
+			bottomGroup.add(stalactite);
+			boardGroup.add(stalactite);
 		}
 		
-		// Add the bottom group to the board
-		boardGroup.add(bottomGroup);
+		return bottomGroup;
 	} catch (error) {
 		console.error('Error adding cell bottom:', error);
+		return null;
 	}
 }
 
@@ -2199,6 +2189,68 @@ function getFloatingHeight(x, z) {
 		floatAmplitude * 0.3 * Math.sin(worldX * 0.2 - worldZ * 0.7);
 	
 	return height;
+}
+
+/**
+ * Check if the player can make any chess moves
+ * @returns {boolean} Whether the player can make any chess moves
+ */
+function canPlayerMakeChessMoves() {
+	const gameState = GameState.getGameState();
+	const playerId = SessionManager.getSession().playerId;
+	
+	// If no game state or player, return false
+	if (!gameState || !gameState.players || !gameState.players[playerId]) {
+		return false;
+	}
+	
+	// Get the player's pieces
+	const playerPieces = [];
+	gameState.board.forEach((row, y) => {
+		row.forEach((cell, x) => {
+			if (cell && cell.chessPiece && cell.playerId === playerId) {
+				playerPieces.push({
+					...cell.chessPiece,
+					x,
+					y
+				});
+			}
+		});
+	});
+	
+	// Check if any piece has valid moves
+	for (const piece of playerPieces) {
+		// Check surrounding cells for valid moves
+		const directions = [
+			{ dx: 0, dy: 1 },  // Up
+			{ dx: 1, dy: 0 },  // Right
+			{ dx: 0, dy: -1 }, // Down
+			{ dx: -1, dy: 0 }, // Left
+			{ dx: 1, dy: 1 },  // Up-Right
+			{ dx: -1, dy: 1 }, // Up-Left
+			{ dx: 1, dy: -1 }, // Down-Right
+			{ dx: -1, dy: -1 }  // Down-Left
+		];
+		
+		for (const dir of directions) {
+			const targetX = piece.x + dir.dx;
+			const targetY = piece.y + dir.dy;
+			
+			// Check if the target position is valid
+			if (targetX >= 0 && targetX < gameState.board[0].length &&
+				targetY >= 0 && targetY < gameState.board.length) {
+				
+				const targetCell = gameState.board[targetY][targetX];
+				
+				// If the cell is empty or has an opponent's piece, it's a valid move
+				if (!targetCell || (targetCell && targetCell.playerId !== playerId)) {
+					return true;
+				}
+			}
+		}
+	}
+	
+	return false;
 }
 
 export default {

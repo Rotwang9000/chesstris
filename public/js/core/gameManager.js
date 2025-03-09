@@ -253,42 +253,64 @@ export function getGameSpeed() {
 }
 
 /**
- * Handle player input
+ * Check if a player can make any valid chess moves
  * @param {string} playerId - The player ID
- * @param {string} input - The input type
- * @param {Object} data - Additional input data
- * @returns {Object} The result of the input
+ * @returns {boolean} Whether the player can make any valid moves
  */
-export function handlePlayerInput(playerId, input, data = {}) {
+export function canPlayerMakeChessMoves(playerId) {
 	const gameState = GameState.getGameState();
 	const player = gameState.players[playerId];
 	
 	if (!player) {
+		return false;
+	}
+	
+	// Check each piece to see if it has any valid moves
+	for (const piece of player.pieces) {
+		const validMoves = GameState.getValidMoves(piece, playerId);
+		if (validMoves && validMoves.length > 0) {
+			return true;
+		}
+	}
+	
+	// No valid moves found
+	return false;
+}
+
+/**
+ * Handle player action based on game state
+ * @param {string} playerId - The player ID
+ * @param {string} action - The action type ('move_chess_piece', 'place_tetris')
+ * @param {Object} data - The action data
+ * @returns {Object} The result of the action
+ */
+export function handlePlayerAction(playerId, action, data) {
+	// Check if the player exists
+	const player = PlayerManager.getPlayer(playerId);
+	if (!player) {
 		return { success: false, error: 'Player not found' };
 	}
 	
-	// Handle different input types
-	switch (input) {
-		case 'move_tetromino':
-			return { success: TetrominoManager.moveTetromino(data.direction) };
-			
-		case 'rotate_tetromino':
-			return { success: TetrominoManager.rotateTetromino(data.direction) };
-			
-		case 'hard_drop':
-			return TetrominoManager.hardDropTetromino();
-			
+	// If the player can't make chess moves, only allow tetris placement
+	const canMakeChessMoves = canPlayerMakeChessMoves(playerId);
+	
+	switch (action) {
 		case 'move_chess_piece':
+			// Only allow chess movement if the player can make valid moves
+			if (!canMakeChessMoves) {
+				return { 
+					success: false, 
+					error: 'No valid chess moves available. Place tetris pieces first to build the board.'
+				};
+			}
 			return PlayerManager.movePiece(data.pieceId, data.targetX, data.targetY, playerId);
 			
-		case 'toggle_pause':
-			if (data.isAdmin) {
-				return { success: true, paused: togglePause() };
-			}
-			return { success: false, error: 'Not authorized' };
+		case 'place_tetris':
+			// Always allow tetris placement
+			return TetrominoManager.placeTetrisPiece(data.tetromino, data.x, data.y, playerId);
 			
 		default:
-			return { success: false, error: 'Invalid input type' };
+			return { success: false, error: 'Invalid action' };
 	}
 }
 
@@ -303,5 +325,6 @@ export default {
 	getGameId,
 	isGamePaused,
 	getGameSpeed,
-	handlePlayerInput
+	canPlayerMakeChessMoves,
+	handlePlayerAction
 }; 
