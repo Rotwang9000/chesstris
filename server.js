@@ -2249,8 +2249,13 @@ app.use(csrfProtection);
 // Start the server
 const PORT = process.env.PORT || 3020;
 
-// Only start the server if this file is run directly (not imported as a module during tests)
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Enhanced check for direct execution vs. import
+// In production, we always want to start the server unless explicitly told not to
+const shouldStartServer = process.env.NODE_ENV === 'production' || 
+                         !process.env.TESTING || 
+                         import.meta.url === `file://${process.argv[1]}`;
+
+if (shouldStartServer) {
 	server.listen(PORT, async () => {
 		try {
 			// Initialize database services
