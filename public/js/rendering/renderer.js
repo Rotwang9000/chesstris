@@ -2078,8 +2078,9 @@ function getFloatingHeight(x, z) {
  * @returns {boolean} Whether the player can make any chess moves
  */
 function canPlayerMakeChessMoves() {
-	const gameState = GameState.getGameState();
-	const playerId = SessionManager.getSession().playerId;
+	// Get the current player ID from the session
+	const sessionData = SessionManager.getSessionData();
+	const playerId = sessionData.playerId;
 	
 	// If no game state or player, return false
 	if (!gameState || !gameState.players || !gameState.players[playerId]) {
