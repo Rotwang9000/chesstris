@@ -74,9 +74,15 @@ export function generateId() {
  * @returns {Object} The initialized game state
  */
 export function initGameState(initialState = {}) {
+	// Create a default empty board as a 2D array
+	const defaultBoard = Array(Constants.INITIAL_BOARD_HEIGHT).fill().map(() => 
+		Array(Constants.INITIAL_BOARD_WIDTH).fill(null)
+	);
+	
 	// Reset the game state with default values
 	gameState = {
-		board: {},
+		// Use a proper 2D array for the board instead of an empty object
+		board: defaultBoard,
 		players: {},
 		homeZones: {},
 		fallingPiece: null,
@@ -88,6 +94,9 @@ export function initGameState(initialState = {}) {
 		difficulty: 'normal',
 		...initialState
 	};
+	
+	console.log('Game state initialized with board dimensions:', 
+		gameState.board.length + 'x' + (gameState.board[0] ? gameState.board[0].length : 0));
 	
 	return gameState;
 }

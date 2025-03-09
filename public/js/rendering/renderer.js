@@ -104,14 +104,12 @@ export function init(container, options = {}) {
 		
 		// Initialize game state if it doesn't exist
 		const gameState = GameState.getGameState();
-		if (!gameState || !gameState.board) {
+		if (!gameState || !gameState.board || !Array.isArray(gameState.board)) {
 			console.log('Initializing default game state for rendering');
-			// Create a minimal game state with an empty board if none exists
-			GameState.initGameState({
-				board: Array(Constants.INITIAL_BOARD_HEIGHT).fill().map(() => 
-					Array(Constants.INITIAL_BOARD_WIDTH).fill(null)
-				)
-			});
+			// Initialize with an empty board (will be filled with null values)
+			GameState.initGameState();
+		} else {
+			console.log('Using existing game state for rendering');
 		}
 		
 		// Add event listeners
@@ -376,6 +374,9 @@ function updateBoard() {
 	
 	// Add all cells to the board
 	try {
+		// Count non-empty cells
+		let nonEmptyCells = 0;
+		
 		gameState.board.forEach((row, y) => {
 			if (!Array.isArray(row)) {
 				console.warn(`Row ${y} is not an array, skipping`);
@@ -383,7 +384,9 @@ function updateBoard() {
 			}
 			
 			row.forEach((cell, x) => {
-				if (!cell) return; // Skip empty cells
+				if (!cell) return; // Skip empty (null) cells, this is normal
+				
+				nonEmptyCells++;
 				
 				const cellMaterial = materials.cell.clone();
 				const playerColor = cell.color || 0xCCCCCC;
@@ -409,6 +412,11 @@ function updateBoard() {
 				}
 			});
 		});
+		
+		// Only log a warning if we find no active cells at all
+		if (nonEmptyCells === 0) {
+			console.log('Board initialized with all empty cells - waiting for game to start');
+		}
 	} catch (error) {
 		console.error('Error rendering board cells:', error);
 	}
