@@ -806,6 +806,11 @@ function updateBoard() {
 		const cellSize = 1;
 		const topGeometry = new BoxGeometry(cellSize, 0.1, cellSize);
 		
+		// Cache for cell decorations to avoid regenerating them
+		if (!gameState.cellDecorations) {
+			gameState.cellDecorations = new Map();
+		}
+		
 		// Track active cells for debugging
 		let activeCellCount = 0;
 		
@@ -815,8 +820,27 @@ function updateBoard() {
 				// Skip empty cells
 				if (!cell || !cell.type) return;
 				
+				// Create a cell ID for decoration consistency
+				const cellId = `${x}_${z}`;
+				
+				// If no decoration state exists for this cell, create it
+				if (!gameState.cellDecorations.has(cellId)) {
+					// Create a deterministic "random" decoration state based on the cell position
+					// This ensures the decorations remain consistent between renders
+					const hasDecoration = (x * 13 + z * 17) % 10 < 7; // 70% chance of decoration
+					
+					const decorationType = (x * 7 + z * 11) % 3; // 0, 1, or 2 for decoration type
+					
+					gameState.cellDecorations.set(cellId, {
+						hasDecoration,
+						decorationType,
+						seed: x * 1000 + z // Use this for position randomization
+					});
+				}
+				
 				// Create a floating cell for this position
-				const cellGroup = createFloatingCell(cell, x, z, cellSize, topGeometry);
+				const cellGroup = createFloatingCell(cell, x, z, cellSize, topGeometry, 
+					gameState.cellDecorations.get(cellId));
 				
 				if (cellGroup) {
 					boardGroup.add(cellGroup);
@@ -838,9 +862,10 @@ function updateBoard() {
  * @param {number} z - Z position
  * @param {number} cellSize - Size of the cell
  * @param {Object} topGeometry - Geometry for the top part
+ * @param {Object} decorationData - Persistent decoration data for the cell
  * @returns {Group} Cell group
  */
-function createFloatingCell(cell, x, z, cellSize, topGeometry) {
+function createFloatingCell(cell, x, z, cellSize, topGeometry, decorationData) {
 	try {
 		const gameState = GameState.getGameState();
 		
@@ -893,9 +918,9 @@ function createFloatingCell(cell, x, z, cellSize, topGeometry) {
 		// Add a bottom part (stalactite-like structure) to the cell
 		addCellBottom(x, z, cellSize, cellColor);
 		
-		// Randomly add decorations to the cell
-		if (Math.random() < 0.7) {
-			addCellDecoration(x, z, cellSize);
+		// Add decorations based on persistent decoration data
+		if (decorationData && decorationData.hasDecoration) {
+			addPersistentDecoration(x, z, cellSize, decorationData);
 		}
 		
 		// If this cell has a potion, add it
@@ -907,6 +932,52 @@ function createFloatingCell(cell, x, z, cellSize, topGeometry) {
 	} catch (error) {
 		console.error('Error creating floating cell:', error);
 		return null;
+	}
+}
+
+/**
+ * Add decorations using persistent decoration data
+ * @param {number} x - X position
+ * @param {number} z - Z position
+ * @param {number} cellSize - Size of the cell
+ * @param {Object} decorationData - Decoration data for this cell
+ */
+function addPersistentDecoration(x, z, cellSize, decorationData) {
+	try {
+		const gameState = GameState.getGameState();
+		
+		// Create a normalized position from the board coordinates
+		const boardWidth = gameState.board[0].length;
+		const boardHeight = gameState.board.length;
+		const centerX = (boardWidth - 1) / 2;
+		const centerZ = (boardHeight - 1) / 2;
+		
+		const normalizedX = (x - centerX) * cellSize;
+		const normalizedZ = (z - centerZ) * cellSize;
+		
+		// Get the floating height for this cell
+		const cellY = getFloatingHeight(x, z);
+		
+		// Set a deterministic seed for this cell to ensure consistent randomness
+		const seed = decorationData.seed;
+		
+		// Use the decoration type from the persistent data
+		switch (decorationData.decorationType) {
+			case 0:
+				// Stone decorations
+				addStoneDecoration(normalizedX, normalizedZ, cellY, cellSize, seed);
+				break;
+			case 1:
+				// Grass tufts
+				addGrassTuft(normalizedX, normalizedZ, cellSize * 0.4, seed);
+				break;
+			case 2:
+				// Mushroom decorations
+				addMushroomDecoration(normalizedX, normalizedZ, cellY, cellSize, seed);
+				break;
+		}
+	} catch (error) {
+		console.error('Error adding persistent decoration:', error);
 	}
 }
 
@@ -1097,21 +1168,29 @@ function addIslandDecorations(width, height) {
  * @param {number} x - X position
  * @param {number} z - Z position
  * @param {number} radius - Approximate radius of the tuft
+ * @param {number} seed - Seed for deterministic randomness
  */
-function addGrassTuft(x, z, radius) {
-	const bladeCount = Math.floor(Math.random() * 5) + 3;
+function addGrassTuft(x, z, radius, seed = 0) {
+	// Use the seed to create pseudo-random values
+	const pseudoRandom = (multiplier = 1, offset = 0) => {
+		// Simple LCG-based deterministic random number generator
+		seed = (seed * 1664525 + 1013904223) % 4294967296;
+		return ((seed / 4294967296) * multiplier + offset);
+	};
+	
+	const bladeCount = Math.floor(pseudoRandom(5) + 3);
 	
 	for (let i = 0; i < bladeCount; i++) {
 		// Create a single blade of grass
-		const bladeHeight = Math.random() * (Constants.CELL_SIZE * 0.6) + Constants.CELL_SIZE * 0.3;
-		const bladeWidth = Math.random() * (Constants.CELL_SIZE * 0.1) + Constants.CELL_SIZE * 0.03;
+		const bladeHeight = pseudoRandom(Constants.CELL_SIZE * 0.6, Constants.CELL_SIZE * 0.3);
+		const bladeWidth = pseudoRandom(Constants.CELL_SIZE * 0.1, Constants.CELL_SIZE * 0.03);
 		const bladeGeometry = new PlaneGeometry(bladeWidth, bladeHeight);
 		
 		// Random shade of green
 		const bladeColor = new Color(0x4CAF50).offsetHSL(
-			(Math.random() - 0.5) * 0.1,  // Slight hue variation
-			Math.random() * 0.2,          // Saturation variation
-			(Math.random() - 0.5) * 0.2   // Lightness variation
+			(pseudoRandom(1, -0.5)) * 0.1,  // Slight hue variation
+			pseudoRandom(0.2),          // Saturation variation
+			(pseudoRandom(1, -0.5)) * 0.2   // Lightness variation
 		);
 		
 		const bladeMaterial = new MeshBasicMaterial({
@@ -1124,16 +1203,16 @@ function addGrassTuft(x, z, radius) {
 		const blade = new Mesh(bladeGeometry, bladeMaterial);
 		
 		// Position with some randomness
-		const offsetX = (Math.random() - 0.5) * radius * 1.5;
-		const offsetZ = (Math.random() - 0.5) * radius * 1.5;
+		const offsetX = (pseudoRandom(1, -0.5)) * radius * 1.5;
+		const offsetZ = (pseudoRandom(1, -0.5)) * radius * 1.5;
 		blade.position.set(x + offsetX, bladeHeight / 2, z + offsetZ);
 		
 		// Random rotation
-		blade.rotation.y = Math.random() * Math.PI;
+		blade.rotation.y = pseudoRandom(Math.PI);
 		
 		// Random lean
-		blade.rotation.x = (Math.random() - 0.5) * 0.3;
-		blade.rotation.z = (Math.random() - 0.5) * 0.3;
+		blade.rotation.x = (pseudoRandom(1, -0.5)) * 0.3;
+		blade.rotation.z = (pseudoRandom(1, -0.5)) * 0.3;
 		
 		blade.castShadow = true;
 		boardGroup.add(blade);
@@ -1660,22 +1739,30 @@ function addCellDecoration(x, z, cellSize) {
  * @param {number} z - Normalized Z position
  * @param {number} y - Y position (height)
  * @param {number} cellSize - Size of the cell
+ * @param {number} seed - Seed for deterministic randomness
  */
-function addStoneDecoration(x, z, y, cellSize) {
+function addStoneDecoration(x, z, y, cellSize, seed = 0) {
 	// Create a small group of stones
 	const stoneGroup = new Group();
 	stoneGroup.position.set(x, y, z);
 	
+	// Use the seed to create pseudo-random values
+	const pseudoRandom = (multiplier = 1, offset = 0) => {
+		// Simple LCG-based deterministic random number generator
+		seed = (seed * 1664525 + 1013904223) % 4294967296;
+		return ((seed / 4294967296) * multiplier + offset);
+	};
+	
 	// Random number of stones (1-3)
-	const stoneCount = Math.floor(Math.random() * 3) + 1;
+	const stoneCount = Math.floor(pseudoRandom(3) + 1);
 	
 	for (let i = 0; i < stoneCount; i++) {
 		// Create a random stone shape
-		const stoneSize = Math.random() * 0.15 + 0.05;
+		const stoneSize = pseudoRandom(0.15, 0.05);
 		const stoneGeometry = new SphereGeometry(stoneSize, 4, 4);
 		
 		// Create a gray material with random shade
-		const stoneBrightness = Math.random() * 0.2 + 0.4; // 0.4-0.6 range
+		const stoneBrightness = pseudoRandom(0.2, 0.4); // 0.4-0.6 range
 		const stoneMaterial = new MeshStandardMaterial({
 			color: new Color(stoneBrightness, stoneBrightness, stoneBrightness),
 			roughness: 0.9,
@@ -1685,16 +1772,16 @@ function addStoneDecoration(x, z, y, cellSize) {
 		const stone = new Mesh(stoneGeometry, stoneMaterial);
 		
 		// Position randomly on the cell
-		const posX = (Math.random() - 0.5) * 0.6 * cellSize;
-		const posZ = (Math.random() - 0.5) * 0.6 * cellSize;
+		const posX = (pseudoRandom(1, -0.5)) * 0.6 * cellSize;
+		const posZ = (pseudoRandom(1, -0.5)) * 0.6 * cellSize;
 		
 		stone.position.set(posX, 0.05 + stoneSize * 0.5, posZ);
 		
 		// Apply random rotation
 		stone.rotation.set(
-			Math.random() * Math.PI,
-			Math.random() * Math.PI,
-			Math.random() * Math.PI
+			pseudoRandom(Math.PI),
+			pseudoRandom(Math.PI),
+			pseudoRandom(Math.PI)
 		);
 		
 		stoneGroup.add(stone);
@@ -1709,21 +1796,29 @@ function addStoneDecoration(x, z, y, cellSize) {
  * @param {number} z - Normalized Z position
  * @param {number} y - Y position (height)
  * @param {number} cellSize - Size of the cell
+ * @param {number} seed - Seed for deterministic randomness
  */
-function addMushroomDecoration(x, z, y, cellSize) {
+function addMushroomDecoration(x, z, y, cellSize, seed = 0) {
 	// Create a group for the mushrooms
 	const mushroomGroup = new Group();
 	mushroomGroup.position.set(x, y, z);
 	
-	// Random number of mushrooms (1-3)
-	const mushroomCount = Math.floor(Math.random() * 2) + 1;
+	// Use the seed to create pseudo-random values
+	const pseudoRandom = (multiplier = 1, offset = 0) => {
+		// Simple LCG-based deterministic random number generator
+		seed = (seed * 1664525 + 1013904223) % 4294967296;
+		return ((seed / 4294967296) * multiplier + offset);
+	};
+	
+	// Random number of mushrooms (1-2)
+	const mushroomCount = Math.floor(pseudoRandom(2) + 1);
 	
 	for (let i = 0; i < mushroomCount; i++) {
 		// Create a mushroom group
 		const mushroom = new Group();
 		
 		// Random size
-		const scale = Math.random() * 0.5 + 0.5;
+		const scale = pseudoRandom(0.5, 0.5);
 		mushroom.scale.set(scale, scale, scale);
 		
 		// Stem
@@ -1744,9 +1839,9 @@ function addMushroomDecoration(x, z, y, cellSize) {
 		const capHeight = stemHeight * 0.5;
 		const capGeometry = new SphereGeometry(capRadius, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.5);
 		
-		// Choose a random mushroom color
+		// Choose a mushroom color based on the seed
 		let capColor;
-		if (Math.random() > 0.5) {
+		if (pseudoRandom() > 0.5) {
 			// Red mushroom
 			capColor = new Color(0.8, 0.1, 0.1);
 		} else {
@@ -1767,13 +1862,13 @@ function addMushroomDecoration(x, z, y, cellSize) {
 		mushroom.add(cap);
 		
 		// Position randomly on the cell
-		const posX = (Math.random() - 0.5) * 0.6 * cellSize;
-		const posZ = (Math.random() - 0.5) * 0.6 * cellSize;
+		const posX = (pseudoRandom(1, -0.5)) * 0.6 * cellSize;
+		const posZ = (pseudoRandom(1, -0.5)) * 0.6 * cellSize;
 		
 		mushroom.position.set(posX, 0, posZ);
 		
 		// Slight random rotation
-		mushroom.rotation.y = Math.random() * Math.PI * 2;
+		mushroom.rotation.y = pseudoRandom(Math.PI * 2);
 		
 		mushroomGroup.add(mushroom);
 	}
