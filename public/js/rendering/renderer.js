@@ -30,7 +30,9 @@ import {
 	TextureLoader,
 	Raycaster,
 	DoubleSide,
-	OrbitControls
+	OrbitControls,
+	BackSide,
+	BufferAttribute
 } from '../utils/three.js';
 
 import * as GameState from '../core/gameState.js';
@@ -96,6 +98,9 @@ export function init(container, options = {}) {
 		scene.add(tetrominoGroup);
 		scene.add(uiGroup);
 		
+		// Create skybox
+		createSkybox();
+		
 		// Add lights
 		addLights();
 		
@@ -133,33 +138,40 @@ export function init(container, options = {}) {
  * Add lights to the scene
  */
 function addLights() {
-	// Ambient light
-	const ambientLight = new AmbientLight(0xffffff, 0.5);
+	// Ambient light (soft overall illumination)
+	const ambientLight = new AmbientLight(0xd6f5ff, 0.5);
 	scene.add(ambientLight);
 	
-	// Directional light (sun)
-	const directionalLight = new DirectionalLight(0xffffff, 0.8);
-	directionalLight.position.set(10, 20, 10);
-	directionalLight.castShadow = true;
-	directionalLight.shadow.mapSize.width = 2048;
-	directionalLight.shadow.mapSize.height = 2048;
-	directionalLight.shadow.camera.near = 0.5;
-	directionalLight.shadow.camera.far = 50;
-	directionalLight.shadow.camera.left = -20;
-	directionalLight.shadow.camera.right = 20;
-	directionalLight.shadow.camera.top = 20;
-	directionalLight.shadow.camera.bottom = -20;
-	scene.add(directionalLight);
+	// Main directional light (sun)
+	const sunLight = new DirectionalLight(0xffffeb, 1.0);
+	sunLight.position.set(30, 40, 50);
+	sunLight.castShadow = true;
 	
-	// Blue point light
-	const pointLight1 = new PointLight(0x3498db, 1, 20);
-	pointLight1.position.set(-5, 10, 5);
-	scene.add(pointLight1);
+	// Configure shadow properties for better quality
+	sunLight.shadow.mapSize.width = 2048;
+	sunLight.shadow.mapSize.height = 2048;
+	sunLight.shadow.camera.near = 0.5;
+	sunLight.shadow.camera.far = 150;
+	sunLight.shadow.camera.left = -50;
+	sunLight.shadow.camera.right = 50;
+	sunLight.shadow.camera.top = 50;
+	sunLight.shadow.camera.bottom = -50;
+	sunLight.shadow.bias = -0.0003;
 	
-	// Red point light
-	const pointLight2 = new PointLight(0xe74c3c, 1, 20);
-	pointLight2.position.set(5, 10, -5);
-	scene.add(pointLight2);
+	scene.add(sunLight);
+	
+	// Opposite fill light (subtle blue for sky reflection)
+	const fillLight = new DirectionalLight(0x8cb8ff, 0.4);
+	fillLight.position.set(-30, 20, -30);
+	scene.add(fillLight);
+	
+	// Upward facing point light (ground/water reflection)
+	const bounceLight = new PointLight(0x3f88c5, 0.3, 50);
+	bounceLight.position.set(0, -10, 0);
+	scene.add(bounceLight);
+	
+	// Add some atmospheric fog for depth
+	scene.fog = new THREE.FogExp2(0xd1e9ff, 0.008);
 }
 
 /**
@@ -329,39 +341,19 @@ function updateBoard() {
 		console.warn('First row of board is empty or not an array');
 		
 		// Create a fallback board with minimum dimensions
-		const fallbackWidth = Constants.INITIAL_BOARD_WIDTH * Constants.CELL_SIZE;
-		const fallbackHeight = Constants.INITIAL_BOARD_HEIGHT * Constants.CELL_SIZE;
-		const boardDepth = Constants.CELL_SIZE * 0.5;
-		
-		const boardGeometry = new BoxGeometry(
-			fallbackWidth,
-			boardDepth,
-			fallbackHeight
+		createFloatingIsland(
+			Constants.INITIAL_BOARD_WIDTH * Constants.CELL_SIZE,
+			Constants.INITIAL_BOARD_HEIGHT * Constants.CELL_SIZE
 		);
-		
-		const boardMesh = new Mesh(boardGeometry, materials.board);
-		boardMesh.position.set(0, -boardDepth / 2, 0);
-		boardMesh.receiveShadow = true;
-		boardGroup.add(boardMesh);
 		
 		return;
 	}
 	
-	// Create the main board
+	// Create the main board as a floating island
 	const boardWidth = gameState.board[0].length * Constants.CELL_SIZE;
 	const boardHeight = gameState.board.length * Constants.CELL_SIZE;
-	const boardDepth = Constants.CELL_SIZE * 0.5;
 	
-	const boardGeometry = new BoxGeometry(
-		boardWidth,
-		boardDepth,
-		boardHeight
-	);
-	
-	const boardMesh = new Mesh(boardGeometry, materials.board);
-	boardMesh.position.set(0, -boardDepth / 2, 0);
-	boardMesh.receiveShadow = true;
-	boardGroup.add(boardMesh);
+	createFloatingIsland(boardWidth, boardHeight);
 	
 	// Create cells
 	const cellSize = Constants.CELL_SIZE;
@@ -419,6 +411,241 @@ function updateBoard() {
 		}
 	} catch (error) {
 		console.error('Error rendering board cells:', error);
+	}
+}
+
+/**
+ * Create a floating island for the game board
+ * @param {number} width - Width of the island
+ * @param {number} height - Height of the island
+ */
+function createFloatingIsland(width, height) {
+	// Create the main flat part of the island
+	const boardDepth = Constants.CELL_SIZE * 0.5;
+	
+	// Create the top flat part of the island
+	const boardGeometry = new BoxGeometry(
+		width,
+		boardDepth,
+		height
+	);
+	
+	const boardMesh = new Mesh(boardGeometry, materials.board);
+	boardMesh.position.set(0, -boardDepth / 2, 0);
+	boardMesh.receiveShadow = true;
+	boardGroup.add(boardMesh);
+	
+	// Create the bottom part of the island with a more interesting shape
+	// We'll use multiple meshes to create a rough, natural look
+	createIslandBottom(width, height);
+	
+	// Add some rocks and vegetation around the edges
+	addIslandDecorations(width, height);
+}
+
+/**
+ * Create the bottom part of the floating island
+ * @param {number} width - Width of the island
+ * @param {number} height - Height of the island
+ */
+function createIslandBottom(width, height) {
+	// Create the bottom part of the island
+	const bottomDepth = Constants.CELL_SIZE * 4; // Much thicker than the top
+	
+	// Create the main bottom part
+	const bottomGeometry = new BoxGeometry(
+		width * 0.9, // Slightly smaller than the top
+		bottomDepth,
+		height * 0.9
+	);
+	
+	const bottomMaterial = new MeshStandardMaterial({
+		color: 0x795548, // Brown color for the earth/rock
+		roughness: 0.9,
+		metalness: 0.1
+	});
+	
+	const bottomMesh = new Mesh(bottomGeometry, bottomMaterial);
+	bottomMesh.position.set(0, -bottomDepth / 2 - Constants.CELL_SIZE * 0.5, 0);
+	bottomMesh.receiveShadow = true;
+	bottomMesh.castShadow = true;
+	boardGroup.add(bottomMesh);
+	
+	// Add some random rocky outcroppings
+	const rockCount = 16;
+	for (let i = 0; i < rockCount; i++) {
+		const angle = (i / rockCount) * Math.PI * 2;
+		const distance = Math.min(width, height) * 0.45;
+		
+		const x = Math.cos(angle) * distance;
+		const z = Math.sin(angle) * distance;
+		
+		// Randomize the rock sizes
+		const rockWidth = Math.random() * (width * 0.2) + width * 0.05;
+		const rockHeight = Math.random() * (height * 0.2) + height * 0.05;
+		const rockDepth = Math.random() * (bottomDepth * 0.8) + bottomDepth * 0.4;
+		
+		const rockGeometry = new BoxGeometry(rockWidth, rockDepth, rockHeight);
+		
+		// Vary the color slightly
+		const rockMaterial = new MeshStandardMaterial({
+			color: new Color(0x795548).offsetHSL(0, 0, (Math.random() - 0.5) * 0.2),
+			roughness: 0.8 + Math.random() * 0.2,
+			metalness: 0.1
+		});
+		
+		const rockMesh = new Mesh(rockGeometry, rockMaterial);
+		rockMesh.position.set(
+			x,
+			-rockDepth / 2 - Constants.CELL_SIZE * 0.5,
+			z
+		);
+		
+		// Rotate the rock slightly for more variety
+		rockMesh.rotation.y = Math.random() * Math.PI;
+		rockMesh.rotation.x = (Math.random() - 0.5) * 0.2;
+		rockMesh.rotation.z = (Math.random() - 0.5) * 0.2;
+		
+		rockMesh.receiveShadow = true;
+		rockMesh.castShadow = true;
+		boardGroup.add(rockMesh);
+	}
+	
+	// Add some stalactite-like rocks hanging from the bottom
+	for (let i = 0; i < 24; i++) {
+		const x = (Math.random() - 0.5) * width * 0.8;
+		const z = (Math.random() - 0.5) * height * 0.8;
+		
+		const stalactiteHeight = Math.random() * bottomDepth * 2 + bottomDepth * 0.5;
+		const stalactiteRadius = Math.random() * (Constants.CELL_SIZE * 0.5) + Constants.CELL_SIZE * 0.1;
+		
+		const stalactiteGeometry = new CylinderGeometry(
+			stalactiteRadius * 0.2, // Narrow at the bottom
+			stalactiteRadius,       // Wider at the top
+			stalactiteHeight,
+			6
+		);
+		
+		const stalactiteMaterial = new MeshStandardMaterial({
+			color: new Color(0x795548).offsetHSL(0, 0, (Math.random() - 0.5) * 0.3 - 0.2),
+			roughness: 0.9,
+			metalness: 0.05
+		});
+		
+		const stalactiteMesh = new Mesh(stalactiteGeometry, stalactiteMaterial);
+		stalactiteMesh.position.set(
+			x,
+			-stalactiteHeight / 2 - bottomDepth - Constants.CELL_SIZE * 0.5,
+			z
+		);
+		
+		stalactiteMesh.receiveShadow = true;
+		stalactiteMesh.castShadow = true;
+		boardGroup.add(stalactiteMesh);
+	}
+}
+
+/**
+ * Add decorative elements around the island edges
+ * @param {number} width - Width of the island
+ * @param {number} height - Height of the island
+ */
+function addIslandDecorations(width, height) {
+	// Add some rocks around the edges
+	const stoneCount = 32;
+	for (let i = 0; i < stoneCount; i++) {
+		const angle = (i / stoneCount) * Math.PI * 2 + Math.random() * 0.2;
+		const distance = Math.min(width, height) * (0.48 + Math.random() * 0.04);
+		
+		const x = Math.cos(angle) * distance;
+		const z = Math.sin(angle) * distance;
+		
+		// Create a small stone
+		const stoneRadius = Math.random() * (Constants.CELL_SIZE * 0.4) + Constants.CELL_SIZE * 0.1;
+		const stoneGeometry = new SphereGeometry(stoneRadius, 6, 4);
+		
+		const stoneMaterial = new MeshStandardMaterial({
+			color: new Color(0xAAAAAA).offsetHSL(0, 0, (Math.random() - 0.5) * 0.2),
+			roughness: 0.8,
+			metalness: 0.2
+		});
+		
+		const stoneMesh = new Mesh(stoneGeometry, stoneMaterial);
+		stoneMesh.position.set(
+			x,
+			stoneRadius * 0.3,
+			z
+		);
+		
+		// Deform the stone a bit
+		stoneMesh.scale.set(
+			1 + Math.random() * 0.4,
+			0.5 + Math.random() * 0.3,
+			1 + Math.random() * 0.4
+		);
+		
+		stoneMesh.rotation.y = Math.random() * Math.PI;
+		stoneMesh.receiveShadow = true;
+		stoneMesh.castShadow = true;
+		boardGroup.add(stoneMesh);
+		
+		// Occasionally add grass or vegetation near the stones
+		if (Math.random() > 0.4) {
+			addGrassTuft(x, z, stoneRadius);
+		}
+	}
+}
+
+/**
+ * Add a small tuft of grass
+ * @param {number} x - X position
+ * @param {number} z - Z position
+ * @param {number} radius - Approximate radius of the tuft
+ */
+function addGrassTuft(x, z, radius) {
+	const bladeCount = Math.floor(Math.random() * 5) + 3;
+	
+	for (let i = 0; i < bladeCount; i++) {
+		// Create a single blade of grass
+		const bladeHeight = Math.random() * (Constants.CELL_SIZE * 0.6) + Constants.CELL_SIZE * 0.3;
+		const bladeWidth = Math.random() * (Constants.CELL_SIZE * 0.1) + Constants.CELL_SIZE * 0.03;
+		const bladeGeometry = new PlaneGeometry(bladeWidth, bladeHeight);
+		
+		// Random shade of green
+		const bladeColor = new Color(0x4CAF50).offsetHSL(
+			(Math.random() - 0.5) * 0.1,  // Slight hue variation
+			Math.random() * 0.2,          // Saturation variation
+			(Math.random() - 0.5) * 0.2   // Lightness variation
+		);
+		
+		const bladeMaterial = new MeshBasicMaterial({
+			color: bladeColor,
+			transparent: true,
+			opacity: 0.9,
+			side: DoubleSide
+		});
+		
+		const blade = new Mesh(bladeGeometry, bladeMaterial);
+		
+		// Position with some randomness
+		const offsetX = (Math.random() - 0.5) * radius * 1.5;
+		const offsetZ = (Math.random() - 0.5) * radius * 1.5;
+		
+		blade.position.set(
+			x + offsetX,
+			bladeHeight / 2,
+			z + offsetZ
+		);
+		
+		// Rotate to create a tuft effect
+		const rotationY = Math.atan2(offsetZ, offsetX);
+		blade.rotation.set(
+			(Math.random() - 0.5) * 0.3,
+			rotationY,
+			(Math.random() - 0.5) * 0.3
+		);
+		
+		boardGroup.add(blade);
 	}
 }
 
@@ -728,6 +955,105 @@ export function cleanup() {
 	
 	// Dispose of the renderer
 	renderer.dispose();
+}
+
+/**
+ * Create a skybox for the background
+ */
+function createSkybox() {
+	// Create a large sphere for the sky
+	const skyGeometry = new SphereGeometry(500, 32, 32);
+	
+	// Create a gradient sky material
+	const skyMaterial = new MeshBasicMaterial({
+		side: BackSide,
+		vertexColors: true
+	});
+	
+	// Create the sky mesh
+	const skyMesh = new Mesh(skyGeometry, skyMaterial);
+	scene.add(skyMesh);
+	
+	// Add gradient colors to the vertices
+	const skyColors = [
+		new Color(0x1a237e), // Deep blue at top
+		new Color(0x42a5f5), // Light blue at middle
+		new Color(0xbbdefb)  // Very light blue/white at horizon
+	];
+	
+	const positions = skyGeometry.attributes.position;
+	const colors = [];
+	
+	for (let i = 0; i < positions.count; i++) {
+		const y = positions.getY(i);
+		const normalizedY = (y + 1) / 2; // Convert from -1,1 to 0,1
+		
+		// Blend between colors based on y position
+		let color;
+		if (normalizedY > 0.5) {
+			// Blend between deep blue and light blue
+			const t = (normalizedY - 0.5) * 2;
+			color = new Color().lerpColors(skyColors[1], skyColors[0], t);
+		} else {
+			// Blend between light blue and horizon
+			const t = normalizedY * 2;
+			color = new Color().lerpColors(skyColors[2], skyColors[1], t);
+		}
+		
+		colors.push(color.r, color.g, color.b);
+	}
+	
+	skyGeometry.setAttribute('color', new BufferAttribute(new Float32Array(colors), 3));
+	
+	// Add some distant clouds (simple white planes at different distances)
+	addClouds();
+	
+	return skyMesh;
+}
+
+/**
+ * Add floating clouds to the sky
+ */
+function addClouds() {
+	const cloudCount = 30;
+	const cloudGroup = new Group();
+	scene.add(cloudGroup);
+	
+	for (let i = 0; i < cloudCount; i++) {
+		// Create a simple plane for each cloud
+		const cloudWidth = Math.random() * 30 + 10;
+		const cloudHeight = Math.random() * 15 + 5;
+		const cloudGeometry = new PlaneGeometry(cloudWidth, cloudHeight);
+		
+		// Create cloud material with transparency
+		const cloudMaterial = new MeshBasicMaterial({
+			color: 0xffffff,
+			transparent: true,
+			opacity: Math.random() * 0.5 + 0.3,
+			side: DoubleSide
+		});
+		
+		const cloud = new Mesh(cloudGeometry, cloudMaterial);
+		
+		// Position the cloud randomly in the sky at a large distance
+		const distance = Math.random() * 200 + 200;
+		const angle = Math.random() * Math.PI * 2;
+		const height = Math.random() * 100 - 20;
+		
+		cloud.position.set(
+			Math.cos(angle) * distance,
+			height,
+			Math.sin(angle) * distance
+		);
+		
+		// Rotate to face center approximately
+		cloud.lookAt(0, cloud.position.y, 0);
+		
+		// Add some variation to the rotation
+		cloud.rotation.z = Math.random() * Math.PI * 2;
+		
+		cloudGroup.add(cloud);
+	}
 }
 
 export default {
