@@ -4,8 +4,25 @@
 <head>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<title>Chess‑tris: Chess meets Tetris</title>
+	<title>Shaktris: Chess meets Tetris</title>
 	<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&family=Oswald:wght@500&display=swap" rel="stylesheet">
+	<link rel="apple-touch-icon" sizes="57x57" href="img/apple-icon-57x57.png">
+	<link rel="apple-touch-icon" sizes="60x60" href="img/apple-icon-60x60.png">
+	<link rel="apple-touch-icon" sizes="72x72" href="img/apple-icon-72x72.png">
+	<link rel="apple-touch-icon" sizes="76x76" href="img/apple-icon-76x76.png">
+	<link rel="apple-touch-icon" sizes="114x114" href="img/apple-icon-114x114.png">
+	<link rel="apple-touch-icon" sizes="120x120" href="img/apple-icon-120x120.png">
+	<link rel="apple-touch-icon" sizes="144x144" href="img/apple-icon-144x144.png">
+	<link rel="apple-touch-icon" sizes="152x152" href="img/apple-icon-152x152.png">
+	<link rel="apple-touch-icon" sizes="180x180" href="img/apple-icon-180x180.png">
+	<link rel="icon" type="image/png" sizes="192x192" href="img/android-icon-192x192.png">
+	<link rel="icon" type="image/png" sizes="32x32" href="img/favicon-32x32.png">
+	<link rel="icon" type="image/png" sizes="96x96" href="img/favicon-96x96.png">
+	<link rel="icon" type="image/png" sizes="16x16" href="img/favicon-16x16.png">
+	<link rel="manifest" href="img/manifest.json">
+	<meta name="msapplication-TileColor" content="#ffffff">
+	<meta name="msapplication-TileImage" content="img/ms-icon-144x144.png">
+	<meta name="theme-color" content="#ffffff">
 	<style>
 		body {
 			margin: 0;
@@ -19,6 +36,15 @@
 		canvas {
 			display: block;
 		}
+		
+		#game-container {
+			position: absolute;
+			top: 0;
+			left: 0;
+			width: 100%;
+			height: 100%;
+			z-index: 0;
+		}
 
 		#ui-container {
 			position: absolute;
@@ -27,6 +53,7 @@
 			width: 100%;
 			height: 100%;
 			pointer-events: none;
+			z-index: 1;
 		}
 
 		.panel {
@@ -480,10 +507,59 @@
 			border-radius: 4px;
 			border-left: 3px solid var(--theme-accent);
 		}
+		
+		#notification-container {
+			position: fixed;
+			top: 20px;
+			right: 20px;
+			width: 300px;
+			z-index: 1000;
+			pointer-events: none;
+		}
+		
+		#notification-container .notification {
+			position: relative;
+			margin-bottom: 10px;
+			top: unset;
+			left: unset;
+			transform: none;
+			width: 100%;
+			box-sizing: border-box;
+			padding: 15px;
+			border-radius: 8px;
+			opacity: 0;
+			transform: translateX(50px);
+			transition: opacity 0.3s, transform 0.3s;
+		}
+		
+		#notification-container .notification.show {
+			opacity: 1;
+			transform: translateX(0);
+		}
+		
+		.notification-info {
+			background: rgba(52, 152, 219, 0.9);
+		}
+		
+		.notification-success {
+			background: rgba(46, 204, 113, 0.9);
+		}
+		
+		.notification-warning {
+			background: rgba(241, 196, 15, 0.9);
+			color: #333;
+		}
+		
+		.notification-error {
+			background: rgba(231, 76, 60, 0.9);
+		}
 	</style>
 </head>
 
 <body>
+	<!-- Main game container for Three.js rendering -->
+	<div id="game-container"></div>
+	
 	<div id="ui-container">
 		<div id="info-panel" class="panel">
 			<div class="game-title">
@@ -517,6 +593,9 @@
 			Mouse: Rotate/Pan • Scroll: Zoom • Click: Select/Move</div>
 		</div>
 	</div>
+	
+	<!-- Notification container for displaying messages -->
+	<div id="notification-container"></div>
 	
 	<div id="notification" class="notification"></div>
 	

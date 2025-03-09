@@ -29,7 +29,15 @@ export function init() {
  * Cache UI elements for faster access
  */
 function cacheElements() {
-	// Screens
+	// Try to find the elements, but don't fail if they don't exist
+	// This allows for a simplified UI during development
+	
+	// Other elements
+	elements.gameContainer = document.getElementById('game-container');
+	elements.notificationContainer = document.getElementById('notification-container');
+	elements.notification = document.getElementById('notification');
+	
+	// Optional elements that might not exist in the simplified UI
 	elements.screens = {
 		loading: document.getElementById('loading-screen'),
 		mainMenu: document.getElementById('main-menu-screen'),
@@ -41,6 +49,14 @@ function cacheElements() {
 		leaderboard: document.getElementById('leaderboard-screen'),
 		settings: document.getElementById('settings-screen')
 	};
+	
+	// Other optional elements
+	elements.userInfo = document.getElementById('user-info');
+	elements.errorMessage = document.getElementById('error-message');
+	elements.loadingMessage = document.getElementById('loading-message');
+	elements.gameOverMessage = document.getElementById('game-over-message');
+	elements.gameOverStats = document.getElementById('game-over-stats');
+	elements.leaderboardList = document.getElementById('leaderboard-list');
 	
 	// Buttons
 	elements.buttons = {
@@ -64,16 +80,6 @@ function cacheElements() {
 		register: document.getElementById('register-form'),
 		joinGame: document.getElementById('join-game-form')
 	};
-	
-	// Other elements
-	elements.gameContainer = document.getElementById('game-container');
-	elements.notificationContainer = document.getElementById('notification-container');
-	elements.userInfo = document.getElementById('user-info');
-	elements.errorMessage = document.getElementById('error-message');
-	elements.loadingMessage = document.getElementById('loading-message');
-	elements.gameOverMessage = document.getElementById('game-over-message');
-	elements.gameOverStats = document.getElementById('game-over-stats');
-	elements.leaderboardList = document.getElementById('leaderboard-list');
 }
 
 /**
@@ -185,40 +191,59 @@ function setupEventListeners() {
 }
 
 /**
- * Show a specific screen
+ * Show a screen and hide all others
  * @param {string} screenName - The name of the screen to show
  */
 function showScreen(screenName) {
+	if (!elements.screens) {
+		console.warn(`Cannot show screen ${screenName} - screens not initialized`);
+		return;
+	}
+	
 	// Hide all screens
-	Object.values(elements.screens).forEach(screen => {
+	Object.keys(elements.screens).forEach(key => {
+		const screen = elements.screens[key];
 		if (screen) {
 			screen.classList.add('hidden');
 		}
 	});
 	
 	// Show the requested screen
-	if (elements.screens[screenName]) {
-		elements.screens[screenName].classList.remove('hidden');
+	const screen = elements.screens[screenName];
+	if (screen) {
+		screen.classList.remove('hidden');
+	} else {
+		console.warn(`Screen ${screenName} not found`);
 	}
 }
 
 /**
- * Show the loading screen
+ * Show loading screen
  * @param {string} message - The loading message
  */
 export function showLoadingScreen(message = 'Loading...') {
-	if (elements.loadingMessage) {
-		elements.loadingMessage.textContent = message;
+	if (elements.screens && elements.screens.loading) {
+		showScreen('loading');
+		if (elements.loadingMessage) {
+			elements.loadingMessage.textContent = message;
+		}
+	} else {
+		// Use notification as fallback
+		showNotification(message, 'info', 0);
 	}
-	showScreen('loading');
 }
 
 /**
- * Hide the loading screen
+ * Hide loading screen
  */
 export function hideLoadingScreen() {
-	if (elements.screens.loading) {
+	if (elements.screens && elements.screens.loading) {
 		elements.screens.loading.classList.add('hidden');
+	} else {
+		// Hide the notification if we used that as fallback
+		if (elements.notification) {
+			elements.notification.classList.remove('show');
+		}
 	}
 }
 
@@ -226,7 +251,12 @@ export function hideLoadingScreen() {
  * Show the main menu
  */
 export function showMainMenu() {
-	showScreen('mainMenu');
+	if (elements.screens && elements.screens.mainMenu) {
+		showScreen('mainMenu');
+	} else {
+		// For the simplified UI, just show a welcome notification
+		showNotification('Welcome to Chesstris!', 'info', 3000);
+	}
 }
 
 /**
@@ -290,37 +320,66 @@ export function showErrorScreen(title, message) {
  * Show a notification
  * @param {string} message - The notification message
  * @param {string} type - The notification type (info, success, warning, error)
- * @param {number} duration - The duration in milliseconds
+ * @param {number} duration - The duration in milliseconds (0 for no auto-hide)
  */
 export function showNotification(message, type = 'info', duration = 3000) {
-	if (!elements.notificationContainer) {
-		return;
+	console.log(`Notification (${type}): ${message}`);
+	
+	// First try to use the notification container
+	if (elements.notificationContainer) {
+		// Create notification element
+		const notification = document.createElement('div');
+		notification.className = `notification notification-${type}`;
+		notification.textContent = message;
+		
+		// Add to container
+		elements.notificationContainer.appendChild(notification);
+		
+		// Show the notification
+		setTimeout(() => {
+			notification.classList.add('show');
+		}, 10);
+		
+		// Remove after duration (if not 0)
+		if (duration > 0) {
+			setTimeout(() => {
+				notification.classList.remove('show');
+				
+				// Remove from DOM after animation
+				setTimeout(() => {
+					if (notification.parentNode) {
+						notification.parentNode.removeChild(notification);
+					}
+				}, 300);
+			}, duration);
+		}
+		
+		return notification;
+	}
+	// Fall back to the simple notification element
+	else if (elements.notification) {
+		const notification = elements.notification;
+		notification.textContent = message;
+		notification.className = `notification ${type}`;
+		
+		// Show the notification
+		notification.classList.add('show');
+		
+		// Hide after duration (if not 0)
+		if (duration > 0) {
+			setTimeout(() => {
+				notification.classList.remove('show');
+			}, duration);
+		}
+		
+		return notification;
+	}
+	// Last resort - log to console
+	else {
+		console.warn(`Could not show notification: ${message}`);
 	}
 	
-	// Create notification element
-	const notification = document.createElement('div');
-	notification.className = `notification notification-${type}`;
-	notification.textContent = message;
-	
-	// Add to container
-	elements.notificationContainer.appendChild(notification);
-	
-	// Show the notification
-	setTimeout(() => {
-		notification.classList.add('show');
-	}, 10);
-	
-	// Remove after duration
-	setTimeout(() => {
-		notification.classList.remove('show');
-		
-		// Remove from DOM after animation
-		setTimeout(() => {
-			if (notification.parentNode) {
-				notification.parentNode.removeChild(notification);
-			}
-		}, 300);
-	}, duration);
+	return null;
 }
 
 /**

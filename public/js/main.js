@@ -52,13 +52,23 @@ async function init() {
 			UI.showNotification('Network connection failed. Playing in offline mode.', 'warning');
 		}
 		
-		// Initialize the renderer
+		// Get the game container element
 		const gameContainer = document.getElementById('game-container');
 		if (!gameContainer) {
+			console.error('Game container element not found. Make sure there is a <div id="game-container"></div> in your HTML.');
+			UI.showNotification('Error: Game container not found', 'error');
 			throw new Error('Game container not found');
 		}
 		
-		Renderer.init(gameContainer);
+		// Initialize the renderer
+		try {
+			Renderer.init(gameContainer);
+			console.log('Renderer initialized successfully');
+		} catch (renderError) {
+			console.error('Failed to initialize renderer:', renderError);
+			UI.showNotification('Error initializing graphics engine', 'error');
+			throw renderError;
+		}
 		
 		// Set up event listeners
 		setupEventListeners();
@@ -70,7 +80,8 @@ async function init() {
 		console.log('Chesstris initialized successfully');
 	} catch (error) {
 		console.error('Initialization failed:', error);
-		UI.showErrorScreen('Failed to initialize the game', error.message);
+		UI.hideLoadingScreen();
+		UI.showNotification('Game initialization failed. Please refresh the page.', 'error');
 	}
 }
 
