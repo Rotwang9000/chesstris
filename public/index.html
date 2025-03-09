@@ -636,6 +636,18 @@
 
 	<!-- Socket.IO -->
 	<script src="/socket.io/socket.io.js"></script>
+	
+	<!-- Solana Wallet (Phantom) -->
+	<script>
+		// Check if Phantom is installed
+		window.onload = function() {
+			if ("solana" in window) {
+				console.log("Phantom wallet is available!");
+			} else {
+				console.log("Phantom wallet is not installed. Some features may not be available.");
+			}
+		};
+	</script>
 
 	<!-- Main App Script -->
 	<script type="module" src="js/main.js"></script>

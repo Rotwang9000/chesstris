@@ -40,6 +40,7 @@ import * as GameState from '../core/gameState.js';
 import * as Constants from '../core/constants.js';
 import * as TetrominoManager from '../core/tetrominoManager.js';
 import * as Helpers from '../utils/helpers.js';
+import SessionManager from '../services/sessionManager.js';
 
 // Three.js variables
 let scene, camera, renderer, controls;
@@ -52,6 +53,11 @@ const materials = {};
 // Animation variables
 let animationFrameId;
 let lastRenderTime = 0;
+
+// UI elements
+let loadingBar;
+let notificationElement;
+let playerLabels = [];
 
 /**
  * Initialize the renderer
@@ -108,14 +114,27 @@ export function init(container, options = {}) {
 		// Load textures
 		loadTextures();
 		
+		// Initialize session manager to get player info
+		const session = SessionManager.initSession();
+		console.log('Session initialized:', session);
+		
 		// Initialize game state if it doesn't exist
 		const gameState = GameState.getGameState();
 		if (!gameState || !gameState.board || !Array.isArray(gameState.board)) {
 			console.log('Initializing default game state for rendering');
 			// Initialize with an empty board (will be filled with null values)
 			GameState.initGameState();
+			
+			// Create a new game world with the current player
+			initializeGameWorld(session.playerId, session.username);
 		} else {
 			console.log('Using existing game state for rendering');
+			
+			// Check if player exists in the game state
+			if (!gameState.players[session.playerId]) {
+				// Player doesn't exist in this game, add them
+				addPlayerToExistingWorld(session.playerId, session.username);
+			}
 		}
 		
 		// Add event listeners
@@ -132,6 +151,268 @@ export function init(container, options = {}) {
 	} catch (error) {
 		console.error('Error initializing renderer:', error);
 		throw error;
+	}
+}
+
+/**
+ * Initialize a new game world with the first player
+ * @param {string} playerId - Player's unique ID
+ * @param {string} username - Player's username
+ */
+function initializeGameWorld(playerId, username) {
+	try {
+		const gameState = GameState.getGameState();
+		if (!gameState) return;
+		
+		// Reset the game state to empty
+		gameState.board = [];
+		gameState.players = {};
+		
+		// Create a 21x21 board (10 cells radius from center)
+		const boardSize = 21;
+		for (let z = 0; z < boardSize; z++) {
+			gameState.board[z] = [];
+			for (let x = 0; x < boardSize; x++) {
+				gameState.board[z][x] = null;
+			}
+		}
+		
+		// Generate a unique color for the player
+		const hue = Math.random();
+		const playerColor = new Color().setHSL(hue, 0.8, 0.5);
+		const colorHex = playerColor.getHex();
+		
+		// Add player to the game state
+		gameState.players[playerId] = {
+			id: playerId,
+			name: username,
+			color: colorHex,
+			homeZone: {
+				x: 5,
+				z: 5,
+				size: 3
+			}
+		};
+		
+		// Create home zone for the player
+		createPlayerHomeZone(playerId);
+		
+		console.log('Initialized game world with player:', playerId);
+	} catch (error) {
+		console.error('Error initializing game world:', error);
+	}
+}
+
+/**
+ * Add a player to an existing game world
+ * @param {string} playerId - Player's unique ID
+ * @param {string} username - Player's username
+ */
+function addPlayerToExistingWorld(playerId, username) {
+	try {
+		const gameState = GameState.getGameState();
+		if (!gameState) return;
+		
+		// Find a free spot for the new player's home zone
+		const homeZonePosition = findFreeHomeZoneSpot(gameState);
+		
+		// Generate a unique color for the player (different from existing players)
+		let hue;
+		let colorHex;
+		let isColorUnique = false;
+		
+		while (!isColorUnique) {
+			hue = Math.random();
+			const playerColor = new Color().setHSL(hue, 0.8, 0.5);
+			colorHex = playerColor.getHex();
+			
+			// Check if this color is significantly different from existing players
+			isColorUnique = Object.values(gameState.players).every(player => {
+				if (!player.color) return true;
+				const existingColor = new Color(player.color);
+				const distance = Math.abs(existingColor.r - playerColor.r) + 
+								Math.abs(existingColor.g - playerColor.g) + 
+								Math.abs(existingColor.b - playerColor.b);
+				return distance > 0.5; // Threshold for sufficient difference
+			});
+		}
+		
+		// Add player to the game state
+		gameState.players[playerId] = {
+			id: playerId,
+			name: username,
+			color: colorHex,
+			homeZone: homeZonePosition
+		};
+		
+		// Create home zone for the player
+		createPlayerHomeZone(playerId);
+		
+		console.log('Added player to existing world:', playerId);
+	} catch (error) {
+		console.error('Error adding player to existing world:', error);
+	}
+}
+
+/**
+ * Find a free spot for a new player's home zone
+ * @param {Object} gameState - Current game state
+ * @returns {Object} Position and size for the new home zone
+ */
+function findFreeHomeZoneSpot(gameState) {
+	// Default size for home zones
+	const homeZoneSize = 3;
+	
+	// Define potential home zone positions
+	// Start with corners and edges of the board
+	const potentialPositions = [
+		{ x: 5, z: 5 },       // Top-left
+		{ x: 5, z: 15 },      // Top-right
+		{ x: 15, z: 5 },      // Bottom-left
+		{ x: 15, z: 15 },     // Bottom-right
+		{ x: 10, z: 5 },      // Top-center
+		{ x: 10, z: 15 },     // Bottom-center
+		{ x: 5, z: 10 },      // Left-center
+		{ x: 15, z: 10 }      // Right-center
+	];
+	
+	// Check existing player home zones
+	const existingHomeZones = Object.values(gameState.players)
+		.filter(player => player.homeZone)
+		.map(player => player.homeZone);
+	
+	// Find first position that doesn't overlap with existing home zones
+	for (const position of potentialPositions) {
+		let isPositionFree = true;
+		
+		// Check for overlap with existing home zones
+		for (const existingZone of existingHomeZones) {
+			// Check if this potential position would overlap with an existing zone
+			if (position.x < existingZone.x + existingZone.size && 
+				position.x + homeZoneSize > existingZone.x &&
+				position.z < existingZone.z + existingZone.size && 
+				position.z + homeZoneSize > existingZone.z) {
+				isPositionFree = false;
+				break;
+			}
+		}
+		
+		if (isPositionFree) {
+			return {
+				x: position.x,
+				z: position.z,
+				size: homeZoneSize
+			};
+		}
+	}
+	
+	// If all predefined positions are taken, find a random position
+	// Keep trying random positions until we find one that doesn't overlap
+	const boardSize = gameState.board.length;
+	const maxAttempts = 100;
+	
+	for (let attempt = 0; attempt < maxAttempts; attempt++) {
+		const x = Math.floor(Math.random() * (boardSize - homeZoneSize));
+		const z = Math.floor(Math.random() * (boardSize - homeZoneSize));
+		
+		let isPositionFree = true;
+		
+		// Check for overlap with existing home zones
+		for (const existingZone of existingHomeZones) {
+			if (x < existingZone.x + existingZone.size && 
+				x + homeZoneSize > existingZone.x &&
+				z < existingZone.z + existingZone.size && 
+				z + homeZoneSize > existingZone.z) {
+				isPositionFree = false;
+				break;
+			}
+		}
+		
+		if (isPositionFree) {
+			return {
+				x: x,
+				z: z,
+				size: homeZoneSize
+			};
+		}
+	}
+	
+	// If we couldn't find a non-overlapping position,
+	// just use a position far from the center
+	return {
+		x: 17,
+		z: 17,
+		size: homeZoneSize
+	};
+}
+
+/**
+ * Create a home zone for a player and add chess pieces
+ * @param {string} playerId - Player's unique ID
+ */
+function createPlayerHomeZone(playerId) {
+	try {
+		const gameState = GameState.getGameState();
+		if (!gameState || !gameState.players[playerId] || !gameState.players[playerId].homeZone) {
+			console.warn(`Cannot create home zone: Player ${playerId} or home zone data not found`);
+			return;
+		}
+		
+		const player = gameState.players[playerId];
+		const { x, z, size } = player.homeZone;
+		
+		// Create home zone cells
+		for (let dz = 0; dz < size; dz++) {
+			for (let dx = 0; dx < size; dx++) {
+				const cellX = x + dx;
+				const cellZ = z + dz;
+				
+				gameState.board[cellZ][cellX] = {
+					type: 'home_zone',
+					player: player.id,
+					chessPiece: null
+				};
+			}
+		}
+		
+		// Add chess pieces - let's place them strategically in the home zone
+		// King in the center, pawns on the front, other pieces in the remaining cells
+		const chessPieces = [
+			// Center piece is the king
+			{ type: 'king', x: x + Math.floor(size/2), z: z + Math.floor(size/2) },
+			
+			// Corner pieces are rooks
+			{ type: 'rook', x: x, z: z },
+			{ type: 'rook', x: x + size - 1, z: z + size - 1 },
+			
+			// Other edge pieces
+			{ type: 'knight', x: x + size - 1, z: z },
+			{ type: 'bishop', x: x, z: z + size - 1 },
+			
+			// A couple of pawns
+			{ type: 'pawn', x: x + 1, z: z },
+			{ type: 'pawn', x: x, z: z + 1 },
+			
+			// If size is 3 or larger, add a queen
+			...(size >= 3 ? [{ type: 'queen', x: x + 1, z: z + 1 }] : [])
+		];
+		
+		// Add the chess pieces to the board
+		chessPieces.forEach(pieceInfo => {
+			if (pieceInfo.x >= 0 && pieceInfo.x < gameState.board[0].length &&
+				pieceInfo.z >= 0 && pieceInfo.z < gameState.board.length &&
+				gameState.board[pieceInfo.z][pieceInfo.x]) {
+				
+				gameState.board[pieceInfo.z][pieceInfo.x].chessPiece = {
+					type: pieceInfo.type,
+					player: playerId
+				};
+			}
+		});
+		
+		console.log(`Created home zone for player ${playerId} with ${chessPieces.length} chess pieces`);
+	} catch (error) {
+		console.error('Error creating player home zone:', error);
 	}
 }
 
@@ -282,6 +563,9 @@ function animate(time = 0) {
 		// Update the scene
 		updateScene(deltaTime);
 		
+		// Update player name labels
+		updatePlayerLabels();
+		
 		// Render the scene
 		if (renderer && scene && camera) {
 			renderer.render(scene, camera);
@@ -290,6 +574,42 @@ function animate(time = 0) {
 		console.error('Error in animation loop:', error);
 		// Don't stop the animation loop on error
 	}
+}
+
+/**
+ * Update the positions of player name labels
+ */
+function updatePlayerLabels() {
+	if (!playerLabels || !playerLabels.length || !camera) return;
+	
+	playerLabels.forEach(label => {
+		if (!label.userData) return;
+		
+		// Get world position
+		const position = new Vector3(
+			label.userData.x,
+			label.userData.y,
+			label.userData.z
+		);
+		
+		// Convert to screen position
+		const screenPosition = position.clone();
+		screenPosition.project(camera);
+		
+		// Convert to CSS coordinates
+		const x = (screenPosition.x * 0.5 + 0.5) * window.innerWidth;
+		const y = (1 - (screenPosition.y * 0.5 + 0.5)) * window.innerHeight;
+		
+		// Apply screen position
+		label.style.transform = `translate(-50%, -100%) translate(${x}px, ${y}px)`;
+		
+		// Hide if behind camera
+		if (screenPosition.z > 1) {
+			label.style.display = 'none';
+		} else {
+			label.style.display = 'block';
+		}
+	});
 }
 
 /**
@@ -816,111 +1136,44 @@ function addPotionParticles(x, z, color) {
 }
 
 /**
- * Update chess pieces
+ * Update chess pieces based on game state
  */
 function updateChessPieces() {
-	// Clear the pieces group
-	while (piecesGroup.children.length > 0) {
-		piecesGroup.remove(piecesGroup.children[0]);
+	try {
+		// Clear all existing pieces
+		while (piecesGroup.children.length > 0) {
+			piecesGroup.remove(piecesGroup.children[0]);
+		}
+		
+		// Get the current game state
+		const gameState = GameState.getGameState();
+		if (!gameState || !gameState.board) return;
+		
+		const board = gameState.board;
+		let piecesAdded = 0;
+		
+		// Iterate through the board
+		for (let z = 0; z < board.length; z++) {
+			for (let x = 0; x < board[z].length; x++) {
+				const cell = board[z][x];
+				
+				// Skip empty cells
+				if (!cell || !cell.type) continue;
+				
+				// Skip cells that don't have chess pieces
+				if (!cell.chessPiece) continue;
+				
+				// Add the chess piece
+				const piece = cell.chessPiece;
+				const result = addChessPiece(piece, piece.player, x, z);
+				if (result) piecesAdded++;
+			}
+		}
+		
+		console.log(`Added ${piecesAdded} chess pieces to the scene`);
+	} catch (error) {
+		console.error('Error updating chess pieces:', error);
 	}
-	
-	const gameState = GameState.getGameState();
-	
-	// Add chess pieces for each player
-	Object.values(gameState.players).forEach(player => {
-		player.pieces.forEach(piece => {
-			addChessPiece(piece, player);
-		});
-	});
-}
-
-/**
- * Add a chess piece to the scene
- * @param {Object} piece - The piece object
- * @param {Object} player - The player object
- */
-function addChessPiece(piece, player) {
-	// Determine piece geometry based on type
-	let pieceGeometry;
-	switch (piece.type) {
-		case Constants.CHESS_PIECE_TYPES.PAWN:
-			pieceGeometry = new CylinderGeometry(0.3, 0.4, 0.8, 8);
-			break;
-		case Constants.CHESS_PIECE_TYPES.ROOK:
-			pieceGeometry = new BoxGeometry(0.6, 1, 0.6);
-			break;
-		case Constants.CHESS_PIECE_TYPES.KNIGHT:
-			// Create a more complex knight shape
-			const knightGroup = new Group();
-			const baseGeometry = new CylinderGeometry(0.4, 0.5, 0.6, 8);
-			const base = new Mesh(baseGeometry, new MeshStandardMaterial({ color: player.color }));
-			base.position.y = 0.3;
-			knightGroup.add(base);
-			
-			const headGeometry = new BoxGeometry(0.3, 0.5, 0.7);
-			const head = new Mesh(headGeometry, new MeshStandardMaterial({ color: player.color }));
-			head.position.set(0, 0.8, 0.1);
-			head.rotation.x = Math.PI / 6;
-			knightGroup.add(head);
-			
-			pieceGeometry = knightGroup;
-			break;
-		case Constants.CHESS_PIECE_TYPES.BISHOP:
-			pieceGeometry = new ConeGeometry(0.4, 1.2, 8);
-			break;
-		case Constants.CHESS_PIECE_TYPES.QUEEN:
-			pieceGeometry = new CylinderGeometry(0.3, 0.5, 1.3, 8);
-			break;
-		case Constants.CHESS_PIECE_TYPES.KING:
-			// Create a more complex king shape
-			const kingGroup = new Group();
-			const kingBaseGeometry = new CylinderGeometry(0.4, 0.5, 1, 8);
-			const kingBase = new Mesh(kingBaseGeometry, new MeshStandardMaterial({ color: player.color }));
-			kingBase.position.y = 0.5;
-			kingGroup.add(kingBase);
-			
-			const crownGeometry = new BoxGeometry(0.8, 0.3, 0.8);
-			const crown = new Mesh(crownGeometry, new MeshStandardMaterial({ color: player.color }));
-			crown.position.y = 1.15;
-			kingGroup.add(crown);
-			
-			const crossGeometry = new BoxGeometry(0.2, 0.4, 0.2);
-			const cross = new Mesh(crossGeometry, new MeshStandardMaterial({ color: player.color }));
-			cross.position.y = 1.5;
-			kingGroup.add(cross);
-			
-			pieceGeometry = kingGroup;
-			break;
-		default:
-			// Default to pawn
-			pieceGeometry = new BoxGeometry(0.5, 0.5, 0.5);
-			break;
-	}
-	
-	// Check if we need a simple or complex mesh
-	let pieceMesh;
-	if (pieceGeometry instanceof Group) {
-		pieceMesh = pieceGeometry;
-	} else {
-		const pieceMaterial = new MeshStandardMaterial({
-			color: player.color,
-			roughness: 0.6,
-			metalness: 0.3
-		});
-		pieceMesh = new Mesh(pieceGeometry, pieceMaterial);
-	}
-	
-	// Position the piece
-	pieceMesh.position.set(
-		piece.x * Constants.CELL_SIZE - (Constants.INITIAL_BOARD_WIDTH * Constants.CELL_SIZE) / 2 + Constants.CELL_SIZE / 2,
-		Constants.CELL_HEIGHT + (piece.type === Constants.CHESS_PIECE_TYPES.KING ? 0.65 : 0.4),
-		piece.y * Constants.CELL_SIZE - (Constants.INITIAL_BOARD_HEIGHT * Constants.CELL_SIZE) / 2 + Constants.CELL_SIZE / 2
-	);
-	
-	pieceMesh.castShadow = true;
-	pieceMesh.userData.piece = piece;
-	
-	piecesGroup.add(pieceMesh);
 }
 
 /**
@@ -978,7 +1231,7 @@ function updateFallingTetromino() {
 		const z = (fallingPiece.y + firstBlock.y - (gameState.board.length - 1) / 2) * Constants.CELL_SIZE;
 		
 		const pieceScale = 0.8;
-		const piece = addChessPiece(fallingPiece.chessPiece, materials.chessPieceWhite);
+		const piece = addChessPiece(fallingPiece.chessPiece, materials.chessPieceWhite, x, y);
 		piece.position.set(x, y, z);
 		piece.scale.set(pieceScale, pieceScale, pieceScale);
 		

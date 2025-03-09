@@ -12,6 +12,8 @@ import * as Network from './utils/network.js';
 import * as Helpers from './utils/helpers.js';
 import * as UI from './ui/uiManager.js';
 import * as Marketplace from './ui/marketplaceUI.js';
+import SessionManager from './services/sessionManager.js';
+import WalletManager from './ui/walletManager.js';
 
 // Game state
 let isInitialized = false;
@@ -28,6 +30,13 @@ async function init() {
 		UI.init();
 		UI.showLoadingScreen('Loading game...');
 		
+		// Initialize session management
+		const session = SessionManager.initSession();
+		console.log('Session initialized:', session);
+		
+		// Initialize wallet UI
+		WalletManager.initWalletUI();
+		
 		// Initialize marketplace UI
 		Marketplace.setupMarketplaceUI();
 		Marketplace.setupPaymentUI();
@@ -37,10 +46,22 @@ async function init() {
 			await Network.initSocket();
 			console.log('Network connection established');
 			
-			// Try to get current user if token exists
-			if (localStorage.getItem('auth_token')) {
+			// Try to get current user from session or token
+			if (session.playerId) {
+				currentUser = {
+					id: session.playerId,
+					username: session.username
+				};
+				UI.updateUserInfo(currentUser);
+			} else if (localStorage.getItem('auth_token')) {
 				try {
 					currentUser = await Network.getCurrentUser();
+					
+					// Update session with user info if available
+					if (currentUser && currentUser.id) {
+						SessionManager.setUsername(currentUser.username);
+					}
+					
 					UI.updateUserInfo(currentUser);
 				} catch (error) {
 					console.warn('Failed to get current user:', error);
