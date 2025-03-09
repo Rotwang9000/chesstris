@@ -24,7 +24,7 @@ router.post('/create', auth, async (req, res) => {
 		
 		// Create game
 		const game = await req.services.gameState.createGame({
-			name: name || 'Chess-tris Game',
+			name: name || 'Shaktris Game',
 			maxPlayers: maxPlayers || 8,
 			difficulty: difficulty || 'normal',
 			createdBy: req.user.id

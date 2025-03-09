@@ -487,7 +487,7 @@
 	<div id="ui-container">
 		<div id="info-panel" class="panel">
 			<div class="game-title">
-				<h1>Chess‑tris</h1>
+				<h1>Shaktris</h1>
 				<span>PROTOTYPE</span>
 			</div>
 			<p>A multiplayer game fusing chess and Tetris mechanics.</p>
@@ -550,12 +550,15 @@
 		</div>
 	</div>
 
-	<!-- Three.js and OrbitControls -->
+	<!-- External Libraries -->
 	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
 	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
-	<!-- Socket.IO client -->
+	<script src="https://cdn.jsdelivr.net/npm/uuid@8.3.2/dist/umd/uuid.min.js"></script>
+
+	<!-- Socket.IO -->
 	<script src="/socket.io/socket.io.js"></script>
-	<!-- Update to use the new modular JavaScript structure -->
+
+	<!-- Main App Script -->
 	<script type="module" src="js/main.js"></script>
 
 	<script>

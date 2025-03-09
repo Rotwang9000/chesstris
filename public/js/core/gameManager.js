@@ -5,7 +5,7 @@
  * game loop, scoring, and game state management.
  */
 
-import { v4 as uuidv4 } from 'uuid';
+import { v4 as uuidv4 } from '../utils/uuid.js';
 import * as GameState from './gameState.js';
 import * as PlayerManager from './playerManager.js';
 import * as TetrominoManager from './tetrominoManager.js';

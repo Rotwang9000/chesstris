@@ -5,7 +5,7 @@
  * player information, and gameplay status.
  */
 
-import { v4 as uuidv4 } from 'uuid';
+import { v4 as uuidv4 } from '../utils/uuid.js';
 import * as Constants from './constants.js';
 
 // Game state singleton

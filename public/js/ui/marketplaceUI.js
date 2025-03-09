@@ -130,7 +130,7 @@ export function setupMarketplaceUI() {
 		
 		// Title
 		const title = document.createElement('h2');
-		title.textContent = 'Chess-tris Marketplace';
+		title.textContent = 'Shaktris Marketplace';
 		
 		// Description
 		const description = document.createElement('p');

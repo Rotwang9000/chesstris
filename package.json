@@ -1,5 +1,5 @@
 {
-	"name": "chess-tris",
+	"name": "shaktris",
 	"version": "1.0.0",
 	"description": "A multiplayer game combining chess and Tetris mechanics",
 	"main": "server.js",

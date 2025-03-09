@@ -60,7 +60,7 @@ async function createSolanaPaymentIntent(userId, amount, packageType) {
 		}
 		
 		// Generate a unique reference ID for this payment
-		const referenceId = `chess-tris-${uuidv4().slice(0, 8)}`;
+		const referenceId = `shaktris-${uuidv4().slice(0, 8)}`;
 		
 		// Calculate tokens based on amount
 		const tokensPerDollar = paymentConfig.solana.tokenRatios[amount];

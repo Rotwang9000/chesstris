@@ -5,7 +5,7 @@
  * moving pieces, and managing player state.
  */
 
-import { v4 as uuidv4 } from 'uuid';
+import { v4 as uuidv4 } from '../utils/uuid.js';
 import * as GameState from './gameState.js';
 import * as Constants from './constants.js';
 
