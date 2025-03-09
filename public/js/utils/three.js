@@ -62,6 +62,7 @@ export const AdditiveBlending = THREE.AdditiveBlending;
 export const NormalBlending = THREE.NormalBlending;
 export const FrontSide = THREE.FrontSide;
 export const BackSide = THREE.BackSide;
+export const FogExp2 = THREE.FogExp2;
 
 // Export OrbitControls
 export const OrbitControls = THREE.OrbitControls; 

@@ -32,7 +32,8 @@ import {
 	DoubleSide,
 	OrbitControls,
 	BackSide,
-	BufferAttribute
+	BufferAttribute,
+	FogExp2
 } from '../utils/three.js';
 
 import * as GameState from '../core/gameState.js';
@@ -171,7 +172,7 @@ function addLights() {
 	scene.add(bounceLight);
 	
 	// Add some atmospheric fog for depth
-	scene.fog = new THREE.FogExp2(0xd1e9ff, 0.008);
+	scene.fog = new FogExp2(0xd1e9ff, 0.008);
 }
 
 /**
@@ -309,11 +310,58 @@ function updateScene(deltaTime) {
 		// Update ghost piece
 		updateGhostPiece();
 		
+		// Animate potions and particles
+		animatePotionsAndParticles(deltaTime);
+		
 		// Update UI
 		updateUI();
 	} catch (error) {
 		console.error('Error updating scene:', error);
 	}
+}
+
+/**
+ * Animate potions and particles
+ * @param {number} deltaTime - Time since last update in ms
+ */
+function animatePotionsAndParticles(deltaTime) {
+	const time = performance.now() / 1000; // Convert to seconds for smoother animation
+	
+	// Find all potion meshes and particles
+	boardGroup.children.forEach(child => {
+		// Animate potions (bobbing up and down)
+		if (child.userData.potionType) {
+			const originalY = child.userData.originalY || 0;
+			child.position.y = originalY + Math.sin(time * 2) * 0.1;
+			child.rotation.y += 0.01;
+		}
+		
+		// Animate particles (orbiting and pulsing)
+		if (child.userData.angleOffset !== undefined) {
+			const originalY = child.userData.originalY || 0;
+			const angleOffset = child.userData.angleOffset || 0;
+			const radiusOffset = child.userData.radiusOffset || 0;
+			
+			// Calculate position in orbit
+			const orbitSpeed = 0.5 + radiusOffset;
+			const orbitAngle = time * orbitSpeed + angleOffset;
+			const orbitRadius = 0.4 + Math.sin(time + angleOffset) * 0.1;
+			
+			// Calculate center of orbit (the potion position)
+			const centerX = child.position.x;
+			const centerZ = child.position.z;
+			
+			// Update position
+			child.position.x = centerX + Math.cos(orbitAngle) * orbitRadius * 0.1;
+			child.position.y = originalY + Math.sin(time * 3 + angleOffset) * 0.05;
+			child.position.z = centerZ + Math.sin(orbitAngle) * orbitRadius * 0.1;
+			
+			// Pulse opacity
+			if (child.material) {
+				child.material.opacity = 0.5 + Math.sin(time * 2 + angleOffset) * 0.3;
+			}
+		}
+	});
 }
 
 /**
@@ -339,25 +387,15 @@ function updateBoard() {
 	// For empty rows, initialize board with default dimensions
 	if (!gameState.board[0] || !Array.isArray(gameState.board[0])) {
 		console.warn('First row of board is empty or not an array');
-		
-		// Create a fallback board with minimum dimensions
-		createFloatingIsland(
-			Constants.INITIAL_BOARD_WIDTH * Constants.CELL_SIZE,
-			Constants.INITIAL_BOARD_HEIGHT * Constants.CELL_SIZE
-		);
-		
 		return;
 	}
 	
-	// Create the main board as a floating island
-	const boardWidth = gameState.board[0].length * Constants.CELL_SIZE;
-	const boardHeight = gameState.board.length * Constants.CELL_SIZE;
-	
-	createFloatingIsland(boardWidth, boardHeight);
+	// In this game, there's no solid board - just floating cells
+	// The board gets built up as tetris pieces are added
 	
 	// Create cells
 	const cellSize = Constants.CELL_SIZE;
-	const cellHeight = Constants.CELL_SIZE * 0.1;
+	const cellHeight = Constants.CELL_SIZE * 0.3; // Thicker cells for visibility
 	const cellGeometry = new BoxGeometry(
 		cellSize * 0.95,
 		cellHeight,
@@ -380,37 +418,68 @@ function updateBoard() {
 				
 				nonEmptyCells++;
 				
-				const cellMaterial = materials.cell.clone();
-				const playerColor = cell.color || 0xCCCCCC;
-				cellMaterial.color = new Color(playerColor);
-				
-				// If this is a home zone cell, use a different material
-				if (cell.isHomeZone) {
-					cellMaterial.opacity = 0.7;
-					cellMaterial.transparent = true;
-				}
-				
-				const cellX = (x - (row.length - 1) / 2) * cellSize;
-				const cellZ = (y - (gameState.board.length - 1) / 2) * cellSize;
-				
-				const cellMesh = new Mesh(cellGeometry, cellMaterial);
-				cellMesh.position.set(cellX, 0, cellZ);
-				cellMesh.receiveShadow = true;
-				boardGroup.add(cellMesh);
-				
-				// Add potion if this cell has one
-				if (cell.potion) {
-					addPotionToCell(cell);
-				}
+				// Create a floating island cell for each active cell
+				createFloatingCell(cell, x, y, cellSize, cellGeometry);
 			});
 		});
 		
 		// Only log a warning if we find no active cells at all
 		if (nonEmptyCells === 0) {
 			console.log('Board initialized with all empty cells - waiting for game to start');
+		} else {
+			console.log(`Rendered ${nonEmptyCells} active cells`);
 		}
 	} catch (error) {
 		console.error('Error rendering board cells:', error);
+	}
+}
+
+/**
+ * Create a floating cell with island-like appearance
+ * @param {Object} cell - The cell data
+ * @param {number} x - X coordinate
+ * @param {number} y - Y coordinate
+ * @param {number} cellSize - Size of each cell 
+ * @param {Object} topGeometry - Geometry for the top of the cell
+ */
+function createFloatingCell(cell, x, y, cellSize, topGeometry) {
+	// Get the game state
+	const gameState = GameState.getGameState();
+	
+	// Calculate position
+	const cellX = (x - (gameState.board[0].length - 1) / 2) * cellSize;
+	const cellZ = (y - (gameState.board.length - 1) / 2) * cellSize;
+	
+	// Create the top flat part of the cell
+	const cellMaterial = materials.cell.clone();
+	const playerColor = cell.color || 0xCCCCCC;
+	cellMaterial.color = new Color(playerColor);
+	
+	// If this is a home zone cell, use a different material
+	if (cell.isHomeZone) {
+		cellMaterial.opacity = 0.7;
+		cellMaterial.transparent = true;
+	}
+	
+	const cellMesh = new Mesh(topGeometry, cellMaterial);
+	cellMesh.position.set(cellX, 0, cellZ);
+	cellMesh.receiveShadow = true;
+	cellMesh.castShadow = true;
+	boardGroup.add(cellMesh);
+	
+	// Add bottom part for a floating island effect
+	addCellBottom(cellX, cellZ, cellSize, playerColor);
+	
+	// Add potion if this cell has one
+	if (cell.potion) {
+		// Update the potion cell reference to include coordinates
+		const potionCell = { ...cell, x, y };
+		addPotionToCell(potionCell);
+	}
+	
+	// Add decorative elements with low probability
+	if (Math.random() > 0.8) {
+		addCellDecoration(cellX, cellZ, cellSize);
 	}
 }
 
@@ -651,9 +720,12 @@ function addGrassTuft(x, z, radius) {
 
 /**
  * Add a potion visual to a cell
- * @param {Object} cell - The cell data containing the potion
+ * @param {Object} cell - The cell data containing the potion and coordinates
  */
 function addPotionToCell(cell) {
+	// Get the game state
+	const gameState = GameState.getGameState();
+	
 	// Create a sphere for the potion
 	const potionGeometry = new SphereGeometry(Constants.CELL_SIZE * 0.3, 16, 16);
 	
@@ -697,6 +769,50 @@ function addPotionToCell(cell) {
 	
 	// Add to board group
 	boardGroup.add(potionMesh);
+	
+	// Add a glowing particle effect around the potion
+	addPotionParticles(cellX, cellZ, potionColor);
+}
+
+/**
+ * Add glowing particles around a potion
+ * @param {number} x - X position
+ * @param {number} z - Z position
+ * @param {number} color - Color of the potion
+ */
+function addPotionParticles(x, z, color) {
+	const particleCount = 8;
+	
+	for (let i = 0; i < particleCount; i++) {
+		const particleSize = Constants.CELL_SIZE * (0.05 + Math.random() * 0.05);
+		const particleGeometry = new SphereGeometry(particleSize, 4, 4);
+		
+		// Create a glowing material
+		const particleMaterial = new MeshBasicMaterial({
+			color: color,
+			transparent: true,
+			opacity: 0.7
+		});
+		
+		const particle = new Mesh(particleGeometry, particleMaterial);
+		
+		// Position in a circle around the potion
+		const angle = (i / particleCount) * Math.PI * 2;
+		const distance = Constants.CELL_SIZE * 0.4;
+		
+		particle.position.set(
+			x + Math.cos(angle) * distance,
+			Constants.CELL_SIZE * 0.5 + Math.sin(i * 0.5) * 0.2, // Slight height variation
+			z + Math.sin(angle) * distance
+		);
+		
+		// Store animation data
+		particle.userData.originalY = particle.position.y;
+		particle.userData.angleOffset = i * (Math.PI * 2 / particleCount);
+		particle.userData.radiusOffset = Math.random() * 0.2;
+		
+		boardGroup.add(particle);
+	}
 }
 
 /**
@@ -1053,6 +1169,212 @@ function addClouds() {
 		cloud.rotation.z = Math.random() * Math.PI * 2;
 		
 		cloudGroup.add(cloud);
+	}
+}
+
+/**
+ * Add a bottom part to a cell to create a floating island effect
+ * @param {number} x - X position
+ * @param {number} z - Z position
+ * @param {number} cellSize - Size of the cell
+ * @param {number} color - Color of the cell (player color)
+ */
+function addCellBottom(x, z, cellSize, color) {
+	// Create the bottom part of the cell
+	const bottomDepth = cellSize * 1.5; // Deeper than the top
+	
+	// Create a slightly smaller bottom to give a ledge effect
+	const bottomWidth = cellSize * 0.85;
+	const bottomGeometry = new BoxGeometry(
+		bottomWidth,
+		bottomDepth,
+		bottomWidth
+	);
+	
+	// Create a slightly darker version of the cell color for the bottom
+	const bottomColor = new Color(color).multiplyScalar(0.8);
+	
+	const bottomMaterial = new MeshStandardMaterial({
+		color: bottomColor,
+		roughness: 0.9,
+		metalness: 0.1
+	});
+	
+	const bottomMesh = new Mesh(bottomGeometry, bottomMaterial);
+	bottomMesh.position.set(x, -bottomDepth / 2 - 0.15, z);
+	bottomMesh.receiveShadow = true;
+	bottomMesh.castShadow = true;
+	boardGroup.add(bottomMesh);
+	
+	// Add a small hanging "stalactite" with low probability
+	if (Math.random() > 0.7) {
+		const stalactiteHeight = Math.random() * cellSize + cellSize * 0.5;
+		const stalactiteRadius = Math.random() * (cellSize * 0.15) + cellSize * 0.05;
+		
+		const stalactiteGeometry = new CylinderGeometry(
+			stalactiteRadius * 0.2, // Narrow at the bottom
+			stalactiteRadius,       // Wider at the top
+			stalactiteHeight,
+			6
+		);
+		
+		const stalactiteMaterial = new MeshStandardMaterial({
+			color: bottomColor.clone().multiplyScalar(0.7), // Even darker
+			roughness: 0.9,
+			metalness: 0.05
+		});
+		
+		const stalactiteMesh = new Mesh(stalactiteGeometry, stalactiteMaterial);
+		stalactiteMesh.position.set(
+			x + (Math.random() - 0.5) * cellSize * 0.4,
+			-stalactiteHeight / 2 - bottomDepth - 0.15,
+			z + (Math.random() - 0.5) * cellSize * 0.4
+		);
+		
+		stalactiteMesh.receiveShadow = true;
+		stalactiteMesh.castShadow = true;
+		boardGroup.add(stalactiteMesh);
+	}
+}
+
+/**
+ * Add decorative elements to a cell
+ * @param {number} x - X position
+ * @param {number} z - Z position
+ * @param {number} cellSize - Size of the cell
+ */
+function addCellDecoration(x, z, cellSize) {
+	// Choose decoration type: 1=stone, 2=grass, 3=mushroom
+	const decorationType = Math.floor(Math.random() * 3) + 1;
+	
+	switch (decorationType) {
+		case 1: // Stone
+			addStoneDecoration(x, z, cellSize);
+			break;
+		case 2: // Grass tuft
+			addGrassTuft(x, z, cellSize * 0.4);
+			break;
+		case 3: // Mushroom
+			addMushroomDecoration(x, z, cellSize);
+			break;
+	}
+}
+
+/**
+ * Add a small stone decoration to a cell
+ * @param {number} x - X position
+ * @param {number} z - Z position
+ * @param {number} cellSize - Size of the cell
+ */
+function addStoneDecoration(x, z, cellSize) {
+	const stoneRadius = Math.random() * (cellSize * 0.15) + cellSize * 0.05;
+	const stoneGeometry = new SphereGeometry(stoneRadius, 6, 4);
+	
+	const stoneMaterial = new MeshStandardMaterial({
+		color: new Color(0xAAAAAA).offsetHSL(0, 0, (Math.random() - 0.5) * 0.2),
+		roughness: 0.8,
+		metalness: 0.2
+	});
+	
+	const stoneMesh = new Mesh(stoneGeometry, stoneMaterial);
+	stoneMesh.position.set(
+		x + (Math.random() - 0.5) * cellSize * 0.6,
+		stoneRadius * 0.5,
+		z + (Math.random() - 0.5) * cellSize * 0.6
+	);
+	
+	// Deform the stone slightly
+	stoneMesh.scale.set(
+		1 + Math.random() * 0.4,
+		0.5 + Math.random() * 0.3,
+		1 + Math.random() * 0.4
+	);
+	
+	stoneMesh.rotation.y = Math.random() * Math.PI;
+	stoneMesh.receiveShadow = true;
+	stoneMesh.castShadow = true;
+	boardGroup.add(stoneMesh);
+}
+
+/**
+ * Add a mushroom decoration to a cell
+ * @param {number} x - X position
+ * @param {number} z - Z position
+ * @param {number} cellSize - Size of the cell
+ */
+function addMushroomDecoration(x, z, cellSize) {
+	// Create stem
+	const stemHeight = cellSize * (0.2 + Math.random() * 0.15);
+	const stemRadius = cellSize * (0.02 + Math.random() * 0.02);
+	const stemGeometry = new CylinderGeometry(stemRadius, stemRadius, stemHeight, 8);
+	const stemMaterial = new MeshStandardMaterial({
+		color: 0xECEFEF,
+		roughness: 0.7,
+		metalness: 0.1
+	});
+	
+	const stemMesh = new Mesh(stemGeometry, stemMaterial);
+	
+	// Position with some randomness
+	const mushX = x + (Math.random() - 0.5) * cellSize * 0.6;
+	const mushZ = z + (Math.random() - 0.5) * cellSize * 0.6;
+	
+	stemMesh.position.set(mushX, stemHeight / 2, mushZ);
+	stemMesh.receiveShadow = true;
+	stemMesh.castShadow = true;
+	boardGroup.add(stemMesh);
+	
+	// Create cap
+	const capRadius = stemRadius * (2.5 + Math.random() * 1.5);
+	const capHeight = stemHeight * (0.3 + Math.random() * 0.2);
+	const capGeometry = new SphereGeometry(capRadius, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2);
+	
+	// Choose from a few mushroom cap colors
+	const capColors = [0xE53935, 0x4CAF50, 0xFFC107, 0x42A5F5];
+	const capColor = capColors[Math.floor(Math.random() * capColors.length)];
+	
+	const capMaterial = new MeshStandardMaterial({
+		color: capColor,
+		roughness: 0.8,
+		metalness: 0.1
+	});
+	
+	const capMesh = new Mesh(capGeometry, capMaterial);
+	capMesh.position.set(mushX, stemHeight, mushZ);
+	capMesh.rotation.x = Math.PI; // Flip to get the dome shape facing up
+	capMesh.receiveShadow = true;
+	capMesh.castShadow = true;
+	boardGroup.add(capMesh);
+	
+	// Add small white dots on red caps
+	if (capColor === 0xE53935 && Math.random() > 0.5) {
+		const dotCount = Math.floor(Math.random() * 5) + 3;
+		
+		for (let i = 0; i < dotCount; i++) {
+			const dotSize = capRadius * (0.1 + Math.random() * 0.1);
+			const dotGeometry = new SphereGeometry(dotSize, 4, 4);
+			const dotMaterial = new MeshStandardMaterial({
+				color: 0xFFFFFF,
+				roughness: 0.7,
+				metalness: 0.1
+			});
+			
+			const dotMesh = new Mesh(dotGeometry, dotMaterial);
+			
+			// Position on the cap surface
+			const angle = Math.random() * Math.PI * 2;
+			const distance = Math.random() * capRadius * 0.6;
+			
+			dotMesh.position.set(
+				mushX + Math.cos(angle) * distance,
+				stemHeight + capHeight * 0.5,
+				mushZ + Math.sin(angle) * distance
+			);
+			
+			dotMesh.receiveShadow = true;
+			dotMesh.castShadow = true;
+			boardGroup.add(dotMesh);
+		}
 	}
 }
 
