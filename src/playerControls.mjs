@@ -20,6 +20,22 @@ export function getPlayer(playerId) {
 }
 
 /**
+ * Check if any players are paused and if their pause has expired
+ * @returns {boolean} True if any players are paused, false otherwise
+ */
+export function checkPausedPlayers() {
+    // Check for players whose pause has expired, and if so, resume them
+    const pausedPlayers = gameState?.players?.filter(player => player.isPaused);
+    if (pausedPlayers.length > 0) {
+        pausedPlayers.forEach(player => {
+            player.isPaused = false;
+        });
+    }
+    return gameState?.players?.filter(player => player.isPaused).length > 0;
+}
+
+
+/**
  * Get the remaining cooldown time for a player's pause
  * @param {string} playerId - The player's unique ID
  * @returns {number} The remaining cooldown time in milliseconds
