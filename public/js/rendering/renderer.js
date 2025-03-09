@@ -549,73 +549,55 @@ function addLights() {
  * Load textures and create materials
  */
 function loadTextures() {
-	const textureLoader = new TextureLoader();
-	
-	// Create materials with fallback colors in case textures are missing
-	materials.board = new MeshStandardMaterial({
-		color: 0x333333,
-		roughness: 0.8,
-		metalness: 0.2
-	});
-	
-	materials.cell = new MeshStandardMaterial({
-		color: 0x555555,
-		roughness: 0.5,
-		metalness: 0.1
-	});
-	
-	materials.homeZone = new MeshStandardMaterial({
-		color: 0x444444,
-		transparent: true,
-		opacity: 0.8
-	});
-	
-	// Chess piece materials
-	materials.chessPieceWhite = new MeshStandardMaterial({
-		color: 0xFFFFFF,
-		roughness: 0.5,
-		metalness: 0.1
-	});
-	
-	materials.chessPieceBlack = new MeshStandardMaterial({
-		color: 0x333333,
-		roughness: 0.5,
-		metalness: 0.1
-	});
-	
-	// Create tetromino materials for each type
-	// Use the keys from TETROMINO_COLORS instead of TETROMINO_TYPES
-	Object.keys(Constants.TETROMINO_COLORS).forEach(type => {
-		const color = Constants.TETROMINO_COLORS[type];
-		materials[`tetromino_${type}`] = new MeshStandardMaterial({
-			color: new Color(color),
-			roughness: 0.7,
-			metalness: 0.3
-		});
-	});
-	
-	// Try to load textures in the background, but don't rely on them
 	try {
-		// Load board textures
-		textureLoader.load('/assets/textures/board.png', 
-			texture => { materials.board.map = texture; materials.board.needsUpdate = true; },
-			undefined,
-			error => console.warn('Failed to load board texture:', error)
-		);
+		const textureLoader = new THREE.TextureLoader();
+		textureLoader.setCrossOrigin('anonymous');
 		
-		textureLoader.load('/assets/textures/cell.png', 
-			texture => { materials.cell.map = texture; materials.cell.needsUpdate = true; },
-			undefined,
-			error => console.warn('Failed to load cell texture:', error)
-		);
+		// Create a default texture (white) for fallbacks
+		const defaultTexture = new THREE.MeshBasicMaterial({ color: 0xFFFFFF });
 		
-		textureLoader.load('/assets/textures/home_zone.png', 
-			texture => { materials.homeZone.map = texture; materials.homeZone.needsUpdate = true; },
-			undefined,
-			error => console.warn('Failed to load home zone texture:', error)
-		);
+		// Create a function to load textures with error handling
+		const loadTextureWithFallback = (url, fallbackColor = 0xCCCCCC) => {
+			return new Promise((resolve) => {
+				textureLoader.load(
+					url,
+					(texture) => {
+						texture.wrapS = THREE.RepeatWrapping;
+						texture.wrapT = THREE.RepeatWrapping;
+						resolve(texture);
+					},
+					undefined, // Progress callback
+					(error) => {
+						console.warn(`Failed to load texture: ${url}`, error);
+						// Create a colored material as fallback
+						const fallbackMaterial = new THREE.MeshBasicMaterial({ color: fallbackColor });
+						resolve(fallbackMaterial);
+					}
+				);
+			});
+		};
+		
+		// Load all textures with proper error handling
+		Promise.all([
+			loadTextureWithFallback('textures/board.png', 0x8B4513), // Brown fallback for board
+			loadTextureWithFallback('textures/cell.png', 0xAAAAAA),  // Grey fallback for cell
+			loadTextureWithFallback('textures/home_zone.png', 0x3366CC) // Blue fallback for home zone
+		]).then(([boardTexture, cellTexture, homeZoneTexture]) => {
+			// Store the textures or fallback materials
+			textures.board = boardTexture;
+			textures.cell = cellTexture;
+			textures.homeZone = homeZoneTexture;
+			
+			// Signal that textures are loaded
+			texturesLoaded = true;
+		});
 	} catch (error) {
-		console.warn('Error loading textures:', error);
+		console.error('Error loading textures:', error);
+		// Set defaults for all textures in case of error
+		textures.board = new THREE.MeshBasicMaterial({ color: 0x8B4513 });
+		textures.cell = new THREE.MeshBasicMaterial({ color: 0xAAAAAA });
+		textures.homeZone = new THREE.MeshBasicMaterial({ color: 0x3366CC });
+		texturesLoaded = true;
 	}
 }
 
@@ -1467,7 +1449,8 @@ function updateGhostPiece() {
  */
 function updateUI() {
 	const gameState = GameState.getGameState();
-	const playerId = SessionManager.getSession().playerId;
+	const sessionData = SessionManager.getSessionData();
+	const playerId = sessionData.playerId;
 	
 	// Update the info panel
 	const infoPanel = document.getElementById('info-panel');
@@ -1879,40 +1862,32 @@ function addChessPiece(piece, playerId, x, z) {
 		const gameState = GameState.getGameState();
 		if (!gameState || !gameState.players) return null;
 		
-		// Get player data
+		// Ensure we have a valid playerId
+		if (!playerId) {
+			console.warn(`No player ID provided for chess piece at ${x},${z}`);
+			playerId = 'unknown'; // Use a default value for rendering
+		}
+		
+		// Get player data - handle case where player might not exist in game state
 		const player = gameState.players[playerId];
 		if (!player) {
-			console.warn(`Player ${playerId} not found for chess piece`);
-			return null;
+			console.warn(`Player ${playerId} not found for chess piece. Using default color.`);
+			// Continue with a default color
 		}
 		
 		// Create a group for the piece
-		const pieceGroup = new Group();
+		const pieceGroup = new THREE.Group();
 		pieceGroup.name = `piece_${piece.type}_${playerId}_${x}_${z}`;
 		
 		// Calculate position
-		const cellSize = 1; // Default cell size
+		const cellSize = gameState.cellSize || 1; // Use game state cell size or default
 		const yOffset = 0.25; // Height above the cell
-		
-		// Create a normalized position from the board coordinates
-		// This centers the board so (0,0) is at the center
-		const boardWidth = gameState.board[0].length;
-		const boardHeight = gameState.board.length;
-		const centerX = (boardWidth - 1) / 2;
-		const centerZ = (boardHeight - 1) / 2;
-		
-		const normalizedX = (x - centerX) * cellSize;
-		const normalizedZ = (z - centerZ) * cellSize;
 		
 		// Get the floating height for this cell position
 		const cellY = getFloatingHeight(x, z);
 		
-		// Position the piece
-		pieceGroup.position.set(
-			normalizedX,
-			cellY + yOffset, // Position above the cell
-			normalizedZ
-		);
+		// Position the piece at the cell location
+		pieceGroup.position.set(x, cellY + yOffset, z);
 		
 		// Create a material based on player color
 		const playerColor = new Color(player.color || 0xffffff);
@@ -2173,22 +2148,34 @@ function createPlayerNameLabel(playerId, playerName, x, y, z) {
  * @returns {number} The calculated height for the position
  */
 function getFloatingHeight(x, z) {
-	// Use a simple sine wave pattern to create floating effect
-	// This makes cells have different heights based on position
-	const baseHeight = 0;
-	const floatAmplitude = 0.2; // How much height varies
-	
-	// Convert board positions to world space for better wave pattern
-	const worldX = x * 1.0; // Multiply by cell size
-	const worldZ = z * 1.0;
-	
-	// Create a natural-looking height pattern using sine waves
-	// Different frequencies create a more organic look
-	const height = baseHeight + 
-		floatAmplitude * 0.7 * Math.sin(worldX * 0.5 + worldZ * 0.3) + 
-		floatAmplitude * 0.3 * Math.sin(worldX * 0.2 - worldZ * 0.7);
-	
-	return height;
+	try {
+		// Validate inputs to prevent NaN values
+		if (x === undefined || z === undefined || isNaN(x) || isNaN(z)) {
+			console.warn(`Invalid coordinates for getFloatingHeight: x=${x}, z=${z}`);
+			return 0; // Return default height for invalid inputs
+		}
+		
+		// Use a simple sine wave pattern to create floating effect
+		// This makes cells have different heights based on position
+		const baseHeight = 0;
+		const floatAmplitude = 0.2; // How much height varies
+		
+		// Convert board positions to world space for better wave pattern
+		const worldX = x * 1.0; // Multiply by cell size
+		const worldZ = z * 1.0;
+		
+		// Create a natural-looking height pattern using sine waves
+		// Different frequencies create a more organic look
+		const height = baseHeight + 
+			floatAmplitude * 0.7 * Math.sin(worldX * 0.5 + worldZ * 0.3) + 
+			floatAmplitude * 0.3 * Math.sin(worldX * 0.2 - worldZ * 0.7);
+		
+		// Make sure we never return NaN
+		return isNaN(height) ? 0 : height;
+	} catch (error) {
+		console.error('Error calculating floating height:', error);
+		return 0; // Return default height on error
+	}
 }
 
 /**

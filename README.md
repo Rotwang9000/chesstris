@@ -371,3 +371,54 @@ Chess-Tris combines real-time gameplay with persistent data storage:
 - **MongoDB** is used for persistent storage
 - **Socket.IO** handles real-time communication
 - **Express** powers the web server
+
+## Function Map and Test Coverage
+
+The following is a map of key functions in the codebase and whether they have proper test coverage:
+
+### Server-Side Functions (GameManager)
+
+| Function | Description | Test Coverage |
+|----------|-------------|---------------|
+| `createGame()` | Creates a new game instance | ✅ Tested |
+| `addPlayer()` | Adds a player to a game | ✅ Tested |
+| `moveChessPiece()` | Handles chess piece movement | ✅ Tested |
+| `placeTetrisPiece()` | Places tetris pieces on the board | ✅ Tested |
+| `getGameState()` | Returns the current state of a game | ✅ Tested |
+| `_expandBoard()` | Dynamically expands the game board | ✅ Tested |
+| `_findFreeHomeZoneSpot()` | Finds a valid position for player home zones | ✅ Tested |
+| `_createHomeZoneForPlayer()` | Creates a player's home zone with chess pieces | ✅ Tested |
+
+### Client-Side Functions (Renderer)
+
+| Function | Description | Test Coverage |
+|----------|-------------|---------------|
+| `init()` | Initializes the rendering engine | ❌ Not tested |
+| `updateBoard()` | Updates the visual board based on game state | ❌ Not tested |
+| `createFloatingCell()` | Creates the 3D representation of a cell | ❌ Not tested |
+| `updateChessPieces()` | Updates chess piece positions | ❌ Not tested |
+| `updateFallingTetromino()` | Animates the falling tetromino piece | ❌ Not tested |
+| `addPotionToCell()` | Adds a potion effect to a cell | ❌ Not tested |
+| `animatePotionsAndParticles()` | Animates potion effects | ❌ Not tested |
+| `createPlayerNameLabel()` | Creates floating player name labels | ❌ Not tested |
+
+### Session and Network Management
+
+| Function | Description | Test Coverage |
+|----------|-------------|---------------|
+| `SessionManager.initSession()` | Initializes or loads player session | ❌ Not tested |
+| `SessionManager.getSessionData()` | Returns current session data | ❌ Not tested |
+| `Network.initSocket()` | Initializes WebSocket connection | ✅ Mocked for tests |
+| `Network.emit()` | Sends data to the server | ✅ Mocked for tests |
+
+### Important Implementation Notes
+
+1. **Board Coordinates**: The game board uses a coordinate system where (0,0) is the top-left corner. X increases to the right, and Y increases downward.
+
+2. **Home Zone Placement**: Home zones are placed with a minimum distance of 8-12 cells between them to ensure fair gameplay. The board expands dynamically as needed when new players join.
+
+3. **Player Limits**: Each game supports up to 2048 players, though practical limits are much lower due to UI constraints.
+
+4. **Tetris-First Gameplay**: Players must place tetris pieces to build the board before they can move chess pieces. This ensures a fair start where players need to expand from their home zone.
+
+5. **Error Handling**: All rendering functions include error handling to prevent NaN values and ensure the game continues running even if individual rendering elements fail.
