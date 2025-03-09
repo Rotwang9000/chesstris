@@ -5,7 +5,34 @@
  */
 
 import * as THREE from '../utils/three.js';
-import { OrbitControls } from '../utils/three.js';
+import { 
+	Scene, 
+	PerspectiveCamera, 
+	WebGLRenderer, 
+	Group, 
+	Object3D,
+	Mesh,
+	Vector3, 
+	Color, 
+	AmbientLight, 
+	DirectionalLight,
+	PointLight,
+	SpotLight,
+	SphereGeometry,
+	BoxGeometry,
+	PlaneGeometry,
+	CylinderGeometry,
+	ConeGeometry,
+	MeshBasicMaterial,
+	MeshStandardMaterial,
+	MeshLambertMaterial,
+	MeshPhongMaterial,
+	TextureLoader,
+	Raycaster,
+	DoubleSide,
+	OrbitControls
+} from '../utils/three.js';
+
 import * as GameState from '../core/gameState.js';
 import * as Constants from '../core/constants.js';
 import * as TetrominoManager from '../core/tetrominoManager.js';
@@ -16,8 +43,8 @@ let scene, camera, renderer, controls;
 let boardGroup, piecesGroup, tetrominoGroup, uiGroup;
 
 // Textures and materials
-const materials = {};
 const textures = {};
+const materials = {};
 
 // Animation variables
 let animationFrameId = null;
@@ -31,24 +58,24 @@ let lastRenderTime = 0;
  */
 export function init(container, options = {}) {
 	// Create the scene
-	scene = new THREE.Scene();
-	scene.background = new THREE.Color(0x121212);
+	scene = new Scene();
+	scene.background = new Color(0x121212);
 	
 	// Create the camera
 	const width = container.clientWidth;
 	const height = container.clientHeight;
 	const aspect = width / height;
-	camera = new THREE.PerspectiveCamera(60, aspect, 0.1, 1000);
+	camera = new PerspectiveCamera(60, aspect, 0.1, 1000);
 	camera.position.set(0, 10, 20);
 	
 	// Create the renderer
-	renderer = new THREE.WebGLRenderer({ antialias: true });
+	renderer = new WebGLRenderer({ antialias: true });
 	renderer.setSize(width, height);
 	renderer.setPixelRatio(window.devicePixelRatio);
 	renderer.shadowMap.enabled = true;
 	container.appendChild(renderer.domElement);
 	
-	// Create controls
+	// Add orbit controls
 	controls = new OrbitControls(camera, renderer.domElement);
 	controls.enableDamping = true;
 	controls.dampingFactor = 0.05;
@@ -58,10 +85,10 @@ export function init(container, options = {}) {
 	controls.maxPolarAngle = Math.PI / 2;
 	
 	// Create groups
-	boardGroup = new THREE.Group();
-	piecesGroup = new THREE.Group();
-	tetrominoGroup = new THREE.Group();
-	uiGroup = new THREE.Group();
+	boardGroup = new Group();
+	piecesGroup = new Group();
+	tetrominoGroup = new Group();
+	uiGroup = new Group();
 	
 	scene.add(boardGroup);
 	scene.add(piecesGroup);
@@ -88,11 +115,11 @@ export function init(container, options = {}) {
  */
 function addLights() {
 	// Ambient light
-	const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+	const ambientLight = new AmbientLight(0xffffff, 0.5);
 	scene.add(ambientLight);
 	
 	// Directional light (sun)
-	const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+	const directionalLight = new DirectionalLight(0xffffff, 0.8);
 	directionalLight.position.set(10, 20, 10);
 	directionalLight.castShadow = true;
 	directionalLight.shadow.mapSize.width = 2048;
@@ -105,13 +132,14 @@ function addLights() {
 	directionalLight.shadow.camera.bottom = -20;
 	scene.add(directionalLight);
 	
-	// Point lights for atmosphere
-	const pointLight1 = new THREE.PointLight(0x3498db, 1, 20);
-	pointLight1.position.set(-10, 10, 5);
+	// Blue point light
+	const pointLight1 = new PointLight(0x3498db, 1, 20);
+	pointLight1.position.set(-5, 10, 5);
 	scene.add(pointLight1);
 	
-	const pointLight2 = new THREE.PointLight(0xe74c3c, 1, 20);
-	pointLight2.position.set(10, 10, -5);
+	// Red point light
+	const pointLight2 = new PointLight(0xe74c3c, 1, 20);
+	pointLight2.position.set(5, 10, -5);
 	scene.add(pointLight2);
 }
 
@@ -119,7 +147,7 @@ function addLights() {
  * Load textures
  */
 function loadTextures() {
-	const textureLoader = new THREE.TextureLoader();
+	const textureLoader = new TextureLoader();
 	
 	// Load board textures
 	textures.board = textureLoader.load('/assets/textures/board.png');
@@ -135,31 +163,29 @@ function loadTextures() {
 	textures.king = textureLoader.load('/assets/textures/king.png');
 	
 	// Create materials
-	materials.board = new THREE.MeshStandardMaterial({
+	materials.board = new MeshStandardMaterial({
 		map: textures.board,
 		roughness: 0.8,
 		metalness: 0.2
 	});
 	
-	materials.cell = new THREE.MeshStandardMaterial({
+	materials.cell = new MeshStandardMaterial({
 		map: textures.cell,
-		transparent: true,
 		roughness: 0.5,
-		metalness: 0.3
+		metalness: 0.1
 	});
 	
-	materials.homeZone = new THREE.MeshStandardMaterial({
+	materials.homeZone = new MeshStandardMaterial({
 		map: textures.homeZone,
 		transparent: true,
-		roughness: 0.3,
-		metalness: 0.5
+		opacity: 0.8
 	});
 	
-	// Create tetromino materials
-	Object.keys(Constants.TETROMINOES).forEach(type => {
-		const color = Constants.TETROMINOES[type].color;
-		materials[`tetromino_${type}`] = new THREE.MeshStandardMaterial({
-			color: new THREE.Color(color),
+	// Create tetromino materials for each type
+	Constants.TETROMINO_TYPES.forEach(type => {
+		const color = Constants.TETROMINO_COLORS[type];
+		materials[`tetromino_${type}`] = new MeshStandardMaterial({
+			color: new Color(color),
 			roughness: 0.7,
 			metalness: 0.3
 		});
@@ -224,124 +250,120 @@ function updateScene(deltaTime) {
 }
 
 /**
- * Update the game board
+ * Update the board visualization
  */
 function updateBoard() {
-	// Clear the board group
+	// Clear existing board
 	while (boardGroup.children.length > 0) {
 		boardGroup.remove(boardGroup.children[0]);
 	}
 	
 	const gameState = GameState.getGameState();
+	if (!gameState || !gameState.board) return;
 	
-	// Create the board base
-	const boardGeometry = new THREE.BoxGeometry(
-		Constants.INITIAL_BOARD_WIDTH * Constants.CELL_SIZE,
-		1,
-		Constants.INITIAL_BOARD_HEIGHT * Constants.CELL_SIZE
+	// Create the main board
+	const boardWidth = gameState.board[0].length * Constants.CELL_SIZE;
+	const boardHeight = gameState.board.length * Constants.CELL_SIZE;
+	const boardDepth = Constants.CELL_SIZE * 0.5;
+	
+	const boardGeometry = new BoxGeometry(
+		boardWidth,
+		boardDepth,
+		boardHeight
 	);
-	const boardMesh = new THREE.Mesh(boardGeometry, materials.board);
-	boardMesh.position.y = -0.5;
+	
+	const boardMesh = new Mesh(boardGeometry, materials.board);
+	boardMesh.position.set(0, -boardDepth / 2, 0);
 	boardMesh.receiveShadow = true;
 	boardGroup.add(boardMesh);
 	
 	// Create cells
-	Object.values(gameState.board).forEach(cell => {
-		// Create cell mesh
-		const cellGeometry = new THREE.BoxGeometry(
-			Constants.CELL_SIZE * 0.95,
-			Constants.CELL_HEIGHT,
-			Constants.CELL_SIZE * 0.95
-		);
-		
-		// Determine cell material
-		let cellMaterial;
-		if (cell.homeZone) {
-			// Home zone cell
-			const playerColor = gameState.players[cell.homeZone.playerId]?.color || 0xffffff;
-			cellMaterial = materials.homeZone.clone();
-			cellMaterial.color = new THREE.Color(playerColor);
-			cellMaterial.opacity = 0.7;
-		} else if (cell.block) {
-			// Tetromino block
-			cellMaterial = materials[`tetromino_${cell.block.type}`] || materials.cell;
-		} else {
-			// Empty cell
-			cellMaterial = materials.cell.clone();
-			cellMaterial.opacity = 0.3;
-		}
-		
-		const cellMesh = new THREE.Mesh(cellGeometry, cellMaterial);
-		cellMesh.position.set(
-			cell.x * Constants.CELL_SIZE - (Constants.INITIAL_BOARD_WIDTH * Constants.CELL_SIZE) / 2 + Constants.CELL_SIZE / 2,
-			Constants.CELL_HEIGHT / 2,
-			cell.y * Constants.CELL_SIZE - (Constants.INITIAL_BOARD_HEIGHT * Constants.CELL_SIZE) / 2 + Constants.CELL_SIZE / 2
-		);
-		cellMesh.castShadow = true;
-		cellMesh.receiveShadow = true;
-		
-		// Add cell to board group
-		boardGroup.add(cellMesh);
-		
-		// Add potion if present
-		if (cell.potion) {
-			addPotionToCell(cell);
-		}
+	const cellSize = Constants.CELL_SIZE;
+	const cellHeight = Constants.CELL_SIZE * 0.1;
+	const cellGeometry = new BoxGeometry(
+		cellSize * 0.95,
+		cellHeight,
+		cellSize * 0.95
+	);
+	
+	// Add all cells to the board
+	gameState.board.forEach((row, y) => {
+		row.forEach((cell, x) => {
+			if (!cell) return; // Skip empty cells
+			
+			const cellMaterial = materials.cell.clone();
+			const playerColor = cell.color || 0xCCCCCC;
+			cellMaterial.color = new Color(playerColor);
+			
+			// If this is a home zone cell, use a different material
+			if (cell.isHomeZone) {
+				cellMaterial.opacity = 0.7;
+				cellMaterial.transparent = true;
+			}
+			
+			const cellX = (x - (row.length - 1) / 2) * cellSize;
+			const cellZ = (y - (gameState.board.length - 1) / 2) * cellSize;
+			
+			const cellMesh = new Mesh(cellGeometry, cellMaterial);
+			cellMesh.position.set(cellX, 0, cellZ);
+			cellMesh.receiveShadow = true;
+			boardGroup.add(cellMesh);
+			
+			// Add potion if this cell has one
+			if (cell.potion) {
+				addPotionToCell(cell);
+			}
+		});
 	});
 }
 
 /**
- * Add a potion to a cell
- * @param {Object} cell - The cell object
+ * Add a potion visual to a cell
+ * @param {Object} cell - The cell data containing the potion
  */
 function addPotionToCell(cell) {
-	const potionGeometry = new THREE.SphereGeometry(Constants.CELL_SIZE * 0.3, 16, 16);
+	// Create a sphere for the potion
+	const potionGeometry = new SphereGeometry(Constants.CELL_SIZE * 0.3, 16, 16);
 	
 	// Determine potion color based on type
 	let potionColor;
 	switch (cell.potion.type) {
-		case Constants.POTION_TYPES.SPEED:
-			potionColor = 0x3498db; // Blue
+		case 'speed':
+			potionColor = 0x3498db; // Blue for speed
 			break;
-		case Constants.POTION_TYPES.JUMP:
-			potionColor = 0x2ecc71; // Green
+		case 'power':
+			potionColor = 0xe74c3c; // Red for power
 			break;
-		case Constants.POTION_TYPES.SHIELD:
-			potionColor = 0xf1c40f; // Yellow
-			break;
-		case Constants.POTION_TYPES.GROW:
-			potionColor = 0xe74c3c; // Red
+		case 'freeze':
+			potionColor = 0x2ecc71; // Green for freeze
 			break;
 		default:
-			potionColor = 0x9b59b6; // Purple
+			potionColor = 0xf1c40f; // Yellow for unknown
 	}
 	
-	const potionMaterial = new THREE.MeshStandardMaterial({
+	// Create emissive material for the potion to make it glow
+	const potionMaterial = new MeshStandardMaterial({
 		color: potionColor,
-		roughness: 0.2,
-		metalness: 0.8,
+		emissive: potionColor,
+		emissiveIntensity: 0.5,
 		transparent: true,
 		opacity: 0.8
 	});
 	
-	const potionMesh = new THREE.Mesh(potionGeometry, potionMaterial);
-	potionMesh.position.set(
-		cell.x * Constants.CELL_SIZE - (Constants.INITIAL_BOARD_WIDTH * Constants.CELL_SIZE) / 2 + Constants.CELL_SIZE / 2,
-		Constants.CELL_HEIGHT + Constants.CELL_SIZE * 0.3,
-		cell.y * Constants.CELL_SIZE - (Constants.INITIAL_BOARD_HEIGHT * Constants.CELL_SIZE) / 2 + Constants.CELL_SIZE / 2
-	);
+	const potionMesh = new Mesh(potionGeometry, potionMaterial);
+	
+	// Position the potion above the cell and make it float
+	const cellX = (cell.x - (gameState.board[0].length - 1) / 2) * Constants.CELL_SIZE;
+	const cellZ = (cell.y - (gameState.board.length - 1) / 2) * Constants.CELL_SIZE;
+	
+	potionMesh.position.set(cellX, Constants.CELL_SIZE * 0.5, cellZ);
 	potionMesh.castShadow = true;
 	
-	// Add animation
-	potionMesh.userData.animation = {
-		hover: {
-			speed: 0.001,
-			height: 0.2,
-			rotation: 0.01,
-			time: Math.random() * Math.PI * 2
-		}
-	};
+	// Store initial position for animation
+	potionMesh.userData.originalY = potionMesh.position.y;
+	potionMesh.userData.potionType = cell.potion.type;
 	
+	// Add to board group
 	boardGroup.add(potionMesh);
 }
 
