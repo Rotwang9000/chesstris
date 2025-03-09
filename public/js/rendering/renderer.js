@@ -164,6 +164,12 @@ function initializeGameWorld(playerId, username) {
 		const gameState = GameState.getGameState();
 		if (!gameState) return;
 		
+		// =====================================================================
+		// NOTE: The code below is for development/testing visualization only.
+		// In production, the actual game state should be managed server-side,
+		// and the client should only be responsible for rendering it.
+		// =====================================================================
+		
 		// Reset the game state to empty
 		gameState.board = [];
 		gameState.players = {};
@@ -216,6 +222,9 @@ function initializeGameWorld(playerId, username) {
 		}
 		
 		// Add chess pieces in standard chess board arrangement
+		// This is only for visualization - in production, piece positions
+		// should be determined by the server based on game rules
+		
 		// Back row (major pieces)
 		const backRowPieces = ['rook', 'knight', 'bishop', 'queen', 'king', 'bishop', 'knight', 'rook'];
 		// Front row (pawns)
@@ -1084,7 +1093,7 @@ function addIslandDecorations(width, height) {
 }
 
 /**
- * Add a small tuft of grass
+ * Add grass tufts as decoration
  * @param {number} x - X position
  * @param {number} z - Z position
  * @param {number} radius - Approximate radius of the tuft
@@ -1117,21 +1126,16 @@ function addGrassTuft(x, z, radius) {
 		// Position with some randomness
 		const offsetX = (Math.random() - 0.5) * radius * 1.5;
 		const offsetZ = (Math.random() - 0.5) * radius * 1.5;
+		blade.position.set(x + offsetX, bladeHeight / 2, z + offsetZ);
 		
-		blade.position.set(
-			x + offsetX,
-			bladeHeight / 2,
-			z + offsetZ
-		);
+		// Random rotation
+		blade.rotation.y = Math.random() * Math.PI;
 		
-		// Rotate to create a tuft effect
-		const rotationY = Math.atan2(offsetZ, offsetX);
-		blade.rotation.set(
-			(Math.random() - 0.5) * 0.3,
-			rotationY,
-			(Math.random() - 0.5) * 0.3
-		);
+		// Random lean
+		blade.rotation.x = (Math.random() - 0.5) * 0.3;
+		blade.rotation.z = (Math.random() - 0.5) * 0.3;
 		
+		blade.castShadow = true;
 		boardGroup.add(blade);
 	}
 }
@@ -1639,8 +1643,8 @@ function addCellDecoration(x, z, cellSize) {
 			// Stone decorations
 			addStoneDecoration(normalizedX, normalizedZ, cellY, cellSize);
 		} else if (decorationType < 0.7) {
-			// Grass tufts
-			addGrassTuft(normalizedX, normalizedZ, cellY, cellSize);
+			// Grass tufts - using the existing function
+			addGrassTuft(normalizedX, normalizedZ, cellSize * 0.4);
 		} else {
 			// Mushroom decorations
 			addMushroomDecoration(normalizedX, normalizedZ, cellY, cellSize);
@@ -1697,57 +1701,6 @@ function addStoneDecoration(x, z, y, cellSize) {
 	}
 	
 	boardGroup.add(stoneGroup);
-}
-
-/**
- * Add grass tufts to a cell
- * @param {number} x - Normalized X position
- * @param {number} z - Normalized Z position
- * @param {number} y - Y position (height) 
- * @param {number} cellSize - Size of the cell
- */
-function addGrassTuft(x, z, y, cellSize) {
-	// Create a group for the grass
-	const grassGroup = new Group();
-	grassGroup.position.set(x, y, z);
-	
-	// Random number of grass tufts
-	const tuftsCount = Math.floor(Math.random() * 5) + 3;
-	
-	for (let i = 0; i < tuftsCount; i++) {
-		// Create a single blade of grass
-		const height = Math.random() * 0.2 + 0.1;
-		const width = 0.03 + Math.random() * 0.02;
-		
-		const grassGeometry = new PlaneGeometry(width, height);
-		
-		// Create a green material with random shade
-		const greenValue = Math.random() * 0.4 + 0.3; // 0.3-0.7 range
-		const grassMaterial = new MeshBasicMaterial({
-			color: new Color(0.1, greenValue, 0.1),
-			side: DoubleSide,
-			transparent: true
-		});
-		
-		const grassBlade = new Mesh(grassGeometry, grassMaterial);
-		
-		// Position randomly on the cell
-		const posX = (Math.random() - 0.5) * 0.7 * cellSize;
-		const posZ = (Math.random() - 0.5) * 0.7 * cellSize;
-		
-		grassBlade.position.set(posX, height * 0.5, posZ);
-		
-		// Random rotation around Y axis
-		grassBlade.rotation.y = Math.random() * Math.PI;
-		
-		// Slight lean in random direction
-		grassBlade.rotation.x = (Math.random() - 0.5) * 0.2;
-		grassBlade.rotation.z = (Math.random() - 0.5) * 0.2;
-		
-		grassGroup.add(grassBlade);
-	}
-	
-	boardGroup.add(grassGroup);
 }
 
 /**
