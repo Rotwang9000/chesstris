@@ -2,7 +2,7 @@
  * Session Manager - Handles player sessions, persistence and wallet integration
  */
 import { v4 as uuidv4 } from '../utils/uuid.js';
-import GameState from '../game/gameState.js';
+import * as GameState from '../core/gameState.js';
 
 // Key for storing session data in local storage
 const SESSION_STORAGE_KEY = 'chesstris_session';
