@@ -37,6 +37,9 @@ import { rateLimiter, socketRateLimiter } from './middleware/rateLimit.js';
 import { csrfProtection } from './middleware/csrfProtection.js';
 import cookieParser from 'cookie-parser';
 
+// Import services for shutdown
+import { closeConnections } from './services/index.js';
+
 // Initialize express and server
 const app = express();
 const server = http.createServer(app);
@@ -2265,13 +2268,34 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
 // Handle graceful shutdown
 process.on('SIGINT', async () => {
-	console.log('Shutting down server...');
+	console.log('Shutting down server via SIGINT...');
 	try {
 		// Close database connections
-		await require('./services').closeConnections();
+		await closeConnections();
 		// Close HTTP server
-		server.close();
-		process.exit(0);
+		server.close(() => {
+			console.log('HTTP server closed');
+			// Exit process with success code
+			process.exit(0);
+		});
+	} catch (error) {
+		console.error('Error during shutdown:', error);
+		process.exit(1);
+	}
+});
+
+// Handle graceful shutdown for SIGTERM (used by process managers like PM2)
+process.on('SIGTERM', async () => {
+	console.log('Shutting down server via SIGTERM...');
+	try {
+		// Close database connections
+		await closeConnections();
+		// Close HTTP server
+		server.close(() => {
+			console.log('HTTP server closed');
+			// Exit process with success code
+			process.exit(0);
+		});
 	} catch (error) {
 		console.error('Error during shutdown:', error);
 		process.exit(1);
