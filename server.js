@@ -4,7 +4,10 @@
  * Main server file that initializes Express, Socket.IO, and database services.
  */
 
+// Import and configure dotenv
 import dotenv from 'dotenv';
+dotenv.config();
+
 import express from 'express';
 import http from 'http';
 import { Server } from 'socket.io';
@@ -33,8 +36,6 @@ import { Connection, PublicKey, Transaction } from '@solana/web3.js';
 import { rateLimiter, socketRateLimiter } from './middleware/rateLimit.js';
 import { csrfProtection } from './middleware/csrfProtection.js';
 import cookieParser from 'cookie-parser';
-
-dotenv.config();
 
 // Initialize express and server
 const app = express();
@@ -1936,202 +1937,6 @@ function getPlayerFeesPaid(playerId) {
  * @param {number} expectedAmount - The expected amount in SOL
  * @returns {Promise<boolean>} - Whether the transaction is valid
  */
-async function validateSolanaTransaction(signature, expectedAmount) {
-	// In a real implementation, we would:
-	// 1. Connect to a Solana node
-	// 2. Verify the transaction exists and is confirmed
-	// 3. Check that the amount matches the expected price
-	// 4. Ensure the recipient is our game's wallet
-	
-	// For this demo, we'll just simulate a successful validation
-	return true;
-}
-
-/**
- * Check if a player is on pause cooldown
- * @param {string} playerId - The player's ID
- * @returns {boolean} - True if player is on pause cooldown
- */
-function isPlayerOnPauseCooldown(playerId) {
-	if (!playerPauseCooldowns.has(playerId)) {
-		return false;
-	}
-	
-	const cooldownUntil = playerPauseCooldowns.get(playerId);
-	return Date.now() < cooldownUntil;
-}
-
-/**
- * Get remaining pause cooldown time in milliseconds
- * @param {string} playerId - The player's ID
- * @returns {number} - Remaining cooldown time in milliseconds
- */
-function getPauseCooldownRemaining(playerId) {
-	if (!playerPauseCooldowns.has(playerId)) {
-		return 0;
-	}
-	
-	const cooldownUntil = playerPauseCooldowns.get(playerId);
-	const remaining = cooldownUntil - Date.now();
-	return Math.max(0, remaining);
-}
-
-/**
- * Set pause cooldown for a player
- * @param {string} playerId - The player's ID
- */
-function setPauseCooldown(playerId) {
-	const cooldownUntil = Date.now() + PAUSE_COOLDOWN_DURATION;
-	playerPauseCooldowns.set(playerId, cooldownUntil);
-}
-
-/**
- * Handle player pause request
- * @param {string} playerId - The player's ID 
- * @returns {Object} - Result of pause request
- */
-function handlePlayerPause(playerId) {
-	// Check if player exists
-	if (!players[playerId]) {
-		return { success: false, reason: 'player_not_found' };
-	}
-	
-	// Check if player has a king
-	const kingPosition = findKingPosition(playerId);
-	if (!kingPosition) {
-		return { success: false, reason: 'no_king' };
-	}
-	
-	// Check if player is already paused
-	if (pausedPlayers.has(playerId)) {
-		return { success: false, reason: 'already_paused' };
-	}
-	
-	// Check if player is on pause cooldown
-	if (isPlayerOnPauseCooldown(playerId)) {
-		return { 
-			success: false, 
-			reason: 'on_cooldown',
-			remainingTime: getPauseCooldownRemaining(playerId)
-		};
-	}
-	
-	// Pause the player
-	const pauseTime = Date.now();
-	const expiryTime = pauseTime + PAUSE_MAX_DURATION;
-	
-	pausedPlayers.set(playerId, {
-		pauseTime,
-		expiryTime
-	});
-	
-	// Set cooldown for future pauses
-	setPauseCooldown(playerId);
-	
-	return { 
-		success: true, 
-		expiryTime,
-		maxDuration: PAUSE_MAX_DURATION
-	};
-}
-
-/**
- * Handle player resume request
- * @param {string} playerId - The player's ID
- * @returns {Object} - Result of resume request
- */
-function handlePlayerResume(playerId) {
-	// Check if player exists
-	if (!players[playerId]) {
-		return { success: false, reason: 'player_not_found' };
-	}
-	
-	// Check if player is paused
-	if (!pausedPlayers.has(playerId)) {
-		return { success: false, reason: 'not_paused' };
-	}
-	
-	// Resume the player
-	pausedPlayers.delete(playerId);
-	
-	return { 
-		success: true,
-		cooldownRemaining: getPauseCooldownRemaining(playerId)
-	};
-}
-
-/**
- * Checks if a player is currently paused
- * @param {string} playerId - The ID of the player
- * @returns {boolean} - Whether the player is paused
- */
-function isPlayerPaused(playerId) {
-	return pausedPlayers.has(playerId);
-}
-
-/**
- * Checks for expired player pauses and removes their pieces if needed
- * This should be called periodically from the game loop
- */
-function checkPausedPlayers() {
-	const now = Date.now();
-	
-	// Collect players whose pause has expired
-	const expiredPlayers = [];
-	pausedPlayers.forEach((pauseData, playerId) => {
-		if (now > pauseData.expiryTime) {
-			expiredPlayers.push(playerId);
-		}
-	});
-	
-	// Handle each expired player
-	expiredPlayers.forEach(playerId => {
-		handleExpiredPause(playerId);
-		pausedPlayers.delete(playerId);
-	});
-}
-
-/**
- * Handles the situation when a player's pause has expired
- * @param {string} playerId - The ID of the player
- */
-function handleExpiredPause(playerId) {
-	console.log(`Player ${playerId}'s pause has expired, removing their pieces`);
-	
-	// Find the king position (if it still exists)
-	const kingPosition = findKingPosition(playerId);
-	if (!kingPosition) {
-		// If the king is gone, the player is already out of the game
-		return;
-	}
-	
-	// 1. Identify all islands on the board (connected components)
-	const islands = identifyIslands();
-	
-	// 2. Find the player's main island (the one with their king)
-	const playerIslandId = findPlayerIsland(islands, kingPosition);
-	
-	if (playerIslandId === null) {
-		// This shouldn't happen, but just in case
-		console.error(`Could not find island for player ${playerId}`);
-		return;
-	}
-	
-	// 3. Find all pieces that are not on the player's island
-	const orphanedPieces = findOrphanedPieces(playerId, islands, playerIslandId);
-	
-	// 4. Remove the player's island
-	removePlayerIsland(playerId, islands[playerIslandId]);
-	
-	// 5. Relocate orphaned pieces back to home
-	relocateOrphanedPiecesToHome(playerId, orphanedPieces);
-	
-	// 6. Notify clients of the changes
-	io.emit('playerPauseExpired', {
-		playerId,
-		removedCells: islands[playerIslandId]
-	});
-}
 
 /**
  * Identifies all islands (connected components) on the board
@@ -2661,3 +2466,17 @@ app.post('/api/triggerUpdate', authenticateAdmin, async (req, res) => {
 if (process.env.NODE_ENV === 'production') {
 	startUpdateChecker();
 } 
+
+// Import player control functions from the dedicated module
+import {
+	getPlayer,
+	getPauseCooldownRemaining,
+	isPlayerOnPauseCooldown,
+	setPauseCooldown,
+	handlePlayerPause,
+	handlePlayerResume,
+	isPlayerPaused,
+	checkPausedPlayers
+} from './src/playerControls.mjs';
+
+

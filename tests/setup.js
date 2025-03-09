@@ -7,6 +7,10 @@
  * - Handles cleanup between tests
  */
 
+// Load environment variables directly
+import dotenv from 'dotenv';
+dotenv.config();
+
 // Set test environment
 process.env.NODE_ENV = 'test';
 

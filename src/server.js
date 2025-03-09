@@ -1,4 +1,5 @@
-// server.js
+// legacy-server.js - Express server for older API endpoints
+// This file uses CommonJS module syntax (require) rather than ES modules (import/export)
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -331,3 +332,56 @@ io.on('connection', (socket) => {
 	socket.emit('boardUpdate', { board, fallingPiece, BOARD_WIDTH, BOARD_HEIGHT, homeZones });
 	// (For a real game you'd want additional events for player moves etc.)
 });
+
+// Player pause related functions
+export const getPlayer = (playerId) => {
+	// Implementation based on existing code
+	return gameState?.players?.find(player => player.id === playerId);
+};
+
+export const getPauseCooldownRemaining = (playerId) => {
+	// Implementation based on game logic
+	const player = getPlayer(playerId);
+	if (!player || !player.pauseCooldown) {
+		return 0;
+	}
+	const now = Date.now();
+	const remaining = Math.max(0, player.pauseCooldown - now);
+	return remaining;
+};
+
+export const isPlayerOnPauseCooldown = (playerId) => {
+	return getPauseCooldownRemaining(playerId) > 0;
+};
+
+export const setPauseCooldown = (playerId, duration) => {
+	const player = getPlayer(playerId);
+	if (player) {
+		player.pauseCooldown = Date.now() + duration;
+	}
+};
+
+export const handlePlayerPause = (playerId) => {
+	const player = getPlayer(playerId);
+	if (player && !isPlayerOnPauseCooldown(playerId)) {
+		player.isPaused = true;
+		// Set a cooldown period (e.g., 5 minutes = 300000 ms)
+		setPauseCooldown(playerId, 300000);
+		return true;
+	}
+	return false;
+};
+
+export const handlePlayerResume = (playerId) => {
+	const player = getPlayer(playerId);
+	if (player && player.isPaused) {
+		player.isPaused = false;
+		return true;
+	}
+	return false;
+};
+
+export const isPlayerPaused = (playerId) => {
+	const player = getPlayer(playerId);
+	return player ? !!player.isPaused : false;
+};
