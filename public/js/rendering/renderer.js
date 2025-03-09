@@ -144,45 +144,46 @@ function addLights() {
 }
 
 /**
- * Load textures
+ * Load textures and create materials
  */
 function loadTextures() {
 	const textureLoader = new TextureLoader();
 	
-	// Load board textures
-	textures.board = textureLoader.load('/assets/textures/board.png');
-	textures.cell = textureLoader.load('/assets/textures/cell.png');
-	textures.homeZone = textureLoader.load('/assets/textures/home_zone.png');
-	
-	// Load chess piece textures
-	textures.pawn = textureLoader.load('/assets/textures/pawn.png');
-	textures.rook = textureLoader.load('/assets/textures/rook.png');
-	textures.knight = textureLoader.load('/assets/textures/knight.png');
-	textures.bishop = textureLoader.load('/assets/textures/bishop.png');
-	textures.queen = textureLoader.load('/assets/textures/queen.png');
-	textures.king = textureLoader.load('/assets/textures/king.png');
-	
-	// Create materials
+	// Create materials with fallback colors in case textures are missing
 	materials.board = new MeshStandardMaterial({
-		map: textures.board,
+		color: 0x333333,
 		roughness: 0.8,
 		metalness: 0.2
 	});
 	
 	materials.cell = new MeshStandardMaterial({
-		map: textures.cell,
+		color: 0x555555,
 		roughness: 0.5,
 		metalness: 0.1
 	});
 	
 	materials.homeZone = new MeshStandardMaterial({
-		map: textures.homeZone,
+		color: 0x444444,
 		transparent: true,
 		opacity: 0.8
 	});
 	
+	// Chess piece materials
+	materials.chessPieceWhite = new MeshStandardMaterial({
+		color: 0xFFFFFF,
+		roughness: 0.5,
+		metalness: 0.1
+	});
+	
+	materials.chessPieceBlack = new MeshStandardMaterial({
+		color: 0x333333,
+		roughness: 0.5,
+		metalness: 0.1
+	});
+	
 	// Create tetromino materials for each type
-	Constants.TETROMINO_TYPES.forEach(type => {
+	// Use the keys from TETROMINO_COLORS instead of TETROMINO_TYPES
+	Object.keys(Constants.TETROMINO_COLORS).forEach(type => {
 		const color = Constants.TETROMINO_COLORS[type];
 		materials[`tetromino_${type}`] = new MeshStandardMaterial({
 			color: new Color(color),
@@ -190,6 +191,30 @@ function loadTextures() {
 			metalness: 0.3
 		});
 	});
+	
+	// Try to load textures in the background, but don't rely on them
+	try {
+		// Load board textures
+		textureLoader.load('/assets/textures/board.png', 
+			texture => { materials.board.map = texture; materials.board.needsUpdate = true; },
+			undefined,
+			error => console.warn('Failed to load board texture:', error)
+		);
+		
+		textureLoader.load('/assets/textures/cell.png', 
+			texture => { materials.cell.map = texture; materials.cell.needsUpdate = true; },
+			undefined,
+			error => console.warn('Failed to load cell texture:', error)
+		);
+		
+		textureLoader.load('/assets/textures/home_zone.png', 
+			texture => { materials.homeZone.map = texture; materials.homeZone.needsUpdate = true; },
+			undefined,
+			error => console.warn('Failed to load home zone texture:', error)
+		);
+	} catch (error) {
+		console.warn('Error loading textures:', error);
+	}
 }
 
 /**
