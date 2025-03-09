@@ -1319,18 +1319,24 @@ function updateChessPieces() {
 	let piecesAdded = 0;
 
 	// Add pieces based on the game state
-	for (let y = 0; y < gameState.board.length; y++) {
-		for (let x = 0; x < gameState.board[y].length; x++) {
-			const cell = gameState.board[y][x];
-			if (cell && cell.chessPiece) {
-				addChessPiece(cell.chessPiece, cell.playerId, x, y);
-				piecesAdded++;
+	try {
+		for (let y = 0; y < gameState.board.length; y++) {
+			for (let x = 0; x < gameState.board[y].length; x++) {
+				const cell = gameState.board[y][x];
+				if (cell && cell.chessPiece) {
+					// Ensure the cell has a valid playerId
+					const playerId = cell.playerId || cell.chessPiece.player || 'unknown';
+					addChessPiece(cell.chessPiece, playerId, x, y);
+					piecesAdded++;
+				}
 			}
 		}
+		
+		// Log added pieces only when they change, not every frame
+		console.log(`Added ${piecesAdded} chess pieces to the scene`);
+	} catch (error) {
+		console.error('Error updating chess pieces:', error);
 	}
-
-	// Log added pieces only when they change, not every frame
-	console.log(`Added ${piecesAdded} chess pieces to the scene`);
 }
 
 /**
@@ -1872,7 +1878,6 @@ function addChessPiece(piece, playerId, x, z) {
 		const player = gameState.players[playerId];
 		if (!player) {
 			console.warn(`Player ${playerId} not found for chess piece. Using default color.`);
-			// Continue with a default color
 		}
 		
 		// Create a group for the piece
@@ -1889,203 +1894,93 @@ function addChessPiece(piece, playerId, x, z) {
 		// Position the piece at the cell location
 		pieceGroup.position.set(x, cellY + yOffset, z);
 		
+		// Get the color - use the player's color if available, otherwise use a default color
+		const defaultColor = 0xCCCCCC; // Light grey fallback color
+		const pieceColor = player ? player.color : defaultColor;
+		
 		// Create a material based on player color
-		const playerColor = new Color(player.color || 0xffffff);
-		const darkened = playerColor.clone().multiplyScalar(0.7);
+		const playerColor = new THREE.Color(pieceColor || 0xffffff);
 		
-		const baseMaterial = new MeshStandardMaterial({
-			color: playerColor,
-			roughness: 0.7,
-			metalness: 0.3
-		});
+		let pieceMaterial;
+		if (piece.type !== 'empty') {
+			pieceMaterial = new THREE.MeshStandardMaterial({
+				color: playerColor,
+				roughness: 0.7,
+				metalness: 0.3
+			});
+		}
 		
-		const darkMaterial = new MeshStandardMaterial({
-			color: darkened,
-			roughness: 0.7,
-			metalness: 0.3
-		});
-		
-		// Create the appropriate geometry based on piece type
+		// Add piece geometry based on type
 		let pieceGeometry;
-		let pieceMesh;
 		
-		switch (piece.type.toLowerCase()) {
+		switch (piece.type) {
 			case 'pawn':
-				// Create pawn geometry - simple cylinder with sphere on top
-				const pawnBase = new CylinderGeometry(0.2, 0.25, 0.5, 8);
-				const pawnBaseMesh = new Mesh(pawnBase, baseMaterial);
-				pawnBaseMesh.position.y = 0.25;
-				pieceGroup.add(pawnBaseMesh);
-				
-				const pawnHead = new SphereGeometry(0.18, 8, 8);
-				const pawnHeadMesh = new Mesh(pawnHead, baseMaterial);
-				pawnHeadMesh.position.y = 0.6;
-				pieceGroup.add(pawnHeadMesh);
+				pieceGeometry = new THREE.CylinderGeometry(0.2, 0.3, 0.5, 8);
 				break;
 				
 			case 'rook':
-				// Create rook geometry - rectangular prism with battlements
-				const rookBase = new BoxGeometry(0.4, 0.6, 0.4);
-				const rookBaseMesh = new Mesh(rookBase, baseMaterial);
-				rookBaseMesh.position.y = 0.3;
-				pieceGroup.add(rookBaseMesh);
-				
-				// Top battlements
-				const rookTop = new BoxGeometry(0.5, 0.15, 0.5);
-				const rookTopMesh = new Mesh(rookTop, darkMaterial);
-				rookTopMesh.position.y = 0.675;
-				pieceGroup.add(rookTopMesh);
-				
-				// Corner battlements
-				[-1, 1].forEach(xPos => {
-					[-1, 1].forEach(zPos => {
-						const cornerGeometry = new BoxGeometry(0.1, 0.1, 0.1);
-						const cornerMesh = new Mesh(cornerGeometry, darkMaterial);
-						cornerMesh.position.set(xPos * 0.2, 0.8, zPos * 0.2);
-						pieceGroup.add(cornerMesh);
-					});
-				});
+				pieceGeometry = new THREE.BoxGeometry(0.4, 0.6, 0.4);
 				break;
 				
 			case 'knight':
-				// Create knight geometry - base with angled head
-				const knightBase = new CylinderGeometry(0.25, 0.3, 0.3, 8);
-				const knightBaseMesh = new Mesh(knightBase, baseMaterial);
-				knightBaseMesh.position.y = 0.15;
-				pieceGroup.add(knightBaseMesh);
-				
-				// Knight neck
-				const knightNeck = new BoxGeometry(0.25, 0.4, 0.25);
-				const knightNeckMesh = new Mesh(knightNeck, baseMaterial);
-				knightNeckMesh.position.set(0, 0.45, 0);
-				pieceGroup.add(knightNeckMesh);
-				
-				// Knight head
-				const knightHead = new BoxGeometry(0.3, 0.25, 0.5);
-				const knightHeadMesh = new Mesh(knightHead, darkMaterial);
-				knightHeadMesh.position.set(0, 0.75, 0.1);
-				knightHeadMesh.rotation.x = Math.PI / 8;
-				pieceGroup.add(knightHeadMesh);
-				
-				// Knight ears/horns
-				const earGeometry = new ConeGeometry(0.1, 0.2, 4);
-				
-				const leftEar = new Mesh(earGeometry, darkMaterial);
-				leftEar.position.set(-0.15, 0.85, 0);
-				leftEar.rotation.z = -Math.PI / 6;
-				pieceGroup.add(leftEar);
-				
-				const rightEar = new Mesh(earGeometry, darkMaterial);
-				rightEar.position.set(0.15, 0.85, 0);
-				rightEar.rotation.z = Math.PI / 6;
-				pieceGroup.add(rightEar);
+				// A simple horse head shape using a cone
+				pieceGeometry = new THREE.ConeGeometry(0.25, 0.6, 5);
 				break;
 				
 			case 'bishop':
-				// Create bishop geometry - base with pointed top
-				const bishopBase = new CylinderGeometry(0.25, 0.3, 0.5, 8);
-				const bishopBaseMesh = new Mesh(bishopBase, baseMaterial);
-				bishopBaseMesh.position.y = 0.25;
-				pieceGroup.add(bishopBaseMesh);
-				
-				const bishopMiddle = new SphereGeometry(0.2, 8, 8);
-				const bishopMiddleMesh = new Mesh(bishopMiddle, baseMaterial);
-				bishopMiddleMesh.position.y = 0.6;
-				pieceGroup.add(bishopMiddleMesh);
-				
-				const bishopTop = new ConeGeometry(0.1, 0.3, 8);
-				const bishopTopMesh = new Mesh(bishopTop, darkMaterial);
-				bishopTopMesh.position.y = 0.85;
-				pieceGroup.add(bishopTopMesh);
+				pieceGeometry = new THREE.ConeGeometry(0.3, 0.7, 8);
 				break;
 				
 			case 'queen':
-				// Create queen geometry - elegant with crown
-				const queenBase = new CylinderGeometry(0.3, 0.35, 0.5, 8);
-				const queenBaseMesh = new Mesh(queenBase, baseMaterial);
-				queenBaseMesh.position.y = 0.25;
-				pieceGroup.add(queenBaseMesh);
-				
-				const queenMiddle = new SphereGeometry(0.25, 8, 8);
-				const queenMiddleMesh = new Mesh(queenMiddle, baseMaterial);
-				queenMiddleMesh.position.y = 0.6;
-				pieceGroup.add(queenMiddleMesh);
-				
-				const crownGeometry = new CylinderGeometry(0.3, 0.2, 0.2, 8);
-				const crownMesh = new Mesh(crownGeometry, darkMaterial);
-				crownMesh.position.y = 0.85;
-				pieceGroup.add(crownMesh);
-				
-				// Add points to the crown
-				for (let i = 0; i < 5; i++) {
-					const angle = (i / 5) * Math.PI * 2;
-					const pointGeometry = new ConeGeometry(0.05, 0.15, 4);
-					const pointMesh = new Mesh(pointGeometry, darkMaterial);
-					pointMesh.position.set(
-						Math.sin(angle) * 0.2,
-						1,
-						Math.cos(angle) * 0.2
-					);
-					pieceGroup.add(pointMesh);
-				}
+				// Queen is a cylinder with a sphere on top
+				pieceGeometry = new THREE.CylinderGeometry(0.3, 0.4, 0.7, 8);
 				break;
 				
 			case 'king':
-				// Create king geometry - majestic with crown and cross
-				const kingBase = new CylinderGeometry(0.3, 0.35, 0.5, 8);
-				const kingBaseMesh = new Mesh(kingBase, baseMaterial);
-				kingBaseMesh.position.y = 0.25;
-				pieceGroup.add(kingBaseMesh);
+				// King is a cylinder with a cross on top
+				pieceGeometry = new THREE.CylinderGeometry(0.3, 0.4, 0.8, 8);
 				
-				const kingMiddle = new SphereGeometry(0.25, 8, 8);
-				const kingMiddleMesh = new Mesh(kingMiddle, baseMaterial);
-				kingMiddleMesh.position.y = 0.6;
-				pieceGroup.add(kingMiddleMesh);
+				// Add a cross on top
+				const crossGeometry = new THREE.BoxGeometry(0.15, 0.3, 0.15);
+				const crossMaterial = pieceMaterial;
+				const cross = new THREE.Mesh(crossGeometry, crossMaterial);
+				cross.position.y = 0.5; // Position on top of the cylinder
+				pieceGroup.add(cross);
 				
-				const kingCrownGeometry = new CylinderGeometry(0.3, 0.2, 0.2, 8);
-				const kingCrownMesh = new Mesh(kingCrownGeometry, darkMaterial);
-				kingCrownMesh.position.y = 0.85;
-				pieceGroup.add(kingCrownMesh);
-				
-				// Cross on top
-				const crossVerticalGeometry = new BoxGeometry(0.08, 0.3, 0.08);
-				const crossVerticalMesh = new Mesh(crossVerticalGeometry, darkMaterial);
-				crossVerticalMesh.position.y = 1.1;
-				pieceGroup.add(crossVerticalMesh);
-				
-				const crossHorizontalGeometry = new BoxGeometry(0.25, 0.08, 0.08);
-				const crossHorizontalMesh = new Mesh(crossHorizontalGeometry, darkMaterial);
-				crossHorizontalMesh.position.y = 1.05;
-				pieceGroup.add(crossHorizontalMesh);
-				
-				// Add a player name label above the king
-				createPlayerNameLabel(playerId, player.name || `Player ${playerId}`, pieceGroup.position.x, pieceGroup.position.y + 1.5, pieceGroup.position.z);
+				// If this is a king, add a floating label above it
+				const playerName = player ? player.username || `Player ${playerId.substring(0, 5)}` : `Player ${playerId.substring(0, 5)}`;
+				createPlayerNameLabel(playerId, playerName, x, cellY + 1.5, z);
 				break;
 				
 			default:
-				// Default fallback - simple cube
-				pieceGeometry = new BoxGeometry(0.4, 0.4, 0.4);
-				pieceMesh = new Mesh(pieceGeometry, baseMaterial);
-				pieceMesh.position.y = 0.2;
-				pieceGroup.add(pieceMesh);
-				break;
+				// Default simple piece for unknown types
+				pieceGeometry = new THREE.SphereGeometry(0.3, 8, 8);
 		}
 		
-		// Add a subtle glow effect
-		const glowGeometry = new SphereGeometry(0.4, 8, 8);
-		const glowMaterial = new MeshBasicMaterial({
-			color: playerColor,
-			transparent: true,
-			opacity: 0.2,
-			side: DoubleSide
-		});
-		const glowMesh = new Mesh(glowGeometry, glowMaterial);
-		glowMesh.position.y = 0.4;
-		pieceGroup.add(glowMesh);
+		if (pieceGeometry && pieceMaterial) {
+			const pieceMesh = new THREE.Mesh(pieceGeometry, pieceMaterial);
+			pieceGroup.add(pieceMesh);
+		}
 		
-		// Add piece to the scene
+		// Add a glow effect around the piece if it's owned by the current player
+		const sessionData = SessionManager.getSessionData();
+		const currentPlayerId = sessionData.playerId;
+		
+		if (playerId === currentPlayerId) {
+			// Create a glow effect for player's own pieces
+			const glowGeometry = new THREE.SphereGeometry(0.4, 16, 16);
+			const glowMaterial = new THREE.MeshBasicMaterial({
+				color: playerColor,
+				transparent: true,
+				opacity: 0.3
+			});
+			
+			const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+			pieceGroup.add(glow);
+		}
+		
+		// Add to the piece group
 		piecesGroup.add(pieceGroup);
-		
 		return pieceGroup;
 	} catch (error) {
 		console.error('Error adding chess piece:', error);
