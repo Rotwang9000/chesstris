@@ -1611,63 +1611,77 @@ function addClouds() {
  */
 function addCellBottom(x, z, cellSize, color) {
 	try {
-		// Create a deterministic seed based on position
-		const seed = x * 1000 + z;
-		
-		// Create a pseudo-random function based on the seed
-		const pseudoRandom = (multiplier = 1, offset = 0) => {
-			const value = Math.sin(seed * 0.1 + offset) * 10000;
-			return (value - Math.floor(value)) * multiplier;
-		};
-		
-		// Create a group for the bottom structures
+		// Create a group to hold all bottom elements
 		const bottomGroup = new THREE.Group();
 		
-		// Create 3-5 triangular stalactites of varying sizes
-		const numStalactites = Math.floor(pseudoRandom(3, 0.1)) + 3;
+		// Add code to validate parameters
+		if (isNaN(x) || isNaN(z) || isNaN(cellSize)) {
+			console.warn(`Invalid parameters in addCellBottom: x=${x}, z=${z}, cellSize=${cellSize}`);
+			return bottomGroup; // Return empty group to avoid errors
+		}
 		
-		for (let i = 0; i < numStalactites; i++) {
-			// Calculate position with deterministic randomness
-			const offsetX = pseudoRandom(0.8, i * 0.1) - 0.4;
-			const offsetZ = pseudoRandom(0.8, i * 0.2) - 0.4;
-			const length = pseudoRandom(1.5, i * 0.3) + 0.5;
+		// Determine if this cell should have stalactites based on position
+		const seed = Math.abs(Math.floor(x * 1000 + z));
+		const pseudoRandom = (multiplier = 1, offset = 0) => {
+			const val = ((seed + offset) * 9301 + 49297) % 233280;
+			return (val / 233280) * multiplier;
+		};
+		
+		const hasStalactites = pseudoRandom() < 0.3; // 30% chance
+		
+		if (hasStalactites) {
+			const count = Math.floor(pseudoRandom(3, 100)) + 1;
 			
-			// Create stalactite geometry
-			const stalactiteGeometry = new THREE.ConeGeometry(
-				cellSize * 0.2, // radius at base
-				length, // height/length
-				3, // triangular (3 segments)
-				1, // height segments
-				false // no top
-			);
-			
-			// Darken the color for the bottom
-			const darkerColor = new THREE.Color(color).multiplyScalar(0.7);
-			const stalactiteMaterial = new THREE.MeshStandardMaterial({
-				color: darkerColor,
-				roughness: 0.9,
-				metalness: 0.1
-			});
-			
-			const stalactite = new THREE.Mesh(stalactiteGeometry, stalactiteMaterial);
-			
-			// Position and rotate the stalactite
-			stalactite.position.set(
-				x + offsetX,
-				getFloatingHeight(x, z) - length / 2,
-				z + offsetZ
-			);
-			stalactite.rotation.x = Math.PI; // Flip to point downward
-			
-			// Add to the scene
-			bottomGroup.add(stalactite);
-			boardGroup.add(stalactite);
+			for (let i = 0; i < count; i++) {
+				// Calculate stalactite parameters
+				let radius = cellSize * 0.07 * (pseudoRandom(1, i * 10) + 0.5);
+				let height = cellSize * (0.2 + pseudoRandom(0.2, i * 20));
+				
+				// Validate to prevent NaN values
+				radius = isNaN(radius) ? cellSize * 0.05 : radius;
+				height = isNaN(height) ? cellSize * 0.2 : height;
+				
+				// Create stalactite
+				const stalactiteGeometry = new THREE.ConeGeometry(
+					radius,
+					height,
+					8
+				);
+				
+				const darkerColor = new THREE.Color(color).multiplyScalar(0.7);
+				const stalactiteMaterial = new THREE.MeshStandardMaterial({
+					color: darkerColor,
+					roughness: 0.9,
+					metalness: 0.1
+				});
+				
+				const stalactite = new THREE.Mesh(stalactiteGeometry, stalactiteMaterial);
+				
+				// Position stalactite
+				let offsetX = (pseudoRandom(cellSize * 0.8, i * 30) - cellSize * 0.4);
+				let offsetZ = (pseudoRandom(cellSize * 0.8, i * 40) - cellSize * 0.4);
+				
+				// Validate to prevent NaN values
+				offsetX = isNaN(offsetX) ? 0 : offsetX;
+				offsetZ = isNaN(offsetZ) ? 0 : offsetZ;
+				
+				stalactite.position.set(
+					x + offsetX,
+					getFloatingHeight(x, z) - (cellSize * 0.5) - (height * 0.5),
+					z + offsetZ
+				);
+				
+				// Point stalactite downward
+				stalactite.rotation.x = Math.PI;
+				
+				bottomGroup.add(stalactite);
+			}
 		}
 		
 		return bottomGroup;
 	} catch (error) {
-		console.error('Error adding cell bottom:', error);
-		return null;
+		console.error('Error creating cell bottom:', error);
+		return new THREE.Group(); // Return empty group on error
 	}
 }
 
@@ -1678,38 +1692,58 @@ function addCellBottom(x, z, cellSize, color) {
  * @param {number} cellSize - Size of the cell
  */
 function addCellDecoration(x, z, cellSize) {
-	try {
-		const gameState = GameState.getGameState();
-		
-		// Create a normalized position from the board coordinates
-		// This centers the board so (0,0) is at the center
-		const boardWidth = gameState.board[0].length;
-		const boardHeight = gameState.board.length;
-		const centerX = (boardWidth - 1) / 2;
-		const centerZ = (boardHeight - 1) / 2;
-		
-		const normalizedX = (x - centerX) * cellSize;
-		const normalizedZ = (z - centerZ) * cellSize;
-		
-		// Get the floating height for this cell
-		const cellY = getFloatingHeight(x, z);
-		
-		// Choose a random decoration type
-		const decorationType = Math.random();
-		
-		if (decorationType < 0.4) {
-			// Stone decorations
-			addStoneDecoration(normalizedX, normalizedZ, cellY, cellSize);
-		} else if (decorationType < 0.7) {
-			// Grass tufts - using the existing function
-			addGrassTuft(normalizedX, normalizedZ, cellSize * 0.4);
-		} else {
-			// Mushroom decorations
-			addMushroomDecoration(normalizedX, normalizedZ, cellY, cellSize);
-		}
-	} catch (error) {
-		console.error('Error adding cell decoration:', error);
+	// Create a decoration based on pseudorandom position
+	const seed = Math.abs(x * 1000 + z);
+	const decorationType = Math.floor(pseudoRandom(4, seed));
+	
+	// Apply the appropriate decoration
+	switch (decorationType) {
+		case 0:
+			// Grass tufts
+			addGrassTuft(x, z, cellSize * 0.1, seed);
+			break;
+		case 1:
+			// Stones
+			addStoneDecoration(x, z, getFloatingHeight(x, z), cellSize, seed);
+			break;
+		case 2:
+			// Mushrooms
+			addMushroomDecoration(x, z, getFloatingHeight(x, z), cellSize, seed);
+			break;
+		case 3:
+			// Stalactites hanging below the cell
+			const yPos = getFloatingHeight(x, z) - (cellSize * 0.5);
+			const stalactiteRadius = cellSize * 0.15 * pseudoRandom(1, seed + 1);
+			const stalactiteHeight = cellSize * 0.3 * pseudoRandom(1, seed + 2);
+			
+			// Validate geometry parameters
+			const params = validateGeometryParams({
+				radius: stalactiteRadius,
+				height: stalactiteHeight
+			});
+			
+			const stalactiteGeometry = new THREE.ConeGeometry(
+				params.radius,
+				params.height,
+				8
+			);
+			
+			const stalactiteMaterial = new THREE.MeshStandardMaterial({
+				color: 0x888888,
+				roughness: 0.8,
+				metalness: 0.2
+			});
+			
+			const stalactite = new THREE.Mesh(stalactiteGeometry, stalactiteMaterial);
+			stalactite.position.set(x, yPos - (params.height * 0.5), z);
+			stalactite.rotation.x = Math.PI; // Point downward
+			
+			decorationsGroup.add(stalactite);
+			break;
 	}
+	
+	// Track that we've added a decoration at this position
+	decorationPositions.set(`${x},${z}`, decorationType);
 }
 
 /**
@@ -1865,122 +1899,115 @@ function addMushroomDecoration(x, z, y, cellSize, seed = 0) {
  */
 function addChessPiece(piece, playerId, x, z) {
 	try {
+		// Find player data
 		const gameState = GameState.getGameState();
-		if (!gameState || !gameState.players) return null;
+		const player = gameState.players ? gameState.players[playerId] : null;
 		
-		// Ensure we have a valid playerId
-		if (!playerId) {
-			console.warn(`No player ID provided for chess piece at ${x},${z}`);
-			playerId = 'unknown'; // Use a default value for rendering
-		}
-		
-		// Get player data - handle case where player might not exist in game state
-		const player = gameState.players[playerId];
+		// If player not found, use a default color and log warning
+		let pieceColor;
 		if (!player) {
 			console.warn(`Player ${playerId} not found for chess piece. Using default color.`);
+			pieceColor = 0xCCCCCC; // Default gray color
+		} else {
+			pieceColor = player.color;
 		}
 		
-		// Create a group for the piece
+		// Validate coordinates
+		if (isNaN(x) || isNaN(z)) {
+			console.warn(`Invalid coordinates for chess piece: x=${x}, z=${z}`);
+			x = 0;
+			z = 0;
+		}
+		
+		// Create piece group
 		const pieceGroup = new THREE.Group();
-		pieceGroup.name = `piece_${piece.type}_${playerId}_${x}_${z}`;
 		
-		// Calculate position
-		const cellSize = gameState.cellSize || 1; // Use game state cell size or default
-		const yOffset = 0.25; // Height above the cell
+		// Get piece world position
+		const yPos = getFloatingHeight(x, z) + 0.2; // Place slightly above the cell
 		
-		// Get the floating height for this cell position
-		const cellY = getFloatingHeight(x, z);
-		
-		// Position the piece at the cell location
-		pieceGroup.position.set(x, cellY + yOffset, z);
-		
-		// Get the color - use the player's color if available, otherwise use a default color
-		const defaultColor = 0xCCCCCC; // Light grey fallback color
-		const pieceColor = player ? player.color : defaultColor;
-		
-		// Create a material based on player color
+		// Material based on player color
 		const playerColor = new THREE.Color(pieceColor || 0xffffff);
+		const colorHex = playerColor.getHex();
 		
-		let pieceMaterial;
-		if (piece.type !== 'empty') {
-			pieceMaterial = new THREE.MeshStandardMaterial({
-				color: playerColor,
-				roughness: 0.7,
-				metalness: 0.3
-			});
-		}
-		
-		// Add piece geometry based on type
+		// Create piece based on type
 		let pieceGeometry;
+		let pieceMaterial;
 		
+		// Create standard material for pieces
+		pieceMaterial = new THREE.MeshStandardMaterial({
+			color: playerColor,
+			roughness: 0.5,
+			metalness: 0.6
+		});
+		
+		// Create appropriate geometry based on piece type
 		switch (piece.type) {
 			case 'pawn':
 				pieceGeometry = new THREE.CylinderGeometry(0.2, 0.3, 0.5, 8);
 				break;
-				
 			case 'rook':
 				pieceGeometry = new THREE.BoxGeometry(0.4, 0.6, 0.4);
 				break;
-				
 			case 'knight':
-				// A simple horse head shape using a cone
-				pieceGeometry = new THREE.ConeGeometry(0.25, 0.6, 5);
+				// Validate parameters for cone geometry
+				const knightRadius = 0.25;
+				const knightHeight = 0.6;
+				pieceGeometry = new THREE.ConeGeometry(knightRadius, knightHeight, 5);
 				break;
-				
 			case 'bishop':
-				pieceGeometry = new THREE.ConeGeometry(0.3, 0.7, 8);
+				// Validate parameters for cone geometry
+				const bishopRadius = 0.3;
+				const bishopHeight = 0.7;
+				pieceGeometry = new THREE.ConeGeometry(bishopRadius, bishopHeight, 8);
 				break;
-				
 			case 'queen':
-				// Queen is a cylinder with a sphere on top
 				pieceGeometry = new THREE.CylinderGeometry(0.3, 0.4, 0.7, 8);
 				break;
-				
 			case 'king':
-				// King is a cylinder with a cross on top
 				pieceGeometry = new THREE.CylinderGeometry(0.3, 0.4, 0.8, 8);
 				
-				// Add a cross on top
+				// Add a cross on top for the king
 				const crossGeometry = new THREE.BoxGeometry(0.15, 0.3, 0.15);
-				const crossMaterial = pieceMaterial;
+				const crossMaterial = new THREE.MeshStandardMaterial({ color: playerColor });
 				const cross = new THREE.Mesh(crossGeometry, crossMaterial);
-				cross.position.y = 0.5; // Position on top of the cylinder
+				cross.position.y = 0.5;
 				pieceGroup.add(cross);
 				
-				// If this is a king, add a floating label above it
-				const playerName = player ? player.username || `Player ${playerId.substring(0, 5)}` : `Player ${playerId.substring(0, 5)}`;
-				createPlayerNameLabel(playerId, playerName, x, cellY + 1.5, z);
+				// Create a label for the king with player name
+				const sessionData = SessionManager.getSessionData();
+				if (player && gameState.players) {
+					const playerName = player.username || `Player ${playerId.slice(0, 5)}`;
+					createPlayerNameLabel(playerId, playerName, x, yPos + 1.5, z);
+				}
 				break;
-				
 			default:
-				// Default simple piece for unknown types
+				// Use a sphere for unknown pieces
 				pieceGeometry = new THREE.SphereGeometry(0.3, 8, 8);
 		}
 		
-		if (pieceGeometry && pieceMaterial) {
-			const pieceMesh = new THREE.Mesh(pieceGeometry, pieceMaterial);
-			pieceGroup.add(pieceMesh);
-		}
+		// Create the piece mesh
+		const pieceMesh = new THREE.Mesh(pieceGeometry, pieceMaterial);
+		pieceMesh.position.set(0, 0, 0);
+		pieceGroup.add(pieceMesh);
 		
-		// Add a glow effect around the piece if it's owned by the current player
+		// Add glow effect to own pieces
 		const sessionData = SessionManager.getSessionData();
-		const currentPlayerId = sessionData.playerId;
-		
-		if (playerId === currentPlayerId) {
-			// Create a glow effect for player's own pieces
+		if (sessionData && playerId === sessionData.playerId) {
 			const glowGeometry = new THREE.SphereGeometry(0.4, 16, 16);
 			const glowMaterial = new THREE.MeshBasicMaterial({
-				color: playerColor,
+				color: 0xffffff,
 				transparent: true,
-				opacity: 0.3
+				opacity: 0.3,
+				blending: THREE.AdditiveBlending
 			});
-			
 			const glow = new THREE.Mesh(glowGeometry, glowMaterial);
 			pieceGroup.add(glow);
 		}
 		
-		// Add to the piece group
+		// Set position and add to the scene
+		pieceGroup.position.set(x, yPos, z);
 		piecesGroup.add(pieceGroup);
+		
 		return pieceGroup;
 	} catch (error) {
 		console.error('Error adding chess piece:', error);
@@ -2043,34 +2070,25 @@ function createPlayerNameLabel(playerId, playerName, x, y, z) {
  * @returns {number} The calculated height for the position
  */
 function getFloatingHeight(x, z) {
-	try {
-		// Validate inputs to prevent NaN values
-		if (x === undefined || z === undefined || isNaN(x) || isNaN(z)) {
-			console.warn(`Invalid coordinates for getFloatingHeight: x=${x}, z=${z}`);
-			return 0; // Return default height for invalid inputs
-		}
-		
-		// Use a simple sine wave pattern to create floating effect
-		// This makes cells have different heights based on position
-		const baseHeight = 0;
-		const floatAmplitude = 0.2; // How much height varies
-		
-		// Convert board positions to world space for better wave pattern
-		const worldX = x * 1.0; // Multiply by cell size
-		const worldZ = z * 1.0;
-		
-		// Create a natural-looking height pattern using sine waves
-		// Different frequencies create a more organic look
-		const height = baseHeight + 
-			floatAmplitude * 0.7 * Math.sin(worldX * 0.5 + worldZ * 0.3) + 
-			floatAmplitude * 0.3 * Math.sin(worldX * 0.2 - worldZ * 0.7);
-		
-		// Make sure we never return NaN
-		return isNaN(height) ? 0 : height;
-	} catch (error) {
-		console.error('Error calculating floating height:', error);
-		return 0; // Return default height on error
+	// Add some gentle height variation based on position
+	// This creates a subtle rolling hills effect
+	if (isNaN(x) || isNaN(z)) {
+		console.warn(`Invalid coordinates passed to getFloatingHeight: x=${x}, z=${z}`);
+		return 0;
 	}
+	
+	const baseHeight = 0;
+	const variation = Math.sin(x * 0.5) * Math.cos(z * 0.5) * 0.2;
+	
+	const result = baseHeight + variation;
+	
+	// Validate result to avoid NaN propagation
+	if (isNaN(result)) {
+		console.warn(`getFloatingHeight calculated NaN: x=${x}, z=${z}, variation=${variation}`);
+		return 0;
+	}
+	
+	return result;
 }
 
 /**
@@ -2082,8 +2100,11 @@ function canPlayerMakeChessMoves() {
 	const sessionData = SessionManager.getSessionData();
 	const playerId = sessionData.playerId;
 	
+	// Get the current game state
+	const gameState = GameState.getGameState();
+	
 	// If no game state or player, return false
-	if (!gameState || !gameState.players || !gameState.players[playerId]) {
+	if (!gameState || !playerId) {
 		return false;
 	}
 	
@@ -2134,6 +2155,27 @@ function canPlayerMakeChessMoves() {
 	}
 	
 	return false;
+}
+
+/**
+ * Validates geometry parameters to ensure they're not NaN or invalid values
+ * @param {Object} params - The parameters to validate
+ * @returns {Object} - The validated parameters
+ */
+function validateGeometryParams(params) {
+	const validated = {};
+	for (const key in params) {
+		let value = params[key];
+		if (isNaN(value) || value === undefined || value === null) {
+			console.warn(`Invalid geometry parameter: ${key} = ${value}, using fallback`);
+			value = key.includes('radius') ? 0.2 : 
+				  key.includes('height') ? 0.5 : 
+				  key.includes('width') ? 0.5 : 
+				  key.includes('depth') ? 0.5 : 0.2;
+		}
+		validated[key] = value;
+	}
+	return validated;
 }
 
 export default {
