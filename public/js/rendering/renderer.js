@@ -546,30 +546,28 @@ function addLights() {
 }
 
 /**
- * Load textures and create materials
+ * Load all required textures
  */
 function loadTextures() {
 	try {
 		const textureLoader = new THREE.TextureLoader();
-		textureLoader.setCrossOrigin('anonymous');
+		const textures = {}; // Object to store loaded textures
 		
-		// Create a default texture (white) for fallbacks
+		// Create a default fallback texture
 		const defaultTexture = new THREE.MeshBasicMaterial({ color: 0xFFFFFF });
 		
-		// Create a function to load textures with error handling
+		// Helper function to load a texture with fallback
 		const loadTextureWithFallback = (url, fallbackColor = 0xCCCCCC) => {
 			return new Promise((resolve) => {
 				textureLoader.load(
 					url,
 					(texture) => {
-						texture.wrapS = THREE.RepeatWrapping;
-						texture.wrapT = THREE.RepeatWrapping;
-						resolve(texture);
+						console.log(`Loaded texture: ${url}`);
+						resolve(new THREE.MeshBasicMaterial({ map: texture }));
 					},
-					undefined, // Progress callback
+					undefined, // onProgress not used
 					(error) => {
 						console.warn(`Failed to load texture: ${url}`, error);
-						// Create a colored material as fallback
 						const fallbackMaterial = new THREE.MeshBasicMaterial({ color: fallbackColor });
 						resolve(fallbackMaterial);
 					}
@@ -577,27 +575,40 @@ function loadTextures() {
 			});
 		};
 		
-		// Load all textures with proper error handling
+		// Load all required textures
+		// Using Promise.all to wait for all textures to load
 		Promise.all([
-			loadTextureWithFallback('textures/board.png', 0x8B4513), // Brown fallback for board
-			loadTextureWithFallback('textures/cell.png', 0xAAAAAA),  // Grey fallback for cell
-			loadTextureWithFallback('textures/home_zone.png', 0x3366CC) // Blue fallback for home zone
-		]).then(([boardTexture, cellTexture, homeZoneTexture]) => {
-			// Store the textures or fallback materials
-			textures.board = boardTexture;
-			textures.cell = cellTexture;
-			textures.homeZone = homeZoneTexture;
+			loadTextureWithFallback('textures/board.png', 0x8B4513),
+			loadTextureWithFallback('textures/cell.png', 0xAAAAAA),
+			loadTextureWithFallback('textures/home_zone.png', 0x3366CC)
+		]).then(([boardMat, cellMat, homeZoneMat]) => {
+			// Store textures in the materials object
+			textures.board = boardMat;
+			textures.cell = cellMat;
+			textures.homeZone = homeZoneMat;
 			
 			// Signal that textures are loaded
-			texturesLoaded = true;
+			console.log('All textures loaded');
+			materials = textures; // Update the global materials object
+		}).catch(error => {
+			console.error('Error loading textures:', error);
+			// Set fallback materials
+			textures.board = new THREE.MeshBasicMaterial({ color: 0x8B4513 });
+			textures.cell = new THREE.MeshBasicMaterial({ color: 0xAAAAAA });
+			textures.homeZone = new THREE.MeshBasicMaterial({ color: 0x3366CC });
+			
+			// Signal that textures are loaded
+			console.log('Using fallback textures');
+			materials = textures; // Update the global materials object
 		});
 	} catch (error) {
-		console.error('Error loading textures:', error);
-		// Set defaults for all textures in case of error
-		textures.board = new THREE.MeshBasicMaterial({ color: 0x8B4513 });
-		textures.cell = new THREE.MeshBasicMaterial({ color: 0xAAAAAA });
-		textures.homeZone = new THREE.MeshBasicMaterial({ color: 0x3366CC });
-		texturesLoaded = true;
+		console.error('Error in loadTextures:', error);
+		// Create basic materials as fallback
+		materials = {
+			board: new THREE.MeshBasicMaterial({ color: 0x8B4513 }),
+			cell: new THREE.MeshBasicMaterial({ color: 0xAAAAAA }),
+			homeZone: new THREE.MeshBasicMaterial({ color: 0x3366CC })
+		};
 	}
 }
 
@@ -836,62 +847,60 @@ function updateBoard() {
  * @param {Object} decorationData - Persistent decoration data for the cell
  * @returns {Group} Cell group
  */
-function createFloatingCell(cell, x, z, cellSize, topGeometry, decorationData) {
+function createFloatingCell(cell, x, z, cellSize = 1, topGeometry, decorationData) {
 	try {
-		// Create a group to hold all cell components
+		// Create a group to hold all parts of this cell
 		const cellGroup = new THREE.Group();
 		
-		// Get material based on cell type and player
+		// Validate parameters
+		if (isNaN(x) || isNaN(z)) {
+			console.warn(`Invalid coordinates for cell: x=${x}, z=${z}`);
+			return cellGroup; // Return empty group
+		}
+		
+		// Use provided cellSize or default to 1 if not provided
+		cellSize = cellSize || Constants.CELL_SIZE || 1;
+		
+		// Determine cell material based on type
 		let material;
-		if (cell.type === 'HOME_ZONE') {
-			const color = cell.playerId ? playerColors[cell.playerId] : 0xCCCCCC;
-			material = new THREE.MeshPhongMaterial({ 
-				color: color,
-				transparent: true,
-				opacity: 0.85,
-				side: THREE.DoubleSide
+		if (cell.isHomeZone) {
+			material = new THREE.MeshPhongMaterial({
+				color: cell.color || 0x3366CC,
+				shininess: 80
 			});
 		} else {
-			material = new THREE.MeshPhongMaterial({ 
-				color: 0xFFFFFF,
-				transparent: true,
-				opacity: 0.7,
-				side: THREE.DoubleSide
+			material = new THREE.MeshPhongMaterial({
+				color: cell.color || 0xAAAAAA,
+				shininess: 50
 			});
 		}
 		
-		// Create cell top
+		// Create the top part of the cell
 		const topMesh = new THREE.Mesh(topGeometry, material);
-		
-		// Set position with slight random offset for natural look
-		const height = getFloatingHeight(x, z);
-		topMesh.position.set(x, height, z);
+		topMesh.position.y = getFloatingHeight(x, z);
 		cellGroup.add(topMesh);
 		
-		// Add cell bottom (decorative elements)
-		addCellBottom(x, z, cellSize, material.color);
-		
-		// Add decorations if the data indicates they should be present
-		if (decorationData) {
-			if (decorationData.hasStone) {
-				addStoneDecoration(x, z, height + 0.1, cellSize, decorationData.seed);
-			}
-			
-			if (decorationData.hasMushroom) {
-				addMushroomDecoration(x, z, height + 0.1, cellSize, decorationData.seed);
-			}
-			
-			if (decorationData.hasGrass) {
-				addGrassTuft(x, z, cellSize * 0.4, decorationData.seed);
-			}
+		// Add a bottom part to give depth
+		const bottomPart = addCellBottom(x, z, cellSize, material.color);
+		if (bottomPart) {
+			cellGroup.add(bottomPart);
 		}
 		
-		// Add cell to the board group
+		// Position the cell
+		cellGroup.position.set(0, 0, 0);
+		
+		// Add decorations if they don't already exist
+		if (decorationData && !decorationData.has(`${x},${z}`)) {
+			addCellDecoration(x, z, cellSize);
+		}
+		
+		// Add to the board group
 		boardGroup.add(cellGroup);
+		
 		return cellGroup;
 	} catch (error) {
 		console.error('Error creating floating cell:', error);
-		return null;
+		return new THREE.Group(); // Return empty group on error
 	}
 }
 
