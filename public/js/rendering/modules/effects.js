@@ -529,7 +529,21 @@ export function createSkybox() {
 		}
 		
 		// Add colors to the geometry
-		skyGeometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+		try {
+			// Different versions of THREE.js have different ways to create buffer attributes
+			if (typeof THREE.Float32BufferAttribute === 'function') {
+				skyGeometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+			} else if (typeof THREE.BufferAttribute === 'function') {
+				// Fallback for older versions
+				skyGeometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(colors), 3));
+			} else {
+				// Ultimate fallback - no color attributes
+				console.warn('Unable to add color attributes to skybox - THREE.js BufferAttribute unavailable');
+			}
+		} catch (error) {
+			console.warn('Error setting color attributes:', error);
+			// Continue without color attributes
+		}
 		
 		return skyMesh;
 	} catch (error) {

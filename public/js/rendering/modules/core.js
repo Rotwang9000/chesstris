@@ -10,8 +10,11 @@ import { Constants } from '../../config/constants.js';
 import { GameState } from '../../game/gameState.js';
 import { SessionManager } from '../../session/sessionManager.js';
 import { canPlayerMakeChessMoves } from './utils.js';
-import { createSkybox, addClouds, animatePotionsAndParticles } from './effects.js';
+import * as EffectsModule from './effects.js';
 import { updatePlayerLabels } from './pieces.js';
+
+// Create shorter aliases for frequently used functions
+const { createSkybox, addClouds, animatePotionsAndParticles } = EffectsModule;
 
 // Shared variables
 let container;
@@ -28,6 +31,7 @@ let decorationsGroup;
 let materials = {};
 let lastTime = 0;
 let isInitialized = false;
+let movingTetromino;
 
 /**
  * Initialize the renderer
@@ -47,45 +51,227 @@ export function init(containerElement, options = {}) {
 			};
 		}
 		
-		console.log('Initializing renderer...');
+		// Check if container exists
+		if (!containerElement) {
+			console.error('Invalid container element provided');
+			return false;
+		}
+		
 		container = containerElement;
 		
-		// Create scene
-		scene = new THREE.Scene();
-		scene.background = new THREE.Color(0x121212);
+		console.log('Initializing renderer with container dimension:', {
+			width: container.clientWidth,
+			height: container.clientHeight,
+			valid: container.clientWidth > 0 && container.clientHeight > 0
+		});
 		
-		// Make scene globally available for debugging
-		window.scene = scene;
+		// Create scene - wrap in try/catch
+		try {
+			scene = new THREE.Scene();
+			scene.background = new THREE.Color(0x121212);
+			
+			// Make scene globally available for debugging
+			window.scene = scene;
+			
+			console.log('Scene created successfully');
+		} catch (sceneError) {
+			console.error('Error creating scene:', sceneError);
+			return false;
+		}
+		
+		// Add skybox if enabled
+		if (options.enableSkybox) {
+			try {
+				const skybox = EffectsModule.createSkybox();
+				if (skybox) {
+					scene.add(skybox);
+					console.log('Skybox added to scene');
+				}
+			} catch (error) {
+				console.warn('Failed to create skybox:', error);
+			}
+		}
+		
+		// Add clouds if enabled
+		if (options.enableClouds) {
+			try {
+				EffectsModule.addClouds(scene);
+				console.log('Clouds added to scene');
+			} catch (error) {
+				console.warn('Failed to add clouds:', error);
+			}
+		}
 		
 		// Create camera
-		const aspect = container.clientWidth / container.clientHeight;
-		camera = new THREE.PerspectiveCamera(60, aspect, 0.1, 1000);
+		try {
+			const aspect = container.clientWidth / container.clientHeight;
+			camera = new THREE.PerspectiveCamera(60, aspect, 0.1, 1000);
+			
+			// Default camera position (can be overridden by options)
+			const cameraOptions = options.cameraOptions || {};
+			const cameraPosition = cameraOptions.position || { x: 12, y: 15, z: 20 };
+			const cameraLookAt = cameraOptions.lookAt || { x: 12, y: 0, z: 12 };
+			
+			camera.position.set(cameraPosition.x, cameraPosition.y, cameraPosition.z);
+			camera.lookAt(cameraLookAt.x, cameraLookAt.y, cameraLookAt.z);
+			
+			// Make camera available globally for debugging
+			window.camera = camera;
+		} catch (error) {
+			console.error('Failed to create camera:', error);
+			return false;
+		}
 		
-		// Default camera position (can be overridden by options)
-		const cameraOptions = options.cameraOptions || {};
-		const cameraPosition = cameraOptions.position || { x: 12, y: 15, z: 20 };
-		const cameraLookAt = cameraOptions.lookAt || { x: 12, y: 0, z: 12 };
+		// Create renderer - improve error handling here
+		try {
+			// Check WebGL compatibility first
+			if (!window.WebGLRenderingContext) {
+				console.error('WebGL not supported in this browser');
+				return false;
+			}
+			
+			// Log container dimensions to check if they're valid
+			console.log('Container dimensions:', {
+				width: container.clientWidth,
+				height: container.clientHeight
+			});
+			
+			// Proceed with THREE.js renderer creation
+			console.log('Creating WebGLRenderer...');
+			
+			// Create the renderer with proper options
+			try {
+				renderer = new THREE.WebGLRenderer({ 
+					antialias: true,
+					alpha: true
+				});
+				
+				console.log('WebGLRenderer instance created successfully');
+			} catch (rendererCreationError) {
+				console.error('Error creating WebGLRenderer instance:', rendererCreationError);
+				// Attempt fallback renderer
+				try {
+					console.warn('Trying fallback renderer without antialias...');
+					renderer = new THREE.WebGLRenderer({ 
+						antialias: false,
+						alpha: true 
+					});
+				} catch (fallbackError) {
+					console.error('Fallback renderer also failed:', fallbackError);
+					return false;
+				}
+			}
+			
+			console.log('Setting renderer size...');
+			// Use a minimum size if container dimensions are zero
+			const width = Math.max(container.clientWidth, 1);
+			const height = Math.max(container.clientHeight, 1);
+			
+			try {
+				renderer.setSize(width, height);
+				console.log('Renderer size set successfully');
+			} catch (sizeError) {
+				console.error('Error setting renderer size:', sizeError);
+				return false;
+			}
+			
+			try {
+				console.log('Setting pixel ratio...');
+				renderer.setPixelRatio(window.devicePixelRatio);
+			} catch (ratioError) {
+				console.warn('Error setting pixel ratio (non-critical):', ratioError);
+				// Continue anyway as this is not critical
+			}
+			
+			try {
+				console.log('Enabling shadow maps...');
+				renderer.shadowMap.enabled = true;
+			} catch (shadowError) {
+				console.warn('Error enabling shadow maps (non-critical):', shadowError);
+				// Continue anyway as this is not critical
+			}
+			
+			console.log('Appending renderer to container...');
+			
+			try {
+				// Clear any existing content
+				while (container.firstChild) {
+					container.removeChild(container.firstChild);
+				}
+				
+				// Append the renderer DOM element
+				container.appendChild(renderer.domElement);
+				console.log('Renderer DOM element appended successfully');
+			} catch (appendError) {
+				console.error('Error appending renderer to container:', appendError);
+				return false;
+			}
+			
+			console.log('WebGL renderer created successfully');
+		} catch (rendererError) {
+			console.error('Failed to create WebGL renderer:', rendererError);
+			console.error('Stack trace:', rendererError.stack);
+			return false;
+		}
 		
-		camera.position.set(cameraPosition.x, cameraPosition.y, cameraPosition.z);
-		camera.lookAt(cameraLookAt.x, cameraLookAt.y, cameraLookAt.z);
+		// Continue with the rest of the initialization
 		
-		// Make camera available globally for debugging
-		window.camera = camera;
-		
-		// Create renderer
-		renderer = new THREE.WebGLRenderer({ antialias: true });
-		renderer.setSize(container.clientWidth, container.clientHeight);
-		renderer.setPixelRatio(window.devicePixelRatio);
-		renderer.shadowMap.enabled = true;
-		container.appendChild(renderer.domElement);
+		// Create groups for organization - add try/catch
+		try {
+			boardGroup = new THREE.Group();
+			piecesGroup = new THREE.Group();
+			tetrominoGroup = new THREE.Group();
+			uiGroup = new THREE.Group();
+			decorationsGroup = new THREE.Group();
+			ghostGroup = new THREE.Group();
+			
+			scene.add(boardGroup);
+			scene.add(piecesGroup);
+			scene.add(tetrominoGroup);
+			scene.add(ghostGroup);
+			scene.add(uiGroup);
+			scene.add(decorationsGroup);
+			
+			console.log('Scene groups created and added successfully');
+		} catch (groupError) {
+			console.error('Error creating scene groups:', groupError);
+			return false;
+		}
 		
 		// Add orbit controls
-		controls = new THREE.OrbitControls(camera, renderer.domElement);
-		controls.enableDamping = true;
-		controls.dampingFactor = 0.05;
+		try {
+			// Different versions of THREE.js handle OrbitControls differently
+			if (typeof THREE.OrbitControls === 'function') {
+				// Direct property of THREE
+				controls = new THREE.OrbitControls(camera, renderer.domElement);
+			} else if (typeof OrbitControls === 'function') {
+				// Global OrbitControls (from separate import)
+				controls = new OrbitControls(camera, renderer.domElement);
+			} else {
+				// Fallback - no controls
+				console.warn('OrbitControls not available, camera controls disabled');
+				console.warn('Using OrbitControls fallback - camera controls will be limited');
+			}
+			
+			if (controls) {
+				controls.enableDamping = true;
+				controls.dampingFactor = 0.05;
+			}
+		} catch (error) {
+			console.warn('Error initializing camera controls:', error);
+			// Create a basic placeholder for controls to avoid null errors
+			controls = {
+				update: () => {},
+				target: new THREE.Vector3(12, 0, 12),
+				enabled: false
+			};
+		}
 		
 		// Add camera control shortcuts
 		window.resetCamera = () => {
+			const cameraOptions = options.cameraOptions || {};
+			const cameraPosition = cameraOptions.position || { x: 12, y: 15, z: 20 };
+			const cameraLookAt = cameraOptions.lookAt || { x: 12, y: 0, z: 12 };
 			camera.position.set(cameraPosition.x, cameraPosition.y, cameraPosition.z);
 			camera.lookAt(cameraLookAt.x, cameraLookAt.y, cameraLookAt.z);
 		};
@@ -100,21 +286,6 @@ export function init(containerElement, options = {}) {
 			camera.lookAt(12, 0, 12);
 		};
 		
-		// Create groups for organization
-		boardGroup = new THREE.Group();
-		piecesGroup = new THREE.Group();
-		tetrominoGroup = new THREE.Group();
-		uiGroup = new THREE.Group();
-		decorationsGroup = new THREE.Group();
-		ghostGroup = new THREE.Group();
-		
-		scene.add(boardGroup);
-		scene.add(piecesGroup);
-		scene.add(tetrominoGroup);
-		scene.add(ghostGroup);
-		scene.add(uiGroup);
-		scene.add(decorationsGroup);
-		
 		// Share groups with other modules
 		window.boardGroup = boardGroup;
 		window.piecesGroup = piecesGroup;
@@ -123,38 +294,50 @@ export function init(containerElement, options = {}) {
 		window.uiGroup = uiGroup;
 		window.decorationsGroup = decorationsGroup;
 		
-		// Add lights
-		setupLights(scene, options);
+		// Add light with try/catch
+		try {
+			setupLights(scene, options);
+		} catch (lightError) {
+			console.error('Error setting up lights:', lightError);
+			// Continue anyway - non-critical
+		}
 		
-		// Create a ground plane for orientation
-		createGroundPlane();
+		// Create ground plane with try/catch
+		try {
+			createGroundPlane();
+		} catch (groundError) {
+			console.error('Error creating ground plane:', groundError);
+			// Continue anyway - non-critical
+		}
 		
-		// Create coordinate axes
-		createCoordinateAxes();
+		// Grid helper with try/catch
+		try {
+			const gridHelper = new THREE.GridHelper(30, 30, 0x444444, 0x222222);
+			scene.add(gridHelper);
+			console.log('Grid helper added to scene');
+		} catch (gridError) {
+			console.error('Error creating grid helper:', gridError);
+			// Continue anyway - non-critical
+		}
 		
-		// Create test board cells for DEBUG
-		createTestCells();
+		// Create coordinate axes with try/catch
+		try {
+			createCoordinateAxes();
+		} catch (axesError) {
+			console.error('Error creating coordinate axes:', axesError);
+			// Continue anyway - non-critical
+		}
+		
+		// Create test cells with try/catch
+		try {
+			createTestCells();
+		} catch (cellsError) {
+			console.error('Error creating test cells:', cellsError);
+			// Continue anyway - non-critical
+		}
 		
 		// Add fog if not in test mode with reduced density
 		scene.fog = new FogExp2(0x111133, options.useTestMode ? 0.0005 : 0.002);
-		
-		// Add skybox and clouds if not in test mode
-		if (!options.useTestMode && typeof createSkybox === 'function') {
-			try {
-				const skybox = createSkybox();
-				if (skybox) {
-					scene.add(skybox);
-					console.log('Skybox added to scene');
-				}
-				
-				if (typeof addClouds === 'function') {
-					addClouds(scene);
-					console.log('Clouds added to scene');
-				}
-			} catch (e) {
-				console.warn('Failed to create skybox or clouds:', e);
-			}
-		}
 		
 		// Load textures
 		if (options.textureLoader) {
@@ -168,37 +351,99 @@ export function init(containerElement, options = {}) {
 		// Add debug UI
 		createDebugUI();
 		
+		// Create a moving tetromino to demonstrate animation
+		function createMovingTetromino() {
+			console.log('Creating moving tetromino for animation...');
+			movingTetromino = new THREE.Group();
+			
+			// Create a T-shaped tetromino with a bright color
+			const blockGeometry = new THREE.BoxGeometry(2, 2, 2);
+			const blockMaterial = new THREE.MeshPhongMaterial({ 
+				color: 0xff3300,
+				emissive: 0x441100,
+				shininess: 30
+			});
+			
+			// T-shape positions
+			const positions = [
+				{ x: 0, y: 0, z: 0 },  // center
+				{ x: -1, y: 0, z: 0 }, // left
+				{ x: 1, y: 0, z: 0 },  // right
+				{ x: 0, y: 0, z: 1 }   // bottom
+			];
+			
+			positions.forEach(pos => {
+				const block = new THREE.Mesh(blockGeometry, blockMaterial);
+				block.position.set(pos.x * 2.2, pos.y * 2.2, pos.z * 2.2);
+				block.castShadow = true;
+				block.receiveShadow = true;
+				movingTetromino.add(block);
+			});
+			
+			// Position the tetromino in mid-air
+			movingTetromino.position.set(10, 15, 10);
+			scene.add(movingTetromino);
+			
+			console.log('Moving tetromino created successfully');
+			return movingTetromino;
+		}
+		
+		createMovingTetromino();
+		
 		// Animation loop
 		function animate(time) {
-			requestAnimationFrame(animate);
+			// Request next frame early to maintain animation even if an error occurs
+			const animationId = requestAnimationFrame(animate);
 			
-			// Calculate delta time for animations
-			const delta = (time - lastTime) / 1000;
-			lastTime = time;
-			
-			// Update controls
-			controls.update();
-			
-			// Update animations
-			if (typeof animatePotionsAndParticles === 'function') {
-				try {
-					animatePotionsAndParticles(delta);
-				} catch (e) {
-					// Ignore animation errors
+			try {
+				// Calculate delta time for animations
+				const delta = (time - lastTime) / 1000;
+				lastTime = time;
+				
+				// Update controls if they exist
+				if (controls && typeof controls.update === 'function') {
+					controls.update();
 				}
-			}
-			
-			// Update player labels
-			if (typeof updatePlayerLabels === 'function') {
-				try {
-					updatePlayerLabels(camera);
-				} catch (e) {
-					// Ignore label update errors
+				
+				// Animate the moving tetromino
+				if (movingTetromino) {
+					// Rotate the tetromino
+					movingTetromino.rotation.y += delta * 0.5;
+					movingTetromino.rotation.x += delta * 0.3;
+					
+					// Make the tetromino bob up and down
+					const hoverHeight = Math.sin(time * 0.001) * 2;
+					movingTetromino.position.y = 15 + hoverHeight;
 				}
+				
+				// Update animations
+				if (typeof animatePotionsAndParticles === 'function') {
+					try {
+						animatePotionsAndParticles(delta);
+					} catch (e) {
+						console.warn('Animation error in potions/particles:', e);
+					}
+				}
+				
+				// Update player labels
+				if (typeof updatePlayerLabels === 'function') {
+					try {
+						updatePlayerLabels(camera);
+					} catch (e) {
+						console.warn('Error updating player labels:', e);
+					}
+				}
+				
+				// Render scene
+				if (scene && camera && renderer) {
+					renderer.render(scene, camera);
+				} else {
+					console.warn('Cannot render: missing scene, camera, or renderer');
+					cancelAnimationFrame(animationId);
+				}
+			} catch (error) {
+				console.error('Animation loop error:', error);
 			}
-			
-			// Render scene
-			renderer.render(scene, camera);
 		}
 		
 		// Start animation loop
@@ -342,48 +587,60 @@ function createTextLabel(text, x, y, z, color = 0xFFFFFF) {
  * @param {Object} options - Options for lighting
  */
 function setupLights(scene, options = {}) {
-	// Create brighter ambient light for better overall visibility
-	const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
+	// Clean up old lights
+	scene.traverse(object => {
+		if (object.isLight) {
+			scene.remove(object);
+		}
+	});
+	
+	// Create ambient light
+	const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
 	scene.add(ambientLight);
 	
-	// Create main directional light (sun)
-	const directionalLight = new THREE.DirectionalLight(0xffffff, 1.5);
-	directionalLight.position.set(50, 100, 50);
+	// Create directional light (sun)
+	const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+	directionalLight.position.set(50, 200, 100);
 	directionalLight.castShadow = true;
 	
-	// Configure shadow properties for better quality
-	directionalLight.shadow.mapSize.width = 2048;
-	directionalLight.shadow.mapSize.height = 2048;
-	directionalLight.shadow.camera.near = 0.5;
+	// Improve shadow quality
+	directionalLight.shadow.mapSize.width = 1024;
+	directionalLight.shadow.mapSize.height = 1024;
+	directionalLight.shadow.camera.near = 10;
 	directionalLight.shadow.camera.far = 500;
-	directionalLight.shadow.camera.left = -100;
-	directionalLight.shadow.camera.right = 100;
-	directionalLight.shadow.camera.top = 100;
-	directionalLight.shadow.camera.bottom = -100;
-	
+	directionalLight.shadow.camera.left = -50;
+	directionalLight.shadow.camera.right = 50;
+	directionalLight.shadow.camera.top = 50;
+	directionalLight.shadow.camera.bottom = -50;
 	scene.add(directionalLight);
 	
-	// Add a spotlight to highlight the board center
-	const spotlight = new THREE.SpotLight(0xffffff, 1.0);
-	spotlight.position.set(12, 30, 12);
-	spotlight.angle = Math.PI / 4;
-	spotlight.penumbra = 0.1;
-	spotlight.decay = 1;
-	spotlight.distance = 100;
-	spotlight.castShadow = true;
-	spotlight.shadow.mapSize.width = 1024;
-	spotlight.shadow.mapSize.height = 1024;
-	spotlight.target.position.set(12, 0, 12); // Target the board center
-	scene.add(spotlight);
-	scene.add(spotlight.target);
-	
-	// Add point light for local illumination
-	const pointLight = new THREE.PointLight(0xffffcc, 1.0, 50);
-	pointLight.position.set(12, 10, 12);
+	// Add a point light over the board
+	const pointLight = new THREE.PointLight(0xffffcc, 1, 50);
+	pointLight.position.set(10, 15, 10);
 	pointLight.castShadow = true;
 	scene.add(pointLight);
 	
-	console.log('Lights added to scene');
+	// Add two colored rim lights for dramatic effect
+	const blueLight = new THREE.PointLight(0x0066ff, 0.7, 40);
+	blueLight.position.set(-20, 10, 20);
+	scene.add(blueLight);
+	
+	const purpleLight = new THREE.PointLight(0xff00ff, 0.5, 40);
+	purpleLight.position.set(20, 5, -10);
+	scene.add(purpleLight);
+	
+	// Helper for debug mode
+	if (options.debug) {
+		const directionalLightHelper = new THREE.DirectionalLightHelper(directionalLight, 5);
+		scene.add(directionalLightHelper);
+		
+		const pointLightHelper = new THREE.PointLightHelper(pointLight, 1);
+		scene.add(pointLightHelper);
+		
+		console.log('Light helpers added for debugging');
+	}
+	
+	console.log('Scene lighting setup complete with enhanced lights');
 }
 
 /**
@@ -576,121 +833,121 @@ export function cleanup() {
  * Create visible test cells in the board area
  */
 function createTestCells() {
-	// Import board module functions if available
-	const createCell = window.boardModule && window.boardModule.createCell;
-	const createChessPiece = window.piecesModule && window.piecesModule.createChessPiece;
+	console.log('Creating test cells for visualization...');
 	
-	// If we can't access these functions, create our own simple versions
-	if (!createCell || !createChessPiece) {
-		console.warn('Board or pieces module not available, creating simple test cells');
-		
-		// Create simple test cells in a checkerboard pattern
-		for (let z = 5; z < 15; z++) {
-			for (let x = 5; x < 15; x++) {
-				if ((x + z) % 2 === 0) {
-					// Create a simple cell
-					const cellGeometry = new THREE.BoxGeometry(1, 0.2, 1);
-					const cellMaterial = new THREE.MeshBasicMaterial({
-						color: (z >= 12) ? 0xFFA500 : 0x42A5F5, // Orange for home zones, blue for regular
-						wireframe: false
-					});
-					const cell = new THREE.Mesh(cellGeometry, cellMaterial);
-					cell.position.set(x, 0, z);
-					
-					// Add a wireframe outline
-					const wireGeometry = new THREE.BoxGeometry(1.02, 0.22, 1.02);
-					const wireMaterial = new THREE.MeshBasicMaterial({
-						color: 0xFFFFFF,
-						wireframe: true
-					});
-					const wireframe = new THREE.Mesh(wireGeometry, wireMaterial);
-					cell.add(wireframe);
-					
-					boardGroup.add(cell);
-				}
-			}
+	// Make the test cells more visible and larger
+	const cellSize = 2.5;
+	const boardSize = 8;
+	
+	// Create checkerboard pattern
+	for (let x = 0; x < boardSize; x++) {
+		for (let z = 0; z < boardSize; z++) {
+			const isEven = (x + z) % 2 === 0;
+			const material = new THREE.MeshLambertMaterial({
+				color: isEven ? 0x888888 : 0x444444,
+				transparent: true,
+				opacity: 0.9
+			});
+			const geometry = new THREE.BoxGeometry(cellSize, 0.5, cellSize);
+			const cell = new THREE.Mesh(geometry, material);
+			
+			// Position cells to form a grid
+			cell.position.x = x * cellSize;
+			cell.position.y = 0;
+			cell.position.z = z * cellSize;
+			
+			// Add to board group
+			boardGroup.add(cell);
+			console.log(`Created test cell at x:${x}, z:${z}`);
 		}
-		
-		// Create some test chess pieces
-		const piecePositions = [
-			{ x: 7, z: 10, type: 'pawn' },
-			{ x: 8, z: 10, type: 'rook' },
-			{ x: 9, z: 10, type: 'knight' }
-		];
-		
-		piecePositions.forEach(pos => {
-			const pieceGeometry = new THREE.CylinderGeometry(0.3, 0.4, 1.2, 8);
-			const pieceMaterial = new THREE.MeshBasicMaterial({
-				color: 0xFF00FF,
-				wireframe: false
-			});
-			const piece = new THREE.Mesh(pieceGeometry, pieceMaterial);
-			piece.position.set(pos.x, 0.6, pos.z); // Position at the center of the cell, slightly elevated
-			
-			// Add wireframe outline
-			const wireGeometry = new THREE.CylinderGeometry(0.31, 0.41, 1.21, 8);
-			const wireMaterial = new THREE.MeshBasicMaterial({
-				color: 0xFFFFFF,
-				wireframe: true
-			});
-			const wireframe = new THREE.Mesh(wireGeometry, wireMaterial);
-			piece.add(wireframe);
-			
-			// Add label
-			const canvas = document.createElement('canvas');
-			canvas.width = 128;
-			canvas.height = 64;
-			const ctx = canvas.getContext('2d');
-			
-			ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-			ctx.fillRect(0, 0, canvas.width, canvas.height);
-			
-			ctx.fillStyle = 'white';
-			ctx.font = 'bold 20px Arial';
-			ctx.textAlign = 'center';
-			ctx.textBaseline = 'middle';
-			ctx.fillText(pos.type.toUpperCase(), canvas.width/2, canvas.height/2);
-			
-			const texture = new THREE.CanvasTexture(canvas);
-			const labelMaterial = new THREE.SpriteMaterial({ map: texture });
-			const label = new THREE.Sprite(labelMaterial);
-			label.position.set(0, 1.0, 0);
-			label.scale.set(1, 0.5, 1);
-			piece.add(label);
-			
-			piecesGroup.add(piece);
-		});
-	} else {
-		console.log('Using board and pieces modules to create test cells');
-		
-		// Create test cells using the imported functions
-		for (let z = 5; z < 15; z++) {
-			for (let x = 5; x < 15; x++) {
-				if ((x + z) % 2 === 0) {
-					const cellOptions = {
-						color: (z >= 12) ? 0xFFA500 : 0x42A5F5,
-						isHomeZone: z >= 12
-					};
-					createCell(x, z, cellOptions);
-				}
-			}
-		}
-		
-		// Create test chess pieces
-		const piecePositions = [
-			{ x: 7, z: 10, type: 'pawn' },
-			{ x: 8, z: 10, type: 'rook' },
-			{ x: 9, z: 10, type: 'knight' }
-		];
-		
-		piecePositions.forEach(pos => {
-			createChessPiece(pos.type, {
-				position: { x: pos.x, y: 0, z: pos.z },
-				color: 0xFF00FF,
-				showLabel: true
-			});
-		});
 	}
+	
+	// Create larger, more visible test objects
+	// A red tetromino-like shape in the center
+	const createTetromino = () => {
+		const tetrominoGroup = new THREE.Group();
+		const blockGeometry = new THREE.BoxGeometry(cellSize, cellSize, cellSize);
+		const blockMaterial = new THREE.MeshLambertMaterial({ color: 0xff0000 });
+		
+		// T-shaped tetromino
+		const positions = [
+			{ x: 0, y: 0, z: 0 },  // center
+			{ x: -1, y: 0, z: 0 }, // left
+			{ x: 1, y: 0, z: 0 },  // right
+			{ x: 0, y: 0, z: 1 }   // bottom
+		];
+		
+		positions.forEach(pos => {
+			const block = new THREE.Mesh(blockGeometry, blockMaterial);
+			block.position.set(
+				pos.x * cellSize + boardSize * cellSize / 2, 
+				cellSize/2 + 1,  // Slightly above the board
+				pos.z * cellSize + boardSize * cellSize / 2
+			);
+			block.castShadow = true;
+			tetrominoGroup.add(block);
+		});
+		
+		return tetrominoGroup;
+	};
+	
+	// Create some chess pieces as well
+	const createChessPiece = (type, color, x, z) => {
+		// Simplified geometry for chess pieces
+		let geometry;
+		
+		switch(type) {
+			case 'pawn':
+				geometry = new THREE.CylinderGeometry(0.4 * cellSize, 0.5 * cellSize, cellSize, 8);
+				break;
+			case 'rook':
+				geometry = new THREE.BoxGeometry(0.8 * cellSize, 1.2 * cellSize, 0.8 * cellSize);
+				break;
+			case 'knight':
+				// Create a simple knight shape
+				const knightGroup = new THREE.Group();
+				const base = new THREE.Mesh(
+					new THREE.CylinderGeometry(0.5 * cellSize, 0.6 * cellSize, 0.6 * cellSize, 8),
+					new THREE.MeshLambertMaterial({ color: color })
+				);
+				const top = new THREE.Mesh(
+					new THREE.SphereGeometry(0.4 * cellSize, 8, 8),
+					new THREE.MeshLambertMaterial({ color: color })
+				);
+				top.position.y = 0.6 * cellSize;
+				knightGroup.add(base);
+				knightGroup.add(top);
+				
+				knightGroup.position.set(x * cellSize, 0.6 * cellSize, z * cellSize);
+				knightGroup.castShadow = true;
+				boardGroup.add(knightGroup);
+				return;
+			default:
+				geometry = new THREE.SphereGeometry(0.6 * cellSize, 8, 8);
+		}
+		
+		const material = new THREE.MeshLambertMaterial({ color: color });
+		const piece = new THREE.Mesh(geometry, material);
+		piece.position.set(x * cellSize, 0.6 * cellSize, z * cellSize);
+		piece.castShadow = true;
+		boardGroup.add(piece);
+	};
+	
+	// Add the tetromino
+	boardGroup.add(createTetromino());
+	
+	// Add some chess pieces on the board edges
+	createChessPiece('rook', 0xffffff, 0, 0);
+	createChessPiece('knight', 0xffffff, 1, 0);
+	createChessPiece('pawn', 0xffffff, 0, 1);
+	createChessPiece('pawn', 0xffffff, 1, 1);
+	
+	createChessPiece('rook', 0x222222, 7, 7);
+	createChessPiece('knight', 0x222222, 6, 7);
+	createChessPiece('pawn', 0x222222, 7, 6);
+	createChessPiece('pawn', 0x222222, 6, 6);
+	
+	console.log('Test cells created successfully');
 }
 
 /**
@@ -726,9 +983,9 @@ function createDebugUI() {
 	resetButton.style.borderRadius = '4px';
 	resetButton.style.cursor = 'pointer';
 	resetButton.onclick = () => {
-		if (window.camera) {
-			window.camera.position.set(12, 15, 12);
-			window.camera.lookAt(12, 0, 12);
+		if (window.resetCamera) {
+			window.resetCamera();
+			console.log('Camera reset to default position');
 		}
 	};
 	debugPanel.appendChild(resetButton);
@@ -744,9 +1001,9 @@ function createDebugUI() {
 	topButton.style.borderRadius = '4px';
 	topButton.style.cursor = 'pointer';
 	topButton.onclick = () => {
-		if (window.camera) {
-			window.camera.position.set(12, 30, 12);
-			window.camera.lookAt(12, 0, 12);
+		if (window.topView) {
+			window.topView();
+			console.log('Camera set to top view');
 		}
 	};
 	debugPanel.appendChild(topButton);
@@ -762,12 +1019,32 @@ function createDebugUI() {
 	sideButton.style.borderRadius = '4px';
 	sideButton.style.cursor = 'pointer';
 	sideButton.onclick = () => {
-		if (window.camera) {
-			window.camera.position.set(30, 5, 12);
-			window.camera.lookAt(12, 0, 12);
+		if (window.sideView) {
+			window.sideView();
+			console.log('Camera set to side view');
 		}
 	};
 	debugPanel.appendChild(sideButton);
+	
+	// Add home zone view button
+	const homeButton = document.createElement('button');
+	homeButton.textContent = 'View Home Zone';
+	homeButton.style.backgroundColor = '#FFA500';
+	homeButton.style.color = 'white';
+	homeButton.style.border = 'none';
+	homeButton.style.padding = '8px 16px';
+	homeButton.style.margin = '5px';
+	homeButton.style.borderRadius = '4px';
+	homeButton.style.cursor = 'pointer';
+	homeButton.onclick = () => {
+		// Focus on home zone (coordinates 12, 0, 15)
+		if (window.camera) {
+			window.camera.position.set(12, 10, 20);
+			window.camera.lookAt(12, 0, 15);
+			console.log('Camera focused on home zone');
+		}
+	};
+	debugPanel.appendChild(homeButton);
 	
 	// Create camera info element
 	const cameraInfo = document.createElement('div');

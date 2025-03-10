@@ -89,7 +89,7 @@ async function init() {
 				
 				// Hide loading screen
 				UI.hideLoadingScreen();
-				UI.showNotification('Welcome to Shaktris!', 'info');
+				UI.showNotification('Welcome to Chesstris - DEBUG MODE ACTIVE', 'info');
 				
 				// Set initialized flag
 				isInitialized = true;

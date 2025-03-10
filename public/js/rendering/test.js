@@ -17,63 +17,107 @@ if (!window.GameState) {
 	const boardSize = 24;
 	const testBoard = Array(boardSize).fill(null).map(() => Array(boardSize).fill(null));
 	
-	// Create LARGER, HIGH-CONTRAST cells in a more visible pattern
-	for (let z = 5; z < 20; z++) {
-		for (let x = 5; x < 20; x++) {
-			// Create a checkerboard pattern of cells with BRIGHT colors
-			if ((x + z) % 2 === 0) {
-				testBoard[z][x] = {
-					type: 'cell',
-					active: true,
-					playerId: testPlayerId,
-					isHomeZone: z >= 15, // Make some cells home zone
-					color: 0xFF5500, // Bright orange color for visibility
-					chessPiece: null
-				};
-			} else {
-				// Add the odd cells too for better visibility, in a different color
+	// Create proper home island area (8x2 area at the bottom)
+	// Home zone for first player (rows 15-16, columns 8-15)
+	for (let z = 15; z <= 16; z++) {
+		for (let x = 8; x <= 15; x++) {
+			testBoard[z][x] = {
+				type: 'cell',
+				active: true,
+				playerId: testPlayerId,
+				isHomeZone: true,  // Mark as home zone
+				color: 0xFFA500,   // Orange color for home zone
+				chessPiece: null    // Will add chess pieces later
+			};
+		}
+	}
+	
+	// Create a path from home zone to other areas
+	for (let z = 10; z < 15; z++) {
+		for (let x = 10; x < 15; x++) {
+			testBoard[z][x] = {
+				type: 'cell',
+				active: true,
+				playerId: testPlayerId,
+				isHomeZone: false,
+				color: 0x42A5F5, // Blue color for regular cells
+				chessPiece: null
+			};
+		}
+	}
+	
+	// Add some additional cells as test terrain
+	for (let z = 5; z < 10; z++) {
+		for (let x = 5; x < 18; x++) {
+			if ((x + z) % 3 === 0) { // Create a pattern with gaps
 				testBoard[z][x] = {
 					type: 'cell',
 					active: true,
 					playerId: testPlayerId,
 					isHomeZone: false,
-					color: 0x00FF00, // Bright green color
+					color: 0x7986CB, // Indigo color
 					chessPiece: null
 				};
 			}
 		}
 	}
 	
-	// Add LARGER, BRIGHTER chess pieces in multiple rows for better visibility
-	const pieceTypes = ['pawn', 'rook', 'knight', 'bishop', 'queen', 'king'];
-	
-	// First row of pieces
-	for (let i = 0; i < 6; i++) {
-		testBoard[10][7 + i] = {
+	// Add chess pieces to home zone in proper arrangement
+	// First row (back row - rook, knight, bishop, queen, king, bishop, knight, rook)
+	const backRow = ['rook', 'knight', 'bishop', 'queen', 'king', 'bishop', 'knight', 'rook'];
+	for (let i = 0; i < 8; i++) {
+		testBoard[16][8 + i] = {
 			type: 'cell',
 			active: true,
 			playerId: testPlayerId,
-			color: 0xFF00FF, // Magenta color for extreme contrast
+			isHomeZone: true,
+			color: 0xFFA500, // Orange home zone
 			chessPiece: {
-				type: pieceTypes[i],
+				type: backRow[i],
 				owner: testPlayerId
 			}
 		};
 	}
 	
-	// Second row of pieces - different types
-	for (let i = 0; i < 6; i++) {
-		testBoard[12][7 + i] = {
+	// Second row (all pawns)
+	for (let i = 0; i < 8; i++) {
+		testBoard[15][8 + i] = {
 			type: 'cell',
 			active: true,
 			playerId: testPlayerId,
-			color: 0xFFFF00, // Yellow color
+			isHomeZone: true,
+			color: 0xFFA500, // Orange home zone
 			chessPiece: {
-				type: pieceTypes[5 - i], // Reverse order
+				type: 'pawn',
 				owner: testPlayerId
 			}
 		};
 	}
+	
+	// Add some advanced pieces on the battlefield for testing
+	// A knight that has moved forward
+	testBoard[12][12] = {
+		type: 'cell',
+		active: true,
+		playerId: testPlayerId,
+		color: 0x42A5F5,
+		chessPiece: {
+			type: 'knight',
+			owner: testPlayerId
+		}
+	};
+	
+	// A pawn that has moved forward
+	testBoard[8][10] = {
+		type: 'cell',
+		active: true,
+		playerId: testPlayerId,
+		color: 0x42A5F5,
+		chessPiece: {
+			type: 'pawn',
+			owner: testPlayerId
+		}
+	};
 	
 	// Sample game state with actual board data and players
 	const sampleGameState = {
@@ -87,6 +131,11 @@ if (!window.GameState) {
 				score: 100,
 				isActive: true
 			}
+		},
+		fallingPiece: {
+			type: 'T',  // T-shaped tetromino
+			position: { x: 12, z: 3, y: 5 }, // Higher up so it's visible
+			rotation: 0
 		}
 	};
 	
@@ -100,7 +149,28 @@ if (!window.GameState) {
 			return cachedGameState;
 		},
 		getGameState: () => {
-			// Return the cached state to prevent rebuilding pieces each frame
+			// Add animation to falling piece
+			if (cachedGameState.fallingPiece) {
+				// Make the piece fall slowly
+				cachedGameState.fallingPiece.position.y -= 0.03;
+				
+				// Reset when it gets too low
+				if (cachedGameState.fallingPiece.position.y < -2) {
+					cachedGameState.fallingPiece.position.y = 5;
+					
+					// Move X position for variety
+					cachedGameState.fallingPiece.position.x = 8 + Math.floor(Math.random() * 8);
+					
+					// Change tetromino type
+					const types = ['I', 'O', 'T', 'J', 'L', 'S', 'Z'];
+					cachedGameState.fallingPiece.type = types[Math.floor(Math.random() * types.length)];
+					
+					// Random rotation
+					cachedGameState.fallingPiece.rotation = Math.floor(Math.random() * 4) * 90;
+				}
+			}
+			
+			// Return the cached state with updated falling piece
 			return cachedGameState;
 		},
 		updateGameState: (newState) => {
@@ -144,10 +214,10 @@ if (!window.TEXTURE_PATHS) {
 	};
 }
 
-// Disable excessive logging in test mode
+// Enable some debug logging
 if (!window.Constants) {
 	window.Constants = {
-		DEBUG_LOGGING: false,
+		DEBUG_LOGGING: true,
 		CELL_SIZE: 1
 	};
 }
@@ -165,7 +235,23 @@ function testRenderer() {
 	// Get container element
 	const container = document.getElementById('game-container');
 	if (!container) {
-		console.error('Game container not found');
+		console.error('Game container not found - unable to initialize renderer');
+		
+		// Try to update the info panel to show the error
+		try {
+			const infoPanel = document.getElementById('info-panel');
+			if (infoPanel) {
+				infoPanel.innerHTML = `
+					<h2>Chesstris Game Test</h2>
+					<p style="color: red;">ERROR: Game container element not found!</p>
+					<p>Please check the HTML for an element with id="game-container".</p>
+				`;
+			}
+		} catch (e) {
+			// If we can't even update the info panel, log to console as a last resort
+			console.error('Failed to update info panel:', e);
+		}
+		
 		return false;
 	}
 	
@@ -180,33 +266,69 @@ function testRenderer() {
 				canvas.height = 128;
 				const ctx = canvas.getContext('2d');
 				
-				// Create a more visible high-contrast checkerboard pattern
-				const squareSize = 16; // Smaller squares for more contrast
-				for (let y = 0; y < canvas.height; y += squareSize) {
-					for (let x = 0; x < canvas.width; x += squareSize) {
-						ctx.fillStyle = (x + y) % (squareSize * 2) === 0 ? '#FF0000' : '#FFFF00';
-						ctx.fillRect(x, y, squareSize, squareSize);
+				// Create a more visible pattern based on texture type
+				if (path.includes('board')) {
+					// Board texture - wooden pattern
+					ctx.fillStyle = '#8D6E63'; // Brown
+					ctx.fillRect(0, 0, canvas.width, canvas.height);
+					
+					// Wood grain lines
+					ctx.strokeStyle = '#5D4037';
+					ctx.lineWidth = 2;
+					for (let i = 0; i < 20; i++) {
+						const y = i * 10 + Math.random() * 5;
+						ctx.beginPath();
+						ctx.moveTo(0, y);
+						ctx.bezierCurveTo(
+							canvas.width/3, y + Math.random() * 10 - 5,
+							canvas.width*2/3, y + Math.random() * 10 - 5,
+							canvas.width, y + Math.random() * 10 - 5
+						);
+						ctx.stroke();
+					}
+				} 
+				else if (path.includes('cell')) {
+					// Cell texture - metallic blue
+					ctx.fillStyle = '#2196F3';
+					ctx.fillRect(0, 0, canvas.width, canvas.height);
+					
+					// Highlight
+					const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+					gradient.addColorStop(0, 'rgba(255, 255, 255, 0.4)');
+					gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0)');
+					gradient.addColorStop(1, 'rgba(0, 0, 0, 0.3)');
+					ctx.fillStyle = gradient;
+					ctx.fillRect(0, 0, canvas.width, canvas.height);
+					
+					// Grid lines
+					ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+					ctx.lineWidth = 1;
+					ctx.beginPath();
+					for (let i = 0; i <= 4; i++) {
+						const pos = i * (canvas.width/4);
+						ctx.moveTo(pos, 0);
+						ctx.lineTo(pos, canvas.height);
+						ctx.moveTo(0, pos);
+						ctx.lineTo(canvas.width, pos);
+					}
+					ctx.stroke();
+				}
+				else if (path.includes('home')) {
+					// Home zone texture - golden pattern
+					ctx.fillStyle = '#FFC107'; // Amber
+					ctx.fillRect(0, 0, canvas.width, canvas.height);
+					
+					// Diagonal pattern
+					ctx.fillStyle = '#FFD54F';
+					for (let i = -canvas.width; i < canvas.width; i += 20) {
+						ctx.beginPath();
+						ctx.moveTo(i, 0);
+						ctx.lineTo(i + canvas.width, canvas.height);
+						ctx.lineTo(i + canvas.width + 10, canvas.height);
+						ctx.lineTo(i + 10, 0);
+						ctx.fill();
 					}
 				}
-				
-				// Add a border
-				ctx.strokeStyle = '#FFFFFF';
-				ctx.lineWidth = 8;
-				ctx.strokeRect(4, 4, canvas.width - 8, canvas.height - 8);
-				
-				// Add text label
-				ctx.fillStyle = '#000000';
-				ctx.font = 'bold 20px Arial';
-				ctx.textAlign = 'center';
-				ctx.textBaseline = 'middle';
-				
-				// Write the texture name
-				let textureName = 'Unknown';
-				if (path.includes('board')) textureName = 'BOARD';
-				else if (path.includes('cell')) textureName = 'CELL';
-				else if (path.includes('home')) textureName = 'HOME';
-				
-				ctx.fillText(textureName, canvas.width/2, canvas.height/2);
 				
 				// Create a texture from canvas
 				const texture = new THREE.CanvasTexture(canvas);
@@ -229,223 +351,79 @@ function testRenderer() {
 		cameraOptions: {
 			position: { x: 12, y: 15, z: 20 },
 			lookAt: { x: 12, y: 0, z: 12 }
-		}
+		},
+		enableSkybox: true,  // Enable skybox
+		enableClouds: true,  // Enable clouds
+		enableEffects: true  // Enable additional effects
 	});
 	
-	// If initialization fails or even if it succeeds, create a direct debug object
-	// to ensure something is visible
-	const createDebugObjects = () => {
-		console.log('Creating direct debug objects');
-		if (window.scene) {
-			// Create a manual grid instead of using GridHelper since it might not be available
-			const gridSize = 40;
-			const gridDivisions = 40;
-			const gridMaterial = new THREE.LineBasicMaterial({ color: 0xFF0000 });
-			
-			// Create grid lines manually
-			const gridGroup = new THREE.Group();
-			
-			// Create X lines (along Z axis)
-			for (let i = 0; i <= gridDivisions; i++) {
-				const x = (i / gridDivisions) * gridSize - gridSize / 2;
-				const geometry = new THREE.Geometry();
-				geometry.vertices.push(
-					new THREE.Vector3(x, 0, -gridSize / 2),
-					new THREE.Vector3(x, 0, gridSize / 2)
-				);
-				const line = new THREE.Line(geometry, gridMaterial);
-				gridGroup.add(line);
-			}
-			
-			// Create Z lines (along X axis)
-			for (let i = 0; i <= gridDivisions; i++) {
-				const z = (i / gridDivisions) * gridSize - gridSize / 2;
-				const geometry = new THREE.Geometry();
-				geometry.vertices.push(
-					new THREE.Vector3(-gridSize / 2, 0, z),
-					new THREE.Vector3(gridSize / 2, 0, z)
-				);
-				const line = new THREE.Line(geometry, gridMaterial);
-				gridGroup.add(line);
-			}
-			
-			// Center the grid
-			gridGroup.position.set(gridSize / 2, 0, gridSize / 2);
-			window.scene.add(gridGroup);
-			
-			// Create visible debug cubes at the test cell positions
-			for (let z = 5; z < 20; z+=2) {
-				for (let x = 5; x < 20; x+=2) {
-					const geometry = new THREE.BoxGeometry(1, 1, 1);
-					const material = new THREE.MeshBasicMaterial({ 
-						color: ((x + z) % 4 === 0) ? 0xFF0000 : 0x00FF00,
-						wireframe: true
-					});
-					const cube = new THREE.Mesh(geometry, material);
-					cube.position.set(x, 0.5, z);
-					window.scene.add(cube);
-				}
-			}
-			
-			// Add a large marker at the origin
-			const originMarker = new THREE.Mesh(
-				new THREE.SphereGeometry(1, 16, 16),
-				new THREE.MeshBasicMaterial({ color: 0x0000FF })
-			);
-			originMarker.position.set(0, 1, 0);
-			window.scene.add(originMarker);
-			
-			// Create colored material lines to mark X, Y, Z directions
-			// X axis - red
-			const xAxisGeo = new THREE.Geometry();
-			xAxisGeo.vertices.push(
-				new THREE.Vector3(0, 0, 0),
-				new THREE.Vector3(10, 0, 0)
-			);
-			const xAxisLine = new THREE.Line(
-				xAxisGeo, 
-				new THREE.LineBasicMaterial({ color: 0xFF0000, linewidth: 3 })
-			);
-			window.scene.add(xAxisLine);
-			
-			// Y axis - green
-			const yAxisGeo = new THREE.Geometry();
-			yAxisGeo.vertices.push(
-				new THREE.Vector3(0, 0, 0),
-				new THREE.Vector3(0, 10, 0)
-			);
-			const yAxisLine = new THREE.Line(
-				yAxisGeo, 
-				new THREE.LineBasicMaterial({ color: 0x00FF00, linewidth: 3 })
-			);
-			window.scene.add(yAxisLine);
-			
-			// Z axis - blue
-			const zAxisGeo = new THREE.Geometry();
-			zAxisGeo.vertices.push(
-				new THREE.Vector3(0, 0, 0),
-				new THREE.Vector3(0, 0, 10)
-			);
-			const zAxisLine = new THREE.Line(
-				zAxisGeo, 
-				new THREE.LineBasicMaterial({ color: 0x0000FF, linewidth: 3 })
-			);
-			window.scene.add(zAxisLine);
-			
-			// Add text labels at key positions
-			const createTextSprite = (text, x, y, z, color = 0xFFFFFF) => {
-				const canvas = document.createElement('canvas');
-				canvas.width = 256;
-				canvas.height = 128;
-				const ctx = canvas.getContext('2d');
-				
-				// Background
-				ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-				ctx.fillRect(0, 0, canvas.width, canvas.height);
-				
-				// Text
-				ctx.fillStyle = `#${color.toString(16).padStart(6, '0')}`;
-				ctx.font = 'bold 48px Arial';
-				ctx.textAlign = 'center';
-				ctx.textBaseline = 'middle';
-				ctx.fillText(text, canvas.width/2, canvas.height/2);
-				
-				// Create sprite
-				const texture = new THREE.CanvasTexture(canvas);
-				const material = new THREE.SpriteMaterial({ map: texture });
-				const sprite = new THREE.Sprite(material);
-				sprite.position.set(x, y, z);
-				sprite.scale.set(5, 2.5, 1);
-				window.scene.add(sprite);
-				return sprite;
-			};
-			
-			// Add labels at key points
-			createTextSprite('ORIGIN', 0, 3, 0, 0xFFFF00);
-			createTextSprite('BOARD AREA', 12, 5, 12, 0x00FFFF);
-			createTextSprite('PIECES HERE', 10, 3, 10, 0xFF00FF);
-			
-			console.log('Debug objects created');
+	// Update the info panel if it exists
+	const infoPanel = document.getElementById('info-panel');
+	if (infoPanel) {
+		if (success) {
+			infoPanel.innerHTML = `
+				<h2>Chesstris Game Test</h2>
+				<p>Testing the full game renderer</p>
+				<p>Controls: Use mouse to rotate, scroll to zoom</p>
+				<p>Debug Controls:</p>
+				<ul>
+					<li>Press <b>window.resetCamera()</b> in console to reset view</li>
+					<li>Press <b>window.topView()</b> for bird's eye view</li>
+					<li>Press <b>window.sideView()</b> for side view</li>
+				</ul>
+				<p>You should see:</p>
+				<ul>
+					<li>Home zone (orange) with chess pieces</li>
+					<li>Blue cells extending outward</li>
+					<li>Falling tetromino pieces</li>
+					<li>Skybox with clouds</li>
+				</ul>
+			`;
 		} else {
-			console.error('Scene not available for debug objects');
+			infoPanel.innerHTML = `
+				<h2>Chesstris Game Test</h2>
+				<p style="color: red;">Renderer initialization failed!</p>
+				<p>Please check the console for error messages.</p>
+				<p>The fallback renderer will activate in a few seconds.</p>
+			`;
 		}
-	};
-	
-	if (!success) {
-		console.error('Failed to initialize renderer');
-		// Create a minimal renderer if the main one failed
-		const scene = new THREE.Scene();
-		window.scene = scene;
-		
-		// Create camera
-		const camera = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.1, 1000);
-		camera.position.set(12, 15, 12);
-		camera.lookAt(12, 0, 12);
-		window.camera = camera;
-		
-		// Create renderer
-		const renderer = new THREE.WebGLRenderer({ antialias: true });
-		renderer.setSize(container.clientWidth, container.clientHeight);
-		container.appendChild(renderer.domElement);
-		window.renderer = renderer;
-		
-		// Create controls
-		const controls = new THREE.OrbitControls(camera, renderer.domElement);
-		controls.enableDamping = true;
-		window.controls = controls;
-		
-		// Add debug objects
-		createDebugObjects();
-		
-		// Animation function
-		function animate() {
-			requestAnimationFrame(animate);
-			controls.update();
-			renderer.render(scene, camera);
-		}
-		animate();
-		
-		return false;
+	} else {
+		console.warn('Info panel element not found');
 	}
 	
-	console.log('Renderer initialized successfully');
 	isInitialized = true;
-	
-	// Add debug objects even with successful initialization
-	createDebugObjects();
-	
-	// Position camera to view test cells after a short delay to ensure everything is loaded
-	setTimeout(() => {
-		if (window.camera) {
-			// Position camera for optimal viewing of test cells
-			window.camera.position.set(12, 15, 12); // More directly overhead
-			window.camera.lookAt(12, 0, 12);
-			console.log('Camera positioned to view test cells');
-			
-			// Log actual camera position for debugging
-			console.log('Camera position:', window.camera.position);
-			console.log('If you cannot see any cells, try: window.camera.position.set(12, 15, 12); window.camera.lookAt(12, 0, 12);');
-			
-			// Add a helper message to show controls in the info panel
-			const infoPanel = document.getElementById('info-panel');
-			if (infoPanel) {
-				infoPanel.innerHTML = '<h2>Chesstris Renderer Test</h2>';
-				infoPanel.innerHTML += '<p><strong>You should see:</strong></p>';
-				infoPanel.innerHTML += '<p>- An orange/green checkerboard (positions 5-20)</p>';
-				infoPanel.innerHTML += '<p>- Magenta and yellow cells with chess pieces</p>';
-				infoPanel.innerHTML += '<p>- A red/yellow grid on the ground</p>';
-				infoPanel.innerHTML += '<p>Use mouse to rotate, scroll to zoom, and right-click to pan</p>';
-			}
-		}
-	}, 500);
-	
-	return true;
+	return success;
 }
 
-// Export test function
-export { testRenderer };
+// Function to enable camera controls from the HTML page
+function initCameraControls() {
+	// Add event listeners for buttons
+	document.getElementById('btn-reset-camera')?.addEventListener('click', () => {
+		if (window.resetCamera) window.resetCamera();
+	});
+	
+	document.getElementById('btn-top-view')?.addEventListener('click', () => {
+		if (window.topView) window.topView();
+	});
+	
+	document.getElementById('btn-side-view')?.addEventListener('click', () => {
+		if (window.sideView) window.sideView();
+	});
+}
 
-// Auto-run test if this file is loaded directly (but don't run twice)
-if (typeof window !== 'undefined' && window.location.pathname.includes('test.html')) {
-	// We'll let the HTML file handle this via DOMContentLoaded
-} 
+// Export the test renderer function for use in the test HTML
+export { testRenderer as init, initCameraControls };
+
+// Initialize when the page is loaded
+window.addEventListener('DOMContentLoaded', () => {
+	console.log('DOM loaded, initializing test renderer...');
+	testRenderer();
+	initCameraControls();
+	
+	// Log success message with instructions
+	console.log('%c Chesstris Renderer Test Initialized', 'background: #2196F3; color: white; padding: 5px; font-size: 16px; font-weight: bold;');
+	console.log('%c Use these commands in console to adjust view:', 'color: #FFC107; font-weight: bold;');
+	console.log('window.resetCamera() - Reset camera position');
+	console.log('window.topView() - Bird\'s eye view');
+	console.log('window.sideView() - Side view');
+}); 

@@ -3,6 +3,31 @@
 Shaktris is a multiplayer prototype that fuses elements of chess and Tetris on a dynamically expanding 2D board rendered in 3D. In this game, each player is assigned a unique "home zone" (an 8×2 area randomly placed, although within 8 to 12 squares of another home zone) where their chess pieces reside. Tetromino pieces fall from the sky (along the Z‑axis) and stick to the board only if at least one block lands adjacent to an existing cell. The chess pieces can then use this as part of the board. So they need to build up the board towards their opponent to be able to move pieces into a place where they can attack.
 Full rows (any 8 in a line) are cleared, including any pieces on them, except for cells in a "safe" home zone that still has at least one piece. To encourage movement and clear abandoned zones, empty home zones degrade over time.
 
+## Recent Rendering Improvements
+
+The game's 3D renderer has been significantly improved with the following features:
+
+1. **Proper Home Islands**: The game now correctly renders an 8×2 home zone area with a full set of chess pieces arranged in standard chess formation.
+
+2. **Skybox and Atmospheric Effects**: A gradient blue skybox provides depth to the scene, along with decorative cloud elements that enhance the visual appeal.
+
+3. **Falling Tetromino Pieces**: Tetromino pieces now fall from the sky and can be seen descending onto the board, providing visual feedback on game mechanics.
+
+4. **Improved Textures**: Enhanced textures for board cells, home zones, and general surfaces with proper texturing and lighting.
+
+5. **Camera Controls**: Added camera control functions (resetCamera, topView, sideView) for easier navigation of the 3D scene.
+
+6. **Visual Debug Tools**: Coordinate labels, wireframe outlines, and other visual aids assist during development and testing.
+
+7. **Fallback Mechanisms**: Placeholder textures are automatically generated if image files are missing, ensuring visual consistency.
+
+To test these rendering improvements, open the `/test.html` page, which provides a controlled environment with:
+- A proper home zone with standard chess pieces
+- A pathway of cells extending outward
+- Falling tetromino pieces
+- The skybox and clouds backdrop
+- Camera control buttons for different viewing angles
+
 ## Core Gameplay Mechanics
 
 - **Tetris Piece Connectivity Rules:**  
@@ -29,6 +54,7 @@ Full rows (any 8 in a line) are cleared, including any pieces on them, except fo
   - 0.5 SOL for rooks, knights, or bishops
   - 1.0 SOL for a queen
   - Kings cannot be purchased
+
 
 - **King Capture Mechanics:**  
   When a player captures an opponent's king:
@@ -545,20 +571,27 @@ The Chesstris renderer has been refactored to be more robust and easier to debug
 
 ### Test Page
 
-A dedicated test page at `/test.html` provides a controlled environment for testing the renderer with simplified geometry and colors. This helps isolate rendering issues from game logic problems.
-
-Features of the test page:
-- Direct visualization of board coordinates with a checkerboard pattern
-- Color-coded axes (Red=X, Green=Y, Blue=Z)
-- Minimal test showing chess pieces at specific coordinates
-- Camera controls for different viewing angles
+A dedicated test page at `/test.html` provides a controlled environment for testing the renderer with a complete visualization of game elements:
+- A proper 8×2 home zone with full chess pieces arranged in standard formation
+- A path of cells extending from the home zone to the board center
+- Falling tetromino pieces that reset when they fall below the board
+- Wireframe outlines and labels on all elements for better visibility
+- Color-coded areas (Orange for home zone, Blue for regular cells)
 
 ### Debug Controls
 
-Both the test page and main game include debug controls for easier navigation:
+Both the test page and main game include enhanced debug controls for easier navigation:
 - Reset Camera: Returns to the default view
 - Top View: Bird's eye view of the board
 - Side View: Shows the board from the side
+- View Home Zone: Focuses directly on the home zone with chess pieces
+
+These controls are available in the debug panel in the top-right corner of the screen, or via these console commands:
+```javascript
+window.resetCamera() // Reset to default view
+window.topView()     // Top-down view
+window.sideView()    // Side view
+```
 
 ### Fallback Mechanisms
 

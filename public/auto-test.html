@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Chesstris Automated Tests</title>
+	<style>
+		body {
+			margin: 0;
+			padding: 0;
+			font-family: Arial, sans-serif;
+			background-color: #1e1e1e;
+			color: #e0e0e0;
+		}
+		
+		.container {
+			display: flex;
+			height: 100vh;
+		}
+		
+		.test-panel {
+			width: 30%;
+			overflow-y: auto;
+			padding: 20px;
+			border-right: 1px solid #444;
+			box-sizing: border-box;
+			height: 100%;
+		}
+		
+		.render-panel {
+			flex: 1;
+			position: relative;
+		}
+		
+		#game-container {
+			position: absolute;
+			top: 0;
+			left: 0;
+			width: 100%;
+			height: 100%;
+		}
+		
+		h1, h2, h3 {
+			color: #90caf9;
+		}
+		
+		button {
+			background-color: #2196F3;
+			color: white;
+			border: none;
+			padding: 10px 16px;
+			margin: 5px;
+			border-radius: 4px;
+			cursor: pointer;
+			font-size: 16px;
+		}
+		
+		button:hover {
+			background-color: #0b7dda;
+		}
+		
+		.test-group {
+			margin-bottom: 20px;
+			border: 1px solid #444;
+			border-radius: 4px;
+			padding: 10px;
+		}
+		
+		.test-group h3 {
+			margin-top: 0;
+		}
+		
+		#test-report {
+			margin-top: 20px;
+		}
+		
+		.small-text {
+			font-size: 12px;
+			color: #888;
+		}
+		
+		.debug-controls {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 10px;
+			margin-bottom: 20px;
+		}
+		
+		.debug-controls button {
+			flex: 1;
+			min-width: 120px;
+		}
+		
+		pre {
+			background-color: #252525;
+			padding: 10px;
+			border-radius: 4px;
+			overflow-x: auto;
+			white-space: pre-wrap;
+		}
+	</style>
+	
+	<!-- Import THREE.js globally -->
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+	
+	<!-- Simple OrbitControls implementation -->
+	<script>
+		(function() {
+			class OrbitControls {
+				constructor(camera, domElement) {
+					this.camera = camera;
+					this.domElement = domElement;
+					this.target = new THREE.Vector3();
+					this.enabled = true;
+					this.enableDamping = false;
+					this.dampingFactor = 0.05;
+					
+					// Make event handlers
+					this._onMouseDown = this._onMouseDown.bind(this);
+					this._onMouseMove = this._onMouseMove.bind(this);
+					this._onMouseUp = this._onMouseUp.bind(this);
+					this._onMouseWheel = this._onMouseWheel.bind(this);
+					
+					// Add event listeners
+					this.domElement.addEventListener('mousedown', this._onMouseDown);
+					document.addEventListener('mousemove', this._onMouseMove);
+					document.addEventListener('mouseup', this._onMouseUp);
+					this.domElement.addEventListener('wheel', this._onMouseWheel);
+					
+					// State variables
+					this._isMouseDown = false;
+					this._mouseX = 0;
+					this._mouseY = 0;
+					this._targetRotationX = 0;
+					this._targetRotationY = 0;
+				}
+				
+				_onMouseDown(event) {
+					this._isMouseDown = true;
+					this._mouseX = event.clientX;
+					this._mouseY = event.clientY;
+				}
+				
+				_onMouseMove(event) {
+					if (!this._isMouseDown) return;
+					
+					const deltaX = event.clientX - this._mouseX;
+					const deltaY = event.clientY - this._mouseY;
+					
+					this._targetRotationX += deltaX * 0.01;
+					this._targetRotationY += deltaY * 0.01;
+					
+					this._mouseX = event.clientX;
+					this._mouseY = event.clientY;
+				}
+				
+				_onMouseUp() {
+					this._isMouseDown = false;
+				}
+				
+				_onMouseWheel(event) {
+					const delta = Math.sign(event.deltaY);
+					const cameraPosition = this.camera.position.clone();
+					const direction = new THREE.Vector3()
+						.subVectors(this.camera.position, this.target)
+						.normalize();
+					
+					// Move camera along the direction by delta
+					this.camera.position.add(direction.multiplyScalar(delta * 2));
+				}
+				
+				update() {
+					if (!this.enabled) return;
+					
+					// Simple orbit around target
+					const position = this.camera.position.clone().sub(this.target);
+					
+					// Apply rotation
+					const distance = position.length();
+					position.x = Math.sin(this._targetRotationX) * Math.cos(this._targetRotationY) * distance;
+					position.z = Math.cos(this._targetRotationX) * Math.cos(this._targetRotationY) * distance;
+					position.y = Math.sin(this._targetRotationY) * distance;
+					
+					// Update camera position
+					this.camera.position.copy(position.add(this.target));
+					this.camera.lookAt(this.target);
+					
+					return true;
+				}
+				
+				dispose() {
+					this.domElement.removeEventListener('mousedown', this._onMouseDown);
+					document.removeEventListener('mousemove', this._onMouseMove);
+					document.removeEventListener('mouseup', this._onMouseUp);
+					this.domElement.removeEventListener('wheel', this._onMouseWheel);
+				}
+			}
+			
+			// Make available globally
+			window.OrbitControls = OrbitControls;
+		})();
+	</script>
+</head>
+<body>
+	<div class="container">
+		<div class="test-panel">
+			<h1>Chesstris Automated Tests</h1>
+			<p>This page automatically tests the rendering system and reports results.</p>
+			
+			<div class="test-group">
+				<h3>Test Controls</h3>
+				<button id="btn-run-tests">Run All Tests</button>
+				<button id="btn-run-diagnostics">Run Diagnostics</button>
+				<button id="btn-check-deps">Check Dependencies</button>
+				<button id="btn-init-direct">Initialize Directly</button>
+			</div>
+			
+			<div class="test-group">
+				<h3>Debug Controls</h3>
+				<div class="debug-controls">
+					<button id="btn-reset-camera">Reset Camera</button>
+					<button id="btn-top-view">Top View</button>
+					<button id="btn-side-view">Side View</button>
+				</div>
+				<div id="camera-info" class="small-text">Camera position: initializing...</div>
+			</div>
+			
+			<div class="test-group">
+				<h3>Test Results</h3>
+				<button id="btn-copy-results">Copy Results to Clipboard</button>
+				<div id="test-summary"></div>
+				<div id="test-report">
+					<p>Tests have not been run yet. Click "Run All Tests" to start.</p>
+				</div>
+			</div>
+			
+			<div class="test-group">
+				<h3>Export Structure</h3>
+				<button id="btn-check-exports">Check Module Exports</button>
+				<div id="export-report"></div>
+			</div>
+			
+			<div class="test-group">
+				<h3>Direct WebGL Test</h3>
+				<button id="btn-direct-test">Direct Test</button>
+				<p class="small-text">This will create a minimal THREE.js scene directly to verify WebGL is working</p>
+				<div id="direct-test-result"></div>
+			</div>
+		</div>
+		
+		<div class="render-panel">
+			<div id="game-container"></div>
+		</div>
+	</div>
+	
+	<!-- Test script -->
+	<script type="module">
+		import { runAutomatedTests, testFeature, logTest, copyTestResultsToClipboard, setupConsoleCapture } from './js/test-utils.js';
+		
+		// Update camera info
+		function updateCameraInfo() {
+			const cameraInfo = document.getElementById('camera-info');
+			if (cameraInfo && window.camera) {
+				const pos = window.camera.position;
+				cameraInfo.textContent = `Camera: x=${pos.x.toFixed(1)}, y=${pos.y.toFixed(1)}, z=${pos.z.toFixed(1)}`;
+			}
+			requestAnimationFrame(updateCameraInfo);
+		}
+		
+		// Check module exports
+		async function checkModuleExports() {
+			const exportReport = document.getElementById('export-report');
+			exportReport.innerHTML = '<pre>Checking exports...</pre>';
+			
+			try {
+				// Check test.js exports
+				const testExports = [];
+				try {
+					const testModule = await import('./js/rendering/test.js');
+					Object.keys(testModule).forEach(key => {
+						testExports.push(`test.js exports: ${key} (${typeof testModule[key]})`);
+					});
+				} catch (e) {
+					testExports.push(`Error importing test.js: ${e.message}`);
+				}
+				
+				// Check index.js exports
+				const indexExports = [];
+				try {
+					const indexModule = await import('./js/rendering/index.js');
+					Object.keys(indexModule).forEach(key => {
+						indexExports.push(`index.js exports: ${key} (${typeof indexModule[key]})`);
+					});
+				} catch (e) {
+					indexExports.push(`Error importing index.js: ${e.message}`);
+				}
+				
+				// Check core.js exports
+				const coreExports = [];
+				try {
+					const coreModule = await import('./js/rendering/modules/core.js');
+					Object.keys(coreModule).forEach(key => {
+						coreExports.push(`core.js exports: ${key} (${typeof coreModule[key]})`);
+					});
+				} catch (e) {
+					coreExports.push(`Error importing core.js: ${e.message}`);
+				}
+				
+				// Update the report
+				exportReport.innerHTML = `<pre>
+Test Module Exports:
+${testExports.join('\n')}
+
+Index Module Exports:
+${indexExports.join('\n')}
+
+Core Module Exports:
+${coreExports.join('\n')}
+</pre>`;
+			} catch (error) {
+				exportReport.innerHTML = `<pre style="color: red;">Error checking exports: ${error.message}</pre>`;
+			}
+		}
+		
+		// Initialize direct renderer
+		async function initializeDirectly() {
+			try {
+				logTest('Initializing renderer directly', 'info');
+				
+				// Get container
+				const container = document.getElementById('game-container');
+				
+				if (!container) {
+					logTest('Game container not found', 'fail');
+					return;
+				}
+				
+				// Ensure container has dimensions
+				if (container.clientWidth === 0 || container.clientHeight === 0) {
+					// Force some dimensions to make sure the container is visible
+					container.style.width = '100%';
+					container.style.height = '100%';
+					logTest(`Adjusted container dimensions: ${container.clientWidth}x${container.clientHeight}`, 'warn');
+				}
+				
+				// Check WebGL support before proceeding
+				if (!window.WebGLRenderingContext) {
+					logTest('WebGL not supported in this browser', 'fail');
+					return;
+				}
+				
+				// Test basic WebGL support
+				const testCanvas = document.createElement('canvas');
+				const gl = testCanvas.getContext('webgl') || testCanvas.getContext('experimental-webgl');
+				
+				if (!gl) {
+					logTest('WebGL context could not be created', 'fail');
+					return;
+				} else {
+					logTest('WebGL context created successfully', 'info');
+				}
+				
+				// Log WebGL info for debugging
+				logTest(`WebGL Version: ${gl.getParameter(gl.VERSION)}`, 'info');
+				logTest(`WebGL Vendor: ${gl.getParameter(gl.VENDOR)}`, 'info');
+				logTest(`WebGL Renderer: ${gl.getParameter(gl.RENDERER)}`, 'info');
+				
+				// Import renderer modules
+				let init;
+				try {
+					const module = await import('./js/rendering/index.js');
+					init = module.init;
+					logTest('Successfully imported renderer module', 'pass');
+				} catch (error) {
+					logTest(`Failed to import renderer module: ${error.message}`, 'fail');
+					return;
+				}
+				
+				if (typeof init !== 'function') {
+					logTest('Import successful but init function not found', 'fail');
+					return;
+				}
+				
+				// Initialize with test options
+				try {
+					logTest('Calling index.init with test options...', 'info');
+					// Call the init function and await the result since it's now async
+					const success = await init(container, {
+						debug: true,
+						enableSkybox: true,
+						enableClouds: true,
+						enableEffects: true,
+						useTestMode: true
+					});
+					
+					if (success) {
+						logTest('Direct initialization successful', 'pass');
+					} else {
+						logTest('Direct initialization returned false', 'fail');
+					}
+				} catch (error) {
+					logTest(`Direct initialization error: ${error.message}`, 'fail');
+					console.error('Initialization error:', error);
+				}
+			} catch (error) {
+				logTest(`Unexpected error during initialization: ${error.message}`, 'fail');
+				console.error('Unexpected initialization error:', error);
+			}
+		}
+		
+		// Function to test WebGL directly without modules
+		function runDirectTest() {
+			const resultElement = document.getElementById('direct-test-result');
+			resultElement.innerHTML = '<p>Running direct WebGL test...</p>';
+			
+			try {
+				// Get container
+				const container = document.getElementById('game-container');
+				if (!container) {
+					resultElement.innerHTML = '<p style="color: red;">Game container not found</p>';
+					return;
+				}
+				
+				// Clear container
+				container.innerHTML = '';
+				
+				// Create scene
+				const scene = new THREE.Scene();
+				scene.background = new THREE.Color(0x6495ED); // Cornflower blue
+				
+				// Create camera
+				const camera = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.1, 1000);
+				camera.position.z = 5;
+				
+				// Create renderer
+				const renderer = new THREE.WebGLRenderer();
+				renderer.setSize(container.clientWidth, container.clientHeight);
+				container.appendChild(renderer.domElement);
+				
+				// Create a cube
+				const geometry = new THREE.BoxGeometry();
+				const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+				const cube = new THREE.Mesh(geometry, material);
+				scene.add(cube);
+				
+				// Animation function
+				function animate() {
+					requestAnimationFrame(animate);
+					
+					// Rotate cube
+					cube.rotation.x += 0.01;
+					cube.rotation.y += 0.01;
+					
+					renderer.render(scene, camera);
+				}
+				
+				// Start animation
+				animate();
+				
+				resultElement.innerHTML = '<p style="color: green;">Direct WebGL test successful! You should see a rotating green wireframe cube.</p>';
+				return true;
+			} catch (error) {
+				resultElement.innerHTML = `<p style="color: red;">Direct WebGL test failed: ${error.message}</p>`;
+				console.error('Direct WebGL test error:', error);
+				return false;
+			}
+		}
+		
+		// Run automated tests and copy results when complete
+		async function runTestsAndCopy() {
+			await runAutomatedTests();
+			// Wait a short time for the results to be fully updated
+			setTimeout(() => {
+				copyTestResultsToClipboard();
+			}, 500);
+		}
+		
+		// Run detailed module diagnostics
+		async function runModuleDiagnostics() {
+			logTest('Running detailed module diagnostics', 'info');
+			
+			// Set up console capture to record all console output to the test log
+			const restoreConsole = setupConsoleCapture();
+			
+			try {
+				// Check core module imports
+				try {
+					// Try directly importing core.js
+					const coreModule = await import('./js/rendering/modules/core.js');
+					logTest(`Direct core.js import successful with ${Object.keys(coreModule).length} exports`, 'pass');
+					
+					// Log all exports
+					Object.keys(coreModule).forEach(key => {
+						logTest(`core.js exports: ${key} (${typeof coreModule[key]})`, 'info');
+					});
+				} catch (error) {
+					logTest(`Direct core.js import failed: ${error.message}`, 'fail');
+				}
+				
+				// Check the index.js import and its handling of core module
+				try {
+					const indexModule = await import('./js/rendering/index.js');
+					logTest(`index.js import successful with ${Object.keys(indexModule).length} exports`, 'pass');
+					
+					// Get CoreRenderer from index module scope if possible
+					if (indexModule.CoreRenderer) {
+						logTest(`index.js exposes CoreRenderer: ${typeof indexModule.CoreRenderer}`, 'info');
+					} else {
+						logTest('index.js does not expose CoreRenderer directly', 'warn');
+					}
+					
+					// Try initializing with the index.init function
+					const container = document.getElementById('game-container');
+					if (container && typeof indexModule.init === 'function') {
+						logTest('Attempting initialization with index.init directly from diagnostics...', 'info');
+						try {
+							const result = await indexModule.init(container, { debug: true });
+							logTest(`Initialization result: ${result}`, result ? 'pass' : 'fail');
+						} catch (initError) {
+							logTest(`Initialization error: ${initError.message}`, 'fail');
+							console.error('Full initialization error:', initError);
+						}
+					}
+				} catch (error) {
+					logTest(`index.js import diagnostics failed: ${error.message}`, 'fail');
+				}
+				
+				// Check browser environment
+				logTest(`User Agent: ${navigator.userAgent}`, 'info');
+				logTest(`Window inner dimensions: ${window.innerWidth}x${window.innerHeight}`, 'info');
+				
+				// Run automated tests
+				await runAutomatedTests();
+			} finally {
+				// Restore original console functions
+				restoreConsole();
+			}
+			
+			// Copy results to clipboard automatically
+			setTimeout(() => {
+				copyTestResultsToClipboard();
+				logTest('Test results copied to clipboard', 'info');
+			}, 500);
+		}
+		
+		// Initialize when the page is loaded
+		document.addEventListener('DOMContentLoaded', () => {
+			// Check if we have THREE.js
+			if (typeof THREE === 'undefined') {
+				document.getElementById('test-report').innerHTML = `
+					<div style="color: red; border: 2px solid red; padding: 10px; margin: 20px 0;">
+						<h3>THREE.js Not Loaded</h3>
+						<p>The THREE.js library failed to load. Testing cannot continue.</p>
+					</div>
+				`;
+				return;
+			}
+			
+			// Start camera info updates
+			updateCameraInfo();
+			
+			// Set up button handlers
+			document.getElementById('btn-run-tests').addEventListener('click', () => {
+				runTestsAndCopy();
+			});
+			
+			document.getElementById('btn-run-diagnostics').addEventListener('click', () => {
+				runModuleDiagnostics();
+			});
+			
+			document.getElementById('btn-copy-results').addEventListener('click', copyTestResultsToClipboard);
+			
+			document.getElementById('btn-check-deps').addEventListener('click', () => {
+				testFeature('THREE.js Dependencies', () => {
+					if (typeof THREE === 'undefined') throw new Error('THREE is not defined');
+					if (typeof THREE.WebGLRenderer !== 'function') throw new Error('THREE.WebGLRenderer not found');
+					if (typeof THREE.Scene !== 'function') throw new Error('THREE.Scene not found');
+					if (typeof THREE.PerspectiveCamera !== 'function') throw new Error('THREE.PerspectiveCamera not found');
+					if (typeof THREE.Mesh !== 'function') throw new Error('THREE.Mesh not found');
+					return true;
+				});
+			});
+			
+			document.getElementById('btn-init-direct').addEventListener('click', initializeDirectly);
+			
+			document.getElementById('btn-check-exports').addEventListener('click', checkModuleExports);
+			
+			// Set up camera control buttons
+			document.getElementById('btn-reset-camera').addEventListener('click', () => {
+				if (window.resetCamera) window.resetCamera();
+			});
+			
+			document.getElementById('btn-top-view').addEventListener('click', () => {
+				if (window.topView) window.topView();
+			});
+			
+			document.getElementById('btn-side-view').addEventListener('click', () => {
+				if (window.sideView) window.sideView();
+			});
+			
+			document.getElementById('btn-direct-test').addEventListener('click', runDirectTest);
+		});
+	</script>
+</body>
+</html> 
