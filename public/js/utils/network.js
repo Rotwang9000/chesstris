@@ -21,11 +21,11 @@ let SERVER_URL;
 // Set SERVER_URL based on environment
 if (isNodeEnvironment) {
 	// In Node.js (testing environment)
-	SERVER_URL = 'http://localhost:3000';
+	SERVER_URL = 'http://localhost:3020';
 } else {
 	// In browser environment
 	SERVER_URL = window.location.hostname === 'localhost' 
-		? `http://${window.location.hostname}:3000` 
+		? `http://${window.location.hostname}:3020` 
 		: window.location.origin;
 }
 

@@ -1,0 +1,34 @@
+/**
+ * DEPRECATED - DO NOT USE
+ * 
+ * The renderer.js file has been refactored into separate modules located in the /public/js/rendering/modules/ directory.
+ * Please use the new modular structure instead:
+ * 
+ * - core.js: Core renderer functionality
+ * - board.js: Board and cell rendering
+ * - pieces.js: Chess piece rendering
+ * - tetromino.js: Tetris piece rendering
+ * - effects.js: Visual effects and decorations
+ * - utils.js: Utility functions
+ * 
+ * Import from the main entry point:
+ * import Renderer from './js/rendering/index.js';
+ */
+
+// The original code has been moved to separate modules
+// Please delete this file after confirming the modular structure works
+
+// Export empty functions to prevent errors during transition
+export function init() {
+	console.warn('This version of renderer.js is deprecated. Please use the modular version from /js/rendering/index.js');
+	return false;
+}
+
+export function cleanup() {
+	console.warn('This version of renderer.js is deprecated. Please use the modular version from /js/rendering/index.js');
+}
+
+export default {
+	init,
+	cleanup
+}; 

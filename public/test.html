@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Chesstris Renderer Test</title>
+	<style>
+		body {
+			margin: 0;
+			padding: 0;
+			overflow: hidden;
+			background-color: #121212;
+			color: #ffffff;
+			font-family: Arial, sans-serif;
+		}
+		
+		#game-container {
+			position: absolute;
+			top: 0;
+			left: 0;
+			width: 100%;
+			height: 100%;
+		}
+		
+		#info-panel {
+			position: absolute;
+			top: 10px;
+			left: 10px;
+			background-color: rgba(0, 0, 0, 0.7);
+			padding: 10px;
+			border-radius: 5px;
+			z-index: 100;
+		}
+	</style>
+</head>
+<body>
+	<div id="game-container"></div>
+	<div id="info-panel">
+		<h2>Chesstris Renderer Test</h2>
+		<p>Testing the refactored renderer modules</p>
+	</div>
+	
+	<!-- Load modules -->
+	<script type="module">
+		import { testRenderer } from './js/rendering/test.js';
+		
+		// Run test when DOM is loaded
+		document.addEventListener('DOMContentLoaded', () => {
+			console.log('DOM loaded, running renderer test...');
+			testRenderer();
+		});
+	</script>
+</body>
+</html> 

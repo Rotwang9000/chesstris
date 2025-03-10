@@ -422,3 +422,107 @@ The following is a map of key functions in the codebase and whether they have pr
 4. **Tetris-First Gameplay**: Players must place tetris pieces to build the board before they can move chess pieces. This ensures a fair start where players need to expand from their home zone.
 
 5. **Error Handling**: All rendering functions include error handling to prevent NaN values and ensure the game continues running even if individual rendering elements fail.
+
+## Refactoring Recommendations
+
+As the codebase has grown, some files like `renderer.js` have become too large and complex. Here's a proposed refactoring strategy:
+
+### Refactoring the Renderer Module
+
+The `renderer.js` file should be split into smaller modules based on functionality:
+
+1. **renderer-core.js**: Core initialization, scene setup, animation loop
+   - `init()`, `animate()`, `updateScene()`, `cleanup()`
+   - Camera and controls setup
+   - Main render loop
+
+2. **renderer-board.js**: Board and cell rendering
+   - `updateBoard()`, `createFloatingCell()`
+   - Cell decoration functions
+   - Board creation functions
+
+3. **renderer-pieces.js**: Chess pieces visualization
+   - `updateChessPieces()`, `addChessPiece()`
+   - Piece movement animations
+   - Player labels
+
+4. **renderer-tetromino.js**: Tetris piece rendering
+   - `updateFallingTetromino()`, `updateGhostPiece()`
+   - Tetromino rotation and movement
+
+5. **renderer-effects.js**: Visual effects and decorations
+   - `addCellDecoration()`, `addPotionToCell()`
+   - Particle effects, animations
+   - Environment effects (clouds, skybox)
+
+6. **renderer-utils.js**: Helper functions
+   - `getFloatingHeight()`, `validateGeometryParams()`
+   - Random generation utilities
+   - Material management
+
+### Implementation Strategy
+
+1. Start by creating a new directory structure:
+```
+public/js/rendering/
+├── index.js           # Main entry point that exports all modules
+├── core.js            # Core renderer functionality
+├── board.js           # Board rendering
+├── pieces.js          # Chess pieces
+├── tetromino.js       # Tetris pieces
+├── effects.js         # Visual effects
+└── utils.js           # Helper functions
+```
+
+2. Move functions to appropriate files, ensuring proper imports/exports
+3. Update references throughout the codebase
+
+## Automated Testing Strategy
+
+Implementing automated tests for the renderer would bring several benefits:
+
+1. **Ensure visual consistency** across changes
+2. **Detect regressions** in rendering functionality
+3. **Validate game rule implementation** in the visual layer
+
+### Recommended Testing Approach
+
+1. **Unit Tests for Utility Functions**:
+   - Test geometry validation
+   - Test coordinate calculations
+   - Test random generators
+
+2. **Integration Tests for Rendering Components**:
+   - Test board generation with mock game states
+   - Test chess piece placement and movement
+   - Test Tetris piece rendering
+
+3. **Visual Regression Tests**:
+   - Capture screenshots of key game states
+   - Compare against baseline images
+   - Flag visual differences for review
+
+### Test Implementation
+
+```javascript
+// Example test for geometry validation
+import { validateGeometryParams } from '../public/js/rendering/utils.js';
+
+describe('Geometry Validation', () => {
+  test('should handle NaN values', () => {
+    const params = { radius: NaN, height: 1 };
+    const validated = validateGeometryParams(params);
+    expect(validated.radius).toBe(0.2); // Default radius value
+    expect(validated.height).toBe(1);   // Original valid value
+  });
+
+  test('should handle undefined values', () => {
+    const params = { width: undefined, depth: 3 };
+    const validated = validateGeometryParams(params);
+    expect(validated.width).toBe(0.5);  // Default width value
+    expect(validated.depth).toBe(3);    // Original valid value
+  });
+});
+```
+
+Implementing these testing strategies will make the codebase more robust and maintainable as the project continues to evolve.

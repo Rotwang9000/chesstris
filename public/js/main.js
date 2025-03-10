@@ -7,7 +7,7 @@
 import * as GameManager from './core/gameManager.js';
 import * as PlayerManager from './core/playerManager.js';
 import * as TetrominoManager from './core/tetrominoManager.js';
-import * as Renderer from './rendering/renderer.js';
+import Renderer from './rendering/index.js'; 
 import * as Network from './utils/network.js';
 import * as Helpers from './utils/helpers.js';
 import * as UI from './ui/uiManager.js';
