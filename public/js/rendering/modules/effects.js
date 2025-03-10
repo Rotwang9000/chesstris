@@ -17,6 +17,11 @@ let particles = []; // Array to track all particles
  * @param {THREE.Group} decorGroup - The group to add decorations to
  */
 export function init(decorGroup) {
+	if (!decorGroup) {
+		console.error('decorationsGroup is not initialized');
+		return;
+	}
+	
 	decorationsGroup = decorGroup;
 	potions = [];
 	particles = [];
@@ -474,10 +479,10 @@ export function addCellDecoration(x, z, cellSize) {
 }
 
 /**
- * Creates the skybox for the scene
- * @param {THREE.Scene} scene - The scene to add the skybox to
+ * Creates a skybox with a gradient effect
+ * @returns {THREE.Mesh} The skybox mesh
  */
-export function createSkybox(scene) {
+export function createSkybox() {
 	try {
 		// Create a large sphere for the sky
 		const skyGeometry = new THREE.SphereGeometry(500, 32, 32);
@@ -489,7 +494,6 @@ export function createSkybox(scene) {
 		});
 		
 		const skyMesh = new THREE.Mesh(skyGeometry, skyMaterial);
-		scene.add(skyMesh);
 		
 		// Define sky colors for gradient
 		const skyColors = [
@@ -504,21 +508,28 @@ export function createSkybox(scene) {
 		
 		for (let i = 0; i < positions.count; i++) {
 			const y = positions.getY(i);
-			const t = (y + 500) / 1000; // Normalize to 0-1 range
+			const normalized = (y + 500) / 1000; // Normalize position between 0 and 1
 			
+			// Choose color based on height
 			let color;
-			if (t < 0.5) {
-				// Top half - deep blue to light blue
-				color = new THREE.Color().lerpColors(skyColors[1], skyColors[0], t * 2);
+			if (normalized > 0.7) {
+				// Top - deep blue
+				color = skyColors[0];
+			} else if (normalized > 0.4) {
+				// Middle - light blue
+				const t = (normalized - 0.4) / 0.3;
+				color = skyColors[0].clone().lerp(skyColors[1], 1 - t);
 			} else {
-				// Bottom half - light blue to horizon color
-				color = new THREE.Color().lerpColors(skyColors[2], skyColors[1], (t - 0.5) * 2);
+				// Bottom - very light blue
+				const t = normalized / 0.4;
+				color = skyColors[1].clone().lerp(skyColors[2], 1 - t);
 			}
 			
 			colors.push(color.r, color.g, color.b);
 		}
 		
-		skyGeometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(colors), 3));
+		// Add colors to the geometry
+		skyGeometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
 		
 		return skyMesh;
 	} catch (error) {

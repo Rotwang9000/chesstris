@@ -13,6 +13,9 @@ let boardGroup;
 let materials = {};
 let decorationPositions = new Map();
 
+// Cache for cell geometries to improve performance
+const cellGeometryCache = {};
+
 /**
  * Initialize the board module
  * @param {THREE.Group} group - The group to add board elements to
@@ -25,45 +28,122 @@ export function init(group, materialSet) {
 }
 
 /**
- * Updates the board based on the current game state
- * @param {Object} gameState - The current game state
- * @param {Object} topGeometry - The geometry to use for cell tops
+ * Updates the board based on the game state
+ * @param {Object} gameState - The game state
+ * @param {THREE.BufferGeometry} topGeometry - Geometry for the top of cells
  */
 export function updateBoard(gameState, topGeometry) {
 	try {
-		if (!gameState || !gameState.board) {
-			console.warn('No game state or board available for rendering');
+		if (!boardGroup) {
+			console.error('Board group not initialized');
 			return;
 		}
 		
-		// Clear existing board elements
+		if (!gameState || !gameState.board) {
+			console.warn('Game state or board not available');
+			return;
+		}
+		
+		// Store previous count to avoid unnecessary logging
+		const prevActiveCellCount = boardGroup.userData.activeCellCount || 0;
+		
+		// Clear existing cells
 		while (boardGroup.children.length > 0) {
 			const child = boardGroup.children[0];
 			boardGroup.remove(child);
 			if (child.geometry) child.geometry.dispose();
-			if (child.material) child.material.dispose();
-		}
-		
-		// Track active cells for debugging
-		let activeCellCount = 0;
-		
-		// Render each cell in the board
-		const boardSize = gameState.board.length;
-		const cellSize = gameState.cellSize || Constants.CELL_SIZE || 1;
-		
-		for (let z = 0; z < boardSize; z++) {
-			for (let x = 0; x < boardSize; x++) {
-				const cell = gameState.board[z] && gameState.board[z][x];
-				
-				// Only render cells that exist and have content
-				if (cell && (cell.playerId || cell.isHomeZone || cell.chessPiece || cell.hasPotion)) {
-					createFloatingCell(cell, x, z, cellSize, topGeometry, decorationPositions);
-					activeCellCount++;
+			if (child.material) {
+				if (Array.isArray(child.material)) {
+					child.material.forEach(m => m.dispose());
+				} else {
+					child.material.dispose();
 				}
 			}
 		}
 		
-		console.log(`Rendered ${activeCellCount} active cells`);
+		const board = gameState.board;
+		let activeCellCount = 0;
+		
+		// We'll use this to keep track of cells to add decorations to
+		const cellsToDecorate = [];
+		
+		// Process the board in a single pass
+		for (let z = 0; z < board.length; z++) {
+			const row = board[z];
+			if (!row) continue;
+			
+			for (let x = 0; x < row.length; x++) {
+				const cell = row[x];
+				if (!cell || !cell.active) continue;
+				
+				activeCellCount++;
+				
+				// Get cell color - use player color if available
+				let cellColor = 0x42a5f5; // Default blue
+				let isHomeZone = false;
+				
+				if (cell.playerId && gameState.players && gameState.players[cell.playerId]) {
+					cellColor = gameState.players[cell.playerId].color || cellColor;
+					isHomeZone = cell.isHomeZone || false;
+				}
+				
+				// Create cell - use MeshBasicMaterial for better visibility
+				const cellMesh = createCell(x, z, {
+					color: cellColor,
+					isHomeZone: isHomeZone,
+					// Use standard material for better appearance
+					material: new THREE.MeshStandardMaterial({
+						color: isHomeZone ? 0xFFD700 : cellColor, // Gold for home zones
+						metalness: 0.3,
+						roughness: 0.7
+					})
+				});
+				
+				// Random chance to add a decoration
+				if (Math.random() < 0.2) {
+					cellsToDecorate.push({ x, z, cellSize: 1 });
+				}
+				
+				// If there's a chess piece on this cell, add it
+				if (cell.chessPiece && cell.chessPiece.type && window.piecesModule) {
+					const pieceColor = gameState.players[cell.chessPiece.owner]?.color || 0xFF00FF;
+					
+					// Add chess piece with height offset to sit on top of the cell
+					window.piecesModule.addChessPiece(
+						cell.chessPiece,
+						cell.chessPiece.owner,
+						x,
+						z
+					);
+				}
+				
+				// If there's a potion on this cell, add it
+				if (cell.potion && typeof addPotionToCell === 'function') {
+					addPotionToCell({
+						x,
+						z,
+						type: cell.potion.type,
+						color: cell.potion.color || 0x00FFFF,
+						createdAt: cell.potion.createdAt || Date.now()
+					});
+				}
+			}
+		}
+		
+		// Add decorations to random cells
+		if (typeof addCellDecoration === 'function' && cellsToDecorate.length > 0) {
+			cellsToDecorate.forEach(cell => {
+				addCellDecoration(cell.x, cell.z, cell.cellSize);
+			});
+		}
+		
+		// Store the active cell count
+		boardGroup.userData.activeCellCount = activeCellCount;
+		
+		// Only log if the count changed significantly
+		if (Math.abs(activeCellCount - prevActiveCellCount) > 5) {
+			console.log(`Board updated with ${activeCellCount} active cells`);
+		}
 	} catch (error) {
 		console.error('Error updating board:', error);
 	}
@@ -72,81 +152,118 @@ export function updateBoard(gameState, topGeometry) {
 /**
  * Creates a floating cell at the specified position
  * @param {Object} cell - Cell data
- * @param {number} x - X coordinate
- * @param {number} z - Z coordinate
+ * @param {number} x - X position
+ * @param {number} z - Z position
  * @param {number} cellSize - Size of the cell
- * @param {THREE.Geometry} topGeometry - Geometry for the top of the cell
- * @param {Map} decorationData - Map of existing decorations
- * @returns {THREE.Group} Cell group
+ * @param {THREE.BufferGeometry} topGeometry - Geometry for the top of cells
+ * @param {Object} decorationData - Data for decorations
+ * @returns {THREE.Group} The created cell group
  */
 export function createFloatingCell(cell, x, z, cellSize = 1, topGeometry, decorationData) {
 	try {
-		// Create a group to hold all parts of this cell
+		if (!boardGroup) {
+			console.error('Board group not initialized');
+			return null;
+		}
+		
+		// Create cell group
 		const cellGroup = new THREE.Group();
 		
-		// Validate parameters
-		if (isNaN(x) || isNaN(z)) {
-			console.warn(`Invalid coordinates for cell: x=${x}, z=${z}`);
-			return cellGroup; // Return empty group
-		}
+		// Calculate floating height
+		const baseHeight = 0.1;
+		const floatingHeight = 0;
 		
-		// Use provided cellSize or default to 1 if not provided
-		cellSize = cellSize || Constants.CELL_SIZE || 1;
+		// Create cell material based on type and owner
+		let cellMaterial;
 		
-		// Determine cell material based on type
-		let material;
+		// Determine cell color (either from cell data or from standard materials)
+		let cellColor = cell.color || 0x4FC3F7;
 		if (cell.isHomeZone) {
-			material = new THREE.MeshPhongMaterial({
-				color: cell.color || 0x3366CC,
-				shininess: 80
-			});
-		} else {
-			material = new THREE.MeshPhongMaterial({
-				color: cell.color || 0xAAAAAA,
-				shininess: 50
-			});
+			cellColor = 0xFFD54F; // Yellow for home zones
 		}
 		
-		// Create the top part of the cell
-		const topMesh = new THREE.Mesh(topGeometry, material);
-		topMesh.position.y = getFloatingHeight(x, z);
+		if (materials && materials.cell) {
+			cellMaterial = materials.cell.clone();
+			if (cellMaterial.map) {
+				// Use the existing texture but tint it with the cell color
+				cellMaterial.color.setHex(cellColor);
+			} else {
+				// No texture, just use color
+				cellMaterial.color.setHex(cellColor);
+			}
+		} else {
+			// Fallback material
+			cellMaterial = new THREE.MeshStandardMaterial({ color: cellColor });
+		}
+		
+		// Make home zone cells more visible
+		if (cell.isHomeZone && materials && materials.homeZone) {
+			cellMaterial = materials.homeZone.clone();
+			cellMaterial.color.setHex(cellColor);
+		}
+		
+		// Create cell geometry
+		const cellWidth = cellSize;
+		const cellDepth = cellSize;
+		const cellHeight = baseHeight;
+		
+		// Create the cell top (the visible part)
+		const topMesh = new THREE.Mesh(
+			topGeometry || new THREE.BoxGeometry(cellWidth, cellHeight, cellDepth),
+			cellMaterial
+		);
+		
+		// Position the top at the correct height
+		topMesh.position.y = floatingHeight + (cellHeight / 2);
+		
+		// Add top to cell group
 		cellGroup.add(topMesh);
 		
-		// Add a bottom part to give depth
-		const bottomPart = addCellBottom(x, z, cellSize, material.color);
-		if (bottomPart) {
-			cellGroup.add(bottomPart);
+		// Add a wireframe outline for better visibility
+		const wireGeometry = new THREE.EdgesGeometry(topMesh.geometry);
+		const wireMaterial = new THREE.LineBasicMaterial({ color: 0xFFFFFF });
+		const wireframe = new THREE.LineSegments(wireGeometry, wireMaterial);
+		topMesh.add(wireframe);
+		
+		// Add a debug text label showing coordinates
+		if (window.Constants && window.Constants.DEBUG_LOGGING === true) {
+			const canvas = document.createElement('canvas');
+			canvas.width = 64;
+			canvas.height = 64;
+			const ctx = canvas.getContext('2d');
+			ctx.fillStyle = '#ffffff';
+			ctx.textAlign = 'center';
+			ctx.textBaseline = 'middle';
+			ctx.font = '24px Arial';
+			ctx.fillText(`${x},${z}`, 32, 32);
+			
+			const labelTexture = new THREE.CanvasTexture(canvas);
+			const labelMaterial = new THREE.SpriteMaterial({ map: labelTexture });
+			const label = new THREE.Sprite(labelMaterial);
+			label.scale.set(0.5, 0.5, 1);
+			label.position.y = floatingHeight + 0.5;
+			cellGroup.add(label);
 		}
 		
-		// Position the cell
-		cellGroup.position.set(0, 0, 0);
+		// Position the cell group at the correct coordinates
+		cellGroup.position.set(x, 0, z);
 		
-		// Add decorations if they don't already exist
-		const posKey = `${x},${z}`;
-		if (decorationData) {
-			// Check if decorationData is a Map
-			if (decorationData instanceof Map) {
-				if (!decorationData.has(posKey)) {
-					addCellDecoration(x, z, cellSize);
-				}
-			} else if (decorationData.positions) {
-				// Assume it's an object with a positions property
-				if (!decorationData.positions[posKey]) {
-					addCellDecoration(x, z, cellSize);
-				}
-			} else {
-				// Default behavior: always add decoration
-				addCellDecoration(x, z, cellSize);
-			}
-		}
+		// Add metadata
+		cellGroup.userData = {
+			type: 'cell',
+			x: x,
+			z: z,
+			playerId: cell.playerId,
+			isHomeZone: cell.isHomeZone
+		};
 		
-		// Add to the board group
+		// Add to board group
 		boardGroup.add(cellGroup);
 		
 		return cellGroup;
 	} catch (error) {
 		console.error('Error creating floating cell:', error);
-		return new THREE.Group(); // Return empty group on error
+		return null;
 	}
 }
 
@@ -336,6 +453,157 @@ export function addIslandDecorations(width, height) {
 	}
 }
 
+/**
+ * Create a cell at the specified position
+ * @param {number} x - X position in board coordinates
+ * @param {number} z - Z position in board coordinates
+ * @param {Object} options - Cell options
+ * @returns {THREE.Mesh} Cell mesh
+ */
+export function createCell(x, z, options = {}) {
+	try {
+		// Log more details in debug mode
+		if (Constants.DEBUG_LOGGING) {
+			console.log(`Creating cell at ${x},${z} with options:`, options);
+		}
+		
+		// Check if boardGroup exists
+		if (!window.boardGroup) {
+			console.error('Board group not initialized. Cannot create cell.');
+			return null;
+		}
+		
+		// Default options
+		const defaults = {
+			width: 1,
+			height: 0.2,
+			depth: 1,
+			color: 0x2196F3,
+			wireframe: false,
+			isHomeZone: false,
+			floating: false,
+			floatingHeight: 0,
+			oscillate: false,
+			texture: null,
+			material: null,
+			transparent: false,
+			opacity: 1.0,
+			receiveShadow: true
+		};
+		
+		// Merge options with defaults
+		const cellOptions = {...defaults, ...options};
+		
+		// Create geometry or use cached geometry
+		const geometryKey = `${cellOptions.width}-${cellOptions.height}-${cellOptions.depth}`;
+		if (!cellGeometryCache[geometryKey]) {
+			cellGeometryCache[geometryKey] = new THREE.BoxGeometry(
+				cellOptions.width,
+				cellOptions.height,
+				cellOptions.depth
+			);
+		}
+		const geometry = cellGeometryCache[geometryKey];
+		
+		// For testing, use MeshBasicMaterial which doesn't require lighting
+		let cellMaterial;
+		if (cellOptions.material) {
+			// Use provided material
+			cellMaterial = cellOptions.material;
+		} else if (cellOptions.texture) {
+			// Use texture with MeshBasicMaterial for visibility in any lighting
+			cellMaterial = new THREE.MeshBasicMaterial({
+				map: cellOptions.texture,
+				color: cellOptions.isHomeZone ? 0xFFFF00 : cellOptions.color, // Make home zones YELLOW for better visibility
+				transparent: cellOptions.transparent,
+				opacity: cellOptions.opacity,
+				wireframe: false
+			});
+		} else {
+			// Use color only with better visibility for testing
+			cellMaterial = new THREE.MeshBasicMaterial({
+				color: cellOptions.isHomeZone ? 0xFFFF00 : cellOptions.color,
+				transparent: cellOptions.transparent,
+				opacity: cellOptions.opacity,
+				wireframe: false
+			});
+		}
+		
+		// Create mesh
+		const cell = new THREE.Mesh(geometry, cellMaterial);
+		cell.position.set(x, cellOptions.floating ? cellOptions.floatingHeight : 0, z);
+		cell.receiveShadow = cellOptions.receiveShadow;
+		cell.castShadow = true;
+		
+		// Add a wireframe outline for better visibility
+		try {
+			const edgesGeometry = new THREE.EdgesGeometry(geometry);
+			const wireframeMaterial = new THREE.LineBasicMaterial({ color: 0xFFFFFF, linewidth: 2 });
+			const wireframe = new THREE.LineSegments(edgesGeometry, wireframeMaterial);
+			cell.add(wireframe);
+		} catch (e) {
+			console.warn('Could not create wireframe outline:', e);
+			
+			// Fallback: Create a wireframe box that surrounds the cell
+			const wireGeometry = new THREE.BoxGeometry(
+				cellOptions.width + 0.02, 
+				cellOptions.height + 0.02, 
+				cellOptions.depth + 0.02
+			);
+			const wireMaterial = new THREE.MeshBasicMaterial({ 
+				color: 0xFFFFFF, 
+				wireframe: true, 
+				transparent: true,
+				opacity: 0.5
+			});
+			const wireBox = new THREE.Mesh(wireGeometry, wireMaterial);
+			cell.add(wireBox);
+		}
+		
+		// Add debug text label to show coordinates
+		// Create a canvas texture with the coordinates
+		const canvas = document.createElement('canvas');
+		canvas.width = 64;
+		canvas.height = 64;
+		const ctx = canvas.getContext('2d');
+		
+		// Draw background
+		ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+		ctx.fillRect(0, 0, canvas.width, canvas.height);
+		
+		// Draw text
+		ctx.fillStyle = 'white';
+		ctx.font = 'bold 20px Arial';
+		ctx.textAlign = 'center';
+		ctx.textBaseline = 'middle';
+		ctx.fillText(`${x},${z}`, canvas.width/2, canvas.height/2);
+		
+		// Create sprite with the canvas texture
+		const texture = new THREE.CanvasTexture(canvas);
+		const labelMaterial = new THREE.SpriteMaterial({ map: texture });
+		const label = new THREE.Sprite(labelMaterial);
+		label.position.set(0, cellOptions.height + 0.1, 0);
+		label.scale.set(0.5, 0.5, 0.5);
+		cell.add(label);
+		
+		// Add to board group
+		window.boardGroup.add(cell);
+		
+		// Store cell data for later reference
+		cell.userData = {
+			type: 'cell',
+			boardX: x,
+			boardZ: z,
+			options: cellOptions
+		};
+		
+		return cell;
+	} catch (error) {
+		console.error('Error creating cell:', error);
+		return null;
+	}
+}
+
 // Export default object with all functions
 export default {
 	init,
@@ -344,5 +612,6 @@ export default {
 	addPersistentDecoration,
 	createFloatingIsland,
 	createIslandBottom,
-	addIslandDecorations
+	addIslandDecorations,
+	createCell
 };

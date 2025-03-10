@@ -27,6 +27,12 @@ export function init(tetroGroup, ghostGrp) {
  */
 export function updateFallingTetromino(gameState) {
 	try {
+		// Check if tetrominoGroup is initialized
+		if (!tetrominoGroup) {
+			console.error('tetrominoGroup is not initialized');
+			return;
+		}
+		
 		if (!gameState || !gameState.fallingPiece) {
 			// Clear tetromino group if no falling piece
 			while (tetrominoGroup.children.length > 0) {
@@ -107,6 +113,12 @@ export function updateFallingTetromino(gameState) {
  */
 export function updateGhostPiece(gameState) {
 	try {
+		// Check if ghostGroup is initialized
+		if (!ghostGroup) {
+			console.error('ghostGroup is not initialized');
+			return;
+		}
+		
 		if (!gameState || !gameState.fallingPiece || !gameState.ghostPiece) {
 			// Clear ghost group if no ghost piece
 			while (ghostGroup.children.length > 0) {

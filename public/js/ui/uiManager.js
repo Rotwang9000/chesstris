@@ -255,7 +255,7 @@ export function showMainMenu() {
 		showScreen('mainMenu');
 	} else {
 		// For the simplified UI, just show a welcome notification
-		showNotification('Welcome to Chesstris!', 'info', 3000);
+		showNotification('Welcome to Shaktris!', 'info', 3000);
 	}
 }
 

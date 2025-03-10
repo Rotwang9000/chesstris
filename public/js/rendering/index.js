@@ -4,15 +4,21 @@
  */
 
 // Import all modules
-import CoreRenderer from './modules/core.js';
-import BoardRenderer from './modules/board.js';
-import PiecesRenderer from './modules/pieces.js';
-import TetrominoRenderer from './modules/tetromino.js';
-import EffectsRenderer from './modules/effects.js';
-import UtilsRenderer from './modules/utils.js';
+import * as	 CoreRenderer from './modules/core.js';
+import * as BoardRenderer from './modules/board.js';
+import * as PiecesRenderer from './modules/pieces.js';
+import * as TetrominoRenderer from './modules/tetromino.js';
+import * as EffectsRenderer from './modules/effects.js';
+import * as UtilsRenderer from './modules/utils.js';
 
-// Initialize modules
+// Shared variables
 let isInitialized = false;
+let boardGroup;
+let piecesGroup;
+let tetrominoGroup;
+let ghostGroup;
+let decorationsGroup;
+let materials = {};
 
 /**
  * Initialize the renderer
@@ -23,11 +29,19 @@ let isInitialized = false;
 function init(container, options = {}) {
 	try {
 		// Initialize core renderer
-		const success = CoreRenderer.init(container, options);
-		if (!success) {
+		const initResult = CoreRenderer.init(container, options);
+		if (!initResult) {
 			console.error('Failed to initialize core renderer');
 			return false;
 		}
+		
+		// Get references to groups from the core renderer
+		boardGroup = window.boardGroup || initResult.boardGroup;
+		piecesGroup = window.piecesGroup || initResult.piecesGroup;
+		tetrominoGroup = window.tetrominoGroup || initResult.tetrominoGroup;
+		ghostGroup = window.ghostGroup || initResult.ghostGroup;
+		decorationsGroup = window.decorationsGroup || initResult.decorationsGroup;
+		materials = window.materials || initResult.materials || {};
 		
 		// Make modules available globally for easier access
 		window.boardModule = BoardRenderer;
@@ -37,16 +51,16 @@ function init(container, options = {}) {
 		window.utilsModule = UtilsRenderer;
 		
 		// Initialize board module
-		BoardRenderer.init(window.boardGroup, window.materials);
+		BoardRenderer.init(boardGroup, materials);
 		
 		// Initialize pieces module
-		PiecesRenderer.init(window.piecesGroup);
+		PiecesRenderer.init(piecesGroup);
 		
 		// Initialize tetromino module
-		TetrominoRenderer.init(window.tetrominoGroup, window.ghostGroup);
+		TetrominoRenderer.init(tetrominoGroup, ghostGroup);
 		
 		// Initialize effects module
-		EffectsRenderer.init(window.decorationsGroup);
+		EffectsRenderer.init(decorationsGroup);
 		
 		isInitialized = true;
 		return true;
@@ -72,6 +86,14 @@ function cleanup() {
 		window.tetrominoModule = null;
 		window.effectsModule = null;
 		window.utilsModule = null;
+		
+		// Clear shared variables
+		boardGroup = null;
+		piecesGroup = null;
+		tetrominoGroup = null;
+		ghostGroup = null;
+		decorationsGroup = null;
+		materials = {};
 		
 		isInitialized = false;
 	} catch (error) {

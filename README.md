@@ -287,6 +287,18 @@ npm install
    - Copy `.env.example` to `.env`
    - Set appropriate values for each variable
 
+4. Create required texture asset directories:
+   ```bash
+   mkdir -p public/img/textures
+   ```
+
+5. Ensure texture files are in the correct location:
+   - Board texture: `public/img/textures/board.png`
+   - Cell texture: `public/img/textures/cell.png`
+   - Home zone texture: `public/img/textures/home_zone.png`
+
+   If you don't have these files yet, you can use placeholder images during development.
+
 ## Running the Application
 
 ```bash
@@ -526,3 +538,61 @@ describe('Geometry Validation', () => {
 ```
 
 Implementing these testing strategies will make the codebase more robust and maintainable as the project continues to evolve.
+
+## Debugging the Renderer
+
+The Chesstris renderer has been refactored to be more robust and easier to debug. Here are some key features and debugging techniques:
+
+### Test Page
+
+A dedicated test page at `/test.html` provides a controlled environment for testing the renderer with simplified geometry and colors. This helps isolate rendering issues from game logic problems.
+
+Features of the test page:
+- Direct visualization of board coordinates with a checkerboard pattern
+- Color-coded axes (Red=X, Green=Y, Blue=Z)
+- Minimal test showing chess pieces at specific coordinates
+- Camera controls for different viewing angles
+
+### Debug Controls
+
+Both the test page and main game include debug controls for easier navigation:
+- Reset Camera: Returns to the default view
+- Top View: Bird's eye view of the board
+- Side View: Shows the board from the side
+
+### Fallback Mechanisms
+
+The renderer includes several fallback mechanisms to ensure it continues to work even if some components fail:
+
+#### Texture Fallbacks
+- Placeholder textures are automatically generated when image files are not found
+- These placeholders include the name of the texture for easy identification
+- High-contrast patterns make them easy to spot during debugging
+
+#### Geometry Fallbacks
+- Wireframe outlines make objects visible even if textures or lighting fail
+- Text labels show coordinates and piece types
+
+#### Direct Debug Mode
+- A "Direct Test" button creates a scene with basic shapes to verify Three.js is working
+- Helps identify if issues are with Three.js setup or with our renderer code
+
+### Known Issues and Workarounds
+
+#### Missing Texture Files
+If you see 404 errors for texture files, ensure the following files exist:
+- public/img/textures/board.png
+- public/img/textures/cell.png
+- public/img/textures/home_zone.png
+
+The renderer will use placeholder textures if these files are missing.
+
+#### API Errors
+If you see errors related to the sponsors API, this is expected during development:
+```
+GET http://localhost:3020/api/sponsors/next 404 (Not Found)
+```
+
+The sponsors system is disabled by default in development mode. To enable it:
+1. Set `SPONSORS_API_ENABLED = true` in `public/js/utils/sponsors.js`
+2. Ensure your development server handles these API endpoints

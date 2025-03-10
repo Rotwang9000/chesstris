@@ -48,61 +48,70 @@ async function init() {
 			
 			// Try to get current user from session or token
 			if (session.playerId) {
+				// Use player from session
 				currentUser = {
 					id: session.playerId,
-					username: session.username
+					name: session.username || 'Anonymous'
 				};
-				UI.updateUserInfo(currentUser);
-			} else if (localStorage.getItem('auth_token')) {
-				try {
-					currentUser = await Network.getCurrentUser();
-					
-					// Update session with user info if available
-					if (currentUser && currentUser.id) {
-						SessionManager.setUsername(currentUser.username);
+				
+				// Initialize the game renderer
+				const gameContainer = document.getElementById('game-container');
+				if (!gameContainer) {
+					throw new Error('Game container element not found');
+				}
+				
+				const rendererSuccess = Renderer.init(gameContainer, {
+					debug: false,
+					texturePaths: {
+						board: './img/textures/board.png',
+						cell: './img/textures/cell.png',
+						homeZone: './img/textures/home_zone.png'
 					}
-					
-					UI.updateUserInfo(currentUser);
-				} catch (error) {
-					console.warn('Failed to get current user:', error);
-					localStorage.removeItem('auth_token');
+				});
+				
+				if (rendererSuccess) {
+					console.log('Renderer initialized successfully');
+				} else {
+					console.error('Failed to initialize renderer');
+					UI.showErrorScreen('Renderer Error', 'Failed to initialize the game renderer. Please refresh the page and try again.');
+					return;
+				}
+				
+				// Initialize game state if GameManager.initGame exists
+				if (typeof GameManager.initGame === 'function') {
+					GameManager.initGame();
+				} else {
+					console.warn('GameManager.initGame not found, skipping game initialization');
+				}
+				
+				// Set up event listeners
+				setupEventListeners();
+				
+				// Hide loading screen
+				UI.hideLoadingScreen();
+				UI.showNotification('Welcome to Shaktris!', 'info');
+				
+				// Set initialized flag
+				isInitialized = true;
+				console.log('Chesstris initialized successfully');
+			} else {
+				// No session, show login UI
+				UI.hideLoadingScreen();
+				if (typeof UI.showLoginForm === 'function') {
+					UI.showLoginForm();
+				} else {
+					UI.showMainMenu();
 				}
 			}
 		} catch (error) {
-			console.warn('Network connection failed:', error);
-			UI.showNotification('Network connection failed. Playing in offline mode.', 'warning');
+			console.error('Error connecting to server:', error);
+			UI.hideLoadingScreen();
+			UI.showErrorScreen('Connection Error', 'Unable to connect to server. Please check your internet connection and try again.');
 		}
-		
-		// Get the game container element
-		const gameContainer = document.getElementById('game-container');
-		if (!gameContainer) {
-			console.error('Game container element not found. Make sure there is a <div id="game-container"></div> in your HTML.');
-			UI.showNotification('Error: Game container not found', 'error');
-			throw new Error('Game container not found');
-		}
-		
-		// Initialize the renderer
-		try {
-			Renderer.init(gameContainer);
-			console.log('Renderer initialized successfully');
-		} catch (renderError) {
-			console.error('Failed to initialize renderer:', renderError);
-			UI.showNotification('Error initializing graphics engine', 'error');
-			throw renderError;
-		}
-		
-		// Set up event listeners
-		setupEventListeners();
-		
-		// Show the main menu
-		UI.showMainMenu();
-		
-		isInitialized = true;
-		console.log('Chesstris initialized successfully');
 	} catch (error) {
-		console.error('Initialization failed:', error);
+		console.error('Initialization error:', error);
 		UI.hideLoadingScreen();
-		UI.showNotification('Game initialization failed. Please refresh the page.', 'error');
+		UI.showErrorScreen('Initialization Error', 'Failed to initialize the application. Please refresh the page and try again.');
 	}
 }
 
