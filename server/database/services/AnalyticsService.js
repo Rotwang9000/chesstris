@@ -10,7 +10,7 @@
 
 import Analytics from '../models/Analytics.js';
 import { v4 as uuidv4 } from 'uuid';
-import UAParser from 'ua-parser-js';
+import * as UAParserJS from 'ua-parser-js';
 
 export class AnalyticsService {
 	/**
@@ -264,7 +264,7 @@ export class AnalyticsService {
 	 * @returns {Object} Device info
 	 */
 	parseUserAgent(userAgent) {
-		const parser = new UAParser(userAgent);
+		const parser = new UAParserJS.UAParser(userAgent);
 		const result = parser.getResult();
 		
 		return {

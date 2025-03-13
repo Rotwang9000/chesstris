@@ -2,39 +2,17 @@
 <html lang="en">
 
 <head>
-	<meta charset="utf-8">
+	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<title>Shaktris: Chess meets Tetris</title>
-	<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&family=Oswald:wght@500&display=swap" rel="stylesheet">
-	<link rel="apple-touch-icon" sizes="57x57" href="img/apple-icon-57x57.png">
-	<link rel="apple-touch-icon" sizes="60x60" href="img/apple-icon-60x60.png">
-	<link rel="apple-touch-icon" sizes="72x72" href="img/apple-icon-72x72.png">
-	<link rel="apple-touch-icon" sizes="76x76" href="img/apple-icon-76x76.png">
-	<link rel="apple-touch-icon" sizes="114x114" href="img/apple-icon-114x114.png">
-	<link rel="apple-touch-icon" sizes="120x120" href="img/apple-icon-120x120.png">
-	<link rel="apple-touch-icon" sizes="144x144" href="img/apple-icon-144x144.png">
-	<link rel="apple-touch-icon" sizes="152x152" href="img/apple-icon-152x152.png">
-	<link rel="apple-touch-icon" sizes="180x180" href="img/apple-icon-180x180.png">
-	<link rel="icon" type="image/png" sizes="192x192" href="img/android-icon-192x192.png">
-	<link rel="icon" type="image/png" sizes="32x32" href="img/favicon-32x32.png">
-	<link rel="icon" type="image/png" sizes="96x96" href="img/favicon-96x96.png">
-	<link rel="icon" type="image/png" sizes="16x16" href="img/favicon-16x16.png">
-	<link rel="manifest" href="img/manifest.json">
-	<meta name="msapplication-TileColor" content="#ffffff">
-	<meta name="msapplication-TileImage" content="img/ms-icon-144x144.png">
-	<meta name="theme-color" content="#ffffff">
+	<title>Shaktris</title>
 	<style>
 		body {
 			margin: 0;
 			padding: 0;
+			font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+			background-color: #121212;
+			color: #f0f0f0;
 			overflow: hidden;
-			background: #222;
-			color: #fff;
-			font-family: 'Roboto', sans-serif;
-		}
-
-		canvas {
-			display: block;
 		}
 		
 		#game-container {
@@ -43,646 +21,141 @@
 			left: 0;
 			width: 100%;
 			height: 100%;
-			z-index: 0;
+			z-index: 1;
 		}
-
+		
 		#ui-container {
 			position: absolute;
 			top: 0;
 			left: 0;
 			width: 100%;
 			height: 100%;
-			pointer-events: none;
-			z-index: 1;
-		}
-
-		.panel {
-			background: rgba(0, 0, 0, 0.7);
-			border-radius: 8px;
-			padding: 15px;
-			margin: 15px;
-			backdrop-filter: blur(5px);
-			pointer-events: auto;
-		}
-
-		#info-panel {
-			position: absolute;
-			top: 0;
-			left: 0;
-			max-width: 400px;
-		}
-
-		#controls-panel {
-			position: absolute;
-			bottom: 0;
-			left: 0;
-			max-width: 400px;
-		}
-
-		#players-panel {
-			position: absolute;
-			top: 0;
-			right: 0;
-			max-width: 250px;
-		}
-
-		h1, h2, h3 {
-			font-family: 'Oswald', sans-serif;
-			margin-top: 0;
-		}
-
-		h1 {
-			font-size: 24px;
-			color: #f5f5f5;
-			margin-bottom: 10px;
-		}
-
-		h2 {
-			font-size: 18px;
-			color: #e0e0e0;
-			margin-bottom: 8px;
-		}
-
-		p {
-			margin: 8px 0;
-			line-height: 1.4;
-		}
-
-		.game-title {
-			display: flex;
-			align-items: center;
-		}
-
-		.game-title span {
-			display: inline-block;
-			padding: 3px 8px;
-			margin-left: 8px;
-			background: linear-gradient(135deg, #ff6b6b, #c44569);
-			border-radius: 4px;
-			font-size: 12px;
-			font-weight: bold;
-		}
-
-		.player {
-			display: flex;
-			align-items: center;
-			margin-bottom: 10px;
-		}
-
-		.player-color {
-			width: 20px;
-			height: 20px;
-			border-radius: 50%;
-			margin-right: 10px;
-			border: 2px solid rgba(255, 255, 255, 0.5);
-		}
-
-		.player-name {
-			font-weight: bold;
-		}
-
-		.piece-count {
-			margin-left: auto;
-			color: #aaa;
-		}
-
-		.btn {
-			background: #4834d4;
-			border: none;
-			color: white;
-			padding: 8px 12px;
-			border-radius: 4px;
-			cursor: pointer;
-			font-family: 'Roboto', sans-serif;
-			font-weight: bold;
-			transition: background 0.2s;
-			margin-right: 8px;
-			margin-bottom: 8px;
-		}
-
-		.btn:hover {
-			background: #5a45e6;
-		}
-
-		.btn:active {
-			background: #372db3;
-		}
-
-		.btn.selected {
-			background: #30336b;
-			box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.5);
-		}
-
-		.sponsor-ad {
-			position: fixed;
-			top: 50%;
-			left: 50%;
-			transform: translate(-50%, -50%);
-			background: rgba(0, 0, 0, 0.9);
-			padding: 20px;
-			border-radius: 8px;
-			max-width: 500px;
-			text-align: center;
-			z-index: 1000;
-			display: none;
-		}
-
-		.sponsor-ad img {
-			max-width: 100%;
-			margin-bottom: 15px;
-		}
-
-		.sponsor-ad .close-btn {
-			position: absolute;
-			top: 10px;
-			right: 10px;
-			background: none;
-			border: none;
-			color: white;
-			font-size: 20px;
-			cursor: pointer;
-		}
-
-		.tooltips {
-			position: absolute;
-			bottom: 10px;
-			right: 10px;
-			font-size: 14px;
-			color: #ccc;
+			z-index: 2;
 			pointer-events: none;
 		}
-
-		.notification {
+		
+		#loading-screen {
 			position: absolute;
-			top: 50%;
-			left: 50%;
-			transform: translate(-50%, -50%);
-			background: rgba(0, 0, 0, 0.8);
-			color: white;
-			padding: 15px 25px;
-			border-radius: 30px;
-			font-weight: bold;
-			pointer-events: none;
-			opacity: 0;
-			transition: opacity 0.3s;
-		}
-
-		.notification.show {
-			opacity: 1;
-		}
-
-		.potion-info {
-			display: flex;
-			align-items: center;
-			margin-top: 10px;
-			padding: 8px;
-			background: rgba(255, 255, 255, 0.1);
-			border-radius: 4px;
-		}
-
-		.potion-icon {
-			width: 30px;
-			height: 30px;
-			margin-right: 10px;
-			background: #673ab7;
-			border-radius: 50%;
-			display: flex;
-			align-items: center;
-			justify-content: center;
-			font-weight: bold;
-			font-size: 16px;
-		}
-
-		.potion-text {
-			flex: 1;
-		}
-
-		.hidden {
-			display: none !important;
-		}
-
-		.modal {
-			display: none;
-			position: fixed;
 			top: 0;
 			left: 0;
 			width: 100%;
 			height: 100%;
-			background-color: rgba(0, 0, 0, 0.5);
-			z-index: 1000;
-		}
-
-		.modal-content {
-			position: absolute;
-			top: 50%;
-			left: 50%;
-			transform: translate(-50%, -50%);
-			background-color: #2a2a2a;
-			padding: 20px;
-			border-radius: 8px;
-			box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
-		}
-
-		#set-username-form {
+			background-color: #121212;
 			display: flex;
 			flex-direction: column;
-			gap: 10px;
-		}
-
-		#username-input {
-			padding: 8px;
-			border: 1px solid #444;
-			border-radius: 4px;
-			background-color: #333;
-			color: #fff;
-			font-size: 16px;
-		}
-
-		.error-message {
-			color: #ff4444;
-			font-size: 14px;
-			margin: 0;
-			min-height: 20px;
-		}
-
-		button {
-			padding: 8px 16px;
-			background-color: #4CAF50;
-			color: white;
-			border: none;
-			border-radius: 4px;
-			cursor: pointer;
-			font-size: 16px;
-		}
-
-		button:hover {
-			background-color: #45a049;
-		}
-
-		/* Russian theme styling */
-		.russian-theme {
-			--theme-primary: #D52B1E;  /* Russian red */
-			--theme-secondary: #0039A6; /* Russian blue */
-			--theme-accent: #E5B022; /* Gold accent color */
-			--theme-bg-dark: #222;
-			--theme-bg-panel: rgba(30, 30, 30, 0.85);
-			--theme-text: #f0f0f0;
-			--theme-border: #444;
-		}
-
-		body.russian-theme {
-			background: var(--theme-bg-dark);
-			color: var(--theme-text);
-			font-family: 'Roboto', sans-serif;
-		}
-
-		.russian-theme .panel {
-			background: var(--theme-bg-panel);
-			border: 1px solid var(--theme-border);
-			box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
-		}
-
-		.russian-theme h1, 
-		.russian-theme h2 {
-			font-family: 'Oswald', sans-serif;
-			color: var(--theme-primary);
-			text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.7);
-		}
-
-		.russian-theme .btn {
-			background: var(--theme-secondary);
-			color: white;
-			border: none;
-			padding: 8px 16px;
-			border-radius: 4px;
-			font-weight: bold;
-			transition: all 0.2s;
-			text-transform: uppercase;
-			font-size: 14px;
-		}
-
-		.russian-theme .btn:hover {
-			background: var(--theme-primary);
-			transform: translateY(-2px);
-			box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
-		}
-
-		.russian-theme .btn.selected {
-			background: var(--theme-accent);
-			color: #000;
-		}
-
-		.russian-theme .player-color {
-			border: 2px solid var(--theme-accent);
-		}
-
-		.russian-theme .game-title span {
-			background: var(--theme-primary);
-			color: white;
-			font-family: 'Oswald', sans-serif;
-			font-weight: 500;
-			padding: 4px 10px;
-			border-radius: 0;
-			transform: rotate(-5deg);
-			box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.3);
-			text-transform: uppercase;
-			letter-spacing: 1px;
-		}
-
-		.russian-theme .notification {
-			background: linear-gradient(135deg, var(--theme-primary), var(--theme-secondary));
-			color: white;
-			font-weight: bold;
-			padding: 12px 24px;
-			border-radius: 30px;
-			box-shadow: 0 5px 15px rgba(0, 0, 0, 0.4);
-		}
-
-		/* Soviet-style decorative elements */
-		.russian-theme .corner-star {
-			position: absolute;
-			width: 30px;
-			height: 30px;
-			background-size: contain;
-			background-repeat: no-repeat;
-			opacity: 0.7;
-		}
-
-		.russian-theme .corner-star.top-left {
-			top: 10px;
-			left: 10px;
-			transform: rotate(-15deg);
-		}
-
-		.russian-theme .corner-star.top-right {
-			top: 10px;
-			right: 10px;
-			transform: rotate(15deg);
-		}
-
-		.russian-theme .corner-star.bottom-left {
-			bottom: 10px;
-			left: 10px;
-			transform: rotate(-15deg);
-		}
-
-		.russian-theme .corner-star.bottom-right {
-			bottom: 10px;
-			right: 10px;
-			transform: rotate(15deg);
-		}
-
-		.russian-theme .player {
-			background: rgba(0, 0, 0, 0.2);
-			padding: 8px 12px;
-			border-radius: 4px;
-			margin-bottom: 8px;
-			border-left: 4px solid var(--theme-accent);
-		}
-
-		.russian-theme .audio-controls {
-			background: var(--theme-bg-panel);
-			border-top: 3px solid var(--theme-primary);
-		}
-
-		/* Range input styling for Russian theme */
-		.russian-theme input[type="range"] {
-			-webkit-appearance: none;
-			height: 8px;
-			background: #444;
-			border-radius: 4px;
-			outline: none;
-		}
-
-		.russian-theme input[type="range"]::-webkit-slider-thumb {
-			-webkit-appearance: none;
-			width: 16px;
-			height: 16px;
-			border-radius: 50%;
-			background: var(--theme-accent);
-			cursor: pointer;
-		}
-
-		.russian-theme input[type="range"]::-moz-range-thumb {
-			width: 16px;
-			height: 16px;
-			border-radius: 50%;
-			background: var(--theme-accent);
-			cursor: pointer;
-			border: none;
-		}
-
-		/* Russian-style header banner */
-		.russian-theme .header-banner {
-			position: absolute;
-			top: 0;
-			left: 0;
-			width: 100%;
-			height: 40px;
-			background: var(--theme-primary);
-			z-index: -1;
-			overflow: hidden;
-		}
-
-		.russian-theme .header-banner::after {
-			content: "";
-			position: absolute;
-			bottom: 0;
-			left: 0;
-			width: 100%;
-			height: 8px;
-			background: repeating-linear-gradient(
-				-45deg,
-				var(--theme-secondary),
-				var(--theme-secondary) 10px,
-				var(--theme-primary) 10px,
-				var(--theme-primary) 20px
-			);
-		}
-
-		/* Tooltip style */
-		.russian-theme .tooltips {
-			background: rgba(0, 0, 0, 0.6);
-			padding: 6px 12px;
-			border-radius: 4px;
-			border-left: 3px solid var(--theme-accent);
+			justify-content: center;
+			align-items: center;
+			z-index: 10;
 		}
 		
-		#notification-container {
-			position: fixed;
-			top: 20px;
-			right: 20px;
+		#loading-progress {
 			width: 300px;
-			z-index: 1000;
+			height: 20px;
+			background-color: #333;
+			border-radius: 10px;
+			margin-top: 20px;
+			overflow: hidden;
+		}
+		
+		#loading-bar {
+			width: 0%;
+			height: 100%;
+			background-color: #4CAF50;
+			transition: width 0.3s ease;
+		}
+		
+		#loading-text {
+			margin-top: 10px;
+			font-size: 16px;
+			color: #aaa;
+		}
+		
+		#loading-error {
+			margin-top: 20px;
+			color: #e74c3c;
+			display: none;
+			text-align: center;
+			max-width: 80%;
+		}
+		
+		#score-display, #resource-display {
+			position: absolute;
+			top: 20px;
+			background-color: rgba(0, 0, 0, 0.7);
+			padding: 10px;
+			border-radius: 5px;
+			font-size: 18px;
 			pointer-events: none;
 		}
 		
-		#notification-container .notification {
-			position: relative;
-			margin-bottom: 10px;
-			top: unset;
-			left: unset;
-			transform: none;
-			width: 100%;
-			box-sizing: border-box;
-			padding: 15px;
-			border-radius: 8px;
-			opacity: 0;
-			transform: translateX(50px);
-			transition: opacity 0.3s, transform 0.3s;
+		#score-display {
+			left: 20px;
 		}
 		
-		#notification-container .notification.show {
-			opacity: 1;
-			transform: translateX(0);
+		#resource-display {
+			right: 20px;
 		}
 		
-		.notification-info {
-			background: rgba(52, 152, 219, 0.9);
+		.game-button {
+			background-color: #4CAF50;
+			color: white;
+			border: none;
+			padding: 10px 20px;
+			text-align: center;
+			text-decoration: none;
+			display: inline-block;
+			font-size: 16px;
+			margin: 4px 2px;
+			cursor: pointer;
+			border-radius: 5px;
+			pointer-events: auto;
 		}
 		
-		.notification-success {
-			background: rgba(46, 204, 113, 0.9);
+		.game-button:hover {
+			background-color: #45a049;
 		}
 		
-		.notification-warning {
-			background: rgba(241, 196, 15, 0.9);
-			color: #333;
-		}
-		
-		.notification-error {
-			background: rgba(231, 76, 60, 0.9);
+		.game-button:disabled {
+			background-color: #cccccc;
+			color: #666666;
+			cursor: not-allowed;
 		}
 	</style>
 </head>
 
 <body>
-	<!-- Main game container for Three.js rendering -->
 	<div id="game-container"></div>
 	
 	<div id="ui-container">
-		<div id="info-panel" class="panel">
-			<div class="game-title">
-				<h1>Shaktris</h1>
-				<span>PROTOTYPE</span>
-			</div>
-			<p>A multiplayer game fusing chess and Tetris mechanics.</p>
-			<h2>Your Home Zone</h2>
-			<p id="home-zone-info">Loading...</p>
-			<div id="potions-container"></div>
-		</div>
-		
-		<div id="controls-panel" class="panel">
-			<h2>Controls</h2>
-			<div id="piece-selection">
-				<p>Select a piece to move</p>
-				<div id="piece-buttons"></div>
-			</div>
-			<div id="movement-controls" class="hidden">
-				<p>Click on the board to move your selected piece</p>
-				<button id="cancel-move" class="btn">Cancel</button>
-			</div>
-		</div>
-		
-		<div id="players-panel" class="panel">
-			<h2>Players</h2>
-			<div id="player-list"></div>
-		</div>
-		
-		<div class="tooltips">
-			Mouse: Rotate/Pan • Scroll: Zoom • Click: Select/Move</div>
-		</div>
+		<div id="score-display">Score: 0</div>
+		<div id="resource-display">Resources: 0</div>
 	</div>
 	
-	<!-- Notification container for displaying messages -->
-	<div id="notification-container"></div>
-	
-	<div id="notification" class="notification"></div>
-	
-	<div id="sponsor-ad" class="sponsor-ad">
-		<button class="close-btn">&times;</button>
-		<h2 id="sponsor-name">Sponsor Name</h2>
-		<img id="sponsor-image" src="" alt="Sponsor">
-		<p id="sponsor-message">Special offer details here</p>
-		<button id="sponsor-link" class="btn">Learn More</button>
-	</div>
-
-	<div id="game-ui">
-		<div id="player-list"></div>
-		<div id="home-zone-info"></div>
-		<div id="potions-container"></div>
-		<div id="movement-controls" class="hidden">
-			<button id="cancel-move">Cancel Move</button>
+	<div id="loading-screen">
+		<h1>Shaktris</h1>
+		<div id="loading-progress">
+			<div id="loading-bar"></div>
 		</div>
-		<div id="piece-selection"></div>
-		<div id="notification" class="notification"></div>
-		<div id="username-form" class="modal">
-			<div class="modal-content">
-				<h2>Set Your Username</h2>
-				<form id="set-username-form">
-					<input type="text" id="username-input" placeholder="Enter username (3-20 characters)" 
-						pattern="[a-zA-Z0-9_-]{3,20}" required>
-					<p class="error-message" id="username-error"></p>
-					<button type="submit">Set Username</button>
-				</form>
-			</div>
-		</div>
+		<div id="loading-text">Loading game...</div>
+		<div id="loading-error"></div>
 	</div>
-
-	<!-- External Libraries -->
-	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
-	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
-	<script src="https://cdn.jsdelivr.net/npm/uuid@8.3.2/dist/umd/uuid.min.js"></script>
-
-	<!-- Socket.IO -->
-	<script src="/socket.io/socket.io.js"></script>
 	
-	<!-- Solana Wallet (Phantom) -->
-	<script>
-		// Check if Phantom is installed
-		window.onload = function() {
-			if ("solana" in window) {
-				console.log("Phantom wallet is available!");
-			} else {
-				console.log("Phantom wallet is not installed. Some features may not be available.");
-			}
-		};
-	</script>
-
-	<!-- Main App Script -->
 	<script type="module" src="js/main.js"></script>
-
 	<script>
-		// Add Russian theme to body when page loads
-		document.addEventListener('DOMContentLoaded', function() {
-			document.body.classList.add('russian-theme');
-			
-			// Add decorative stars
-			const starPositions = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
-			starPositions.forEach(position => {
-				const star = document.createElement('div');
-				star.className = `corner-star ${position}`;
-				
-				// Create SVG star
-				const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-				svg.setAttribute('width', '30');
-				svg.setAttribute('height', '30');
-				svg.setAttribute('viewBox', '0 0 24 24');
-				
-				const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-				path.setAttribute('d', 'M12,1L15.36,7.94L23,8.27L17.31,13.47L19.05,20.99L12,17.27L4.95,20.99L6.69,13.47L1,8.27L8.64,7.94L12,1Z');
-				path.setAttribute('fill', '#E5B022');
-				
-				svg.appendChild(path);
-				star.appendChild(svg);
-				document.body.appendChild(star);
-			});
-			
-			// Add header banner
-			const banner = document.createElement('div');
-			banner.className = 'header-banner';
-			document.body.appendChild(banner);
-		});
+		// Simulate loading progress
+		let progress = 0;
+		const loadingBar = document.getElementById('loading-bar');
+		const loadingText = document.getElementById('loading-text');
+		
+		const loadingInterval = setInterval(() => {
+			progress += Math.random() * 10;
+			if (progress > 100) {
+				progress = 100;
+				clearInterval(loadingInterval);
+			}
+			loadingBar.style.width = `${progress}%`;
+			loadingText.textContent = `Loading game... ${Math.floor(progress)}%`;
+		}, 200);
 	</script>
 </body>
 

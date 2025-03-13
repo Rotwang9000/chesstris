@@ -1,86 +1,61 @@
 /**
- * Example Test File with ES6 Modules
+ * Example ES6 Module Tests
  * 
- * This demonstrates how to structure tests using ES6 modules
+ * This file demonstrates how to write tests for ES6 modules.
  */
 
-// Import test libraries with ES6 import syntax
 import { expect } from 'chai';
 import sinon from 'sinon';
 
-// Import modules you're testing with .js extension
-import { addSponsorToTetromino } from '../../public/utils/sponsors.js';
+// Import the original modules
+import { randomInt, randomColor, clamp, lerp } from '../../public/js/utils/helpers.js';
 
-// Example of how to mock ES modules
-// Create a module proxy for mocking
-const mockFetch = async () => ({
-	ok: true,
-	json: async () => ({ _id: '123', name: 'Test Sponsor' })
-});
-
-// Test suite
 describe('Example ES6 Module Tests', () => {
-	// Mock setup and teardown
-	let fetchStub;
-	
-	beforeEach(() => {
-		// Setup: Replace global.fetch with our mock
-		fetchStub = sinon.stub(global, 'fetch').callsFake(mockFetch);
-	});
-	
-	afterEach(() => {
-		// Teardown: Restore original fetch
-		fetchStub.restore();
-	});
-	
 	// Test case
 	it('should demonstrate a simple test with ES6 modules', () => {
 		// Arrange
-		const expected = 'test';
+		const min = 1;
+		const max = 10;
 		
 		// Act
-		const actual = 'test';
+		const result = randomInt(min, max);
 		
 		// Assert
-		expect(actual).to.equal(expected);
+		expect(result).to.be.at.least(min);
+		expect(result).to.be.at.most(max);
 	});
 	
 	// Async test case
 	it('should demonstrate an async test with ES6 modules', async () => {
-		// We're using the fetchStub defined in beforeEach
+		// Arrange
+		const mockData = { success: true, data: [1, 2, 3] };
+		
+		// Create a mock implementation of an async function
+		const mockAsyncFunction = sinon.stub().resolves(mockData);
 		
 		// Act
-		const tetromino = { type: 'I' };
-		const result = await addSponsorToTetromino(tetromino);
+		const result = await mockAsyncFunction('test-url');
 		
 		// Assert
-		expect(result.sponsor).to.exist;
-		expect(result.sponsor.id).to.equal('123');
+		expect(result).to.deep.equal(mockData);
+		expect(mockAsyncFunction.calledWith('test-url')).to.be.true;
 	});
 	
-	// Example of how to mock specific module methods
 	describe('Mocking module methods', () => {
-		// Example class to mock
-		class ExampleClass {
-			doSomething() {
-				return 'real implementation';
-			}
-		}
-		
 		it('should mock methods with replacements', () => {
-			// Create an instance
-			const instance = new ExampleClass();
+			// Arrange
+			const clampStub = sinon.stub().returns(5);
 			
-			// Mock the method
-			sinon.stub(instance, 'doSomething').returns('mocked implementation');
+			// Act
+			const result = clampStub(10, 0, 5);
 			
-			// Test the mock
-			expect(instance.doSomething()).to.equal('mocked implementation');
+			// Assert
+			expect(result).to.equal(5);
+			expect(clampStub.calledWith(10, 0, 5)).to.be.true;
 		});
 	});
 });
 
-// You can also have multiple describe blocks
 describe('Another Test Suite', () => {
 	it('should work as expected', () => {
 		expect(true).to.be.true;

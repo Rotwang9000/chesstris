@@ -10,6 +10,7 @@ import * as PiecesRenderer from './modules/pieces.js';
 import * as TetrominoRenderer from './modules/tetromino.js';
 import * as EffectsRenderer from './modules/effects.js';
 import * as UtilsRenderer from './modules/utils.js';
+import { initCompatibilityLayer } from './compatibility.js';
 
 // Shared variables
 let isInitialized = false;
@@ -46,6 +47,20 @@ async function init(container, options = {}) {
 		
 		// Merge options with defaults
 		const mergedOptions = { ...defaultOptions, ...options };
+		
+		// Always enable debug mode in development
+		if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+			mergedOptions.debug = true;
+			console.log('Debug mode enabled automatically in development environment');
+		}
+		
+		// Add useTestMode if we're on a test page
+		if (window.location.pathname.includes('test') || 
+			window.location.pathname.includes('auto-test') ||
+			window.location.pathname.includes('renderer_test')) {
+			mergedOptions.useTestMode = true;
+			console.log('Test mode enabled automatically for test pages');
+		}
 		
 		// Inspect CoreRenderer before attempting to use it
 		console.log('CoreRenderer details:', {
@@ -186,6 +201,15 @@ async function init(container, options = {}) {
 			} catch (error) {
 				console.warn('Error initializing game world:', error);
 			}
+		}
+		
+		// Initialize compatibility layer to ensure old function calls work
+		try {
+			initCompatibilityLayer();
+			console.log('Compatibility layer initialized');
+		} catch (compatError) {
+			console.warn('Error initializing compatibility layer:', compatError);
+			// Don't fail initialization if compatibility layer fails
 		}
 		
 		// Log success

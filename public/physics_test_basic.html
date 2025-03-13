@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Chesstris Physics Test (Basic)</title>
+	<style>
+		body {
+			margin: 0;
+			padding: 0;
+			overflow: hidden;
+			background-color: #121212;
+			color: #ffffff;
+			font-family: Arial, sans-serif;
+		}
+		
+		#game-container {
+			width: 100vw;
+			height: 100vh;
+			position: relative;
+		}
+		
+		#debug-panel {
+			position: absolute;
+			top: 10px;
+			right: 10px;
+			background-color: rgba(0, 0, 0, 0.7);
+			padding: 10px;
+			border-radius: 5px;
+			z-index: 1000;
+			width: 250px;
+		}
+		
+		#debug-panel button {
+			margin: 5px;
+			padding: 8px 12px;
+			background-color: #2196F3;
+			color: white;
+			border: none;
+			border-radius: 3px;
+			cursor: pointer;
+		}
+		
+		#debug-panel button:hover {
+			background-color: #0b7dda;
+		}
+		
+		#debug-panel h3 {
+			margin-top: 0;
+			color: #90caf9;
+		}
+		
+		#camera-info {
+			margin-top: 10px;
+			font-size: 12px;
+		}
+		
+		#controls-info {
+			margin-top: 10px;
+			font-size: 12px;
+			color: #aaa;
+		}
+		
+		.small-text {
+			font-size: 10px;
+			color: #666;
+			margin-top: 5px;
+			margin-bottom: 0;
+		}
+		
+		#loading-message {
+			position: absolute;
+			top: 50%;
+			left: 50%;
+			transform: translate(-50%, -50%);
+			font-size: 24px;
+			color: #90caf9;
+		}
+		
+		.control-group {
+			margin-bottom: 10px;
+			padding-bottom: 10px;
+			border-bottom: 1px solid #333;
+		}
+		
+		.control-group:last-child {
+			border-bottom: none;
+		}
+		
+		/* Physics visualization styling */
+		.physics-debug {
+			position: absolute;
+			bottom: 10px;
+			left: 10px;
+			background-color: rgba(0, 0, 0, 0.7);
+			padding: 5px 10px;
+			font-size: 12px;
+			border-radius: 3px;
+			pointer-events: none;
+		}
+		
+		/* Controls help panel */
+		#controls-help {
+			position: absolute;
+			bottom: 10px;
+			right: 10px;
+			background-color: rgba(0, 0, 0, 0.7);
+			padding: 10px;
+			font-size: 12px;
+			border-radius: 5px;
+			color: #fff;
+			max-width: 300px;
+		}
+		
+		#controls-help h4 {
+			margin-top: 0;
+			color: #90caf9;
+		}
+		
+		.key {
+			display: inline-block;
+			background: #333;
+			padding: 2px 6px;
+			border-radius: 3px;
+			margin: 0 3px;
+			font-family: monospace;
+			border: 1px solid #555;
+		}
+
+		#error-log {
+			position: absolute;
+			top: 50%;
+			left: 50%;
+			transform: translate(-50%, -50%);
+			background-color: rgba(255, 0, 0, 0.8);
+			padding: 20px;
+			border-radius: 5px;
+			font-family: monospace;
+			color: white;
+			display: none;
+			z-index: 1000;
+			max-width: 90%;
+			max-height: 80vh;
+			overflow: auto;
+		}
+	</style>
+	
+	<!-- Import THREE.js globally first -->
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r132/three.min.js"></script>
+	
+	<!-- Implement OrbitControls directly in the page -->
+	<script>
+		// Basic OrbitControls implementation
+		class OrbitControls {
+			constructor(camera, domElement) {
+				this.camera = camera;
+				this.domElement = domElement;
+				this.target = new THREE.Vector3(0, 0, 0);
+				this.enableDamping = false;
+				this.dampingFactor = 0.05;
+				this.enabled = true;
+				
+				// Mouse state
+				this._mouseDown = false;
+				this._mouseX = 0;
+				this._mouseY = 0;
+				
+				// Bind event handlers
+				this._handleMouseDown = this._handleMouseDown.bind(this);
+				this._handleMouseMove = this._handleMouseMove.bind(this);
+				this._handleMouseUp = this._handleMouseUp.bind(this);
+				this._handleWheel = this._handleWheel.bind(this);
+				
+				// Add event listeners
+				this.domElement.addEventListener('mousedown', this._handleMouseDown);
+				window.addEventListener('mousemove', this._handleMouseMove);
+				window.addEventListener('mouseup', this._handleMouseUp);
+				this.domElement.addEventListener('wheel', this._handleWheel);
+				
+				console.log('OrbitControls initialized');
+			}
+			
+			_handleMouseDown(event) {
+				this._mouseDown = true;
+				this._mouseX = event.clientX;
+				this._mouseY = event.clientY;
+			}
+			
+			_handleMouseMove(event) {
+				if (!this._mouseDown) return;
+				
+				const deltaX = event.clientX - this._mouseX;
+				const deltaY = event.clientY - this._mouseY;
+				
+				// Simple orbit rotation
+				this.rotateCamera(deltaX, deltaY);
+				
+				this._mouseX = event.clientX;
+				this._mouseY = event.clientY;
+			}
+			
+			_handleMouseUp() {
+				this._mouseDown = false;
+			}
+			
+			_handleWheel(event) {
+				// Zoom in/out
+				const delta = Math.max(-1, Math.min(1, -event.deltaY));
+				this.zoomCamera(delta);
+				
+				event.preventDefault();
+			}
+			
+			rotateCamera(deltaX, deltaY) {
+				const sensitivity = 0.01;
+				
+				// Calculate new camera position
+				const offset = new THREE.Vector3().subVectors(this.camera.position, this.target);
+				const spherical = new THREE.Spherical().setFromVector3(offset);
+				
+				spherical.theta -= deltaX * sensitivity;
+				spherical.phi = Math.max(0.1, Math.min(Math.PI - 0.1, spherical.phi + deltaY * sensitivity));
+				
+				// Set new camera position
+				offset.setFromSpherical(spherical);
+				this.camera.position.copy(this.target).add(offset);
+				this.camera.lookAt(this.target);
+			}
+			
+			zoomCamera(delta) {
+				const zoomSpeed = 1.0;
+				const direction = new THREE.Vector3().subVectors(this.camera.position, this.target).normalize();
+				
+				// Adjust distance
+				const distance = this.camera.position.distanceTo(this.target);
+				const newDistance = Math.max(1, distance - delta * zoomSpeed);
+				
+				// Set new camera position
+				this.camera.position.copy(this.target).add(direction.multiplyScalar(newDistance));
+			}
+			
+			update() {
+				// No-op for basic implementation
+				return true;
+			}
+			
+			dispose() {
+				this.domElement.removeEventListener('mousedown', this._handleMouseDown);
+				window.removeEventListener('mousemove', this._handleMouseMove);
+				window.removeEventListener('mouseup', this._handleMouseUp);
+				this.domElement.removeEventListener('wheel', this._handleWheel);
+			}
+		}
+		
+		// Make it globally available
+		window.OrbitControls = OrbitControls;
+		console.log('OrbitControls implementation added');
+	</script>
+	
+	<!-- Error handling -->
+	<script>
+		// Set up global error handling
+		window.addEventListener('error', function(event) {
+			const errorLog = document.getElementById('error-log');
+			if (errorLog) {
+				errorLog.style.display = 'block';
+				errorLog.innerHTML += `<div>${event.message} at ${event.filename}:${event.lineno}</div>`;
+			}
+			console.error('Global error:', event);
+		});
+		
+		// Log system info
+		console.log('Browser info:', navigator.userAgent);
+		console.log('Window size:', window.innerWidth, 'x', window.innerHeight);
+	</script>
+</head>
+<body>
+	<div id="game-container">
+		<div id="loading-message">Loading Physics Test...</div>
+		
+		<div id="debug-panel">
+			<h3>Physics Test Controls</h3>
+			<p class="small-text">Loading controls...</p>
+		</div>
+		
+		<div class="physics-debug">
+			Position: (0.00, 0.00, 0.00)<br>
+			Velocity: (0.0000, 0.0000, 0.0000)
+		</div>
+		
+		<div id="error-log"></div>
+	</div>
+	
+	<!-- All the physics logic in a simple script tag -->
+	<script>
+		// Wait for the DOM to be fully loaded
+		document.addEventListener('DOMContentLoaded', function() {
+			console.log('DOM loaded, initializing physics test...');
+			initializePhysicsTest();
+		});
+		
+		// Global variables for game state
+		let scene, camera, renderer, controls;
+		let boardGroup, tetrominoGroup, ghostGroup;
+		let board = [];
+		let activeTetromino = null;
+		let tetrominoPhysics = null;
+		
+		// Main initialization function
+		async function initializePhysicsTest() {
+			console.log('Initializing physics test environment...');
+			
+			// Initialize renderer
+			const gameContainer = document.getElementById('game-container');
+			renderer = new THREE.WebGLRenderer({ antialias: true });
+			renderer.setSize(window.innerWidth, window.innerHeight);
+			renderer.setClearColor(0x1e293b); // Dark blue background
+			gameContainer.appendChild(renderer.domElement);
+			
+			// Set up scene
+			scene = new THREE.Scene();
+			
+			// Create camera
+			camera = new THREE.PerspectiveCamera(
+				75,
+				window.innerWidth / window.innerHeight,
+				0.1,
+				1000
+			);
+			camera.position.set(25, 30, 25);
+			camera.lookAt(new THREE.Vector3(15, 0, 15));
+			
+			// Set up controls
+			console.log('Setting up camera controls...');
+			try {
+				// Use our custom OrbitControls
+				controls = new OrbitControls(camera, renderer.domElement);
+				controls.target.set(15, 0, 15);
+				controls.update();
+				console.log('Camera controls initialized');
+			} catch (error) {
+				console.error('Error setting up camera controls:', error);
+				// Create basic controls functionality
+				controls = {
+					target: new THREE.Vector3(15, 0, 15),
+					update: function() { return false; }
+				};
+			}
+			
+			// Create groups
+			boardGroup = new THREE.Group();
+			scene.add(boardGroup);
+			
+			tetrominoGroup = new THREE.Group();
+			scene.add(tetrominoGroup);
+			
+			ghostGroup = new THREE.Group();
+			scene.add(ghostGroup);
+			
+			// Add lighting
+			addLighting();
+			
+			// Create basic board
+			createBasicBoard();
+			
+			// Start animation loop
+			animate();
+			
+			// Set up debug panel
+			setupDebugPanel();
+			
+			// Set up control instructions
+			setupControlsHelp();
+			
+			// Remove loading message
+			const loadingMessage = document.getElementById('loading-message');
+			if (loadingMessage) {
+				loadingMessage.style.display = 'none';
+			}
+			
+			// Handle window resize
+			window.addEventListener('resize', onWindowResize);
+		}
+		
+		// Function to add lighting to the scene
+		function addLighting() {
+			// Add ambient light
+			const ambientLight = new THREE.AmbientLight(0x404040, 0.8);
+			scene.add(ambientLight);
+			
+			// Add directional light (simulating sun)
+			const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+			dirLight.position.set(20, 30, 20);
+			dirLight.castShadow = true;
+			
+			// Configure shadow properties
+			dirLight.shadow.mapSize.width = 2048;
+			dirLight.shadow.mapSize.height = 2048;
+			dirLight.shadow.camera.near = 0.5;
+			dirLight.shadow.camera.far = 100;
+			dirLight.shadow.camera.left = -30;
+			dirLight.shadow.camera.right = 30;
+			dirLight.shadow.camera.top = 30;
+			dirLight.shadow.camera.bottom = -30;
+			
+			scene.add(dirLight);
+			
+			// Add a point light for extra illumination
+			const pointLight = new THREE.PointLight(0x2196F3, 0.5);
+			pointLight.position.set(15, 15, 15);
+			scene.add(pointLight);
+		}
+		
+		// Create a simple board for testing
+		function createBasicBoard() {
+			// Create test board
+			board = Array(32).fill().map(() => Array(32).fill(null));
+			
+			// Create a central platform
+			for (let z = 8; z < 16; z++) {
+				for (let x = 8; x < 16; x++) {
+					board[z][x] = {
+						active: true,
+						isHomeZone: false,
+						color: 0x42A5F5 // Blue
+					};
+				}
+			}
+			
+			// Create cells
+			for (let z = 0; z < board.length; z++) {
+				for (let x = 0; x < board[z].length; x++) {
+					const cell = board[z][x];
+					if (cell && cell.active) {
+						// Create cell mesh
+						const geometry = new THREE.BoxGeometry(1, 1, 1);
+						const material = new THREE.MeshPhongMaterial({
+							color: cell.color || 0x42A5F5,
+							shininess: 50
+						});
+						
+						// Create block mesh
+						const cellMesh = new THREE.Mesh(geometry, material);
+						cellMesh.position.set(x, 0, z);
+						
+						// Add wireframe 
+						const wireframe = new THREE.LineSegments(
+							new THREE.WireframeGeometry(geometry),
+							new THREE.LineBasicMaterial({ 
+								color: 0xffffff, 
+								transparent: true, 
+								opacity: 0.15
+							})
+						);
+						cellMesh.add(wireframe);
+						
+						boardGroup.add(cellMesh);
+					}
+				}
+			}
+		}
+		
+		// Render loop
+		function animate() {
+			requestAnimationFrame(animate);
+			
+			// Update camera controls
+			if (controls && typeof controls.update === 'function') {
+				controls.update();
+			}
+			
+			// Render scene
+			renderer.render(scene, camera);
+		}
+		
+		// Set up debug panel controls
+		function setupDebugPanel() {
+			const debugPanel = document.getElementById('debug-panel');
+			if (!debugPanel) return;
+			
+			// Clear existing buttons
+			debugPanel.innerHTML = '<h3>Physics Test Controls</h3>';
+			
+			// Camera controls group
+			const cameraGroup = document.createElement('div');
+			cameraGroup.className = 'control-group';
+			cameraGroup.innerHTML = '<div id="camera-info">Camera: default view</div>';
+			
+			// Add camera view toggle button
+			const viewButton = document.createElement('button');
+			viewButton.textContent = 'Reset Camera';
+			viewButton.onclick = () => {
+				camera.position.set(25, 30, 25);
+				camera.lookAt(new THREE.Vector3(15, 0, 15));
+				controls.target.set(15, 0, 15);
+				controls.update();
+			};
+			cameraGroup.appendChild(viewButton);
+			
+			// Add top view button
+			const topViewButton = document.createElement('button');
+			topViewButton.textContent = 'Top View';
+			topViewButton.onclick = () => {
+				camera.position.set(15, 50, 15);
+				camera.lookAt(new THREE.Vector3(15, 0, 15));
+				controls.target.set(15, 0, 15);
+				controls.update();
+			};
+			cameraGroup.appendChild(topViewButton);
+			
+			debugPanel.appendChild(cameraGroup);
+			
+			// Add controls info
+			const controlsInfo = document.createElement('div');
+			controlsInfo.id = 'controls-info';
+			controlsInfo.innerHTML = `
+				<p>Camera Controls:</p>
+				<ul>
+					<li>Click and drag to rotate camera</li>
+					<li>Mouse wheel to zoom in/out</li>
+				</ul>
+				<p class="small-text">Check console (F12) for detailed logs</p>
+			`;
+			debugPanel.appendChild(controlsInfo);
+		}
+		
+		// Set up control instructions panel
+		function setupControlsHelp() {
+			const controlsHelp = document.getElementById('controls-help');
+			if (!controlsHelp) {
+				// Create controls help panel if it doesn't exist
+				const panel = document.createElement('div');
+				panel.id = 'controls-help';
+				panel.innerHTML = `
+					<h4>Physics Test Controls</h4>
+					<p>Use the mouse to rotate the camera view.</p>
+					<p>Use the mouse wheel to zoom in and out.</p>
+				`;
+				document.body.appendChild(panel);
+			}
+		}
+		
+		// Handle window resize
+		function onWindowResize() {
+			camera.aspect = window.innerWidth / window.innerHeight;
+			camera.updateProjectionMatrix();
+			renderer.setSize(window.innerWidth, window.innerHeight);
+		}
+	</script>
+</body>
+</html> 

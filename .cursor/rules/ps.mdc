@@ -1,0 +1,12 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+
+# Your rule content
+
+- You can @ files here
+- You can use markdown but dont have to
+your shell is powershell under windows
+"npm run dev" is already running and will automatically pick up changes(port 320)

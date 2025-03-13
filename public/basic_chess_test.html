@@ -1,0 +1,1584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Shaktris - Basic Chess Test</title>
+	<link rel="icon" href="favicon.ico" type="image/x-icon">
+	<script type="importmap">
+	{
+		"imports": {
+			"three": "/js/lib/three.module.js",
+			"three/addons/": "/js/lib/jsm/"
+		}
+	}
+	</script>
+	<style>
+		body {
+			margin: 0;
+			padding: 0;
+			overflow: hidden;
+			background-color: #121212;
+			color: #ffffff;
+			font-family: Arial, sans-serif;
+		}
+		
+		#game-container {
+			width: 100vw;
+			height: 100vh;
+			position: relative;
+		}
+		
+		#controls {
+			position: absolute;
+			top: 10px;
+			right: 10px;
+			background-color: rgba(0, 0, 0, 0.8);
+			padding: 10px;
+			border-radius: 5px;
+			z-index: 1000;
+			width: 250px;
+		}
+		
+		#controls h3 {
+			margin-top: 0;
+			color: #90caf9;
+		}
+		
+		button {
+			margin: 5px;
+			padding: 8px 12px;
+			background-color: #2196F3;
+			color: white;
+			border: none;
+			border-radius: 3px;
+			cursor: pointer;
+		}
+		
+		button:hover {
+			background-color: #0b7dda;
+		}
+		
+		button.active {
+			background-color: #4CAF50;
+		}
+		
+		.piece-selector {
+			display: grid;
+			grid-template-columns: repeat(3, 1fr);
+			gap: 5px;
+			margin-top: 10px;
+		}
+		
+		#status-message {
+			position: absolute;
+			bottom: 20px;
+			left: 50%;
+			transform: translateX(-50%);
+			background-color: rgba(0, 0, 0, 0.7);
+			color: #4CAF50;
+			padding: 10px 20px;
+			border-radius: 20px;
+			font-size: 16px;
+			opacity: 0;
+			transition: opacity 0.3s ease;
+			z-index: 1100;
+		}
+		
+		#status-message.visible {
+			opacity: 1;
+		}
+	</style>
+	
+	<!-- Import THREE.js directly from CDN -->
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+	
+	<!-- OrbitControls import -->
+	<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+	<div id="game-container"></div>
+	
+	<div id="controls">
+		<h3>Chess Pieces Test</h3>
+		<div>
+			<button id="reset-camera">Reset Camera</button>
+			<button id="top-view">Top View</button>
+			<button id="side-view">Side View</button>
+		</div>
+		
+		<h4>Add Chess Piece</h4>
+		<div class="piece-selector">
+			<button data-piece="pawn">Pawn</button>
+			<button data-piece="rook">Rook</button>
+			<button data-piece="knight">Knight</button>
+			<button data-piece="bishop">Bishop</button>
+			<button data-piece="queen">Queen</button>
+			<button data-piece="king">King</button>
+		</div>
+		
+		<h4>Board Controls</h4>
+		<div>
+			<button id="create-board">Create Board</button>
+			<button id="clear-board">Clear Board</button>
+			<button id="add-tetris">Add Tetris</button>
+		</div>
+		
+		<h4>Tetris Controls</h4>
+		<ul style="list-style: none; padding-left: 5px; font-size: 12px; margin: 5px 0;">
+			<li>↑↓←→ - Move tetris piece</li>
+			<li>Drag - Move on mobile</li>
+			<li>Q - Rotate piece</li>
+			<li>Double-tap - Rotate on mobile</li>
+			<li>A - Fast drop</li>
+		</ul>
+	</div>
+	
+	<div id="status-message"></div>
+	
+	<script>
+		// Core variables
+		let scene, camera, renderer, controls;
+		let boardGroup, piecesGroup, tetrominoGroup, highlightGroup;
+		let cellMaterials = {};
+		let pieceGeometries = {};
+		let activeBoard = [];
+		let boardSize = 8;
+		const CELL_SIZE = 1;
+		
+		// Chess piece variables
+		let selectedPiece = null;
+		let highlightedCells = [];
+		
+		// Tetris control variables
+		let activeTetromino = null;
+		let isTetrominoFalling = false;
+		let lastUpdateTime = 0;
+		let fallSpeed = 0.05;
+		let fastFallSpeed = 0.3;
+		let currentFallSpeed = fallSpeed;
+		let isDragging = false;
+		let dragStartPosition = { x: 0, z: 0 };
+		let dragStartMousePosition = { x: 0, y: 0 };
+		let keyStates = {
+			ArrowLeft: false,
+			ArrowRight: false,
+			ArrowUp: false,
+			ArrowDown: false,
+			A: false,
+			Q: false
+		};
+		
+		// Show status message
+		function showStatus(message, type = 'success') {
+			const statusElement = document.getElementById('status-message');
+			statusElement.textContent = message;
+			statusElement.style.color = type === 'error' ? '#ff5252' : 
+				type === 'warning' ? '#ffab40' : '#4CAF50';
+			
+			statusElement.classList.add('visible');
+			
+			setTimeout(() => {
+				statusElement.classList.remove('visible');
+			}, 3000);
+		}
+		
+		// Initialize the 3D scene
+		function init() {
+			// Create scene
+			scene = new THREE.Scene();
+			scene.background = new THREE.Color(0x121212);
+			
+			// Create camera
+			camera = new THREE.PerspectiveCamera(
+				70, // FOV
+				window.innerWidth / window.innerHeight, // Aspect ratio
+				0.1, // Near clipping plane
+				1000 // Far clipping plane
+			);
+			
+			// Set initial camera position
+			camera.position.set(8, 8, 12);
+			camera.lookAt(new THREE.Vector3(4, 0, 4));
+			
+			// Create renderer
+			renderer = new THREE.WebGLRenderer({ antialias: true });
+			renderer.setSize(window.innerWidth, window.innerHeight);
+			renderer.setClearColor(0x121212);
+			renderer.setPixelRatio(window.devicePixelRatio);
+			renderer.shadowMap.enabled = true;
+			
+			// Add to DOM
+			document.getElementById('game-container').appendChild(renderer.domElement);
+			
+			// Create OrbitControls
+			controls = new THREE.OrbitControls(camera, renderer.domElement);
+			controls.enableDamping = true;
+			controls.dampingFactor = 0.25;
+			controls.screenSpacePanning = false;
+			controls.maxPolarAngle = Math.PI / 2;
+			
+			// Create groups for organization
+			boardGroup = new THREE.Group();
+			piecesGroup = new THREE.Group();
+			tetrominoGroup = new THREE.Group();
+			highlightGroup = new THREE.Group();
+			
+			scene.add(boardGroup);
+			scene.add(piecesGroup);
+			scene.add(tetrominoGroup);
+			scene.add(highlightGroup);
+			
+			// Add lights
+			addLights();
+			
+			// Add skybox
+			addSkybox();
+			
+			// Create materials for cells
+			createMaterials();
+			
+			// Create piece geometries
+			createPieceGeometries();
+			
+			// Create empty board
+			createBoard();
+			
+			// Add event listeners
+			window.addEventListener('resize', onWindowResize);
+			window.addEventListener('keydown', handleKeyDown);
+			window.addEventListener('keyup', handleKeyUp);
+			
+			// Add touch/mouse event listeners for mobile
+			const gameContainer = document.getElementById('game-container');
+			gameContainer.addEventListener('mousedown', handleMouseDown);
+			gameContainer.addEventListener('mousemove', handleMouseMove);
+			gameContainer.addEventListener('mouseup', handleMouseUp);
+			gameContainer.addEventListener('touchstart', handleTouchStart, { passive: false });
+			gameContainer.addEventListener('touchmove', handleTouchMove, { passive: false });
+			gameContainer.addEventListener('touchend', handleTouchEnd);
+			gameContainer.addEventListener('dblclick', handleDoubleClick);
+			gameContainer.addEventListener('click', onMouseClick);
+			
+			// Set up button handlers
+			setupButtonHandlers();
+			
+			// Start animation loop
+			animate();
+			
+			// Expose camera controls to window for direct access
+			window.resetCamera = resetCamera;
+			window.topView = topView;
+			window.sideView = sideView;
+			
+			showStatus('Chess test initialized - use arrow keys or drag to move tetris pieces');
+		}
+		
+		// Add lights to the scene
+		function addLights() {
+			// Ambient light
+			const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
+			scene.add(ambientLight);
+			
+			// Directional light (sun)
+			const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+			directionalLight.position.set(10, 15, 10);
+			directionalLight.castShadow = true;
+			
+			// Set up shadow properties
+			directionalLight.shadow.mapSize.width = 2048;
+			directionalLight.shadow.mapSize.height = 2048;
+			directionalLight.shadow.camera.near = 0.5;
+			directionalLight.shadow.camera.far = 50;
+			directionalLight.shadow.camera.left = -20;
+			directionalLight.shadow.camera.right = 20;
+			directionalLight.shadow.camera.top = 20;
+			directionalLight.shadow.camera.bottom = -20;
+			
+			scene.add(directionalLight);
+			
+			// Additional fill light
+			const fillLight = new THREE.DirectionalLight(0xffffff, 0.3);
+			fillLight.position.set(-10, 5, -10);
+			scene.add(fillLight);
+		}
+		
+		// Create a skybox with gradient
+		function addSkybox() {
+			const skyGeometry = new THREE.SphereGeometry(200, 32, 32);
+			const skyMaterial = new THREE.MeshBasicMaterial({
+				side: THREE.BackSide,
+				vertexColors: true
+			});
+			
+			// Define sky colors (lighter blue gradient)
+			const skyColors = [
+				new THREE.Color(0x8eb8e5), // Light blue at top
+				new THREE.Color(0xc6e4ff), // Very light blue at middle
+				new THREE.Color(0xebf5ff)  // Almost white at horizon
+			];
+			
+			// Apply vertex colors
+			const positions = skyGeometry.attributes.position;
+			const colors = [];
+			
+			for (let i = 0; i < positions.count; i++) {
+				const y = positions.getY(i);
+				const normalized = (y + 200) / 400; // Normalize between 0 and 1
+				
+				let color;
+				if (normalized > 0.7) {
+					color = skyColors[0];
+				} else if (normalized > 0.4) {
+					const t = (normalized - 0.4) / 0.3;
+					color = skyColors[0].clone().lerp(skyColors[1], 1 - t);
+				} else {
+					const t = normalized / 0.4;
+					color = skyColors[1].clone().lerp(skyColors[2], 1 - t);
+				}
+				
+				colors.push(color.r, color.g, color.b);
+			}
+			
+			skyGeometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+			
+			const skybox = new THREE.Mesh(skyGeometry, skyMaterial);
+			scene.add(skybox);
+		}
+		
+		// Create materials for cells
+		function createMaterials() {
+			// Regular cell material
+			cellMaterials.regular = new THREE.MeshPhongMaterial({
+				color: 0x42A5F5,
+				shininess: 5,
+				flatShading: true
+			});
+			
+			// Home zone material
+			cellMaterials.homeZone = new THREE.MeshPhongMaterial({
+				color: 0xFFA500,
+				shininess: 10,
+				flatShading: true
+			});
+			
+			// White cell for chess board
+			cellMaterials.white = new THREE.MeshPhongMaterial({
+				color: 0xFFFFFF,
+				shininess: 30,
+				flatShading: true
+			});
+			
+			// Black cell for chess board
+			cellMaterials.black = new THREE.MeshPhongMaterial({
+				color: 0x404040,
+				shininess: 30,
+				flatShading: true
+			});
+			
+			// Materials for chess pieces
+			cellMaterials.whitePiece = new THREE.MeshPhongMaterial({
+				color: 0xEDEDED,
+				shininess: 100
+			});
+			
+			cellMaterials.blackPiece = new THREE.MeshPhongMaterial({
+				color: 0x202020,
+				shininess: 100
+			});
+			
+			// Russian-themed tetris piece materials
+			cellMaterials.tetrisKremlin = new THREE.MeshPhongMaterial({
+				color: 0xc62828, // Deep red
+				shininess: 40,
+				transparent: true,
+				opacity: 0.95
+			});
+			
+			cellMaterials.tetrisSaintBasil = new THREE.MeshPhongMaterial({
+				color: 0x1565c0, // Deep blue
+				shininess: 40,
+				transparent: true,
+				opacity: 0.95
+			});
+			
+			cellMaterials.tetrisPalace = new THREE.MeshPhongMaterial({
+				color: 0xffb300, // Amber
+				shininess: 40,
+				transparent: true,
+				opacity: 0.95
+			});
+			
+			cellMaterials.tetrisMonument = new THREE.MeshPhongMaterial({
+				color: 0x558b2f, // Green
+				shininess: 40,
+				transparent: true,
+				opacity: 0.95
+			});
+			
+			cellMaterials.tetrisSquare = new THREE.MeshPhongMaterial({
+				color: 0x6a1b9a, // Purple
+				shininess: 40,
+				transparent: true,
+				opacity: 0.95
+			});
+			
+			cellMaterials.tetrisCathedral = new THREE.MeshPhongMaterial({
+				color: 0xe65100, // Orange
+				shininess: 40,
+				transparent: true,
+				opacity: 0.95
+			});
+			
+			cellMaterials.tetrisHeritage = new THREE.MeshPhongMaterial({
+				color: 0x00695c, // Teal
+				shininess: 40,
+				transparent: true,
+				opacity: 0.95
+			});
+			
+			// Add highlight materials
+			cellMaterials.highlight = new THREE.MeshPhongMaterial({
+				color: 0x00ff00,
+				transparent: true,
+				opacity: 0.5
+			});
+			
+			cellMaterials.attackHighlight = new THREE.MeshPhongMaterial({
+				color: 0xff0000,
+				transparent: true,
+				opacity: 0.5
+			});
+		}
+		
+		// Create geometries for chess pieces
+		function createPieceGeometries() {
+			// Simplified geometric representations of chess pieces
+			
+			// Pawn - simple cone
+			pieceGeometries.pawn = new THREE.ConeGeometry(0.3, 0.8, 8);
+			
+			// Rook - cylinder with smaller cylinder on top
+			pieceGeometries.rook = new THREE.CylinderGeometry(0.35, 0.35, 0.9, 8);
+			
+			// Knight - combination of a cube and cone
+			const knightGroup = new THREE.Group();
+			const knightBase = new THREE.Mesh(
+				new THREE.CylinderGeometry(0.3, 0.35, 0.5, 8),
+				new THREE.MeshBasicMaterial() // Material will be replaced when used
+			);
+			const knightHead = new THREE.Mesh(
+				new THREE.ConeGeometry(0.25, 0.6, 8),
+				new THREE.MeshBasicMaterial() // Material will be replaced when used
+			);
+			knightHead.position.y = 0.5;
+			knightHead.rotation.z = Math.PI / 6; // Tilt the head
+			knightBase.add(knightHead);
+			knightGroup.add(knightBase);
+			pieceGeometries.knight = knightGroup;
+			
+			// Bishop - cone with sphere on top
+			const bishopGroup = new THREE.Group();
+			const bishopBase = new THREE.Mesh(
+				new THREE.ConeGeometry(0.35, 0.8, 8),
+				new THREE.MeshBasicMaterial() // Material will be replaced when used
+			);
+			const bishopHead = new THREE.Mesh(
+				new THREE.SphereGeometry(0.2, 8, 8),
+				new THREE.MeshBasicMaterial() // Material will be replaced when used
+			);
+			bishopHead.position.y = 0.6;
+			bishopBase.add(bishopHead);
+			bishopGroup.add(bishopBase);
+			pieceGeometries.bishop = bishopGroup;
+			
+			// Queen - cylinder with cone on top
+			const queenGroup = new THREE.Group();
+			const queenBase = new THREE.Mesh(
+				new THREE.CylinderGeometry(0.35, 0.4, 0.6, 8),
+				new THREE.MeshBasicMaterial() // Material will be replaced when used
+			);
+			const queenMiddle = new THREE.Mesh(
+				new THREE.SphereGeometry(0.4, 8, 8),
+				new THREE.MeshBasicMaterial() // Material will be replaced when used
+			);
+			queenMiddle.position.y = 0.5;
+			const queenTop = new THREE.Mesh(
+				new THREE.ConeGeometry(0.15, 0.3, 8),
+				new THREE.MeshBasicMaterial() // Material will be replaced when used
+			);
+			queenTop.position.y = 0.9;
+			queenBase.add(queenMiddle);
+			queenBase.add(queenTop);
+			queenGroup.add(queenBase);
+			pieceGeometries.queen = queenGroup;
+			
+			// King - cylinder with cross on top
+			const kingGroup = new THREE.Group();
+			const kingBase = new THREE.Mesh(
+				new THREE.CylinderGeometry(0.35, 0.4, 0.7, 8),
+				new THREE.MeshBasicMaterial() // Material will be replaced when used
+			);
+			const kingMiddle = new THREE.Mesh(
+				new THREE.SphereGeometry(0.35, 8, 8),
+				new THREE.MeshBasicMaterial() // Material will be replaced when used
+			);
+			kingMiddle.position.y = 0.5;
+			const kingCrossV = new THREE.Mesh(
+				new THREE.BoxGeometry(0.1, 0.4, 0.1),
+				new THREE.MeshBasicMaterial() // Material will be replaced when used
+			);
+			kingCrossV.position.y = 1.0;
+			const kingCrossH = new THREE.Mesh(
+				new THREE.BoxGeometry(0.3, 0.1, 0.1),
+				new THREE.MeshBasicMaterial() // Material will be replaced when used
+			);
+			kingCrossH.position.y = 1.0;
+			kingBase.add(kingMiddle);
+			kingBase.add(kingCrossV);
+			kingBase.add(kingCrossH);
+			kingGroup.add(kingBase);
+			pieceGeometries.king = kingGroup;
+		}
+		
+		// Create the chess board
+		function createBoard() {
+			// Clear any existing board
+			while (boardGroup.children.length > 0) {
+				boardGroup.remove(boardGroup.children[0]);
+			}
+			
+			// Reset active board array
+			activeBoard = Array(boardSize).fill().map(() => Array(boardSize).fill(null));
+			
+			// Create checkerboard pattern
+			for (let z = 0; z < boardSize; z++) {
+				for (let x = 0; x < boardSize; x++) {
+					// Determine cell color (checkerboard pattern)
+					const isWhite = (x + z) % 2 === 0;
+					const material = isWhite ? cellMaterials.white : cellMaterials.black;
+					
+					// Create cell geometry
+					const cellGeometry = new THREE.BoxGeometry(CELL_SIZE, 0.5, CELL_SIZE);
+					const cell = new THREE.Mesh(cellGeometry, material);
+					
+					// Position cell
+					cell.position.set(
+						x * CELL_SIZE + CELL_SIZE / 2,
+						0,
+						z * CELL_SIZE + CELL_SIZE / 2
+					);
+					
+					// Enable shadows
+					cell.receiveShadow = true;
+					
+					// Add to board group
+					boardGroup.add(cell);
+					
+					// Track cell in active board
+					activeBoard[z][x] = {
+						mesh: cell,
+						piece: null,
+						isWhite: isWhite
+					};
+				}
+			}
+			
+			// Center board in scene
+			boardGroup.position.set(
+				-(boardSize * CELL_SIZE) / 2,
+				0,
+				-(boardSize * CELL_SIZE) / 2
+			);
+			
+			showStatus('Board created');
+		}
+		
+		// Clear the board of all pieces
+		function clearBoard() {
+			// Remove all pieces from the board
+			while (piecesGroup.children.length > 0) {
+				piecesGroup.remove(piecesGroup.children[0]);
+			}
+			
+			// Update active board to remove piece references
+			for (let z = 0; z < boardSize; z++) {
+				for (let x = 0; x < boardSize; x++) {
+					if (activeBoard[z][x]) {
+						activeBoard[z][x].piece = null;
+					}
+				}
+			}
+			
+			showStatus('Board cleared');
+		}
+		
+		// Add a chess piece to the board
+		function addChessPiece(type, x = 4, z = 4, isWhite = true) {
+			// Check if we have a geometry for this piece type
+			if (!pieceGeometries[type]) {
+				console.error(`No geometry defined for piece type: ${type}`);
+				showStatus(`Unknown piece type: ${type}`, 'error');
+				return;
+			}
+			
+			// Apply material based on color
+			const material = isWhite ? cellMaterials.whitePiece : cellMaterials.blackPiece;
+			
+			// Create the piece - either a mesh or replace materials in a group
+			let piece;
+			
+			if (pieceGeometries[type] instanceof THREE.BufferGeometry) {
+				// Simple geometry
+				piece = new THREE.Mesh(pieceGeometries[type], material);
+			} else if (pieceGeometries[type] instanceof THREE.Group) {
+				// Group of meshes - clone and recursively set materials
+				piece = pieceGeometries[type].clone();
+				piece.traverse((obj) => {
+					if (obj.isMesh) {
+						obj.material = material.clone();
+					}
+				});
+			} else {
+				// Fallback for unexpected geometry type
+				console.error(`Unexpected geometry type for ${type}`);
+				showStatus(`Error creating ${type}`, 'error');
+				return;
+			}
+			
+			// Check if coordinates are valid
+			if (x < 0 || x >= boardSize || z < 0 || z >= boardSize) {
+				console.error(`Invalid coordinates: ${x}, ${z}`);
+				showStatus('Invalid board position', 'error');
+				return;
+			}
+			
+			// Calculate world position based on board coordinates
+			const worldX = x * CELL_SIZE + CELL_SIZE / 2;
+			const worldZ = z * CELL_SIZE + CELL_SIZE / 2;
+			
+			// Position piece (add height to place on top of cell)
+			piece.position.set(worldX, 0.7, worldZ);
+			
+			// Add shadow casting
+			piece.castShadow = true;
+			piece.traverse((obj) => {
+				if (obj.isMesh) {
+					obj.castShadow = true;
+				}
+			});
+			
+			// Add to the pieces group
+			piecesGroup.position.copy(boardGroup.position);
+			piecesGroup.add(piece);
+			
+			// Update active board
+			if (activeBoard[z][x]) {
+				activeBoard[z][x].piece = piece;
+				// Store additional metadata for chess piece
+				piece.userData = {
+					type: type,
+					isWhite: isWhite,
+					boardX: x,
+					boardZ: z
+				};
+			}
+			
+			showStatus(`${type.charAt(0).toUpperCase() + type.slice(1)} added`);
+			return piece;
+		}
+		
+		// Add a tetris piece
+		function addTetrisPiece() {
+			// Define tetromino shapes with Russian landmark themes
+			const shapes = {
+				// I - Kremlin Wall
+				I: {
+					coords: [[0,0], [1,0], [2,0], [3,0]],
+					material: 'tetrisKremlin',
+					name: 'Kremlin Wall'
+				},
+				// O - Red Square
+				O: {
+					coords: [[0,0], [1,0], [0,1], [1,1]],
+					material: 'tetrisSquare',
+					name: 'Red Square'
+				},
+				// T - Saint Basil's Cathedral
+				T: {
+					coords: [[0,0], [1,0], [2,0], [1,1]],
+					material: 'tetrisCathedral',
+					name: 'Saint Basil\'s Cathedral'
+				},
+				// L - Russian Heritage
+				L: {
+					coords: [[0,0], [0,1], [0,2], [1,2]],
+					material: 'tetrisHeritage',
+					name: 'Russian Heritage'
+				}
+			};
+			
+			// Select a random shape
+			const shapeTypes = Object.keys(shapes);
+			const shapeType = shapeTypes[Math.floor(Math.random() * shapeTypes.length)];
+			const shape = shapes[shapeType];
+			
+			// Create a group for the tetromino
+			const tetromino = new THREE.Group();
+			
+			// Store metadata
+			tetromino.userData = {
+				type: shapeType,
+				shape: shape.coords,
+				name: shape.name,
+				gridX: 3,  // Starting X position on grid
+				gridZ: 3,  // Starting Z position on grid
+				rotation: 0, // Rotation in degrees
+				y: 5 // Starting height
+			};
+			
+			// Create blocks for each part of the shape
+			shape.coords.forEach(coord => {
+				const blockGeometry = new THREE.BoxGeometry(CELL_SIZE, CELL_SIZE, CELL_SIZE);
+				const block = new THREE.Mesh(blockGeometry, cellMaterials[shape.material]);
+				
+				// Position block relative to tetromino
+				block.position.set(
+					coord[0] * CELL_SIZE,
+					0,
+					coord[1] * CELL_SIZE
+				);
+				
+				block.castShadow = true;
+				tetromino.add(block);
+			});
+			
+			// Position the tetromino above the board
+			tetromino.position.y = tetromino.userData.y;
+			updateTetrominoPosition(tetromino);
+			
+			// Store the tetromino as the active one
+			activeTetromino = tetromino;
+			isTetrominoFalling = true;
+			currentFallSpeed = fallSpeed;
+			lastUpdateTime = Date.now();
+			
+			// Apply a random rotation
+			tetromino.rotation.y = Math.PI / 2 * Math.floor(Math.random() * 4);
+			tetromino.userData.rotation = Math.floor(Math.random() * 4) * 90;
+			
+			// Add to the scene
+			tetrominoGroup.add(tetromino);
+			
+			showStatus(`${shape.name} tetromino added - arrows/drag to move, Q/double-tap to rotate, A for fast drop`);
+		}
+		
+		// Update tetromino position based on grid coordinates
+		function updateTetrominoPosition(tetromino) {
+			if (!tetromino) return;
+			
+			const gridX = tetromino.userData.gridX;
+			const gridZ = tetromino.userData.gridZ;
+			
+			// Ensure the tetromino is within board boundaries
+			const clampedX = Math.max(0, Math.min(gridX, boardSize - 1));
+			const clampedZ = Math.max(0, Math.min(gridZ, boardSize - 1));
+			
+			if (clampedX !== gridX || clampedZ !== gridZ) {
+				tetromino.userData.gridX = clampedX;
+				tetromino.userData.gridZ = clampedZ;
+			}
+			
+			// Calculate world position from grid position (adding board group position)
+			tetromino.position.set(
+				boardGroup.position.x + (gridX * CELL_SIZE),
+				tetromino.position.y, // Keep current height
+				boardGroup.position.z + (gridZ * CELL_SIZE)
+			);
+		}
+		
+		// Animate a tetromino falling
+		function animateTetromino(timestamp) {
+			if (!activeTetromino || !isTetrominoFalling) return;
+			
+			// Calculate time delta
+			const deltaTime = timestamp - lastUpdateTime;
+			
+			// Update position based on fall speed
+			if (deltaTime > 0) {
+				activeTetromino.position.y -= currentFallSpeed * (deltaTime / 16.67); // Normalized to 60fps
+				
+				// Check if tetromino has landed
+				if (activeTetromino.position.y <= 0.6) {
+					// Snap to grid
+					activeTetromino.position.y = 0.6;
+					
+					// Align to grid on X and Z axes
+					snapTetrominoToGrid();
+					
+					// Lock the tetromino in place
+					isTetrominoFalling = false;
+					activeTetromino = null;
+					
+					// Spawn a new tetromino after a short delay
+					setTimeout(() => {
+						addTetrisPiece();
+					}, 1000);
+					
+					showStatus('Tetris piece landed. Use arrows/taps to move the new piece.');
+				}
+				
+				lastUpdateTime = timestamp;
+			}
+		}
+		
+		// Snap the tetromino to the grid
+		function snapTetrominoToGrid() {
+			if (!activeTetromino) return;
+			
+			// Round the grid position to the nearest integer
+			const roundedX = Math.round(activeTetromino.userData.gridX);
+			const roundedZ = Math.round(activeTetromino.userData.gridZ);
+			
+			// Update the position
+			activeTetromino.userData.gridX = roundedX;
+			activeTetromino.userData.gridZ = roundedZ;
+			
+			// Apply the new position
+			updateTetrominoPosition(activeTetromino);
+		}
+		
+		// Move the active tetromino
+		function moveTetromino(direction) {
+			if (!activeTetromino || !isTetrominoFalling) return;
+			
+			switch (direction) {
+				case 'left':
+					activeTetromino.userData.gridX -= 1;
+					break;
+				case 'right':
+					activeTetromino.userData.gridX += 1;
+					break;
+				case 'up':
+					activeTetromino.userData.gridZ -= 1;
+					break;
+				case 'down':
+					activeTetromino.userData.gridZ += 1;
+					break;
+				case 'rotate':
+					// Rotate 90 degrees clockwise
+					activeTetromino.userData.rotation = (activeTetromino.userData.rotation + 90) % 360;
+					activeTetromino.rotation.y = THREE.MathUtils.degToRad(activeTetromino.userData.rotation);
+					break;
+				case 'drop':
+					// Increase fall speed
+					currentFallSpeed = fastFallSpeed;
+					break;
+			}
+			
+			// Allow pieces to go outside the board area
+			// Only enforce minimum bounds to prevent going too far off-screen
+			activeTetromino.userData.gridX = Math.max(-5, activeTetromino.userData.gridX);
+			activeTetromino.userData.gridZ = Math.max(-5, activeTetromino.userData.gridZ);
+			
+			// Update the position
+			updateTetrominoPosition(activeTetromino);
+		}
+		
+		// Handle key press
+		function handleKeyDown(event) {
+			// Skip if no active tetromino
+			if (!activeTetromino || !isTetrominoFalling) return;
+			
+			// Update key states
+			if (event.key in keyStates) {
+				keyStates[event.key] = true;
+			}
+			
+			switch (event.key) {
+				case 'ArrowLeft':
+					moveTetromino('left');
+					break;
+				case 'ArrowRight':
+					moveTetromino('right');
+					break;
+				case 'ArrowUp':
+					moveTetromino('up');
+					break;
+				case 'ArrowDown':
+					moveTetromino('down');
+					break;
+				case 'q':
+				case 'Q':
+					moveTetromino('rotate');
+					break;
+				case 'a':
+				case 'A':
+					moveTetromino('drop');
+					showStatus('Fast drop activated', 'info');
+					break;
+				case ' ': // Space bar for hard drop
+					// Hard drop - move the piece all the way down immediately
+					while (activeTetromino && isTetrominoFalling && activeTetromino.position.y > 0.6) {
+						activeTetromino.position.y = 0.6;
+						snapTetrominoToGrid();
+						isTetrominoFalling = false;
+						showStatus('Hard drop!', 'info');
+						
+						// Spawn a new piece after a delay
+						setTimeout(() => {
+							activeTetromino = null;
+							addTetrisPiece();
+						}, 500);
+					}
+					break;
+			}
+		}
+		
+		// Handle key release
+		function handleKeyUp(event) {
+			// Update key states
+			if (event.key in keyStates) {
+				keyStates[event.key] = false;
+			}
+			
+			// Reset fall speed when A is released
+			if ((event.key === 'a' || event.key === 'A') && activeTetromino && isTetrominoFalling) {
+				currentFallSpeed = fallSpeed;
+			}
+		}
+		
+		// Camera control functions
+		function resetCamera() {
+			gsap.to(camera.position, {
+				x: 8,
+				y: 8,
+				z: 12,
+				duration: 1,
+				onUpdate: () => {
+					camera.lookAt(new THREE.Vector3(4, 0, 4));
+				}
+			});
+			showStatus('Camera reset');
+		}
+		
+		function topView() {
+			gsap.to(camera.position, {
+				x: 4,
+				y: 15,
+				z: 4,
+				duration: 1,
+				onUpdate: () => {
+					camera.lookAt(new THREE.Vector3(4, 0, 4));
+				}
+			});
+			showStatus('Top view');
+		}
+		
+		function sideView() {
+			gsap.to(camera.position, {
+				x: 16,
+				y: 3,
+				z: 4,
+				duration: 1,
+				onUpdate: () => {
+					camera.lookAt(new THREE.Vector3(4, 0, 4));
+				}
+			});
+			showStatus('Side view');
+		}
+		
+		// Simple animation implementation to replace gsap
+		if (typeof gsap === 'undefined') {
+			window.gsap = {
+				to: function(object, options) {
+					const startValues = {};
+					const targetValues = {};
+					const properties = ['x', 'y', 'z'];
+					
+					// Store start values
+					properties.forEach(prop => {
+						if (options[prop] !== undefined) {
+							startValues[prop] = object[prop];
+							targetValues[prop] = options[prop];
+						}
+					});
+					
+					const duration = options.duration || 1;
+					const fps = 60;
+					const totalFrames = duration * fps;
+					let currentFrame = 0;
+					
+					function animateFrame() {
+						if (currentFrame < totalFrames) {
+							const progress = currentFrame / totalFrames;
+							
+							// Update each property
+							properties.forEach(prop => {
+								if (targetValues[prop] !== undefined) {
+									object[prop] = startValues[prop] + (targetValues[prop] - startValues[prop]) * progress;
+								}
+							});
+							
+							currentFrame++;
+							
+							// Update callback
+							if (options.onUpdate) {
+								options.onUpdate();
+							}
+							
+							requestAnimationFrame(animateFrame);
+						} else {
+							// Set final values
+							properties.forEach(prop => {
+								if (targetValues[prop] !== undefined) {
+									object[prop] = targetValues[prop];
+								}
+							});
+							
+							// Final update callback
+							if (options.onUpdate) {
+								options.onUpdate();
+							}
+							
+							// Complete callback
+							if (options.onComplete) {
+								options.onComplete();
+							}
+						}
+					}
+					
+					animateFrame();
+				}
+			};
+		}
+		
+		// Set up button handlers
+		function setupButtonHandlers() {
+			// Camera controls
+			document.getElementById('reset-camera').addEventListener('click', resetCamera);
+			document.getElementById('top-view').addEventListener('click', topView);
+			document.getElementById('side-view').addEventListener('click', sideView);
+			
+			// Chess piece buttons
+			document.querySelectorAll('.piece-selector button').forEach(button => {
+				button.addEventListener('click', () => {
+					const pieceType = button.getAttribute('data-piece');
+					
+					// Remove active class from all piece buttons
+					document.querySelectorAll('.piece-selector button').forEach(btn => {
+						btn.classList.remove('active');
+					});
+					
+					// Add active class to clicked button
+					button.classList.add('active');
+					
+					// Add the chess piece to center of board
+					addChessPiece(pieceType, 4, 4, true);
+				});
+			});
+			
+			// Board controls
+			document.getElementById('create-board').addEventListener('click', createBoard);
+			document.getElementById('clear-board').addEventListener('click', clearBoard);
+			document.getElementById('add-tetris').addEventListener('click', addTetrisPiece);
+		}
+		
+		// Handle window resize
+		function onWindowResize() {
+			camera.aspect = window.innerWidth / window.innerHeight;
+			camera.updateProjectionMatrix();
+			renderer.setSize(window.innerWidth, window.innerHeight);
+		}
+		
+		// Animation loop
+		function animate(timestamp) {
+			requestAnimationFrame(animate);
+			
+			// Update tetromino falling animation
+			if (activeTetromino && isTetrominoFalling) {
+				animateTetromino(timestamp || Date.now());
+			} else if (!activeTetromino && !isTetrominoFalling) {
+				// Auto-spawn a tetromino if none exists
+				addTetrisPiece();
+			}
+			
+			if (controls) controls.update();
+			
+			renderer.render(scene, camera);
+		}
+		
+		// Initialize the scene when the page loads
+		document.addEventListener('DOMContentLoaded', init);
+		
+		// Mouse and touch handlers for tetromino movement
+		function handleMouseDown(event) {
+			if (!activeTetromino || !isTetrominoFalling) return;
+			
+			event.preventDefault();
+			controls.enabled = false;
+			
+			isDragging = true;
+			
+			// Store initial positions
+			dragStartPosition = {
+				x: activeTetromino.userData.gridX,
+				z: activeTetromino.userData.gridZ
+			};
+			
+			dragStartMousePosition = {
+				x: event.clientX,
+				y: event.clientY
+			};
+		}
+		
+		function handleMouseMove(event) {
+			if (!isDragging || !activeTetromino || !isTetrominoFalling) return;
+			
+			event.preventDefault();
+			
+			// Calculate movement in screen space
+			const deltaX = event.clientX - dragStartMousePosition.x;
+			const deltaY = event.clientY - dragStartMousePosition.y;
+			
+			// Convert screen space to grid movement (with sensitivity adjustment)
+			const sensitivity = 20; // Pixels per grid unit
+			const gridDeltaX = Math.round(deltaX / sensitivity);
+			const gridDeltaZ = Math.round(deltaY / sensitivity);
+			
+			// Update tetromino position
+			activeTetromino.userData.gridX = dragStartPosition.x + gridDeltaX;
+			activeTetromino.userData.gridZ = dragStartPosition.z + gridDeltaZ;
+			
+			// Allow pieces to go outside the board area
+			// Only enforce minimum bounds to prevent going too far off-screen
+			activeTetromino.userData.gridX = Math.max(-5, activeTetromino.userData.gridX);
+			activeTetromino.userData.gridZ = Math.max(-5, activeTetromino.userData.gridZ);
+			
+			// Update position
+			updateTetrominoPosition(activeTetromino);
+		}
+		
+		function handleMouseUp(event) {
+			if (isDragging) {
+				event.preventDefault();
+				isDragging = false;
+				controls.enabled = true;
+			}
+		}
+		
+		// Double click to rotate
+		function handleDoubleClick(event) {
+			if (!activeTetromino || !isTetrominoFalling) return;
+			
+			event.preventDefault();
+			moveTetromino('rotate');
+		}
+		
+		// Touch event handlers (mobile)
+		function handleTouchStart(event) {
+			if (!activeTetromino || !isTetrominoFalling) return;
+			
+			event.preventDefault();
+			controls.enabled = false;
+			
+			isDragging = true;
+			
+			// Store initial positions
+			dragStartPosition = {
+				x: activeTetromino.userData.gridX,
+				z: activeTetromino.userData.gridZ
+			};
+			
+			// Get touch position
+			const touch = event.touches[0];
+			dragStartMousePosition = {
+				x: touch.clientX,
+				y: touch.clientY
+			};
+		}
+		
+		function handleTouchMove(event) {
+			if (!isDragging || !activeTetromino || !isTetrominoFalling) return;
+			
+			event.preventDefault();
+			
+			// Get touch position
+			const touch = event.touches[0];
+			
+			// Calculate movement in screen space
+			const deltaX = touch.clientX - dragStartMousePosition.x;
+			const deltaY = touch.clientY - dragStartMousePosition.y;
+			
+			// Convert screen space to grid movement (with sensitivity adjustment)
+			const sensitivity = 20; // Pixels per grid unit
+			const gridDeltaX = Math.round(deltaX / sensitivity);
+			const gridDeltaZ = Math.round(deltaY / sensitivity);
+			
+			// Update tetromino position
+			activeTetromino.userData.gridX = dragStartPosition.x + gridDeltaX;
+			activeTetromino.userData.gridZ = dragStartPosition.z + gridDeltaZ;
+			
+			// Allow pieces to go outside the board area
+			// Only enforce minimum bounds to prevent going too far off-screen
+			activeTetromino.userData.gridX = Math.max(-5, activeTetromino.userData.gridX);
+			activeTetromino.userData.gridZ = Math.max(-5, activeTetromino.userData.gridZ);
+			
+			// Update position
+			updateTetrominoPosition(activeTetromino);
+		}
+		
+		function handleTouchEnd(event) {
+			if (isDragging) {
+				isDragging = false;
+				controls.enabled = true;
+			}
+		}
+		
+		// Update controls list to match new controls
+		document.addEventListener('DOMContentLoaded', () => {
+			// Find and update the tetris controls section
+			const tetrisControlsList = document.querySelector('#controls ul');
+			if (tetrisControlsList) {
+				tetrisControlsList.innerHTML = `
+					<li>↑↓←→ - Move tetris piece</li>
+					<li>Drag - Move on mobile</li>
+					<li>Q - Rotate piece</li>
+					<li>Double-tap - Rotate on mobile</li>
+					<li>A - Fast drop</li>
+				`;
+			}
+		});
+		
+		// Get valid moves for a chess piece based on its type
+		function getValidMoves(piece) {
+			if (!piece || !piece.userData) return [];
+			
+			const validMoves = [];
+			const type = piece.userData.type;
+			const x = piece.userData.boardX;
+			const z = piece.userData.boardZ;
+			
+			// Define movement patterns for each piece type
+			const movementPatterns = {
+				pawn: {
+					// Pawns move forward only (in z direction) and capture diagonally
+					moves: piece.userData.isWhite ? 
+						[{dx: 0, dz: 1}] : [{dx: 0, dz: -1}],
+					attacks: piece.userData.isWhite ? 
+						[{dx: 1, dz: 1}, {dx: -1, dz: 1}] : 
+						[{dx: 1, dz: -1}, {dx: -1, dz: -1}],
+					maxDistance: 1
+				},
+				rook: {
+					// Rooks move in straight lines (horizontally and vertically)
+					moves: [{dx: 1, dz: 0}, {dx: -1, dz: 0}, {dx: 0, dz: 1}, {dx: 0, dz: -1}],
+					attacks: [{dx: 1, dz: 0}, {dx: -1, dz: 0}, {dx: 0, dz: 1}, {dx: 0, dz: -1}],
+					maxDistance: 7
+				},
+				knight: {
+					// Knights move in L-shape
+					moves: [
+						{dx: 1, dz: 2}, {dx: 2, dz: 1}, 
+						{dx: -1, dz: 2}, {dx: -2, dz: 1},
+						{dx: 1, dz: -2}, {dx: 2, dz: -1},
+						{dx: -1, dz: -2}, {dx: -2, dz: -1}
+					],
+					attacks: [
+						{dx: 1, dz: 2}, {dx: 2, dz: 1}, 
+						{dx: -1, dz: 2}, {dx: -2, dz: 1},
+						{dx: 1, dz: -2}, {dx: 2, dz: -1},
+						{dx: -1, dz: -2}, {dx: -2, dz: -1}
+					],
+					maxDistance: 1
+				},
+				bishop: {
+					// Bishops move diagonally
+					moves: [{dx: 1, dz: 1}, {dx: -1, dz: 1}, {dx: 1, dz: -1}, {dx: -1, dz: -1}],
+					attacks: [{dx: 1, dz: 1}, {dx: -1, dz: 1}, {dx: 1, dz: -1}, {dx: -1, dz: -1}],
+					maxDistance: 7
+				},
+				queen: {
+					// Queens move in all directions
+					moves: [
+						{dx: 1, dz: 0}, {dx: -1, dz: 0}, {dx: 0, dz: 1}, {dx: 0, dz: -1},
+						{dx: 1, dz: 1}, {dx: -1, dz: 1}, {dx: 1, dz: -1}, {dx: -1, dz: -1}
+					],
+					attacks: [
+						{dx: 1, dz: 0}, {dx: -1, dz: 0}, {dx: 0, dz: 1}, {dx: 0, dz: -1},
+						{dx: 1, dz: 1}, {dx: -1, dz: 1}, {dx: 1, dz: -1}, {dx: -1, dz: -1}
+					],
+					maxDistance: 7
+				},
+				king: {
+					// Kings move one square in any direction
+					moves: [
+						{dx: 1, dz: 0}, {dx: -1, dz: 0}, {dx: 0, dz: 1}, {dx: 0, dz: -1},
+						{dx: 1, dz: 1}, {dx: -1, dz: 1}, {dx: 1, dz: -1}, {dx: -1, dz: -1}
+					],
+					attacks: [
+						{dx: 1, dz: 0}, {dx: -1, dz: 0}, {dx: 0, dz: 1}, {dx: 0, dz: -1},
+						{dx: 1, dz: 1}, {dx: -1, dz: 1}, {dx: 1, dz: -1}, {dx: -1, dz: -1}
+					],
+					maxDistance: 1
+				}
+			};
+			
+			// Check if pattern exists for this piece type
+			const pattern = movementPatterns[type];
+			if (!pattern) return [];
+			
+			// Special case for knights which can jump over pieces
+			if (type === 'knight') {
+				// For knights, we check each potential move individually
+				pattern.moves.forEach(move => {
+					const newX = x + move.dx;
+					const newZ = z + move.dz;
+					
+					// Check bounds
+					if (newX < 0 || newX >= boardSize || newZ < 0 || newZ >= boardSize) return;
+					
+					// Check if cell is empty or has an opponent's piece
+					if (!activeBoard[newZ][newX] || !activeBoard[newZ][newX].piece) {
+						validMoves.push({
+							x: newX,
+							z: newZ,
+							type: 'move'
+						});
+					} else if (activeBoard[newZ][newX].piece.userData && 
+							   activeBoard[newZ][newX].piece.userData.isWhite !== piece.userData.isWhite) {
+						validMoves.push({
+							x: newX,
+							z: newZ,
+							type: 'attack'
+						});
+					}
+				});
+				
+				return validMoves;
+			}
+			
+			// For other pieces, we check in each direction
+			// Add movement options
+			for (const move of pattern.moves) {
+				for (let dist = 1; dist <= pattern.maxDistance; dist++) {
+					const newX = x + (move.dx * dist);
+					const newZ = z + (move.dz * dist);
+					
+					// Check bounds
+					if (newX < 0 || newX >= boardSize || newZ < 0 || newZ >= boardSize) break;
+					
+					// Check if cell is empty
+					if (!activeBoard[newZ][newX] || !activeBoard[newZ][newX].piece) {
+						validMoves.push({
+							x: newX,
+							z: newZ,
+							type: 'move'
+						});
+					} else {
+						// Cell is occupied, stop checking in this direction
+						break;
+					}
+				}
+			}
+			
+			// Add attack options
+			for (const attack of pattern.attacks) {
+				for (let dist = 1; dist <= pattern.maxDistance; dist++) {
+					const newX = x + (attack.dx * dist);
+					const newZ = z + (attack.dz * dist);
+					
+					// Check bounds
+					if (newX < 0 || newX >= boardSize || newZ < 0 || newZ >= boardSize) break;
+					
+					// Check if cell has an opponent's piece
+					if (activeBoard[newZ][newX] && activeBoard[newZ][newX].piece) {
+						const targetPiece = activeBoard[newZ][newX].piece;
+						if (targetPiece.userData && targetPiece.userData.isWhite !== piece.userData.isWhite) {
+							validMoves.push({
+								x: newX,
+								z: newZ,
+								type: 'attack'
+							});
+						}
+						// Stop checking in this direction
+						break;
+					}
+				}
+			}
+			
+			return validMoves;
+		}
+		
+		// Highlight valid moves for a selected chess piece
+		function highlightValidMoves(piece) {
+			// Clear previous highlights
+			clearHighlights();
+			
+			if (!piece) return;
+			
+			// Get valid moves
+			const validMoves = getValidMoves(piece);
+			
+			// Create highlight for each valid move
+			for (const move of validMoves) {
+				const isAttack = move.type === 'attack';
+				const material = isAttack ? cellMaterials.attackHighlight : cellMaterials.highlight;
+				
+				// Create highlight mesh
+				const highlightGeometry = new THREE.BoxGeometry(CELL_SIZE, 0.1, CELL_SIZE);
+				const highlight = new THREE.Mesh(highlightGeometry, material);
+				
+				// Position just above the board surface
+				const worldX = move.x * CELL_SIZE + CELL_SIZE / 2;
+				const worldZ = move.z * CELL_SIZE + CELL_SIZE / 2;
+				highlight.position.set(worldX, 0.3, worldZ);
+				
+				// Store move data for easy access
+				highlight.userData = {
+					moveType: move.type,
+					boardX: move.x,
+					boardZ: move.z
+				};
+				
+				// Add to highlight group
+				highlightGroup.position.copy(boardGroup.position);
+				highlightGroup.add(highlight);
+				highlightedCells.push(highlight);
+			}
+		}
+		
+		// Clear all highlighted cells
+		function clearHighlights() {
+			while (highlightGroup.children.length > 0) {
+				highlightGroup.remove(highlightGroup.children[0]);
+			}
+			highlightedCells = [];
+		}
+		
+		// Move a chess piece to a new position
+		function moveChessPiece(piece, targetX, targetZ) {
+			if (!piece || !activeBoard[targetZ] || !activeBoard[targetZ][targetX]) return false;
+			
+			// Get original position
+			const originalX = piece.userData.boardX;
+			const originalZ = piece.userData.boardZ;
+			
+			// Check if there's an opponent piece to capture
+			if (activeBoard[targetZ][targetX].piece) {
+				// Remove the captured piece
+				const capturedPiece = activeBoard[targetZ][targetX].piece;
+				piecesGroup.remove(capturedPiece);
+				showStatus(`${piece.userData.type.charAt(0).toUpperCase() + piece.userData.type.slice(1)} captures opponent's piece!`, 'success');
+			}
+			
+			// Update board data
+			activeBoard[originalZ][originalX].piece = null;
+			activeBoard[targetZ][targetX].piece = piece;
+			
+			// Update piece position and metadata
+			piece.userData.boardX = targetX;
+			piece.userData.boardZ = targetZ;
+			
+			// Calculate world position
+			const worldX = targetX * CELL_SIZE + CELL_SIZE / 2;
+			const worldZ = targetZ * CELL_SIZE + CELL_SIZE / 2;
+			
+			// Animate the piece movement
+			const duration = 0.5;
+			const startX = piece.position.x;
+			const startZ = piece.position.z;
+			const startTime = Date.now();
+			
+			function animatePieceMovement() {
+				const elapsedTime = (Date.now() - startTime) / 1000;
+				const progress = Math.min(elapsedTime / duration, 1);
+				
+				// Simple easing function
+				const easedProgress = 1 - Math.pow(1 - progress, 3);
+				
+				// Update position with slight arc
+				piece.position.x = startX + (worldX - startX) * easedProgress;
+				piece.position.y = 0.7 + Math.sin(Math.PI * easedProgress) * 0.5; // Arc upward
+				piece.position.z = startZ + (worldZ - startZ) * easedProgress;
+				
+				if (progress < 1) {
+					requestAnimationFrame(animatePieceMovement);
+				} else {
+					// Ensure final position is exact
+					piece.position.set(worldX, 0.7, worldZ);
+					showStatus(`${piece.userData.type.charAt(0).toUpperCase() + piece.userData.type.slice(1)} moved`, 'success');
+				}
+			}
+			
+			// Start animation
+			animatePieceMovement();
+			
+			return true;
+		}
+		
+		// Handle mouse click events for piece selection and movement
+		let raycaster = new THREE.Raycaster();
+		let mouse = new THREE.Vector2();
+		
+		function onMouseClick(event) {
+			// Calculate mouse position in normalized device coordinates
+			mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+			mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+			
+			// Cast ray from camera
+			raycaster.setFromCamera(mouse, camera);
+			
+			// If a piece is selected, check for valid move targets
+			if (selectedPiece) {
+				const intersects = raycaster.intersectObjects(highlightedCells);
+				if (intersects.length > 0) {
+					const targetCell = intersects[0].object;
+					const targetX = targetCell.userData.boardX;
+					const targetZ = targetCell.userData.boardZ;
+					
+					// Move the piece
+					moveChessPiece(selectedPiece, targetX, targetZ);
+					
+					// Clear selection and highlights
+					selectedPiece = null;
+					clearHighlights();
+					
+					return;
+				}
+				
+				// If clicked elsewhere, just clear selection
+				selectedPiece = null;
+				clearHighlights();
+				return;
+			}
+			
+			// Check for piece selection - use recursive flag (true) to check all descendants
+			const intersects = raycaster.intersectObjects(piecesGroup.children, true);
+			if (intersects.length > 0) {
+				// Get the selected mesh or its parent group
+				let selectedObject = intersects[0].object;
+				
+				// Find the parent piece (directly under piecesGroup)
+				while (selectedObject.parent && selectedObject.parent !== piecesGroup) {
+					selectedObject = selectedObject.parent;
+				}
+				
+				// Now we have the actual piece
+				selectedPiece = selectedObject;
+				
+				// Make sure the piece has userData
+				if (selectedPiece && selectedPiece.userData && selectedPiece.userData.type) {
+					// Highlight valid moves
+					highlightValidMoves(selectedPiece);
+					
+					showStatus(`${selectedPiece.userData.type.charAt(0).toUpperCase() + selectedPiece.userData.type.slice(1)} selected. Click highlighted cells to move.`, 'info');
+				} else {
+					console.warn('Selected piece has no userData', selectedPiece);
+					selectedPiece = null;
+				}
+			}
+		}
+	</script>
+</body>
+</html> 

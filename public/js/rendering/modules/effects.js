@@ -3,9 +3,18 @@
  * Contains functions for visual effects, decorations, and animations
  */
 
-import * as THREE from '../../utils/three.js';
+import * as THREE from 'three';
 import { Constants } from '../../config/constants.js';
-import { getFloatingHeight, createPseudoRandomGenerator } from './utils.js';
+import { getFloatingHeight } from './utils.js';
+
+// Define createPseudoRandomGenerator if it's not available
+const createPseudoRandomGenerator = window.createPseudoRandomGenerator || function(initialSeed = 1) {
+	let seed = initialSeed || Math.random() * 10000;
+	return function(multiplier = 1, offset = 0) {
+		seed = (seed * 9301 + 49297) % 233280;
+		return (seed / 233280) * multiplier + offset;
+	};
+};
 
 // Shared variables
 let decorationsGroup; // Group for all decorations
@@ -681,6 +690,421 @@ export function addCellBottom(x, z, cellSize, color) {
 	}
 }
 
+/**
+ * Create Russian-themed decorative elements
+ * @param {THREE.Scene} scene - The scene to add elements to
+ */
+export function addRussianThemeElements(scene) {
+	console.log('Adding Russian-themed decorative elements');
+	
+	// Add birch trees around the board
+	addBirchTrees(scene);
+	
+	// Add decorative mushrooms
+	addMushrooms(scene);
+	
+	// Add grass patches
+	addGrassPatches(scene);
+	
+	// Add small onion domes as decorations
+	addOnionDomes(scene);
+}
+
+/**
+ * Add birch trees around the board
+ * @param {THREE.Scene} scene - The scene to add trees to
+ */
+function addBirchTrees(scene) {
+	// Create a group for trees
+	const treeGroup = new THREE.Group();
+	scene.add(treeGroup);
+	
+	// Create birch tree texture
+	const birchTexture = new THREE.TextureLoader().load('img/textures/birch.jpg', 
+		texture => {
+			texture.wrapS = THREE.RepeatWrapping;
+			texture.wrapT = THREE.RepeatWrapping;
+			texture.repeat.set(1, 2);
+		},
+		undefined,
+		error => {
+			console.warn('Failed to load birch texture:', error);
+			// Use fallback color
+			birchMaterial.color.set(0xf5f5f5);
+		}
+	);
+	
+	// Create materials
+	const birchMaterial = new THREE.MeshPhongMaterial({
+		map: birchTexture,
+		shininess: 10
+	});
+	
+	const leafMaterial = new THREE.MeshPhongMaterial({
+		color: 0x7cfc00,
+		shininess: 5
+	});
+	
+	// Create 8-12 trees around the board
+	const treeCount = 8 + Math.floor(Math.random() * 5);
+	const boardSize = 32; // Assuming board size
+	const treePositions = [];
+	
+	for (let i = 0; i < treeCount; i++) {
+		// Create tree trunk
+		const trunkHeight = 5 + Math.random() * 3;
+		const trunkRadius = 0.3 + Math.random() * 0.2;
+		const trunkGeometry = new THREE.CylinderGeometry(trunkRadius, trunkRadius * 1.2, trunkHeight, 8);
+		const trunk = new THREE.Mesh(trunkGeometry, birchMaterial);
+		
+		// Create tree top (leaves)
+		const leafRadius = 1.5 + Math.random() * 1;
+		const leafGeometry = new THREE.SphereGeometry(leafRadius, 8, 8);
+		const leaves = new THREE.Mesh(leafGeometry, leafMaterial);
+		leaves.position.y = trunkHeight / 2;
+		
+		// Create tree group
+		const tree = new THREE.Group();
+		tree.add(trunk);
+		tree.add(leaves);
+		
+		// Position tree around the board
+		let x, z;
+		let validPosition = false;
+		let attempts = 0;
+		
+		while (!validPosition && attempts < 20) {
+			// Randomly position around the board
+			const angle = Math.random() * Math.PI * 2;
+			const distance = boardSize / 2 + 5 + Math.random() * 10;
+			
+			x = Math.cos(angle) * distance;
+			z = Math.sin(angle) * distance;
+			
+			// Check if position is far enough from other trees
+			validPosition = true;
+			for (const pos of treePositions) {
+				const dx = pos.x - x;
+				const dz = pos.z - z;
+				const distSquared = dx * dx + dz * dz;
+				
+				if (distSquared < 25) { // Minimum 5 units between trees
+					validPosition = false;
+					break;
+				}
+			}
+			
+			attempts++;
+		}
+		
+		if (validPosition) {
+			tree.position.set(x, 0, z);
+			treePositions.push({ x, z });
+			treeGroup.add(tree);
+		}
+	}
+}
+
+/**
+ * Add decorative mushrooms to the scene
+ * @param {THREE.Scene} scene - The scene to add mushrooms to
+ */
+function addMushrooms(scene) {
+	// Create a group for mushrooms
+	const mushroomGroup = new THREE.Group();
+	scene.add(mushroomGroup);
+	
+	// Create materials
+	const stemMaterial = new THREE.MeshPhongMaterial({
+		color: 0xf5f5dc,
+		shininess: 5
+	});
+	
+	const capMaterials = [
+		new THREE.MeshPhongMaterial({ color: 0xff0000, shininess: 30 }), // Red
+		new THREE.MeshPhongMaterial({ color: 0xffa500, shininess: 30 }), // Orange
+		new THREE.MeshPhongMaterial({ color: 0x8b4513, shininess: 30 })  // Brown
+	];
+	
+	// Create 15-25 mushrooms
+	const mushroomCount = 15 + Math.floor(Math.random() * 10);
+	const boardSize = 32; // Assuming board size
+	
+	for (let i = 0; i < mushroomCount; i++) {
+		// Create mushroom stem
+		const stemHeight = 0.3 + Math.random() * 0.4;
+		const stemRadius = 0.1 + Math.random() * 0.1;
+		const stemGeometry = new THREE.CylinderGeometry(stemRadius, stemRadius * 1.2, stemHeight, 8);
+		const stem = new THREE.Mesh(stemGeometry, stemMaterial);
+		
+		// Create mushroom cap
+		const capRadius = stemRadius * (2 + Math.random());
+		const capHeight = capRadius * (0.6 + Math.random() * 0.4);
+		const capGeometry = new THREE.SphereGeometry(capRadius, 8, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+		const capMaterial = capMaterials[Math.floor(Math.random() * capMaterials.length)];
+		const cap = new THREE.Mesh(capGeometry, capMaterial);
+		cap.position.y = stemHeight / 2;
+		
+		// Add white spots to red mushrooms
+		if (capMaterial.color.getHex() === 0xff0000) {
+			addMushroomSpots(cap, capRadius);
+		}
+		
+		// Create mushroom group
+		const mushroom = new THREE.Group();
+		mushroom.add(stem);
+		mushroom.add(cap);
+		
+		// Position mushroom randomly around the board
+		const angle = Math.random() * Math.PI * 2;
+		const distance = 5 + Math.random() * (boardSize / 2 + 10);
+		
+		const x = Math.cos(angle) * distance;
+		const z = Math.sin(angle) * distance;
+		
+		// Add some randomness to y position to account for terrain
+		const y = -0.5 + Math.random() * 0.2;
+		
+		mushroom.position.set(x, y, z);
+		
+		// Random rotation
+		mushroom.rotation.y = Math.random() * Math.PI * 2;
+		
+		// Random scale
+		const scale = 0.5 + Math.random() * 1.5;
+		mushroom.scale.set(scale, scale, scale);
+		
+		mushroomGroup.add(mushroom);
+	}
+}
+
+/**
+ * Add spots to a mushroom cap
+ * @param {THREE.Mesh} cap - The mushroom cap mesh
+ * @param {number} radius - The radius of the cap
+ * @param {number} spotCount - Number of spots to add
+ */
+function addMushroomSpots(cap, radius, spotCount = 5) {
+	const spotGroup = new THREE.Group();
+	cap.add(spotGroup);
+	
+	for (let i = 0; i < spotCount; i++) {
+		// Use THREE.CircleBufferGeometry instead of CircleGeometry
+		const spotGeometry = new THREE.CircleBufferGeometry(radius * 0.15, 8);
+		// If CircleBufferGeometry is not available, try regular CircleGeometry
+		// const spotGeometry = new THREE.CircleGeometry(radius * 0.15, 8);
+		
+		const spotMaterial = new THREE.MeshBasicMaterial({
+			color: 0xffffff,
+			side: THREE.DoubleSide
+		});
+		
+		const spot = new THREE.Mesh(spotGeometry, spotMaterial);
+		
+		// Random position on the cap
+		const angle = Math.random() * Math.PI * 2;
+		const distance = Math.random() * radius * 0.7;
+		spot.position.set(
+			Math.cos(angle) * distance,
+			0.01, // Slightly above the cap
+			Math.sin(angle) * distance
+		);
+		
+		// Rotate to face upward
+		spot.rotation.x = -Math.PI / 2;
+		
+		spotGroup.add(spot);
+	}
+}
+
+/**
+ * Add grass patches to the scene
+ * @param {THREE.Scene} scene - The scene to add grass to
+ */
+function addGrassPatches(scene) {
+	// Create a group for grass
+	const grassGroup = new THREE.Group();
+	scene.add(grassGroup);
+	
+	// Create grass materials with different shades of green
+	const grassMaterials = [
+		new THREE.MeshPhongMaterial({ color: 0x2e8b57, shininess: 5 }), // Sea green
+		new THREE.MeshPhongMaterial({ color: 0x228b22, shininess: 5 }), // Forest green
+		new THREE.MeshPhongMaterial({ color: 0x32cd32, shininess: 5 })  // Lime green
+	];
+	
+	// Create 20-30 grass patches
+	const patchCount = 20 + Math.floor(Math.random() * 11);
+	const boardSize = 32; // Assuming board size
+	
+	for (let i = 0; i < patchCount; i++) {
+		// Create grass patch
+		const patchWidth = 2 + Math.random() * 3;
+		const patchDepth = 2 + Math.random() * 3;
+		const patchGeometry = new THREE.PlaneGeometry(patchWidth, patchDepth);
+		const patchMaterial = grassMaterials[Math.floor(Math.random() * grassMaterials.length)];
+		const patch = new THREE.Mesh(patchGeometry, patchMaterial);
+		
+		// Rotate to lay flat
+		patch.rotation.x = -Math.PI / 2;
+		
+		// Position grass patch randomly around the board
+		const angle = Math.random() * Math.PI * 2;
+		const distance = 5 + Math.random() * (boardSize / 2 + 15);
+		
+		const x = Math.cos(angle) * distance;
+		const z = Math.sin(angle) * distance;
+		
+		// Slightly above ground to avoid z-fighting
+		patch.position.set(x, -0.49, z);
+		
+		// Random rotation around Y axis
+		patch.rotation.z = Math.random() * Math.PI * 2;
+		
+		grassGroup.add(patch);
+		
+		// Add some individual grass blades on top of the patch
+		addGrassBlades(patch, patchWidth, patchDepth, grassMaterials);
+	}
+}
+
+/**
+ * Add individual grass blades to a grass patch
+ * @param {THREE.Mesh} patch - The grass patch mesh
+ * @param {number} width - The width of the patch
+ * @param {number} depth - The depth of the patch
+ * @param {Array} materials - Array of grass materials
+ */
+function addGrassBlades(patch, width, depth, materials) {
+	// Create 10-20 grass blades per patch
+	const bladeCount = 10 + Math.floor(Math.random() * 11);
+	
+	for (let i = 0; i < bladeCount; i++) {
+		// Create grass blade
+		const bladeHeight = 0.3 + Math.random() * 0.5;
+		const bladeWidth = 0.05 + Math.random() * 0.1;
+		const bladeGeometry = new THREE.PlaneGeometry(bladeWidth, bladeHeight);
+		const bladeMaterial = materials[Math.floor(Math.random() * materials.length)];
+		const blade = new THREE.Mesh(bladeGeometry, bladeMaterial);
+		
+		// Position randomly on the patch
+		const x = (Math.random() - 0.5) * width * 0.8;
+		const z = (Math.random() - 0.5) * depth * 0.8;
+		const y = bladeHeight / 2;
+		
+		blade.position.set(x, y, z);
+		
+		// Random rotation around Y axis
+		blade.rotation.y = Math.random() * Math.PI * 2;
+		
+		// Slight random tilt
+		blade.rotation.x = (Math.random() - 0.5) * 0.2;
+		blade.rotation.z = (Math.random() - 0.5) * 0.2;
+		
+		patch.add(blade);
+	}
+}
+
+/**
+ * Add decorative onion domes to the scene
+ * @param {THREE.Scene} scene - The scene to add domes to
+ */
+function addOnionDomes(scene) {
+	// Create a group for domes
+	const domeGroup = new THREE.Group();
+	scene.add(domeGroup);
+	
+	// Create materials with Russian-inspired colors
+	const domeMaterials = [
+		new THREE.MeshPhongMaterial({ color: 0x4169e1, shininess: 50 }), // Royal blue
+		new THREE.MeshPhongMaterial({ color: 0xcd5c5c, shininess: 50 }), // Indian red
+		new THREE.MeshPhongMaterial({ color: 0xffd700, shininess: 80 })  // Gold
+	];
+	
+	// Create 3-5 onion domes
+	const domeCount = 3 + Math.floor(Math.random() * 3);
+	const boardSize = 32; // Assuming board size
+	
+	for (let i = 0; i < domeCount; i++) {
+		// Create onion dome
+		const domeRadius = 1 + Math.random() * 1.5;
+		const domeHeight = domeRadius * 2;
+		
+		// Create custom geometry for onion dome shape
+		const domeGeometry = createOnionDomeGeometry(domeRadius, domeHeight);
+		const domeMaterial = domeMaterials[Math.floor(Math.random() * domeMaterials.length)];
+		const dome = new THREE.Mesh(domeGeometry, domeMaterial);
+		
+		// Create base
+		const baseRadius = domeRadius * 0.8;
+		const baseHeight = domeRadius * 0.5;
+		const baseGeometry = new THREE.CylinderGeometry(baseRadius, baseRadius, baseHeight, 16);
+		const baseMaterial = new THREE.MeshPhongMaterial({ color: 0xd3d3d3, shininess: 30 });
+		const base = new THREE.Mesh(baseGeometry, baseMaterial);
+		base.position.y = -domeHeight / 2 - baseHeight / 2;
+		
+		// Create spire
+		const spireRadius = domeRadius * 0.1;
+		const spireHeight = domeRadius * 0.8;
+		const spireGeometry = new THREE.CylinderGeometry(0, spireRadius, spireHeight, 8);
+		const spireMaterial = new THREE.MeshPhongMaterial({ color: 0xffd700, shininess: 100 });
+		const spire = new THREE.Mesh(spireGeometry, spireMaterial);
+		spire.position.y = domeHeight / 2 + spireHeight / 2;
+		
+		// Create dome group
+		const domeStructure = new THREE.Group();
+		domeStructure.add(dome);
+		domeStructure.add(base);
+		domeStructure.add(spire);
+		
+		// Position dome randomly around the board
+		const angle = Math.random() * Math.PI * 2;
+		const distance = boardSize / 2 + 15 + Math.random() * 10;
+		
+		const x = Math.cos(angle) * distance;
+		const z = Math.sin(angle) * distance;
+		
+		domeStructure.position.set(x, 0, z);
+		
+		// Random scale
+		const scale = 0.8 + Math.random() * 1.2;
+		domeStructure.scale.set(scale, scale, scale);
+		
+		domeGroup.add(domeStructure);
+	}
+}
+
+/**
+ * Create custom geometry for onion dome shape
+ * @param {number} radius - Base radius of the dome
+ * @param {number} height - Height of the dome
+ * @returns {THREE.BufferGeometry} - The onion dome geometry
+ */
+function createOnionDomeGeometry(radius, height) {
+	// Create a lathe geometry with custom points to form onion dome shape
+	const points = [];
+	const segments = 20;
+	
+	for (let i = 0; i <= segments; i++) {
+		const t = i / segments;
+		const y = height * (t - 0.5); // -height/2 to height/2
+		
+		// Create bulbous onion shape
+		let r;
+		if (t < 0.5) {
+			// Bottom half - widen
+			r = radius * (1 + 2 * t * (1 - t));
+		} else {
+			// Top half - narrow to a point
+			r = radius * (1 - Math.pow(2 * (t - 0.5), 2) * 0.8);
+		}
+		
+		points.push(new THREE.Vector2(r, y));
+	}
+	
+	return new THREE.LatheGeometry(points, 16);
+}
+
 // Export default object with all functions
 export default {
 	init,
@@ -693,5 +1117,6 @@ export default {
 	addCellDecoration,
 	createSkybox,
 	addClouds,
-	addCellBottom
+	addCellBottom,
+	addRussianThemeElements
 };

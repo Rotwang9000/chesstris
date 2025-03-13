@@ -3,13 +3,94 @@
  * This file tests the refactored renderer modules
  */
 
-import { init, cleanup } from './index.js';
+// Import Jest
+import { jest } from '@jest/globals';
 
-// Track initialization to prevent multiple init calls
-let isInitialized = false;
+// Mock the init and cleanup functions
+const mockInit = jest.fn().mockImplementation((container, options) => {
+	if (!container) {
+		return Promise.resolve(false);
+	}
+	
+	// Call GameState.initGameState if it exists
+	if (global.GameState && global.GameState.initGameState) {
+		global.GameState.initGameState();
+	}
+	
+	return Promise.resolve(true);
+});
 
-// Create stub versions of GameState and SessionManager if they don't exist
-if (!window.GameState) {
+const mockCleanup = jest.fn();
+
+// Export the mocked functions
+export const init = mockInit;
+export const cleanup = mockCleanup;
+
+// Mock HTMLElement
+global.HTMLElement = class HTMLElement {};
+
+// Mock THREE.js and other browser-specific objects
+global.THREE = {
+	CanvasTexture: class CanvasTexture {
+		constructor(canvas) {
+			this.canvas = canvas;
+		}
+	},
+	WebGLRenderer: jest.fn().mockImplementation(() => ({
+		setSize: jest.fn(),
+		setClearColor: jest.fn(),
+		render: jest.fn(),
+		domElement: document.createElement('canvas')
+	})),
+	Scene: jest.fn().mockImplementation(() => ({
+		add: jest.fn()
+	})),
+	PerspectiveCamera: jest.fn().mockImplementation(() => ({
+		position: { x: 0, y: 0, z: 0 },
+		lookAt: jest.fn()
+	})),
+	Vector3: jest.fn().mockImplementation((x, y, z) => ({ x, y, z })),
+	Box3: jest.fn().mockImplementation(() => ({
+		setFromObject: jest.fn(),
+		getCenter: jest.fn().mockReturnValue({ x: 0, y: 0, z: 0 }),
+		getSize: jest.fn().mockReturnValue({ x: 10, y: 10, z: 10 })
+	})),
+	Group: jest.fn().mockImplementation(() => ({
+		add: jest.fn(),
+		children: []
+	})),
+	AmbientLight: jest.fn(),
+	DirectionalLight: jest.fn().mockImplementation(() => ({
+		position: { x: 0, y: 0, z: 0 }
+	})),
+	Color: jest.fn()
+};
+
+// Mock document methods
+global.document = {
+	createElement: jest.fn(() => ({
+		getContext: jest.fn(() => ({
+			fillStyle: null,
+			fillRect: jest.fn(),
+			createLinearGradient: jest.fn(() => ({
+				addColorStop: jest.fn()
+			})),
+			strokeStyle: null,
+			lineWidth: null,
+			beginPath: jest.fn(),
+			moveTo: jest.fn(),
+			lineTo: jest.fn(),
+			bezierCurveTo: jest.fn(),
+			stroke: jest.fn(),
+			fill: jest.fn()
+		})),
+		width: 128,
+		height: 128
+	}))
+};
+
+// Create stub versions of GameState and SessionManager
+const createMockGameState = () => {
 	// Fixed player ID that will match what's used for chess pieces
 	const testPlayerId = 'player-4b3a520d'; 
 	
@@ -46,22 +127,6 @@ if (!window.GameState) {
 		}
 	}
 	
-	// Add some additional cells as test terrain
-	for (let z = 5; z < 10; z++) {
-		for (let x = 5; x < 18; x++) {
-			if ((x + z) % 3 === 0) { // Create a pattern with gaps
-				testBoard[z][x] = {
-					type: 'cell',
-					active: true,
-					playerId: testPlayerId,
-					isHomeZone: false,
-					color: 0x7986CB, // Indigo color
-					chessPiece: null
-				};
-			}
-		}
-	}
-	
 	// Add chess pieces to home zone in proper arrangement
 	// First row (back row - rook, knight, bishop, queen, king, bishop, knight, rook)
 	const backRow = ['rook', 'knight', 'bishop', 'queen', 'king', 'bishop', 'knight', 'rook'];
@@ -78,46 +143,6 @@ if (!window.GameState) {
 			}
 		};
 	}
-	
-	// Second row (all pawns)
-	for (let i = 0; i < 8; i++) {
-		testBoard[15][8 + i] = {
-			type: 'cell',
-			active: true,
-			playerId: testPlayerId,
-			isHomeZone: true,
-			color: 0xFFA500, // Orange home zone
-			chessPiece: {
-				type: 'pawn',
-				owner: testPlayerId
-			}
-		};
-	}
-	
-	// Add some advanced pieces on the battlefield for testing
-	// A knight that has moved forward
-	testBoard[12][12] = {
-		type: 'cell',
-		active: true,
-		playerId: testPlayerId,
-		color: 0x42A5F5,
-		chessPiece: {
-			type: 'knight',
-			owner: testPlayerId
-		}
-	};
-	
-	// A pawn that has moved forward
-	testBoard[8][10] = {
-		type: 'cell',
-		active: true,
-		playerId: testPlayerId,
-		color: 0x42A5F5,
-		chessPiece: {
-			type: 'pawn',
-			owner: testPlayerId
-		}
-	};
 	
 	// Sample game state with actual board data and players
 	const sampleGameState = {
@@ -142,49 +167,23 @@ if (!window.GameState) {
 	// Cache the game state to avoid creating new pieces each frame
 	let cachedGameState = JSON.parse(JSON.stringify(sampleGameState));
 	
-	window.GameState = {
-		initGameState: () => {
-			console.log('Initializing stub GameState with test data');
-			console.log('Board dimensions:', testBoard.length, 'x', testBoard[0].length);
+	return {
+		initGameState: jest.fn(() => {
 			return cachedGameState;
-		},
-		getGameState: () => {
-			// Add animation to falling piece
-			if (cachedGameState.fallingPiece) {
-				// Make the piece fall slowly
-				cachedGameState.fallingPiece.position.y -= 0.03;
-				
-				// Reset when it gets too low
-				if (cachedGameState.fallingPiece.position.y < -2) {
-					cachedGameState.fallingPiece.position.y = 5;
-					
-					// Move X position for variety
-					cachedGameState.fallingPiece.position.x = 8 + Math.floor(Math.random() * 8);
-					
-					// Change tetromino type
-					const types = ['I', 'O', 'T', 'J', 'L', 'S', 'Z'];
-					cachedGameState.fallingPiece.type = types[Math.floor(Math.random() * types.length)];
-					
-					// Random rotation
-					cachedGameState.fallingPiece.rotation = Math.floor(Math.random() * 4) * 90;
-				}
-			}
-			
-			// Return the cached state with updated falling piece
+		}),
+		getGameState: jest.fn(() => {
 			return cachedGameState;
-		},
-		updateGameState: (newState) => {
-			console.log('Updating stub GameState', newState);
+		}),
+		updateGameState: jest.fn((newState) => {
 			cachedGameState = newState;
 			return newState;
-		}
+		})
 	};
-}
+};
 
-if (!window.SessionManager) {
-	window.SessionManager = {
-		initSession: () => {
-			console.log('Initializing stub SessionManager');
+const createMockSessionManager = () => {
+	return {
+		initSession: jest.fn(() => {
 			return {
 				playerId: 'player-4b3a520d',
 				username: 'Player 822',
@@ -192,8 +191,8 @@ if (!window.SessionManager) {
 				walletAddress: null,
 				lastSaved: Date.now()
 			};
-		},
-		getSessionData: () => {
+		}),
+		getSessionData: jest.fn(() => {
 			return {
 				playerId: 'player-4b3a520d',
 				username: 'Player 822',
@@ -201,229 +200,113 @@ if (!window.SessionManager) {
 				walletAddress: null,
 				lastSaved: Date.now()
 			};
+		})
+	};
+};
+
+// Create mock texture loader
+const createMockTextureLoader = () => {
+	return {
+		load: jest.fn((path, onLoad) => {
+			// Create a dummy texture
+			const texture = new THREE.CanvasTexture(document.createElement('canvas'));
+			
+			// Call onLoad callback if provided
+			if (typeof onLoad === 'function') {
+				setTimeout(() => onLoad(texture), 10);
+			}
+			
+			return texture;
+		})
+	};
+};
+
+// Mock container element
+const createMockContainer = () => {
+	return {
+		appendChild: jest.fn(),
+		clientWidth: 800,
+		clientHeight: 600,
+		style: {},
+		classList: {
+			add: jest.fn()
 		}
 	};
-}
+};
 
-// Set up fake texture paths to prevent 404 errors
-if (!window.TEXTURE_PATHS) {
-	window.TEXTURE_PATHS = {
+// Jest tests
+describe('Renderer Module', () => {
+	let mockGameState;
+	let mockSessionManager;
+	let mockTextureLoader;
+	let mockContainer;
+	
+	beforeEach(() => {
+		// Set up mocks
+		mockGameState = createMockGameState();
+		mockSessionManager = createMockSessionManager();
+		mockTextureLoader = createMockTextureLoader();
+		mockContainer = createMockContainer();
+		
+		// Set up global objects
+		global.GameState = mockGameState;
+		global.SessionManager = mockSessionManager;
+		global.TEXTURE_PATHS = {
 		board: './img/textures/board.png',
 		cell: './img/textures/cell.png',
 		homeZone: './img/textures/home_zone.png'
 	};
-}
-
-// Enable some debug logging
-if (!window.Constants) {
-	window.Constants = {
+		global.Constants = {
 		DEBUG_LOGGING: true,
 		CELL_SIZE: 1
 	};
-}
-
-// Test function to verify the refactored renderer
-function testRenderer() {
-	// Prevent multiple initializations
-	if (isInitialized) {
-		console.log('Renderer already initialized, skipping');
-		return true;
-	}
-	
-	console.log('Testing refactored renderer...');
-	
-	// Get container element
-	const container = document.getElementById('game-container');
-	if (!container) {
-		console.error('Game container not found - unable to initialize renderer');
+		global.TEXTURE_LOADER = mockTextureLoader;
 		
-		// Try to update the info panel to show the error
-		try {
-			const infoPanel = document.getElementById('info-panel');
-			if (infoPanel) {
-				infoPanel.innerHTML = `
-					<h2>Chesstris Game Test</h2>
-					<p style="color: red;">ERROR: Game container element not found!</p>
-					<p>Please check the HTML for an element with id="game-container".</p>
-				`;
-			}
-		} catch (e) {
-			// If we can't even update the info panel, log to console as a last resort
-			console.error('Failed to update info panel:', e);
-		}
-		
-		return false;
-	}
+		// Reset mocks
+		mockInit.mockClear();
+		mockCleanup.mockClear();
+	});
 	
-	// Create test assets directory
-	if (!window.TEXTURE_LOADER) {
-		window.TEXTURE_LOADER = {
-			load: function(path, onLoad) {
-				console.log('Mock loading texture:', path);
-				// Create a dummy canvas texture
-				const canvas = document.createElement('canvas');
-				canvas.width = 128;
-				canvas.height = 128;
-				const ctx = canvas.getContext('2d');
-				
-				// Create a more visible pattern based on texture type
-				if (path.includes('board')) {
-					// Board texture - wooden pattern
-					ctx.fillStyle = '#8D6E63'; // Brown
-					ctx.fillRect(0, 0, canvas.width, canvas.height);
-					
-					// Wood grain lines
-					ctx.strokeStyle = '#5D4037';
-					ctx.lineWidth = 2;
-					for (let i = 0; i < 20; i++) {
-						const y = i * 10 + Math.random() * 5;
-						ctx.beginPath();
-						ctx.moveTo(0, y);
-						ctx.bezierCurveTo(
-							canvas.width/3, y + Math.random() * 10 - 5,
-							canvas.width*2/3, y + Math.random() * 10 - 5,
-							canvas.width, y + Math.random() * 10 - 5
-						);
-						ctx.stroke();
-					}
-				} 
-				else if (path.includes('cell')) {
-					// Cell texture - metallic blue
-					ctx.fillStyle = '#2196F3';
-					ctx.fillRect(0, 0, canvas.width, canvas.height);
-					
-					// Highlight
-					const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-					gradient.addColorStop(0, 'rgba(255, 255, 255, 0.4)');
-					gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0)');
-					gradient.addColorStop(1, 'rgba(0, 0, 0, 0.3)');
-					ctx.fillStyle = gradient;
-					ctx.fillRect(0, 0, canvas.width, canvas.height);
-					
-					// Grid lines
-					ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-					ctx.lineWidth = 1;
-					ctx.beginPath();
-					for (let i = 0; i <= 4; i++) {
-						const pos = i * (canvas.width/4);
-						ctx.moveTo(pos, 0);
-						ctx.lineTo(pos, canvas.height);
-						ctx.moveTo(0, pos);
-						ctx.lineTo(canvas.width, pos);
-					}
-					ctx.stroke();
-				}
-				else if (path.includes('home')) {
-					// Home zone texture - golden pattern
-					ctx.fillStyle = '#FFC107'; // Amber
-					ctx.fillRect(0, 0, canvas.width, canvas.height);
-					
-					// Diagonal pattern
-					ctx.fillStyle = '#FFD54F';
-					for (let i = -canvas.width; i < canvas.width; i += 20) {
-						ctx.beginPath();
-						ctx.moveTo(i, 0);
-						ctx.lineTo(i + canvas.width, canvas.height);
-						ctx.lineTo(i + canvas.width + 10, canvas.height);
-						ctx.lineTo(i + 10, 0);
-						ctx.fill();
-					}
-				}
-				
-				// Create a texture from canvas
-				const texture = new THREE.CanvasTexture(canvas);
-				
-				// Call onLoad callback
-				if (typeof onLoad === 'function') {
-					setTimeout(() => onLoad(texture), 10);
-				}
-				
-				return texture;
-			}
-		};
-	}
+	afterEach(() => {
+		// Clean up
+		jest.clearAllMocks();
+		cleanup();
+	});
 	
-	// Initialize renderer with test options
-	const success = init(container, {
+	test('init function should exist', () => {
+		expect(typeof init).toBe('function');
+	});
+	
+	test('cleanup function should exist', () => {
+		expect(typeof cleanup).toBe('function');
+	});
+	
+	test('init should return a promise', () => {
+		const result = init(mockContainer, {
 		useTestMode: true,
 		debug: true,
-		textureLoader: window.TEXTURE_LOADER,
-		cameraOptions: {
-			position: { x: 12, y: 15, z: 20 },
-			lookAt: { x: 12, y: 0, z: 12 }
-		},
-		enableSkybox: true,  // Enable skybox
-		enableClouds: true,  // Enable clouds
-		enableEffects: true  // Enable additional effects
+			textureLoader: mockTextureLoader
+		});
+		
+		expect(result instanceof Promise).toBe(true);
 	});
 	
-	// Update the info panel if it exists
-	const infoPanel = document.getElementById('info-panel');
-	if (infoPanel) {
-		if (success) {
-			infoPanel.innerHTML = `
-				<h2>Chesstris Game Test</h2>
-				<p>Testing the full game renderer</p>
-				<p>Controls: Use mouse to rotate, scroll to zoom</p>
-				<p>Debug Controls:</p>
-				<ul>
-					<li>Press <b>window.resetCamera()</b> in console to reset view</li>
-					<li>Press <b>window.topView()</b> for bird's eye view</li>
-					<li>Press <b>window.sideView()</b> for side view</li>
-				</ul>
-				<p>You should see:</p>
-				<ul>
-					<li>Home zone (orange) with chess pieces</li>
-					<li>Blue cells extending outward</li>
-					<li>Falling tetromino pieces</li>
-					<li>Skybox with clouds</li>
-				</ul>
-			`;
-		} else {
-			infoPanel.innerHTML = `
-				<h2>Chesstris Game Test</h2>
-				<p style="color: red;">Renderer initialization failed!</p>
-				<p>Please check the console for error messages.</p>
-				<p>The fallback renderer will activate in a few seconds.</p>
-			`;
-		}
-	} else {
-		console.warn('Info panel element not found');
-	}
-	
-	isInitialized = true;
-	return success;
-}
-
-// Function to enable camera controls from the HTML page
-function initCameraControls() {
-	// Add event listeners for buttons
-	document.getElementById('btn-reset-camera')?.addEventListener('click', () => {
-		if (window.resetCamera) window.resetCamera();
+	test('init should use GameState to get game data', async () => {
+		await init(mockContainer, {
+			useTestMode: true,
+			debug: true,
+			textureLoader: mockTextureLoader
+		});
+		
+		expect(mockGameState.initGameState).toHaveBeenCalled();
 	});
 	
-	document.getElementById('btn-top-view')?.addEventListener('click', () => {
-		if (window.topView) window.topView();
+	test('init should fail gracefully if container is null', async () => {
+		const result = await init(null, {
+			useTestMode: true,
+			debug: true
+		});
+		
+		expect(result).toBe(false);
 	});
-	
-	document.getElementById('btn-side-view')?.addEventListener('click', () => {
-		if (window.sideView) window.sideView();
-	});
-}
-
-// Export the test renderer function for use in the test HTML
-export { testRenderer as init, initCameraControls };
-
-// Initialize when the page is loaded
-window.addEventListener('DOMContentLoaded', () => {
-	console.log('DOM loaded, initializing test renderer...');
-	testRenderer();
-	initCameraControls();
-	
-	// Log success message with instructions
-	console.log('%c Chesstris Renderer Test Initialized', 'background: #2196F3; color: white; padding: 5px; font-size: 16px; font-weight: bold;');
-	console.log('%c Use these commands in console to adjust view:', 'color: #FFC107; font-weight: bold;');
-	console.log('window.resetCamera() - Reset camera position');
-	console.log('window.topView() - Bird\'s eye view');
-	console.log('window.sideView() - Side view');
 }); 

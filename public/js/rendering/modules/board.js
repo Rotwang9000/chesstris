@@ -3,7 +3,7 @@
  * Contains functions for rendering the game board and cells
  */
 
-import * as THREE from '../../utils/three.js';
+import * as THREE from 'three';
 import { Constants } from '../../config/constants.js';
 import { getFloatingHeight } from './utils.js';
 import { addCellDecoration, addCellBottom } from './effects.js';

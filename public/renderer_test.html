@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Chesstris Renderer Test</title>
+	<style>
+		body {
+			margin: 0;
+			padding: 0;
+			overflow: hidden;
+			background-color: #121212;
+			color: #ffffff;
+			font-family: Arial, sans-serif;
+		}
+		
+		#game-container {
+			width: 100vw;
+			height: 100vh;
+			position: relative;
+		}
+		
+		#debug-panel {
+			position: absolute;
+			top: 10px;
+			right: 10px;
+			background-color: rgba(0, 0, 0, 0.7);
+			padding: 10px;
+			border-radius: 5px;
+			z-index: 1000;
+		}
+		
+		#debug-panel button {
+			margin: 5px;
+			padding: 8px 12px;
+			background-color: #2196F3;
+			color: white;
+			border: none;
+			border-radius: 3px;
+			cursor: pointer;
+		}
+		
+		#debug-panel button:hover {
+			background-color: #0b7dda;
+		}
+		
+		#camera-info {
+			margin-top: 10px;
+			font-size: 12px;
+		}
+		
+		#loading-message {
+			position: absolute;
+			top: 50%;
+			left: 50%;
+			transform: translate(-50%, -50%);
+			font-size: 24px;
+			text-align: center;
+		}
+	</style>
+</head>
+<body>
+	<div id="game-container">
+		<div id="loading-message">Loading Renderer Test...</div>
+	</div>
+	
+	<div id="debug-panel">
+		<button id="btn-reset-camera">Reset Camera</button>
+		<button id="btn-top-view">Top View</button>
+		<button id="btn-side-view">Side View</button>
+		<button id="btn-home-view">View Home Zone</button>
+		<button id="btn-test-tetris">Drop Tetris Piece</button>
+		<div id="camera-info">Camera Position: -</div>
+	</div>
+	
+	<!-- Import modules -->
+	<script type="module">
+		import * as THREE from './js/utils/three.js';
+		import { OrbitControls } from './js/utils/OrbitControls.js';
+		
+		// Wait for DOM to load
+		document.addEventListener('DOMContentLoaded', async () => {
+			try {
+				document.getElementById('loading-message').textContent = 'Initializing renderer...';
+				
+				// Set up global variables
+				window.THREE = THREE;
+				
+				// Create a basic test game state
+				const boardSize = 24;
+				const testBoard = Array(boardSize).fill(null).map(() => Array(boardSize).fill(null));
+				const testPlayerId = 'player-test';
+				
+				// Create a home zone (8x2 area)
+				const homeZoneX = 8;
+				const homeZoneZ = 15;
+				
+				// Create home zone cells
+				for (let z = homeZoneZ; z < homeZoneZ + 2; z++) {
+					for (let x = homeZoneX; x < homeZoneX + 8; x++) {
+						testBoard[z][x] = {
+							active: true,
+							playerId: testPlayerId,
+							isHomeZone: true,
+							color: 0xFFA500 // Orange color for home zone
+						};
+					}
+				}
+				
+				// Create a path from home zone to show connectivity
+				for (let z = 10; z < homeZoneZ; z++) {
+					for (let x = 10; x < 15; x++) {
+						testBoard[z][x] = {
+							active: true,
+							playerId: testPlayerId,
+							isHomeZone: false,
+							color: 0x42A5F5 // Blue for regular cells
+						};
+					}
+				}
+				
+				// Add chess pieces to home zone in standard formation
+				// Back row: rook, knight, bishop, queen, king, bishop, knight, rook
+				const backRow = ['rook', 'knight', 'bishop', 'queen', 'king', 'bishop', 'knight', 'rook'];
+				for (let i = 0; i < 8; i++) {
+					if (testBoard[homeZoneZ][homeZoneX + i]) {
+						testBoard[homeZoneZ][homeZoneX + i].chessPiece = {
+							type: backRow[i],
+							owner: testPlayerId,
+							id: `piece-${backRow[i]}-${i}`
+						};
+					}
+				}
+				
+				// Front row: all pawns
+				for (let i = 0; i < 8; i++) {
+					if (testBoard[homeZoneZ + 1][homeZoneX + i]) {
+						testBoard[homeZoneZ + 1][homeZoneX + i].chessPiece = {
+							type: 'pawn',
+							owner: testPlayerId,
+							id: `piece-pawn-${i}`
+						};
+					}
+				}
+				
+				// Create test game state
+				const testGameState = {
+					board: testBoard,
+					players: {
+						[testPlayerId]: {
+							id: testPlayerId,
+							username: 'Test Player',
+							color: 0x42A5F5,
+							score: 0
+						}
+					},
+					cellSize: 1,
+					fallingPiece: {
+						type: 'T',
+						position: { x: 12, y: 5, z: 12 },
+						rotation: 0,
+						blocks: [
+							{ x: 0, y: 0, z: 0 },
+							{ x: -1, y: 0, z: 0 },
+							{ x: 1, y: 0, z: 0 },
+							{ x: 0, y: 0, z: 1 }
+						],
+						color: 0xFF00FF
+					}
+				};
+				
+				// Create stub GameState object
+				window.GameState = {
+					initGameState: () => testGameState,
+					getGameState: () => {
+						// Animate falling piece
+						if (testGameState.fallingPiece) {
+							testGameState.fallingPiece.position.y -= 0.03;
+							
+							// Reset when it gets too low
+							if (testGameState.fallingPiece.position.y < -2) {
+								testGameState.fallingPiece.position.y = 5;
+								
+								// Move X position for variety
+								testGameState.fallingPiece.position.x = 8 + Math.floor(Math.random() * 8);
+								
+								// Change tetromino type
+								const types = ['I', 'O', 'T', 'J', 'L', 'S', 'Z'];
+								testGameState.fallingPiece.type = types[Math.floor(Math.random() * types.length)];
+								
+								// Random rotation
+								testGameState.fallingPiece.rotation = Math.floor(Math.random() * 4) * 90;
+							}
+						}
+						
+						return testGameState;
+					},
+					updateGameState: (newState) => {
+						Object.assign(testGameState, newState);
+						return testGameState;
+					}
+				};
+				
+				// Create stub SessionManager
+				window.SessionManager = {
+					initSession: () => {
+						return {
+							playerId: testPlayerId,
+							username: 'Test Player',
+							lastSaved: Date.now()
+						};
+					},
+					getSessionData: () => {
+						return {
+							playerId: testPlayerId,
+							username: 'Test Player',
+							lastSaved: Date.now()
+						};
+					}
+				};
+				
+				// Set up fake texture paths
+				window.TEXTURE_PATHS = {
+					board: './img/textures/board.png',
+					cell: './img/textures/cell.png',
+					homeZone: './img/textures/home_zone.png'
+				};
+				
+				// Define constants
+				window.Constants = {
+					DEBUG_LOGGING: true,
+					CELL_SIZE: 1,
+					BOARD_SIZE: boardSize
+				};
+				
+				console.log('Loading renderer modules...');
+				
+				// Import renderer
+				try {
+					const renderingModule = await import('./js/rendering/index.js');
+					console.log('Renderer module loaded:', renderingModule);
+					
+					// Initialize renderer
+					const container = document.getElementById('game-container');
+					const rendererInitialized = await renderingModule.init(container, {
+						debug: true,
+						enableSkybox: true,
+						enableClouds: true
+					});
+					
+					if (rendererInitialized) {
+						console.log('Renderer initialized successfully');
+						document.getElementById('loading-message').style.display = 'none';
+						
+						// Set up camera controls
+						document.getElementById('btn-reset-camera').addEventListener('click', () => {
+							if (window.resetCamera) window.resetCamera();
+						});
+						
+						document.getElementById('btn-top-view').addEventListener('click', () => {
+							if (window.topView) window.topView();
+						});
+						
+						document.getElementById('btn-side-view').addEventListener('click', () => {
+							if (window.sideView) window.sideView();
+						});
+						
+						document.getElementById('btn-home-view').addEventListener('click', () => {
+							if (window.camera) {
+								window.camera.position.set(homeZoneX + 4, 10, homeZoneZ + 5);
+								window.camera.lookAt(homeZoneX + 4, 0, homeZoneZ + 1);
+							}
+						});
+						
+						document.getElementById('btn-test-tetris').addEventListener('click', () => {
+							const gameState = window.GameState.getGameState();
+							if (gameState.fallingPiece) {
+								gameState.fallingPiece.position.y = 5;
+								gameState.fallingPiece.position.x = homeZoneX + 4;
+								gameState.fallingPiece.position.z = homeZoneZ - 2;
+							}
+						});
+						
+						// Update camera info
+						function updateCameraInfo() {
+							const cameraInfo = document.getElementById('camera-info');
+							if (cameraInfo && window.camera) {
+								const pos = window.camera.position;
+								cameraInfo.textContent = `Camera: x=${pos.x.toFixed(1)}, y=${pos.y.toFixed(1)}, z=${pos.z.toFixed(1)}`;
+							}
+							requestAnimationFrame(updateCameraInfo);
+						}
+						
+						// Start updating camera info
+						updateCameraInfo();
+					} else {
+						document.getElementById('loading-message').textContent = 'Failed to initialize renderer!';
+						console.error('Failed to initialize renderer');
+					}
+				} catch (error) {
+					document.getElementById('loading-message').textContent = 'Error loading renderer: ' + error.message;
+					console.error('Error loading renderer module:', error);
+				}
+			} catch (error) {
+				document.getElementById('loading-message').textContent = 'Fatal error: ' + error.message;
+				console.error('Fatal initialization error:', error);
+			}
+		});
+	</script>
+</body>
+</html> 

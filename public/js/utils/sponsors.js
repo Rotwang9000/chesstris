@@ -8,172 +8,189 @@
 import * as Network from './network.js';
 
 // Flag to determine if we should attempt to use the sponsors API
-// Set to false by default to prevent errors when API is not available
-const SPONSORS_API_ENABLED = false;
-
-// Mock sponsor data for development
-const MOCK_SPONSORS = [
-	{
-		id: 'mock-sponsor-1',
-		name: 'Development Sponsor',
-		message: 'This is a mock sponsor for development',
-		imageUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
-		url: 'https://example.com'
-	}
-];
+const USE_SPONSORS = false;  // Set to false to disable sponsor functionality
 
 /**
- * Add a sponsor to a tetromino based on the bidding system
+ * Add a sponsor to a tetromino
  * @param {Object} tetromino - The tetromino to add a sponsor to
- * @returns {Object} The tetromino with sponsor information
+ * @returns {Object} The tetromino with sponsor added
  */
 export async function addSponsorToTetromino(tetromino) {
-	// Return early if sponsors API is disabled
-	if (!SPONSORS_API_ENABLED) {
-		// Optionally use mock sponsor data
-		// tetromino.hasSponsor = true;
-		// tetromino.sponsor = MOCK_SPONSORS[0];
-		// tetromino.sponsor.impressionTime = Date.now();
+	if (!USE_SPONSORS) {
 		return tetromino;
 	}
 	
 	try {
-		// Fetch the next sponsor from the server
-		const response = await Network.apiRequest('/api/sponsors/next', {
-			method: 'GET'
-		});
+		// Get a sponsor from the server
+		const sponsor = await Network.getNextSponsor().catch(() => null);
 		
-		if (response && response.sponsor) {
-			// Record the impression
-			recordImpression(response.sponsor.id);
-			
-			// Add sponsor info to the tetromino
-			tetromino.hasSponsor = true;
-			tetromino.sponsor = response.sponsor;
-			tetromino.sponsor.impressionTime = Date.now();
-			
-			console.log(`Added sponsor ${response.sponsor.name} to tetromino`);
-			
+		if (!sponsor) {
 			return tetromino;
 		}
+		
+		// Add sponsor to tetromino
+		tetromino.sponsor = {
+			id: sponsor.id,
+			name: sponsor.name,
+			logo: sponsor.logo,
+			color: sponsor.color || getDefaultColorForShape(tetromino.type),
+			clickUrl: sponsor.clickUrl,
+			impressionRecorded: false
+		};
+		
+		// Record an impression
+		recordImpression(sponsor.id).catch(console.error);
+		
+		return tetromino;
 	} catch (error) {
-		// Log error only once per session to avoid spam
-		if (!window.sponsorErrorLogged) {
-			console.error('Failed to fetch sponsor:', error.message);
-			window.sponsorErrorLogged = true;
-		}
+		console.error('Error adding sponsor to tetromino:', error);
+		return tetromino;
 	}
-	
-	// Return the original tetromino if no sponsor was added
-	return tetromino;
 }
 
 /**
- * Record an impression for a sponsor
- * @param {string} sponsorId - The ID of the sponsor
+ * Record an impression of a sponsor
+ * @param {string} sponsorId - The sponsor ID
+ * @returns {Promise<boolean>} Whether the impression was recorded successfully
  */
 async function recordImpression(sponsorId) {
-	if (!SPONSORS_API_ENABLED) return;
+	if (!USE_SPONSORS) {
+		return true;
+	}
 	
 	try {
-		await Network.apiRequest('/api/sponsors/impression', {
-			method: 'POST',
-			body: { sponsorId }
-		});
+		await Network.recordSponsorImpression(sponsorId);
+		return true;
 	} catch (error) {
-		// Log error only once per session
-		if (!window.sponsorImpressionErrorLogged) {
-			console.error('Failed to record impression:', error.message);
-			window.sponsorImpressionErrorLogged = true;
-		}
+		console.error('Error recording sponsor impression:', error);
+		return false;
 	}
 }
 
 /**
- * Handle a click on a sponsored element
- * @param {string} sponsorId - The ID of the sponsor
+ * Handle a click on a sponsored tetromino
+ * @param {string} sponsorId - The sponsor ID
+ * @returns {Promise<boolean>} Whether the click was recorded successfully
  */
 export async function handleSponsorClick(sponsorId) {
-	if (!SPONSORS_API_ENABLED) {
-		// For development, just open a mock URL
-		window.open('https://example.com', '_blank');
-		return;
+	if (!USE_SPONSORS) {
+		return true;
 	}
 	
 	try {
 		// Record the click
-		await Network.apiRequest('/api/sponsors/click', {
-			method: 'POST',
-			body: { sponsorId }
-		});
+		await Network.recordSponsorClick(sponsorId);
 		
-		// Get the sponsor info
-		const response = await Network.apiRequest(`/api/sponsors/${sponsorId}`, {
-			method: 'GET'
-		});
+		// Get the sponsor data
+		const sponsors = JSON.parse(localStorage.getItem('sponsors') || '{}');
+		const sponsor = sponsors[sponsorId];
 		
-		if (response && response.sponsor && response.sponsor.url) {
-			window.open(response.sponsor.url, '_blank');
+		if (!sponsor || !sponsor.clickUrl) {
+			return false;
 		}
+		
+		// Open the sponsor's website in a new tab
+		window.open(sponsor.clickUrl, '_blank');
+		
+		return true;
 	} catch (error) {
-		console.error('Failed to handle sponsor click:', error.message);
+		console.error('Error handling sponsor click:', error);
+		return false;
 	}
 }
 
 /**
- * Get statistics for a sponsor
- * @param {string} sponsorId - The ID of the sponsor
- * @returns {Object} Sponsor statistics
+ * Get stats for a sponsor
+ * @param {string} sponsorId - The sponsor ID
+ * @returns {Promise<Object>} The sponsor stats
  */
 export async function getSponsorStats(sponsorId) {
-	if (!SPONSORS_API_ENABLED) {
+	if (!USE_SPONSORS) {
 		return {
 			impressions: 0,
 			clicks: 0,
-			ctr: 0,
-			cellsSponsored: 0
+			clickThroughRate: 0
 		};
 	}
 	
 	try {
-		const response = await Network.apiRequest(`/api/sponsors/${sponsorId}/stats`, {
-			method: 'GET'
-		});
+		// Get sponsor stats from the server
+		const response = await fetch(`${Network.API.SPONSORS}/${sponsorId}/stats`);
 		
-		return response;
+		if (!response.ok) {
+			throw new Error('Failed to get sponsor stats');
+		}
+		
+		return await response.json();
 	} catch (error) {
 		console.error('Error getting sponsor stats:', error);
-		throw new Error(`Failed to fetch sponsor stats: ${error.message}`);
+		
+		// Return default stats
+		return {
+			impressions: 0,
+			clicks: 0,
+			clickThroughRate: 0
+		};
 	}
 }
 
 /**
- * Display sponsor information in the UI
- * @param {Object} sponsor - The sponsor object
+ * Display sponsor information
+ * @param {Object} sponsor - The sponsor data
  */
 export function displaySponsorInfo(sponsor) {
-	const sponsorAd = document.getElementById('sponsor-ad');
-	const sponsorName = document.getElementById('sponsor-name');
-	const sponsorImage = document.getElementById('sponsor-image');
-	const sponsorMessage = document.getElementById('sponsor-message');
-	const sponsorLink = document.getElementById('sponsor-link');
-	
-	if (sponsorAd && sponsorName && sponsorImage && sponsorMessage && sponsorLink) {
-		sponsorName.textContent = sponsor.name;
-		sponsorImage.src = sponsor.imageUrl;
-		sponsorMessage.textContent = sponsor.message || 'Check out our sponsor!';
-		
-		sponsorLink.addEventListener('click', () => handleSponsorClick(sponsor.id));
-		
-		// Show the sponsor ad
-		sponsorAd.style.display = 'block';
-		
-		// Add close button functionality
-		const closeBtn = sponsorAd.querySelector('.close-btn');
-		if (closeBtn) {
-			closeBtn.addEventListener('click', () => {
-				sponsorAd.style.display = 'none';
-			});
-		}
+	if (!USE_SPONSORS || !sponsor) {
+		return;
 	}
+	
+	// Create or get sponsor info element
+	let sponsorInfo = document.getElementById('sponsor-info');
+	
+	if (!sponsorInfo) {
+		sponsorInfo = document.createElement('div');
+		sponsorInfo.id = 'sponsor-info';
+		sponsorInfo.style.position = 'absolute';
+		sponsorInfo.style.top = '10px';
+		sponsorInfo.style.right = '10px';
+		sponsorInfo.style.padding = '10px';
+		sponsorInfo.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+		sponsorInfo.style.color = 'white';
+		sponsorInfo.style.borderRadius = '5px';
+		sponsorInfo.style.zIndex = '1000';
+		document.body.appendChild(sponsorInfo);
+	}
+	
+	// Create sponsor content
+	sponsorInfo.innerHTML = `
+		<div>
+			<strong>Sponsored by:</strong>
+			<div>${sponsor.name}</div>
+			${sponsor.logo ? `<img src="${sponsor.logo}" alt="${sponsor.name}" style="max-width: 100px; max-height: 50px;">` : ''}
+		</div>
+	`;
+	
+	// Add click event
+	sponsorInfo.style.cursor = 'pointer';
+	sponsorInfo.addEventListener('click', () => {
+		handleSponsorClick(sponsor.id);
+	});
+}
+
+/**
+ * Get a default color for a tetromino shape
+ * @param {string} shape - The tetromino shape (I, O, T, J, L, S, Z)
+ * @returns {number} A hex color value
+ */
+function getDefaultColorForShape(shape) {
+	const colors = {
+		I: 0x00f0f0, // cyan
+		O: 0xf0f000, // yellow
+		T: 0xa000f0, // purple
+		J: 0x0000f0, // blue
+		L: 0xf0a000, // orange
+		S: 0x00f000, // green
+		Z: 0xf00000  // red
+	};
+	
+	return colors[shape] || 0xcccccc;
 } 

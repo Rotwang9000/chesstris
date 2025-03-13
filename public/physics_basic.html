@@ -1,0 +1,1220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Chesstris Basic Physics Test</title>
+	<style>
+		body {
+			margin: 0;
+			padding: 0;
+			overflow: hidden;
+			background-color: #121212;
+			color: #ffffff;
+			font-family: Arial, sans-serif;
+		}
+		
+		#game-container {
+			width: 100vw;
+			height: 100vh;
+			position: relative;
+		}
+		
+		#debug-panel {
+			position: absolute;
+			top: 10px;
+			right: 10px;
+			background-color: rgba(0, 0, 0, 0.7);
+			padding: 10px;
+			border-radius: 5px;
+			z-index: 1000;
+			width: 250px;
+		}
+		
+		#debug-panel button {
+			margin: 5px;
+			padding: 8px 12px;
+			background-color: #2196F3;
+			color: white;
+			border: none;
+			border-radius: 3px;
+			cursor: pointer;
+		}
+		
+		#debug-panel button:hover {
+			background-color: #0b7dda;
+		}
+		
+		#debug-panel h3 {
+			margin-top: 0;
+			color: #90caf9;
+		}
+		
+		.small-text {
+			font-size: 10px;
+			color: #666;
+			margin-top: 5px;
+			margin-bottom: 0;
+		}
+		
+		#loading-message {
+			position: absolute;
+			top: 50%;
+			left: 50%;
+			transform: translate(-50%, -50%);
+			font-size: 24px;
+			color: #90caf9;
+		}
+		
+		#controls-guide {
+			position: absolute;
+			bottom: 10px;
+			left: 10px;
+			background-color: rgba(0, 0, 0, 0.7);
+			padding: 10px;
+			border-radius: 5px;
+			font-size: 12px;
+		}
+		
+		#controls-guide ul {
+			margin: 5px 0 0 15px;
+			padding: 0;
+		}
+	</style>
+	
+	<!-- Import THREE.js globally -->
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r132/three.min.js"></script>
+</head>
+<body>
+	<div id="game-container">
+		<div id="loading-message">Loading Physics Test...</div>
+		
+		<div id="debug-panel">
+			<h3>Physics Test Controls</h3>
+			<button id="test-stick">Test Sticking</button>
+			<button id="test-collision">Test Collision</button>
+			<button id="spawn-5">Spawn 5 Tetrominos</button>
+			<button id="reset-board">Reset Board</button>
+			<button id="reset-camera">Reset Camera</button>
+			<button id="top-view">Top View</button>
+			<p class="small-text">Use mouse to rotate camera, scroll to zoom</p>
+		</div>
+		
+		<div id="controls-guide">
+			<h4>Keyboard Controls:</h4>
+			<ul>
+				<li>Arrow Left/Right: Move horizontally</li>
+				<li>Arrow Up/Down: Move forward/backward</li>
+				<li>Space: Drop faster</li>
+				<li>R: Rotate tetromino</li>
+				<li>Q: Rotate tetromino 90 degrees</li>
+			</ul>
+		</div>
+	</div>
+	
+	<script>
+		// Wait for the document to be ready
+		document.addEventListener('DOMContentLoaded', init);
+		
+		// Global variables
+		let scene, camera, renderer, controls;
+		let boardGroup, tetrominoGroup, ghostGroup, chessGroup;
+		
+		// Physics constants
+		const GRAVITY = 0.008; // Further slowed down gravity
+		const GROUND_Y = 0;
+		const CELL_SIZE = 1;
+		const BOARD_SIZE = 16;
+		const COLLISION_THRESHOLD = 2.5;
+		const BOUNCE_FACTOR = 0.3;
+		const MOVE_SPEED = 0.05; // Further reduced move speed
+		const SPAWN_HEIGHT = 25;
+		const GRID_SNAP_THRESHOLD = 0.2; // Reduced threshold for easier grid-snapping
+		const DISSOLUTION_SPEED = 0.03; // Speed of tetromino dissolution
+		
+		// Game state
+		let activeTetromino = null;
+		let tetrominoVelocity = { x: 0, y: 0, z: 0 };
+		let tetrominoRotation = { x: 0, y: 0, z: 0 };
+		let tetrominoPositionBeforePhysics = null;
+		let isFastDrop = false;
+		let physicsEnabled = true;
+		let respawnDelay = 2000; // 2 seconds
+		let isRespawning = false;
+		let respawnTimer = null;
+		let dissolvingTetrominos = []; // Array to track dissolving tetrominos
+		
+		// Key states
+		const keyState = {
+			ArrowLeft: false,
+			ArrowRight: false,
+			ArrowUp: false,
+			ArrowDown: false,
+			Space: false,
+			KeyR: false,
+			KeyQ: false // Added Q key for 90-degree rotation
+		};
+		
+		// Tetromino shapes and colors
+		const TETROMINO_SHAPES = {
+			I: [
+				{ x: -1.5, y: 0, z: 0 },
+				{ x: -0.5, y: 0, z: 0 },
+				{ x: 0.5, y: 0, z: 0 },
+				{ x: 1.5, y: 0, z: 0 }
+			],
+			J: [
+				{ x: -1, y: 0, z: 0 },
+				{ x: 0, y: 0, z: 0 },
+				{ x: 1, y: 0, z: 0 },
+				{ x: -1, y: 0, z: 1 }
+			],
+			L: [
+				{ x: -1, y: 0, z: 0 },
+				{ x: 0, y: 0, z: 0 },
+				{ x: 1, y: 0, z: 0 },
+				{ x: 1, y: 0, z: 1 }
+			],
+			O: [
+				{ x: -0.5, y: 0, z: -0.5 },
+				{ x: 0.5, y: 0, z: -0.5 },
+				{ x: -0.5, y: 0, z: 0.5 },
+				{ x: 0.5, y: 0, z: 0.5 }
+			],
+			S: [
+				{ x: 0, y: 0, z: 0 },
+				{ x: 1, y: 0, z: 0 },
+				{ x: -1, y: 0, z: 1 },
+				{ x: 0, y: 0, z: 1 }
+			],
+			T: [
+				{ x: -1, y: 0, z: 0 },
+				{ x: 0, y: 0, z: 0 },
+				{ x: 1, y: 0, z: 0 },
+				{ x: 0, y: 0, z: 1 }
+			],
+			Z: [
+				{ x: -1, y: 0, z: 0 },
+				{ x: 0, y: 0, z: 0 },
+				{ x: 0, y: 0, z: 1 },
+				{ x: 1, y: 0, z: 1 }
+			]
+		};
+		
+		const TETROMINO_COLORS = {
+			I: 0x00f0f0, // Cyan
+			J: 0x0000f0, // Blue
+			L: 0xf0a000, // Orange
+			O: 0xf0f000, // Yellow
+			S: 0x00f000, // Green
+			T: 0xa000f0, // Purple
+			Z: 0xf00000  // Red
+		};
+		
+		// Basic OrbitControls implementation
+		class OrbitControls {
+			constructor(camera, domElement) {
+				this.camera = camera;
+				this.domElement = domElement;
+				this.target = new THREE.Vector3(0, 0, 0);
+				this.enabled = true;
+				
+				// Mouse state
+				this._mouseDown = false;
+				this._mouseX = 0;
+				this._mouseY = 0;
+				
+				// Bind event handlers
+				this._handleMouseDown = this._handleMouseDown.bind(this);
+				this._handleMouseMove = this._handleMouseMove.bind(this);
+				this._handleMouseUp = this._handleMouseUp.bind(this);
+				this._handleWheel = this._handleWheel.bind(this);
+				
+				// Add event listeners
+				this.domElement.addEventListener('mousedown', this._handleMouseDown);
+				window.addEventListener('mousemove', this._handleMouseMove);
+				window.addEventListener('mouseup', this._handleMouseUp);
+				this.domElement.addEventListener('wheel', this._handleWheel);
+				
+				console.log('OrbitControls initialized');
+			}
+			
+			_handleMouseDown(event) {
+				this._mouseDown = true;
+				this._mouseX = event.clientX;
+				this._mouseY = event.clientY;
+			}
+			
+			_handleMouseMove(event) {
+				if (!this._mouseDown) return;
+				
+				const deltaX = event.clientX - this._mouseX;
+				const deltaY = event.clientY - this._mouseY;
+				
+				// Simple orbit rotation
+				this.rotateCamera(deltaX, deltaY);
+				
+				this._mouseX = event.clientX;
+				this._mouseY = event.clientY;
+			}
+			
+			_handleMouseUp() {
+				this._mouseDown = false;
+			}
+			
+			_handleWheel(event) {
+				// Zoom in/out
+				const delta = Math.max(-1, Math.min(1, -event.deltaY));
+				this.zoomCamera(delta);
+				
+				event.preventDefault();
+			}
+			
+			rotateCamera(deltaX, deltaY) {
+				const sensitivity = 0.01;
+				
+				// Calculate new camera position
+				const offset = new THREE.Vector3().subVectors(this.camera.position, this.target);
+				const spherical = new THREE.Spherical().setFromVector3(offset);
+				
+				spherical.theta -= deltaX * sensitivity;
+				spherical.phi = Math.max(0.1, Math.min(Math.PI - 0.1, spherical.phi + deltaY * sensitivity));
+				
+				// Set new camera position
+				offset.setFromSpherical(spherical);
+				this.camera.position.copy(this.target).add(offset);
+				this.camera.lookAt(this.target);
+			}
+			
+			zoomCamera(delta) {
+				const zoomSpeed = 1.0;
+				const direction = new THREE.Vector3().subVectors(this.camera.position, this.target).normalize();
+				
+				// Adjust distance
+				const distance = this.camera.position.distanceTo(this.target);
+				const newDistance = Math.max(1, distance - delta * zoomSpeed);
+				
+				// Set new camera position
+				this.camera.position.copy(this.target).add(direction.multiplyScalar(newDistance));
+			}
+			
+			update() {
+				// Just a placeholder for compatibility
+				return true;
+			}
+			
+			dispose() {
+				this.domElement.removeEventListener('mousedown', this._handleMouseDown);
+				window.removeEventListener('mousemove', this._handleMouseMove);
+				window.removeEventListener('mouseup', this._handleMouseUp);
+				this.domElement.removeEventListener('wheel', this._handleWheel);
+			}
+		}
+		
+		function init() {
+			console.log('Initializing physics test...');
+			
+			// Initialize the renderer
+			const container = document.getElementById('game-container');
+			renderer = new THREE.WebGLRenderer({ antialias: true, shadowMap: true });
+			renderer.setSize(window.innerWidth, window.innerHeight);
+			renderer.setClearColor(0x1e293b); // Dark blue background
+			renderer.shadowMap.enabled = true;
+			renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+			container.appendChild(renderer.domElement);
+			
+			// Create scene
+			scene = new THREE.Scene();
+			
+			// Create camera
+			camera = new THREE.PerspectiveCamera(
+				75, 
+				window.innerWidth / window.innerHeight,
+				0.1,
+				1000
+			);
+			camera.position.set(25, 30, 25);
+			camera.lookAt(new THREE.Vector3(7.5, 0, 7.5));
+			
+			// Create controls
+			controls = new OrbitControls(camera, renderer.domElement);
+			controls.target.set(7.5, 0, 7.5);
+			controls.update();
+			
+			// Create scene groups
+			boardGroup = new THREE.Group();
+			tetrominoGroup = new THREE.Group();
+			ghostGroup = new THREE.Group();
+			chessGroup = new THREE.Group(); // New group for chess pieces
+			scene.add(boardGroup);
+			scene.add(tetrominoGroup);
+			scene.add(ghostGroup);
+			scene.add(chessGroup);
+			
+			// Add lighting
+			addLighting();
+			
+			// Create a basic board
+			createBasicBoard();
+			
+			// Create physics debug element
+			const debugDiv = document.createElement('div');
+			debugDiv.className = 'physics-debug';
+			debugDiv.style.position = 'absolute';
+			debugDiv.style.bottom = '10px';
+			debugDiv.style.left = '10px';
+			debugDiv.style.background = 'rgba(0, 0, 0, 0.7)';
+			debugDiv.style.color = 'white';
+			debugDiv.style.padding = '10px';
+			debugDiv.style.borderRadius = '5px';
+			debugDiv.style.fontFamily = 'monospace';
+			debugDiv.style.fontSize = '12px';
+			document.body.appendChild(debugDiv);
+			
+			// Set up buttons
+			document.getElementById('test-stick').addEventListener('click', testSticking);
+			document.getElementById('test-collision').addEventListener('click', testCollision);
+			document.getElementById('spawn-5').addEventListener('click', spawn5Tetrominos);
+			document.getElementById('reset-board').addEventListener('click', resetBoard);
+			document.getElementById('reset-camera').addEventListener('click', () => {
+				camera.position.set(25, 30, 25);
+				camera.lookAt(new THREE.Vector3(7.5, 0, 7.5));
+				controls.target.set(7.5, 0, 7.5);
+			});
+			document.getElementById('top-view').addEventListener('click', () => {
+				camera.position.set(7.5, 50, 7.5);
+				camera.lookAt(new THREE.Vector3(7.5, 0, 7.5));
+				controls.target.set(7.5, 0, 7.5);
+			});
+			
+			// Set up keyboard controls
+			window.addEventListener('keydown', (e) => {
+				if (keyState.hasOwnProperty(e.code)) {
+					keyState[e.code] = true;
+					e.preventDefault();
+				}
+			});
+			
+			window.addEventListener('keyup', (e) => {
+				if (keyState.hasOwnProperty(e.code)) {
+					keyState[e.code] = false;
+					e.preventDefault();
+				}
+			});
+			
+			// Handle window resize
+			window.addEventListener('resize', () => {
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+				renderer.setSize(window.innerWidth, window.innerHeight);
+			});
+			
+			// Hide loading message
+			document.getElementById('loading-message').style.display = 'none';
+			
+			// Start animation loop
+			animate();
+			
+			console.log('Physics test initialized successfully');
+		}
+		
+		function addLighting() {
+			// Add ambient light
+			const ambientLight = new THREE.AmbientLight(0x404040, 0.8);
+			scene.add(ambientLight);
+			
+			// Add directional light
+			const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+			dirLight.position.set(20, 30, 20);
+			dirLight.castShadow = true;
+			dirLight.shadow.mapSize.width = 2048;
+			dirLight.shadow.mapSize.height = 2048;
+			dirLight.shadow.camera.left = -20;
+			dirLight.shadow.camera.right = 20;
+			dirLight.shadow.camera.top = 20;
+			dirLight.shadow.camera.bottom = -20;
+			dirLight.shadow.camera.near = 0.5;
+			dirLight.shadow.camera.far = 100;
+			scene.add(dirLight);
+			
+			// Add point light
+			const pointLight = new THREE.PointLight(0x2196F3, 0.5);
+			pointLight.position.set(7.5, 15, 7.5);
+			scene.add(pointLight);
+		}
+		
+		function createBasicBoard() {
+			// Create a ground plane for shadow casting
+			const groundGeometry = new THREE.PlaneGeometry(BOARD_SIZE * 2, BOARD_SIZE * 2);
+			const groundMaterial = new THREE.MeshPhongMaterial({
+				color: 0x2c3e50,
+				side: THREE.DoubleSide
+			});
+			const groundPlane = new THREE.Mesh(groundGeometry, groundMaterial);
+			groundPlane.rotation.x = Math.PI / 2;
+			groundPlane.position.y = -0.5;
+			groundPlane.receiveShadow = true;
+			scene.add(groundPlane);
+			
+			// Create an 16x16 board
+			for (let z = 0; z < BOARD_SIZE; z++) {
+				for (let x = 0; x < BOARD_SIZE; x++) {
+					// Only create cells in a checkerboard pattern
+					if ((x + z) % 2 === 0) {
+						// Create cell mesh - Using 1.0 height to match tetromino dimensions
+						const geometry = new THREE.BoxGeometry(1, 1.0, 1);
+						const material = new THREE.MeshPhongMaterial({
+							color: 0x42A5F5,
+							shininess: 50,
+							transparent: true,
+							opacity: 0.8 // Slightly transparent to see through
+						});
+						
+						// Create block mesh
+						const cellMesh = new THREE.Mesh(geometry, material);
+						cellMesh.position.set(x, -0.5, z); // Positioned lower so top is at y=0
+						cellMesh.receiveShadow = true; // Cells receive shadows
+						
+						// Add wireframe outline
+						const wireframe = new THREE.LineSegments(
+							new THREE.WireframeGeometry(geometry),
+							new THREE.LineBasicMaterial({ 
+								color: 0xffffff, 
+								transparent: true, 
+								opacity: 0.15
+							})
+						);
+						cellMesh.add(wireframe);
+						
+						// Store x,z coordinates in the mesh for collision detection
+						cellMesh.userData = { x, z, isCell: true, isEdge: isEdgeCell(x, z) };
+						
+						boardGroup.add(cellMesh);
+					}
+				}
+			}
+			
+			// Add grid lines to help with alignment
+			const gridHelper = new THREE.GridHelper(BOARD_SIZE, BOARD_SIZE, 0xffffff, 0x888888);
+			gridHelper.position.set(BOARD_SIZE/2 - 0.5, 0.01, BOARD_SIZE/2 - 0.5); // Centered on board, slightly above
+			scene.add(gridHelper);
+		}
+		
+		// Helper to check if a cell is at the edge of the board
+		function isEdgeCell(x, z) {
+			// Determine if this cell is at the edge of the board
+			if (x === 0 || x === BOARD_SIZE - 1 || z === 0 || z === BOARD_SIZE - 1) {
+				return true;
+			}
+			
+			// Check if adjacent cells are missing (as we're using a checkerboard pattern)
+			const neighbors = [
+				{x: x+1, z: z}, {x: x-1, z: z}, 
+				{x: x, z: z+1}, {x: x, z: z-1}
+			];
+			
+			for (const neighbor of neighbors) {
+				// Skip if out of bounds
+				if (neighbor.x < 0 || neighbor.x >= BOARD_SIZE || 
+					neighbor.z < 0 || neighbor.z >= BOARD_SIZE) {
+					continue;
+				}
+				
+				// If the neighbor position would be empty (due to checkerboard pattern)
+				// then this cell is considered an edge
+				if ((neighbor.x + neighbor.z) % 2 !== 0) {
+					return true;
+				}
+			}
+			
+			return false;
+		}
+		
+		function createTetrominoMesh(shape, color, isGhost = false) {
+			const group = new THREE.Group();
+			const blocks = [];
+			
+			// Create blocks
+			TETROMINO_SHAPES[shape].forEach(pos => {
+				const geometry = new THREE.BoxGeometry(CELL_SIZE, CELL_SIZE, CELL_SIZE);
+				const material = new THREE.MeshPhongMaterial({
+					color: color,
+					transparent: isGhost || false,
+					opacity: isGhost ? 0.2 : 1.0,
+					shininess: 50
+				});
+				
+				const blockMesh = new THREE.Mesh(geometry, material);
+				blockMesh.position.set(pos.x, pos.y, pos.z);
+				blockMesh.castShadow = true; // Cast shadows
+				
+				// Add wireframe outline
+				const wireframe = new THREE.LineSegments(
+					new THREE.WireframeGeometry(geometry),
+					new THREE.LineBasicMaterial({ 
+						color: 0xffffff, 
+						transparent: true, 
+						opacity: 0.2
+					})
+				);
+				blockMesh.add(wireframe);
+				
+				group.add(blockMesh);
+				blocks.push(blockMesh);
+			});
+			
+			// Store shape and block references
+			group.userData = { 
+				shape: shape, 
+				blocks: blocks,
+				isStuck: false,
+				isGhost: isGhost,
+				dissolving: false,
+				dissolveProgress: 0
+			};
+			
+			return group;
+		}
+		
+		function spawnTetromino(shape, position, options = {}) {
+			// Default options
+			const defaults = {
+				isGhost: false,
+				initialVelocity: { x: 0, y: 0, z: 0 },
+				initialRotation: { x: 0, y: 0, z: 0 },
+				color: null
+			};
+			
+			const config = { ...defaults, ...options };
+			const color = config.color || TETROMINO_COLORS[shape];
+			
+			// Remove any existing active tetromino if not a ghost
+			if (!config.isGhost && activeTetromino) {
+				activeTetromino = null;
+			}
+			
+			// Create tetromino mesh
+			const tetromino = createTetrominoMesh(shape, color, config.isGhost);
+			tetromino.position.copy(position);
+			
+			// Add to the appropriate group
+			if (config.isGhost) {
+				ghostGroup.add(tetromino);
+			} else {
+				tetrominoGroup.add(tetromino);
+				
+				// Set as active tetromino
+				activeTetromino = tetromino;
+				tetrominoVelocity = { ...config.initialVelocity };
+				tetrominoRotation = { ...config.initialRotation };
+				tetrominoPositionBeforePhysics = position.clone();
+				
+				console.log(`Spawned ${shape} tetromino at position (${position.x}, ${position.y}, ${position.z})`);
+			}
+			
+			return tetromino;
+		}
+		
+		function spawnRandomTetromino(options = {}) {
+			const defaults = {
+				height: SPAWN_HEIGHT, // Use the increased spawn height
+				isGhost: false,
+				initialVelocity: { x: 0, y: 0, z: 0 },
+				initialRotation: { x: 0, y: 0, z: 0 }
+			};
+			
+			const config = { ...defaults, ...options };
+			
+			// Get random shape
+			const shapes = Object.keys(TETROMINO_SHAPES);
+			const shape = shapes[Math.floor(Math.random() * shapes.length)];
+			
+			// Create a position at the center top of the board
+			const position = new THREE.Vector3(
+				Math.floor(BOARD_SIZE / 2),
+				config.height,
+				Math.floor(BOARD_SIZE / 2)
+			);
+			
+			// Spawn the tetromino
+			return spawnTetromino(shape, position, config);
+		}
+		
+		function snapToGrid(tetromino) {
+			if (!tetromino) return;
+			
+			// Round position to nearest grid cell
+			tetromino.position.x = Math.round(tetromino.position.x);
+			tetromino.position.z = Math.round(tetromino.position.z);
+			
+			// Keep Y position as is for falling
+		}
+		
+		function updatePhysics() {
+			if (!physicsEnabled || !activeTetromino) return;
+			
+			// Store the position before physics update for collision detection
+			tetrominoPositionBeforePhysics = activeTetromino.position.clone();
+			
+			// Handle user input - this changes velocity
+			handleUserInput();
+			
+			// Apply gravity
+			tetrominoVelocity.y -= GRAVITY * (isFastDrop ? 5 : 1);
+			
+			// Apply velocity to position
+			activeTetromino.position.x += tetrominoVelocity.x;
+			activeTetromino.position.y += tetrominoVelocity.y;
+			activeTetromino.position.z += tetrominoVelocity.z;
+			
+			// Absolutely no rotation from physics
+			// Only Q key rotation is allowed (handled in handleUserInput)
+			
+			// Apply dampening
+			tetrominoVelocity.x *= 0.8; // Increased dampening for more responsive stop
+			tetrominoVelocity.z *= 0.8; // Increased dampening
+			
+			// Force rotation values to zero (except user-controlled Y rotation)
+			tetrominoRotation.x = 0;
+			tetrominoRotation.z = 0;
+			
+			// Snap to grid if velocity is small enough
+			if (Math.abs(tetrominoVelocity.x) < GRID_SNAP_THRESHOLD && 
+				Math.abs(tetrominoVelocity.z) < GRID_SNAP_THRESHOLD) {
+				snapToGrid(activeTetromino);
+			}
+			
+			// Check collisions with ground
+			if (checkGroundCollision()) {
+				// If the ground collision function returned true, the tetromino was processed
+				return;
+			}
+			
+			// Check collisions with board boundaries
+			checkBoardBoundaries();
+			
+			// Check collisions with other tetrominos
+			checkOtherTetrominoCollisions();
+			
+			// Check if the tetromino is too far below the board
+			if (activeTetromino && activeTetromino.position.y < -10) {
+				console.log("Tetromino fell too far, removing it");
+				removeTetromino(activeTetromino);
+				scheduleRespawn();
+			}
+			
+			// Update debug info
+			updateDebugInfo();
+		}
+		
+		function handleUserInput() {
+			if (!activeTetromino) return;
+			
+			// Previous velocity for comparing direction changes
+			const prevVelocity = {
+				x: tetrominoVelocity.x,
+				z: tetrominoVelocity.z
+			};
+			
+			// Get grid-aligned position
+			const gridX = Math.round(activeTetromino.position.x);
+			const gridZ = Math.round(activeTetromino.position.z);
+			
+			// Distance to grid center
+			const distToGridX = Math.abs(activeTetromino.position.x - gridX);
+			const distToGridZ = Math.abs(activeTetromino.position.z - gridZ);
+			
+			// Reset velocities to zero by default
+			tetrominoVelocity.x = 0;
+			tetrominoVelocity.z = 0;
+			
+			// Check key states for movement - only move when close to a grid point
+			if (keyState.ArrowLeft && distToGridZ < GRID_SNAP_THRESHOLD) {
+				// Only allow movement when close to grid center in perpendicular direction
+				tetrominoVelocity.x = -MOVE_SPEED;
+				// Force Z position to be exactly on grid
+				activeTetromino.position.z = gridZ;
+			}
+			else if (keyState.ArrowRight && distToGridZ < GRID_SNAP_THRESHOLD) {
+				tetrominoVelocity.x = MOVE_SPEED;
+				// Force Z position to be exactly on grid
+				activeTetromino.position.z = gridZ;
+			}
+			else if (keyState.ArrowUp && distToGridX < GRID_SNAP_THRESHOLD) {
+				tetrominoVelocity.z = -MOVE_SPEED;
+				// Force X position to be exactly on grid
+				activeTetromino.position.x = gridX;
+			}
+			else if (keyState.ArrowDown && distToGridX < GRID_SNAP_THRESHOLD) {
+				tetrominoVelocity.z = MOVE_SPEED;
+				// Force X position to be exactly on grid
+				activeTetromino.position.x = gridX;
+			}
+			
+			// Fast drop with Space key
+			if (keyState.Space) {
+				isFastDrop = true;
+			} else {
+				isFastDrop = false;
+			}
+			
+			// Q key rotation
+			if (keyState.KeyQ) {
+				// Rotate 90 degrees in the XY plane
+				rotateTetromino90Degrees();
+				keyState.KeyQ = false; // Only rotate once per key press
+			}
+			
+			// If significant direction change, ensure we're grid-aligned
+			if (Math.sign(prevVelocity.x) !== Math.sign(tetrominoVelocity.x) && 
+				Math.abs(tetrominoVelocity.x) > 0.01) {
+				activeTetromino.position.z = Math.round(activeTetromino.position.z);
+			}
+			if (Math.sign(prevVelocity.z) !== Math.sign(tetrominoVelocity.z) && 
+				Math.abs(tetrominoVelocity.z) > 0.01) {
+				activeTetromino.position.x = Math.round(activeTetromino.position.x);
+			}
+		}
+		
+		// Function to rotate the tetromino 90 degrees in the XY plane
+		function rotateTetromino90Degrees() {
+			if (!activeTetromino) return;
+			
+			// We'll rotate the tetromino around the Y axis by 90 degrees
+			activeTetromino.rotation.y += Math.PI / 2;
+			
+			console.log("Rotated tetromino 90 degrees");
+		}
+		
+		function checkGroundCollision() {
+			if (!activeTetromino) return false;
+			
+			// Check if the tetromino is close to the ground
+			if (activeTetromino.position.y <= GROUND_Y + 0.5) {
+				// If it's moving slowly, check if at edge
+				if (Math.abs(tetrominoVelocity.y) < 0.2) {
+					// Check if any part of the tetromino is over an edge cell
+					const isOnEdge = isTouchingBoardEdge(activeTetromino);
+					
+					if (isOnEdge) {
+						console.log("Tetromino is touching a board edge, sticking");
+						stickTetromino();
+						return true;
+					} else {
+						console.log("Tetromino hit the board but not at an edge, dissolving");
+						// Start dissolution process instead of bouncing
+						startDissolveTetromino(activeTetromino);
+						activeTetromino = null; // Clear active tetromino
+						scheduleRespawn();
+						return true;
+					}
+				} else {
+					// Still moving fast, just bounce with minimal additional effects
+					activeTetromino.position.y = GROUND_Y + 0.5;
+					tetrominoVelocity.y = -tetrominoVelocity.y * BOUNCE_FACTOR;
+					
+					// No rotation on bounce
+					return true;
+				}
+			}
+			return false;
+		}
+		
+		// Function to start dissolving a tetromino
+		function startDissolveTetromino(tetromino) {
+			if (!tetromino) return;
+			
+			// Mark as dissolving
+			tetromino.userData.dissolving = true;
+			tetromino.userData.dissolveProgress = 0;
+			
+			// Make sure it's transparent to start the dissolve effect
+			tetromino.children.forEach(block => {
+				if (block.material) {
+					block.material.transparent = true;
+				}
+			});
+			
+			// Add to dissolving array for animation
+			dissolvingTetrominos.push(tetromino);
+			
+			console.log("Started dissolving tetromino");
+		}
+		
+		// Update dissolving tetrominos
+		function updateDissolvingTetrominos() {
+			// Process each dissolving tetromino
+			for (let i = dissolvingTetrominos.length - 1; i >= 0; i--) {
+				const tetromino = dissolvingTetrominos[i];
+				
+				// Increment dissolve progress
+				tetromino.userData.dissolveProgress += DISSOLUTION_SPEED;
+				
+				// Update opacity based on dissolve progress
+				tetromino.children.forEach(block => {
+					if (block.material) {
+						block.material.opacity = 1 - tetromino.userData.dissolveProgress;
+						
+						// Add some falling/shrinking effect
+						block.position.y -= 0.03;
+						block.scale.multiplyScalar(0.97);
+					}
+					
+					// Update wireframe opacity too
+					if (block.children.length > 0 && block.children[0].material) {
+						block.children[0].material.opacity = 0.2 * (1 - tetromino.userData.dissolveProgress);
+					}
+				});
+				
+				// Remove if fully dissolved
+				if (tetromino.userData.dissolveProgress >= 1) {
+					// Remove from scene
+					if (tetromino.parent) {
+						tetromino.parent.remove(tetromino);
+					}
+					dissolvingTetrominos.splice(i, 1);
+				}
+			}
+		}
+		
+		// Helper function to check if the tetromino is touching a board edge
+		function isTouchingBoardEdge(tetromino) {
+			// Get the tetromino's position and box
+			const tetrominoPosition = tetromino.position.clone();
+			const boundingBox = new THREE.Box3().setFromObject(tetromino);
+			
+			// Get all corners of the bounding box (8 corners)
+			const corners = [
+				new THREE.Vector3(boundingBox.min.x, boundingBox.min.y, boundingBox.min.z),
+				new THREE.Vector3(boundingBox.min.x, boundingBox.min.y, boundingBox.max.z),
+				new THREE.Vector3(boundingBox.min.x, boundingBox.max.y, boundingBox.min.z),
+				new THREE.Vector3(boundingBox.min.x, boundingBox.max.y, boundingBox.max.z),
+				new THREE.Vector3(boundingBox.max.x, boundingBox.min.y, boundingBox.min.z),
+				new THREE.Vector3(boundingBox.max.x, boundingBox.min.y, boundingBox.max.z),
+				new THREE.Vector3(boundingBox.max.x, boundingBox.max.y, boundingBox.min.z),
+				new THREE.Vector3(boundingBox.max.x, boundingBox.max.y, boundingBox.max.z)
+			];
+			
+			// Check each block in the board
+			for (let i = 0; i < boardGroup.children.length; i++) {
+				const cellMesh = boardGroup.children[i];
+				
+				// Skip if not a cell or not an edge
+				if (!cellMesh.userData?.isCell || !cellMesh.userData?.isEdge) {
+					continue;
+				}
+				
+				// Get the cell position
+				const cellPosition = cellMesh.position.clone();
+				const cellBounds = new THREE.Box3().setFromObject(cellMesh);
+				
+				// Check if any corner of the tetromino is close to the edge cell
+				for (const corner of corners) {
+					const distance = corner.distanceTo(cellPosition);
+					if (distance < 1.5) { // More precise distance check
+						return true;
+					}
+				}
+				
+				// Check if tetrominoBounds intersects with cellBounds
+				if (boundingBox.intersectsBox(cellBounds)) {
+					return true;
+				}
+			}
+			
+			// Check if the tetromino is at the board edge (x=0, x=BOARD_SIZE, z=0, z=BOARD_SIZE)
+			const edgeThreshold = 1.0;
+			if (
+				tetrominoPosition.x <= edgeThreshold || 
+				tetrominoPosition.x >= BOARD_SIZE - edgeThreshold ||
+				tetrominoPosition.z <= edgeThreshold || 
+				tetrominoPosition.z >= BOARD_SIZE - edgeThreshold
+			) {
+				return true;
+			}
+			
+			return false;
+		}
+		
+		function checkBoardBoundaries() {
+			if (!activeTetromino) return;
+			
+			// Get bounding box of tetromino
+			const boundingBox = new THREE.Box3().setFromObject(activeTetromino);
+			const size = new THREE.Vector3();
+			boundingBox.getSize(size);
+			
+			// Check if out of board boundaries and bounce
+			if (activeTetromino.position.x < 0 + size.x/2) {
+				activeTetromino.position.x = 0 + size.x/2;
+				tetrominoVelocity.x = 0; // Stop instead of bounce
+			}
+			if (activeTetromino.position.x > BOARD_SIZE - size.x/2) {
+				activeTetromino.position.x = BOARD_SIZE - size.x/2;
+				tetrominoVelocity.x = 0; // Stop instead of bounce
+			}
+			if (activeTetromino.position.z < 0 + size.z/2) {
+				activeTetromino.position.z = 0 + size.z/2;
+				tetrominoVelocity.z = 0; // Stop instead of bounce
+			}
+			if (activeTetromino.position.z > BOARD_SIZE - size.z/2) {
+				activeTetromino.position.z = BOARD_SIZE - size.z/2;
+				tetrominoVelocity.z = 0; // Stop instead of bounce
+			}
+		}
+		
+		function checkOtherTetrominoCollisions() {
+			if (!activeTetromino) return;
+			
+			// Get bounding box of active tetromino
+			const activeBoundingBox = new THREE.Box3().setFromObject(activeTetromino);
+			
+			// Check collisions with stuck tetrominos
+			tetrominoGroup.children.forEach(otherTetromino => {
+				// Skip if it's the active tetromino, not stuck, or dissolving
+				if (otherTetromino === activeTetromino || 
+					!otherTetromino.userData?.isStuck || 
+					otherTetromino.userData?.dissolving) {
+					return;
+				}
+				
+				// Get bounding box of other tetromino
+				const otherBoundingBox = new THREE.Box3().setFromObject(otherTetromino);
+				
+				// Check if bounding boxes intersect
+				if (activeBoundingBox.intersectsBox(otherBoundingBox)) {
+					// Calculate collision normal and penetration depth
+					const activeCenter = new THREE.Vector3();
+					const otherCenter = new THREE.Vector3();
+					activeBoundingBox.getCenter(activeCenter);
+					otherBoundingBox.getCenter(otherCenter);
+					
+					const normal = new THREE.Vector3().subVectors(activeCenter, otherCenter).normalize();
+					
+					// If the Y component is significant, it's a top collision
+					if (normal.y > 0.7) {
+						// If it's moving slowly, check if other tetromino is stuck to edge
+						if (Math.abs(tetrominoVelocity.y) < 0.3) {
+							console.log("Collision with another tetromino that's at the edge");
+							stickTetromino();
+						} else {
+							// Otherwise bounce with no rotation
+							tetrominoVelocity.y = Math.abs(tetrominoVelocity.y) * BOUNCE_FACTOR;
+							// Add a slight position offset to prevent getting stuck
+							activeTetromino.position.y += 0.1;
+						}
+					} else {
+						// Side collision, just stop movement in that direction
+						if (Math.abs(normal.x) > Math.abs(normal.z)) {
+							tetrominoVelocity.x = 0;
+						} else {
+							tetrominoVelocity.z = 0;
+						}
+						
+						// No rotation on collision
+					}
+					
+					// Move the tetromino out of collision
+					if (tetrominoPositionBeforePhysics) {
+						activeTetromino.position.copy(tetrominoPositionBeforePhysics);
+					}
+				}
+			});
+		}
+		
+		function stickTetromino() {
+			if (!activeTetromino) return;
+			
+			console.log("Sticking tetromino to board");
+			
+			// Mark as stuck
+			activeTetromino.userData.isStuck = true;
+			
+			// Reset velocity and rotation
+			tetrominoVelocity = { x: 0, y: 0, z: 0 };
+			tetrominoRotation = { x: 0, y: 0, z: 0 };
+			
+			// Schedule spawning of new tetromino
+			scheduleRespawn();
+			
+			// Clear the active tetromino
+			activeTetromino = null;
+		}
+		
+		// Helper function to safely remove a tetromino
+		function removeTetromino(tetromino) {
+			if (!tetromino) return;
+			
+			// Remove from the group
+			if (tetromino.parent) {
+				tetromino.parent.remove(tetromino);
+			}
+			
+			// If it was the active tetromino, clear it
+			if (activeTetromino === tetromino) {
+				activeTetromino = null;
+			}
+		}
+		
+		// Update debug info display
+		function updateDebugInfo() {
+			const debugElement = document.querySelector('.physics-debug');
+			if (debugElement && activeTetromino) {
+				const pos = activeTetromino.position;
+				const vel = tetrominoVelocity;
+				debugElement.innerHTML = `
+					Position: (${pos.x.toFixed(2)}, ${pos.y.toFixed(2)}, ${pos.z.toFixed(2)})<br>
+					Velocity: (${vel.x.toFixed(4)}, ${vel.y.toFixed(4)}, ${vel.z.toFixed(4)})
+				`;
+			}
+		}
+		
+		function scheduleRespawn() {
+			if (isRespawning) return;
+			
+			isRespawning = true;
+			clearTimeout(respawnTimer);
+			
+			respawnTimer = setTimeout(() => {
+				if (physicsEnabled) {
+					spawnRandomTetromino();
+				}
+				isRespawning = false;
+			}, respawnDelay);
+		}
+		
+		function testSticking() {
+			console.log("Running 'Test Sticking' scenario");
+			
+			// Reset the board
+			resetBoard();
+			
+			// Spawn exactly at the edge of the board
+			// x=0 is the true edge
+			const position = new THREE.Vector3(
+				0, // Position at exact edge of board
+				SPAWN_HEIGHT,
+				Math.floor(BOARD_SIZE / 2)
+			);
+			
+			// Get random shape
+			const shapes = Object.keys(TETROMINO_SHAPES);
+			const shape = shapes[Math.floor(Math.random() * shapes.length)];
+			
+			// Spawn tetromino at edge with gentle downward velocity
+			spawnTetromino(shape, position, {
+				initialVelocity: { x: 0, y: -0.03, z: 0 } // Even slower initial velocity
+			});
+		}
+		
+		function testCollision() {
+			console.log("Running 'Test Collision' scenario");
+			
+			// Reset the board
+			resetBoard();
+			
+			// First, spawn and stick a tetromino at the edge
+			const shapes = Object.keys(TETROMINO_SHAPES);
+			const baseShape = shapes[Math.floor(Math.random() * shapes.length)];
+			const baseTetromino = spawnTetromino(baseShape, new THREE.Vector3(
+				0, // Edge of the board
+				2,
+				Math.floor(BOARD_SIZE / 2)
+			));
+			
+			// Mark it as stuck
+			baseTetromino.userData.isStuck = true;
+			
+			// Then, spawn another tetromino above it
+			setTimeout(() => {
+				const fallingShape = shapes[Math.floor(Math.random() * shapes.length)];
+				spawnTetromino(fallingShape, new THREE.Vector3(
+					0, // Edge of the board to ensure collision
+					SPAWN_HEIGHT,
+					Math.floor(BOARD_SIZE / 2)
+				), {
+					initialVelocity: { x: 0, y: -0.1, z: 0 },
+					initialRotation: { x: 0, y: 0.1, z: 0 }
+				});
+			}, 200);
+		}
+		
+		function spawn5Tetrominos() {
+			console.log("Running 'Spawn 5 Tetrominos' scenario");
+			
+			// Reset the board
+			resetBoard();
+			
+			// Get all shapes
+			const shapes = Object.keys(TETROMINO_SHAPES);
+			
+			// Spawn 5 tetrominos with delay
+			for (let i = 0; i < 5; i++) {
+				setTimeout(() => {
+					// Only spawn if physics is still enabled
+					if (!physicsEnabled) return;
+					
+					const shape = shapes[i % shapes.length];
+					const position = new THREE.Vector3(
+						Math.floor(BOARD_SIZE / 2) + (i % 3 - 1) * 3,
+						SPAWN_HEIGHT + i,
+						Math.floor(BOARD_SIZE / 2) + (i % 3 - 1) * 2
+					);
+					
+					spawnTetromino(shape, position, {
+						initialVelocity: { 
+							x: (Math.random() - 0.5) * 0.1, 
+							y: -0.05, 
+							z: (Math.random() - 0.5) * 0.1 
+						},
+						initialRotation: { 
+							x: 0, 
+							y: (Math.random() - 0.5) * 0.05, 
+							z: 0 
+						}
+					});
+				}, i * 500); // 500ms between spawns
+			}
+		}
+		
+		function resetBoard() {
+			console.log("Resetting the board");
+			
+			// Clear existing tetrominos
+			while (tetrominoGroup.children.length > 0) {
+				tetrominoGroup.remove(tetrominoGroup.children[0]);
+			}
+			
+			// Clear ghost tetrominos
+			while (ghostGroup.children.length > 0) {
+				ghostGroup.remove(ghostGroup.children[0]);
+			}
+			
+			// Reset state
+			activeTetromino = null;
+			tetrominoVelocity = { x: 0, y: 0, z: 0 };
+			tetrominoRotation = { x: 0, y: 0, z: 0 };
+			tetrominoPositionBeforePhysics = null;
+			isFastDrop = false;
+			isRespawning = false;
+			clearTimeout(respawnTimer);
+		}
+		
+		function animate() {
+			requestAnimationFrame(animate);
+			
+			// Update tetromino physics
+			updatePhysics();
+			
+			// Update dissolving tetrominos
+			updateDissolvingTetrominos();
+			
+			// Update controls if needed
+			if (controls) controls.update();
+			
+			// Render the scene
+			renderer.render(scene, camera);
+		}
+	</script>
+</body>
+</html> 

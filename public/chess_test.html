@@ -1,0 +1,809 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Chesstris Chess Pieces Test</title>
+	<style>
+		body {
+			margin: 0;
+			padding: 0;
+			overflow: hidden;
+			background-color: #121212;
+			color: #ffffff;
+			font-family: Arial, sans-serif;
+		}
+		
+		#game-container {
+			width: 100vw;
+			height: 100vh;
+			position: relative;
+		}
+		
+		#debug-panel {
+			position: absolute;
+			top: 10px;
+			right: 10px;
+			background-color: rgba(0, 0, 0, 0.8);
+			padding: 10px;
+			border-radius: 5px;
+			z-index: 1000;
+			max-width: 300px;
+			box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+		}
+		
+		#debug-panel button {
+			margin: 5px;
+			padding: 8px 12px;
+			background-color: #2196F3;
+			color: white;
+			border: none;
+			border-radius: 3px;
+			cursor: pointer;
+			font-size: 12px;
+		}
+		
+		#debug-panel button:hover {
+			background-color: #0b7dda;
+		}
+		
+		/* Highlight active buttons */
+		#debug-panel button.active {
+			background-color: #4CAF50;
+		}
+		
+		/* Make room for any debug controls that might be added by the renderer */
+		#default-debug-controls {
+			position: absolute;
+			top: 10px;
+			left: 10px;
+			background-color: rgba(0, 0, 0, 0.7);
+			padding: 10px;
+			border-radius: 5px;
+			z-index: 999;
+		}
+		
+		#default-debug-controls button {
+			margin: 5px;
+			padding: 8px 12px;
+			background-color: #9C27B0;
+			color: white;
+			border: none;
+			border-radius: 3px;
+			cursor: pointer;
+		}
+		
+		.piece-selector {
+			display: grid;
+			grid-template-columns: repeat(3, 1fr);
+			gap: 5px;
+			margin-top: 10px;
+		}
+		
+		.piece-selector button {
+			text-transform: capitalize;
+		}
+		
+		#camera-info {
+			margin-top: 10px;
+			font-size: 12px;
+			color: #BBDEFB;
+		}
+		
+		#loading-message {
+			position: absolute;
+			top: 50%;
+			left: 50%;
+			transform: translate(-50%, -50%);
+			font-size: 24px;
+			text-align: center;
+			background-color: rgba(0, 0, 0, 0.7);
+			padding: 20px;
+			border-radius: 10px;
+			z-index: 1200;
+		}
+		
+		#log-panel {
+			position: absolute;
+			bottom: 10px;
+			left: 10px;
+			width: 300px;
+			max-height: 200px;
+			overflow-y: auto;
+			background-color: rgba(0, 0, 0, 0.7);
+			padding: 10px;
+			border-radius: 5px;
+			font-family: monospace;
+			font-size: 12px;
+			z-index: 998;
+		}
+		
+		.error-message {
+			background-color: rgba(255, 0, 0, 0.2);
+			border: 1px solid #ff5252;
+			padding: 10px;
+			margin: 20px;
+			border-radius: 5px;
+		}
+		
+		/* Status message for actions */
+		#status-message {
+			position: absolute;
+			bottom: 20px;
+			left: 50%;
+			transform: translateX(-50%);
+			background-color: rgba(0, 0, 0, 0.7);
+			color: #4CAF50;
+			padding: 10px 20px;
+			border-radius: 20px;
+			font-size: 16px;
+			opacity: 0;
+			transition: opacity 0.3s ease;
+			z-index: 1100;
+		}
+		
+		#status-message.visible {
+			opacity: 1;
+		}
+		
+		/* Highlight active chess piece */
+		.piece-selector button.active {
+			background-color: #FF9800;
+			box-shadow: 0 0 5px #FF9800;
+		}
+	</style>
+	
+	<!-- Import THREE.js directly from CDN -->
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+	
+	<!-- Import OrbitControls from CDN -->
+	<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+	<div id="game-container">
+		<div id="loading-message">Loading Chess Pieces Test...</div>
+	</div>
+	
+	<div id="debug-panel">
+		<h3>Chess Pieces Test</h3>
+		<div>
+			<button id="btn-reset-camera">Reset Camera</button>
+			<button id="btn-top-view">Top View</button>
+			<button id="btn-side-view">Side View</button>
+		</div>
+		
+		<h4>Add Chess Piece</h4>
+		<div class="piece-selector">
+			<button data-piece="pawn">Pawn</button>
+			<button data-piece="rook">Rook</button>
+			<button data-piece="knight">Knight</button>
+			<button data-piece="bishop">Bishop</button>
+			<button data-piece="queen">Queen</button>
+			<button data-piece="king">King</button>
+		</div>
+		
+		<h4>Board Controls</h4>
+		<div>
+			<button id="btn-create-board">Create Test Board</button>
+			<button id="btn-clear-board">Clear Board</button>
+			<button id="btn-add-tetris">Add Tetris Piece</button>
+		</div>
+		
+		<div id="camera-info">Camera Position: -</div>
+	</div>
+	
+	<!-- Status message for showing action feedback -->
+	<div id="status-message"></div>
+	
+	<!-- Log panel for debug messages -->
+	<div id="log-panel"></div>
+	
+	<!-- Basic initialization script - not a module -->
+	<script>
+		// Set up basic logging
+		const logPanel = document.getElementById('log-panel');
+		const statusMessage = document.getElementById('status-message');
+		const nativeConsoleLog = console.log;
+		const nativeConsoleError = console.error;
+		const nativeConsoleWarn = console.warn;
+		
+		// Show temporary status message
+		function showStatus(message, type = 'success') {
+			if (!statusMessage) return;
+			
+			statusMessage.textContent = message;
+			statusMessage.style.color = type === 'error' ? '#ff5252' : 
+				type === 'warning' ? '#ffab40' : '#4CAF50';
+			
+			statusMessage.classList.add('visible');
+			
+			// Hide after 3 seconds
+			setTimeout(() => {
+				statusMessage.classList.remove('visible');
+			}, 3000);
+		}
+		
+		// Override console methods - prevent recursion by using native methods directly
+		console.log = function(...args) {
+			const message = args.join(' ');
+			addLogEntry(message);
+			nativeConsoleLog.apply(console, args);
+		};
+		
+		console.error = function(...args) {
+			const message = args.join(' ');
+			addLogEntry(message, 'error');
+			nativeConsoleError.apply(console, args);
+		};
+		
+		console.warn = function(...args) {
+			const message = args.join(' ');
+			addLogEntry(message, 'warning');
+			nativeConsoleWarn.apply(console, args);
+		};
+		
+		// Custom logger that doesn't create circular references
+		function addLogEntry(message, type = 'info') {
+			try {
+				if (!logPanel) return;
+				
+				const logEntry = document.createElement('div');
+				logEntry.textContent = message;
+				
+				switch (type) {
+					case 'error':
+						logEntry.style.color = '#ff5252';
+						break;
+					case 'warning':
+						logEntry.style.color = '#ffab40';
+						break;
+					case 'success':
+						logEntry.style.color = '#69f0ae';
+						break;
+					default:
+						logEntry.style.color = '#ffffff';
+				}
+				
+				logPanel.appendChild(logEntry);
+				logPanel.scrollTop = logPanel.scrollHeight;
+			} catch (e) {
+				// Use native console to avoid recursion
+				nativeConsoleError('Error in logger:', e);
+			}
+		}
+		
+		// Verify THREE.js is globally available
+		console.log('THREE.js global availability check: ' + (window.THREE ? 'Available ✓' : 'Not available ✗'));
+		
+		// Add the createPseudoRandomGenerator function directly to THREE.Math if missing
+		if (window.THREE && !window.THREE.Math.createPseudoRandomGenerator) {
+			window.THREE.Math.createPseudoRandomGenerator = function(initialSeed = 1) {
+				let seed = initialSeed || Math.random() * 10000;
+				return function(multiplier = 1, offset = 0) {
+					seed = (seed * 9301 + 49297) % 233280;
+					return (seed / 233280) * multiplier + offset;
+				};
+			};
+			console.log('Added createPseudoRandomGenerator to THREE.Math');
+		}
+		
+		// Create a lighter sky color skybox
+		function createLightSkybox() {
+			try {
+				// Create a large sphere for the sky
+				const skyGeometry = new THREE.SphereGeometry(500, 32, 32);
+				
+				// The material will use vertex colors
+				const skyMaterial = new THREE.MeshBasicMaterial({
+					side: THREE.BackSide, // Draw on the inside of the sphere
+					vertexColors: true
+				});
+				
+				const skyMesh = new THREE.Mesh(skyGeometry, skyMaterial);
+				
+				// Use lighter sky colors for gradient
+				const skyColors = [
+					new THREE.Color(0x8eb8e5), // Light blue at top
+					new THREE.Color(0xc6e4ff), // Very light blue at middle
+					new THREE.Color(0xebf5ff)  // Almost white at horizon
+				];
+				
+				// Apply vertex colors for gradient effect
+				const positions = skyGeometry.attributes.position;
+				const colors = [];
+				
+				for (let i = 0; i < positions.count; i++) {
+					const y = positions.getY(i);
+					const normalized = (y + 500) / 1000; // Normalize position between 0 and 1
+					
+					// Choose color based on height
+					let color;
+					if (normalized > 0.7) {
+						// Top - light blue
+						color = skyColors[0];
+					} else if (normalized > 0.4) {
+						// Middle - lighter blue
+						const t = (normalized - 0.4) / 0.3;
+						color = skyColors[0].clone().lerp(skyColors[1], 1 - t);
+					} else {
+						// Bottom - almost white
+						const t = normalized / 0.4;
+						color = skyColors[1].clone().lerp(skyColors[2], 1 - t);
+					}
+					
+					colors.push(color.r, color.g, color.b);
+				}
+				
+				// Add colors to the geometry
+				skyGeometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+				
+				return skyMesh;
+			} catch (error) {
+				console.error('Error creating custom skybox:', error);
+				return null;
+			}
+		}
+		
+		// Expose our custom skybox function globally
+		window.createLightSkybox = createLightSkybox;
+		
+		// Move any auto-generated debug controls to a specific container
+		function organizeDebugControls() {
+			// Create a container for any auto-generated debug controls
+			const debugContainer = document.createElement('div');
+			debugContainer.id = 'default-debug-controls';
+			document.body.appendChild(debugContainer);
+			
+			// Find and move any controls that might have been added automatically
+			const autoDebugControls = document.querySelectorAll('.dg.ac');
+			autoDebugControls.forEach(control => {
+				debugContainer.appendChild(control);
+			});
+		}
+		
+		// Allow only one active button in a group
+		function setupButtonGroups() {
+			const groups = document.querySelectorAll('.piece-selector');
+			groups.forEach(group => {
+				const buttons = group.querySelectorAll('button');
+				buttons.forEach(button => {
+					button.addEventListener('click', () => {
+						// Remove active class from all buttons in the group
+						buttons.forEach(b => b.classList.remove('active'));
+						// Add active class to clicked button
+						button.classList.add('active');
+					});
+				});
+			});
+		}
+		
+		// Run these after a short delay to ensure everything is loaded
+		setTimeout(organizeDebugControls, 1000);
+		setTimeout(setupButtonGroups, 500);
+		
+		// CUSTOM SETUP: Force-disable any test GameState to prevent the hardcoded board
+		setTimeout(() => {
+			window.GameState = null; // Will be set up in our custom code
+		}, 0);
+	</script>
+	
+	<script type="module">
+		// Wait for DOM to load
+		document.addEventListener('DOMContentLoaded', async () => {
+			try {
+				// Initialize test
+				console.log('Initializing chess pieces test...');
+				
+				// Force clear any previously defined GameState (prevents test module from being used)
+				window.GameState = null;
+				
+				// Create a basic test game state - THIS IS OUR CUSTOM BOARD, NOT THE HARDCODED ONE
+				const boardSize = 8;
+				const testBoard = Array(boardSize).fill(null).map(() => Array(boardSize).fill(null));
+				const testPlayerId = 'player-test';
+				
+				// Create checker pattern board for testing
+				for (let z = 0; z < boardSize; z++) {
+					for (let x = 0; x < boardSize; x++) {
+						testBoard[z][x] = {
+							type: 'cell',
+							active: true,
+							playerId: testPlayerId,
+							isHomeZone: (z < 2),  // First two rows are home zone
+							color: ((x + z) % 2 === 0) ? 0xFFFFFF : 0x000000 // Checkerboard pattern
+						};
+					}
+				}
+				
+				// Create test game state
+				const testGameState = {
+					board: testBoard,
+					players: {
+						[testPlayerId]: {
+							id: testPlayerId,
+							username: 'Test Player',
+							color: 0x42A5F5,
+							score: 0
+						}
+					},
+					cellSize: 1,
+					fallingPiece: null
+				};
+				
+				// EXPLICITLY Create stub GameState object - This overrides the test module
+				window.GameState = {
+					initGameState: () => testGameState,
+					getGameState: () => testGameState,
+					updateGameState: (newState) => {
+						Object.assign(testGameState, newState);
+						return testGameState;
+					}
+				};
+				
+				// EXPLICITLY Create stub SessionManager - For current player detection
+				window.SessionManager = {
+					initSession: () => {
+						return {
+							playerId: testPlayerId,
+							username: 'Test Player',
+							lastSaved: Date.now()
+						};
+					},
+					getSessionData: () => {
+						return {
+							playerId: testPlayerId,
+							username: 'Test Player',
+							lastSaved: Date.now()
+						};
+					}
+				};
+				
+				// Define constants
+				window.Constants = {
+					DEBUG_LOGGING: true,
+					CELL_SIZE: 1,
+					BOARD_SIZE: boardSize
+				};
+				
+				console.log('Loading renderer modules...');
+				
+				// Import compatibility layer
+				try {
+					// Add the missing function to utils.js module and window globally
+					window.createPseudoRandomGenerator = function(initialSeed = 1) {
+						let seed = initialSeed || Math.random() * 10000;
+						return function(multiplier = 1, offset = 0) {
+							seed = (seed * 9301 + 49297) % 233280;
+							return (seed / 233280) * multiplier + offset;
+						};
+					};
+					
+					const compatModule = await import('./js/rendering/compatibility.js');
+					console.log('Compatibility module loaded successfully', 'success');
+					
+					// Initialize compatibility layer
+					await compatModule.initCompatibilityLayer();
+					console.log('Compatibility layer initialized', 'success');
+					
+					// Import other modules we might need
+					const renderingModule = await import('./js/rendering/index.js');
+					
+					// Wait for THREE.js to be fully initialized
+					setTimeout(() => {
+						// Add our custom light skybox to the scene if it exists
+						if (window.scene && window.createLightSkybox) {
+							try {
+								// Remove any existing skybox (usually has a large radius)
+								const existingSkyboxes = [];
+								window.scene.traverse((object) => {
+									// Find large spheres which are likely skyboxes
+									if (object.geometry && 
+										object.geometry.type === 'SphereGeometry' &&
+										object.geometry.parameters.radius > 400) {
+										existingSkyboxes.push(object);
+									}
+								});
+								
+								// Remove them from the scene
+								existingSkyboxes.forEach(skybox => {
+									window.scene.remove(skybox);
+								});
+								
+								// Add our custom light skybox
+								const lightSkybox = window.createLightSkybox();
+								if (lightSkybox) {
+									window.scene.add(lightSkybox);
+									console.log('Added custom light skybox', 'success');
+								}
+							} catch (e) {
+								console.error('Error adding custom skybox:', e);
+							}
+						}
+					}, 1000); // Wait 1 second after initialization
+					
+					// *** SPECIAL FLAG - DISABLE THE TEST MODULE ***
+					// This will override any test.js behavior
+					window.__DISABLE_TEST_MODULE = true;
+					
+					// Initialize the renderer with our options
+					const rendererInitialized = await renderingModule.init(document.getElementById('game-container'), {
+						debug: true,
+						enableSkybox: true, // We'll replace it with our light one after initialization
+						enableClouds: true,
+						// Prevent using built-in test board by specifying playerId and useTestMode: false
+						playerId: testPlayerId,
+						useTestMode: false
+					});
+					
+					// CRITICAL: Custom direct button handler setup - will apply even if other handlers fail
+					function setupButtonsDirectly() {
+						try {
+							// Setup piece buttons
+							document.querySelectorAll('.piece-selector button').forEach(button => {
+								// Force remove any existing click events
+								const newBtn = button.cloneNode(true);
+								button.parentNode.replaceChild(newBtn, button);
+								
+								newBtn.addEventListener('click', (e) => {
+									const pieceType = newBtn.getAttribute('data-piece');
+									showStatus(`Adding ${pieceType}...`);
+									addPiece(pieceType);
+								});
+							});
+							
+							// Camera controls
+							const resetBtn = document.getElementById('btn-reset-camera');
+							const newResetBtn = resetBtn.cloneNode(true);
+							resetBtn.parentNode.replaceChild(newResetBtn, resetBtn);
+							newResetBtn.addEventListener('click', () => {
+								if (typeof window.resetCamera === 'function') {
+									window.resetCamera();
+									showStatus('Camera reset');
+								}
+							});
+							
+							const topBtn = document.getElementById('btn-top-view');
+							const newTopBtn = topBtn.cloneNode(true);
+							topBtn.parentNode.replaceChild(newTopBtn, topBtn);
+							newTopBtn.addEventListener('click', () => {
+								if (typeof window.topView === 'function') {
+									window.topView();
+									showStatus('Top view');
+								}
+							});
+							
+							const sideBtn = document.getElementById('btn-side-view');
+							const newSideBtn = sideBtn.cloneNode(true);
+							sideBtn.parentNode.replaceChild(newSideBtn, sideBtn);
+							newSideBtn.addEventListener('click', () => {
+								if (typeof window.sideView === 'function') {
+									window.sideView();
+									showStatus('Side view');
+								}
+							});
+							
+							// Board controls
+							const createBtn = document.getElementById('btn-create-board');
+							const newCreateBtn = createBtn.cloneNode(true);
+							createBtn.parentNode.replaceChild(newCreateBtn, createBtn);
+							newCreateBtn.addEventListener('click', () => {
+								createBoard();
+								showStatus('Board created');
+							});
+							
+							const clearBtn = document.getElementById('btn-clear-board');
+							const newClearBtn = clearBtn.cloneNode(true);
+							clearBtn.parentNode.replaceChild(newClearBtn, clearBtn);
+							newClearBtn.addEventListener('click', () => {
+								clearBoard();
+								showStatus('Board cleared');
+							});
+							
+							const tetrisBtn = document.getElementById('btn-add-tetris');
+							const newTetrisBtn = tetrisBtn.cloneNode(true);
+							tetrisBtn.parentNode.replaceChild(newTetrisBtn, tetrisBtn);
+							newTetrisBtn.addEventListener('click', () => {
+								addTetrisPiece();
+								showStatus('Tetris piece added');
+							});
+							
+							console.log('Direct button handlers set up successfully');
+						} catch (e) {
+							console.error('Error setting up direct button handlers:', e);
+						}
+					}
+					
+					// Functions to handle button actions
+					function addPiece(type) {
+						try {
+							if (typeof window.addChessPiece !== 'function') {
+								showStatus('addChessPiece function not available', 'error');
+								return;
+							}
+							
+							// Create piece data
+							const piece = {
+								type: type,
+								owner: testPlayerId,
+								id: `piece-${type}-${Date.now()}`
+							};
+							
+							// Add to board state
+							testBoard[4][4] = {
+								type: 'cell',
+								active: true,
+								playerId: testPlayerId,
+								chessPiece: piece,
+								color: ((4 + 4) % 2 === 0) ? 0xFFFFFF : 0x000000
+							};
+							
+							// Call directly with full parameters
+							window.addChessPiece(piece, testPlayerId, 4, 4);
+							
+							// Update board to make sure the piece is visible
+							window.updateBoard(testGameState);
+							
+							showStatus(`${type.charAt(0).toUpperCase() + type.slice(1)} added`);
+						} catch (e) {
+							showStatus(`Error adding piece: ${e.message}`, 'error');
+						}
+					}
+					
+					function createBoard() {
+						try {
+							// Reset board state
+							for (let z = 0; z < boardSize; z++) {
+								for (let x = 0; x < boardSize; x++) {
+									testBoard[z][x] = {
+										type: 'cell',
+										active: true,
+										playerId: testPlayerId,
+										isHomeZone: (z < 2),
+										color: ((x + z) % 2 === 0) ? 0xFFFFFF : 0x000000
+									};
+								}
+							}
+							
+							if (typeof window.updateBoard === 'function') {
+								window.updateBoard(testGameState);
+							}
+						} catch (e) {
+							showStatus(`Error creating board: ${e.message}`, 'error');
+						}
+					}
+					
+					function clearBoard() {
+						try {
+							// Clear the board
+							for (let z = 0; z < boardSize; z++) {
+								for (let x = 0; x < boardSize; x++) {
+									testBoard[z][x] = {
+										type: 'cell',
+										active: false,
+										playerId: testPlayerId,
+										chessPiece: null
+									};
+								}
+							}
+							
+							if (typeof window.updateBoard === 'function') {
+								window.updateBoard(testGameState);
+							}
+						} catch (e) {
+							showStatus(`Error clearing board: ${e.message}`, 'error');
+						}
+					}
+					
+					function addTetrisPiece() {
+						try {
+							if (typeof window.updateFallingTetromino !== 'function') {
+								showStatus('updateFallingTetromino not available', 'error');
+								return;
+							}
+							
+							// Create a tetris piece
+							const tetrominoTypes = ['I', 'O', 'T', 'J', 'L', 'S', 'Z'];
+							const randomType = tetrominoTypes[Math.floor(Math.random() * tetrominoTypes.length)];
+							
+							const tetromino = {
+								type: randomType,
+								position: { x: 4, z: 4, y: 6 },
+								rotation: Math.floor(Math.random() * 4) * 90
+							};
+							
+							// Update game state
+							testGameState.fallingPiece = tetromino;
+							
+							// Update visual
+							window.updateFallingTetromino(tetromino);
+						} catch (e) {
+							showStatus(`Error adding tetris piece: ${e.message}`, 'error');
+						}
+					}
+					
+					if (rendererInitialized) {
+						console.log('Renderer initialized successfully', 'success');
+						document.getElementById('loading-message').style.display = 'none';
+						
+						// Force apply our board immediately
+						if (typeof window.updateBoard === 'function') {
+							window.updateBoard(testGameState);
+							console.log('Applied custom board', 'success');
+						} else {
+							console.error('window.updateBoard function not available!');
+						}
+						
+						// Set up button handlers directly
+						setTimeout(setupButtonsDirectly, 500); // Delay to ensure everything is loaded
+						
+						// Update camera position display
+						setInterval(() => {
+							try {
+								if (window.camera) {
+									const pos = window.camera.position;
+									document.getElementById('camera-info').textContent = 
+										`Camera: X:${pos.x.toFixed(1)} Y:${pos.y.toFixed(1)} Z:${pos.z.toFixed(1)}`;
+								}
+							} catch (e) {
+								// Silent error
+							}
+						}, 500);
+						
+						// Ensure debug controls are organized properly
+						setTimeout(organizeDebugControls, 500);
+						setTimeout(organizeDebugControls, 1500);
+						
+						// Force update board one more time after a delay
+						setTimeout(() => {
+							try {
+								if (typeof window.updateBoard === 'function') {
+									window.updateBoard(testGameState);
+									console.log('Reapplied custom board after delay', 'success');
+								}
+							} catch (e) {
+								console.error('Error updating board after delay:', e);
+							}
+						}, 2000);
+						
+					} else {
+						console.error('Failed to initialize renderer');
+						showErrorMessage('Renderer initialization failed. Check console for details.');
+					}
+				} catch (moduleError) {
+					console.error(`Error loading modules: ${moduleError.message}`);
+					console.error('Stack trace:', moduleError.stack);
+					showErrorMessage(`Module error: ${moduleError.message}`);
+				}
+				
+			} catch (error) {
+				console.error(`Error during initialization: ${error.message}`);
+				console.error('Full error:', error);
+				showErrorMessage(`Initialization error: ${error.message}`);
+			}
+		});
+		
+		// Helper function to show error messages in the UI
+		function showErrorMessage(message) {
+			const container = document.getElementById('game-container');
+			const loadingMessage = document.getElementById('loading-message');
+			
+			// Hide loading message
+			if (loadingMessage) {
+				loadingMessage.style.display = 'none';
+			}
+			
+			// Create error message
+			const errorElement = document.createElement('div');
+			errorElement.className = 'error-message';
+			errorElement.innerHTML = `
+				<h3>Error</h3>
+				<p>${message}</p>
+				<p>Check the browser console for more details.</p>
+			`;
+			
+			// Add to container
+			container.appendChild(errorElement);
+		}
+	</script>
+</body>
+</html> 

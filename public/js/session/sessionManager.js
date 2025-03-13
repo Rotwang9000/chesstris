@@ -1,126 +1,104 @@
 /**
  * Session Manager Module
- * Manages user sessions
+ * Handles user sessions and authentication
  */
 
-// Session storage key
-const SESSION_STORAGE_KEY = 'chesstris_session';
-
-// Default session data
-const DEFAULT_SESSION = {
-	playerId: null,
-	username: null,
-	walletConnected: false,
-	walletAddress: null,
-	lastSaved: Date.now()
+// Session data
+const sessionData = {
+	userId: null,
+	username: 'Guest',
+	isAuthenticated: false,
+	preferences: {
+		theme: 'default',
+		soundEnabled: true,
+		musicEnabled: true
+	}
 };
 
 /**
- * Session Manager class
- * Manages user sessions
+ * Initialize the session
+ * @param {Object} options - Session initialization options
+ * @returns {Boolean} Success status
  */
-class SessionManagerClass {
-	/**
-	 * Initialize or load an existing session
-	 * @param {Object} sessionData - Initial session data (optional)
-	 * @returns {Object} The session data
-	 */
-	static initSession(sessionData = null) {
-		try {
-			// Try to load existing session
-			const existingSession = localStorage.getItem(SESSION_STORAGE_KEY);
-			
-			if (existingSession) {
-				const parsedSession = JSON.parse(existingSession);
-				console.log(`Loaded existing session: ${parsedSession.playerId}`);
-				return parsedSession;
-			}
-			
-			// Create new session if none exists
-			const newSession = {
-				...DEFAULT_SESSION,
-				...sessionData,
-				playerId: sessionData?.playerId || `player-${Math.random().toString(16).substring(2)}`,
-				username: sessionData?.username || `Player ${Math.floor(Math.random() * 1000)}`,
-				lastSaved: Date.now()
-			};
-			
-			// Save to localStorage
-			localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(newSession));
-			console.log(`Created new session: ${newSession.playerId}`);
-			
-			return newSession;
-		} catch (error) {
-			console.error('Error initializing session:', error);
-			return DEFAULT_SESSION;
+export function initSession(options = {}) {
+	console.log('Initializing session with options:', options);
+	
+	// Try to load session from localStorage
+	try {
+		const savedSession = localStorage.getItem('chesstris_session');
+		if (savedSession) {
+			const parsedSession = JSON.parse(savedSession);
+			Object.assign(sessionData, parsedSession);
+			console.log('Loaded session from localStorage');
 		}
+	} catch (error) {
+		console.warn('Failed to load session from localStorage:', error);
 	}
 	
-	/**
-	 * Get session data
-	 * @returns {Object} The session data
-	 */
-	static getSessionData() {
-		try {
-			// Try to load existing session
-			const existingSession = localStorage.getItem(SESSION_STORAGE_KEY);
-			
-			if (existingSession) {
-				return JSON.parse(existingSession);
-			}
-			
-			// Initialize if no session exists
-			return SessionManagerClass.initSession();
-		} catch (error) {
-			console.error('Error getting session data:', error);
-			return DEFAULT_SESSION;
-		}
-	}
+	// Override with any provided options
+	if (options.userId) sessionData.userId = options.userId;
+	if (options.username) sessionData.username = options.username;
+	if (options.isAuthenticated !== undefined) sessionData.isAuthenticated = options.isAuthenticated;
+	if (options.preferences) Object.assign(sessionData.preferences, options.preferences);
 	
-	/**
-	 * Update session data
-	 * @param {Object} newData - New session data to merge
-	 * @returns {Object} The updated session data
-	 */
-	static updateSessionData(newData) {
-		try {
-			// Get current session data
-			const currentSession = SessionManagerClass.getSessionData();
-			
-			// Merge new data
-			const updatedSession = {
-				...currentSession,
-				...newData,
-				lastSaved: Date.now()
-			};
-			
-			// Save to localStorage
-			localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(updatedSession));
-			
-			return updatedSession;
-		} catch (error) {
-			console.error('Error updating session data:', error);
-			return SessionManagerClass.getSessionData();
-		}
-	}
-	
-	/**
-	 * Clear session data
-	 * @returns {boolean} Whether the session was cleared successfully
-	 */
-	static clearSession() {
-		try {
-			localStorage.removeItem(SESSION_STORAGE_KEY);
-			return true;
-		} catch (error) {
-			console.error('Error clearing session:', error);
-			return false;
-		}
-	}
+	return true;
 }
 
-// Export the SessionManager
-export const SessionManager = SessionManagerClass;
+/**
+ * Get the current session data
+ * @returns {Object} The session data
+ */
+export function getSessionData() {
+	return { ...sessionData };
+}
 
-// Default export
-export default SessionManager; 
+/**
+ * Update the session data
+ * @param {Object} updates - Updates to apply to the session data
+ * @returns {Object} The updated session data
+ */
+export function updateSessionData(updates) {
+	Object.assign(sessionData, updates);
+	
+	// Save to localStorage
+	try {
+		localStorage.setItem('chesstris_session', JSON.stringify(sessionData));
+	} catch (error) {
+		console.warn('Failed to save session to localStorage:', error);
+	}
+	
+	return { ...sessionData };
+}
+
+/**
+ * Clear the session data
+ * @returns {Boolean} Success status
+ */
+export function clearSession() {
+	// Reset to defaults
+	sessionData.userId = null;
+	sessionData.username = 'Guest';
+	sessionData.isAuthenticated = false;
+	sessionData.preferences = {
+		theme: 'default',
+		soundEnabled: true,
+		musicEnabled: true
+	};
+	
+	// Remove from localStorage
+	try {
+		localStorage.removeItem('chesstris_session');
+	} catch (error) {
+		console.warn('Failed to remove session from localStorage:', error);
+	}
+	
+	return true;
+}
+
+// Export SessionManager object for compatibility
+export const SessionManager = {
+	initSession,
+	getSessionData,
+	updateSessionData,
+	clearSession
+}; 

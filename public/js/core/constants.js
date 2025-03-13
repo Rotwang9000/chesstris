@@ -5,10 +5,10 @@
  */
 
 // Board dimensions
-export const INITIAL_BOARD_WIDTH = 24;
-export const INITIAL_BOARD_HEIGHT = 24;
+export const INITIAL_BOARD_WIDTH = 10;
+export const INITIAL_BOARD_HEIGHT = 20;
 export const CELL_SIZE = 1;
-export const CELL_HEIGHT = 0.2;
+export const CELL_HEIGHT = 0.5;
 
 // Game settings
 export const HOME_ZONE_WIDTH = 8;
@@ -19,7 +19,7 @@ export const COOLDOWN_HARD = 5000;     // 5 seconds
 export const PAUSE_DURATION = 900000;  // 15 minutes
 
 // Tetromino properties
-export const START_Z = 10;
+export const START_Z = 20;
 export const FALL_SPEED = 0.05;
 export const TETROMINO_COLORS = {
 	I: 0x00ffff, // Cyan

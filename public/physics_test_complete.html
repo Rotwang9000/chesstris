@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Physics Test Page</title>
+	<style>
+		body {
+			margin: 0;
+			overflow: hidden;
+			font-family: Arial, sans-serif;
+		}
+		#container {
+			position: relative;
+			width: 100vw;
+			height: 100vh;
+		}
+		#uiContainer {
+			position: absolute;
+			top: 10px;
+			left: 10px;
+			z-index: 100;
+			background: rgba(0, 0, 0, 0.7);
+			color: white;
+			padding: 10px;
+			border-radius: 5px;
+		}
+		.panel {
+			margin-bottom: 10px;
+			padding: 10px;
+			background: rgba(255, 255, 255, 0.1);
+			border-radius: 3px;
+		}
+		button {
+			margin: 5px;
+			padding: 5px 10px;
+			background: #4CAF50;
+			border: none;
+			color: white;
+			cursor: pointer;
+			border-radius: 3px;
+		}
+		button:hover {
+			background: #45a049;
+		}
+		#debugPanel {
+			position: absolute;
+			top: 10px;
+			right: 10px;
+			z-index: 100;
+			background: rgba(0, 0, 0, 0.7);
+			color: white;
+			padding: 10px;
+			border-radius: 5px;
+			max-width: 300px;
+		}
+		#loadingScreen {
+			position: fixed;
+			top: 0;
+			left: 0;
+			width: 100%;
+			height: 100%;
+			background: rgba(0, 0, 0, 0.8);
+			display: flex;
+			justify-content: center;
+			align-items: center;
+			z-index: 1000;
+			color: white;
+			font-size: 24px;
+		}
+		#notification {
+			position: fixed;
+			bottom: 20px;
+			left: 50%;
+			transform: translateX(-50%);
+			background: rgba(0, 0, 0, 0.8);
+			color: white;
+			padding: 10px 20px;
+			border-radius: 5px;
+			display: none;
+			z-index: 1000;
+		}
+	</style>
+	
+	<!-- Import THREE.js from CDN -->
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+	
+	<!-- Import map for module resolution -->
+	<script type="importmap">
+	{
+		"imports": {
+			"three": "/js/lib/three.module.js",
+			"three/addons/": "/js/lib/jsm/"
+		}
+	}
+	</script>
+</head>
+<body>
+	<div id="container"></div>
+	<div id="uiContainer">
+		<div class="panel">
+			<h3>Physics Controls</h3>
+			<button id="spawnBtn">Spawn Tetromino</button>
+			<button id="resetCameraBtn">Reset Camera</button>
+			<button id="togglePhysicsBtn">Toggle Physics</button>
+		</div>
+		<div class="panel">
+			<h3>Test Functions</h3>
+			<button id="gridAlignmentTest">Test Grid Alignment</button>
+			<button id="rotationTest">Test Rotation</button>
+			<button id="dropTest">Test Drop</button>
+			<button id="multiSpawnTest">Test Multiple Spawns</button>
+			<button id="stickTest">Test Sticking</button>
+			<button id="collisionTest">Test Collisions</button>
+		</div>
+	</div>
+	<div id="debugPanel">
+		<h3>Debug Info</h3>
+		<div id="debugInfo"></div>
+	</div>
+	<div id="loadingScreen">Loading...</div>
+	<div id="notification"></div>
+
+	<script type="module">
+		// Make THREE available globally for other scripts
+		window.THREE = THREE;
+		window.OrbitControls = THREE.OrbitControls;
+		
+		// Import game modules
+		import { Constants } from './js/config/constants.js';
+		import * as TetrominoModule from './js/rendering/modules/tetromino.js';
+		import * as GameState from './js/game/gameState.js';
+
+		let scene, camera, renderer, controls;
+		let tetrominoGroup, ghostGroup;
+		let isPhysicsEnabled = true;
+		let debugInfo = document.getElementById('debugInfo');
+		let notification = document.getElementById('notification');
+
+		// Initialize GameState
+		GameState.init();
+
+		function init() {
+			// Scene setup
+			scene = new THREE.Scene();
+			scene.background = new THREE.Color(0x87CEEB); // Sky blue
+
+			// Camera setup
+			camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+			camera.position.set(10, 10, 10);
+
+			// Renderer setup
+			renderer = new THREE.WebGLRenderer({ antialias: true });
+			renderer.setSize(window.innerWidth, window.innerHeight);
+			renderer.shadowMap.enabled = true;
+			document.getElementById('container').appendChild(renderer.domElement);
+
+			// Controls setup
+			controls = new OrbitControls(camera, renderer.domElement);
+			controls.enableDamping = true;
+			controls.dampingFactor = 0.05;
+
+			// Lighting setup
+			const ambientLight = new THREE.AmbientLight(0x404040);
+			scene.add(ambientLight);
+
+			const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+			directionalLight.position.set(5, 10, 5);
+			directionalLight.castShadow = true;
+			scene.add(directionalLight);
+
+			// Ground plane
+			const groundGeometry = new THREE.PlaneGeometry(50, 50);
+			const groundMaterial = new THREE.MeshStandardMaterial({ color: 0x228B22 }); // Forest green
+			const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+			ground.rotation.x = -Math.PI / 2;
+			ground.receiveShadow = true;
+			scene.add(ground);
+
+			// Grid helper
+			const gridHelper = new THREE.GridHelper(50, 50, 0x808080, 0x808080);
+			scene.add(gridHelper);
+
+			// Initialize tetromino groups
+			tetrominoGroup = new THREE.Group();
+			ghostGroup = new THREE.Group();
+			scene.add(tetrominoGroup);
+			scene.add(ghostGroup);
+
+			// Initialize tetromino module
+			TetrominoModule.init(tetrominoGroup, ghostGroup);
+
+			// Create a simple board for testing
+			createTestBoard();
+
+			// Event listeners
+			window.addEventListener('resize', onWindowResize, false);
+			document.getElementById('spawnBtn').addEventListener('click', spawnTetromino);
+			document.getElementById('resetCameraBtn').addEventListener('click', resetCamera);
+			document.getElementById('togglePhysicsBtn').addEventListener('click', togglePhysics);
+			document.getElementById('gridAlignmentTest').addEventListener('click', testGridAlignment);
+			document.getElementById('rotationTest').addEventListener('click', testRotation);
+			document.getElementById('dropTest').addEventListener('click', testDrop);
+			document.getElementById('multiSpawnTest').addEventListener('click', testMultipleSpawns);
+			document.getElementById('stickTest').addEventListener('click', testSticking);
+			document.getElementById('collisionTest').addEventListener('click', testCollisions);
+
+			// Hide loading screen
+			document.getElementById('loadingScreen').style.display = 'none';
+
+			// Start animation loop
+			animate();
+		}
+
+		function createTestBoard() {
+			const boardSize = 10;
+			const board = [];
+			
+			for (let z = 0; z < boardSize; z++) {
+				board[z] = [];
+				for (let x = 0; x < boardSize; x++) {
+					if ((x + z) % 2 === 0) {
+						board[z][x] = {
+							active: true,
+							playerId: 1,
+							isHomeZone: x < 3 || x >= boardSize - 3
+						};
+					} else {
+						board[z][x] = {
+							active: false,
+							playerId: null,
+							isHomeZone: false
+						};
+					}
+				}
+			}
+			
+			// Set the board in GameState
+			GameState.setBoard(board);
+			
+			// Create visual representation of the board
+			for (let z = 0; z < boardSize; z++) {
+				for (let x = 0; x < boardSize; x++) {
+					if (board[z][x] && board[z][x].active) {
+						const cellGeometry = new THREE.BoxGeometry(0.9, 0.2, 0.9);
+						const cellMaterial = new THREE.MeshStandardMaterial({
+							color: board[z][x].isHomeZone ? 0xFFA500 : 0x4682B4,
+							roughness: 0.7,
+							metalness: 0.2
+						});
+						const cell = new THREE.Mesh(cellGeometry, cellMaterial);
+						cell.position.set(x, 0, z);
+						cell.receiveShadow = true;
+						scene.add(cell);
+					}
+				}
+			}
+		}
+
+		function showNotification(message, duration = 3000) {
+			notification.textContent = message;
+			notification.style.display = 'block';
+			setTimeout(() => {
+				notification.style.display = 'none';
+			}, duration);
+		}
+
+		function spawnTetromino() {
+			try {
+				const tetromino = TetrominoModule.spawnTetromino();
+				if (tetromino) {
+					showNotification('Tetromino spawned');
+				} else {
+					showNotification('Failed to spawn tetromino');
+				}
+			} catch (error) {
+				console.error('Error spawning tetromino:', error);
+				showNotification('Error spawning tetromino');
+			}
+		}
+
+		function resetCamera() {
+			camera.position.set(10, 10, 10);
+			camera.lookAt(0, 0, 0);
+			controls.target.set(0, 0, 0);
+			controls.update();
+			showNotification('Camera reset');
+		}
+
+		function togglePhysics() {
+			isPhysicsEnabled = !isPhysicsEnabled;
+			TetrominoModule.togglePhysics(isPhysicsEnabled);
+			showNotification(`Physics ${isPhysicsEnabled ? 'enabled' : 'disabled'}`);
+		}
+
+		function testGridAlignment() {
+			try {
+				const tetromino = TetrominoModule.spawnTetromino();
+				if (tetromino) {
+					tetromino.position.set(0, 10, 0);
+					showNotification('Testing grid alignment');
+				} else {
+					showNotification('Failed to spawn tetromino for grid alignment test');
+				}
+			} catch (error) {
+				console.error('Error in grid alignment test:', error);
+				showNotification('Error in grid alignment test');
+			}
+		}
+
+		function testRotation() {
+			try {
+				const tetromino = TetrominoModule.spawnTetromino();
+				if (tetromino) {
+					tetromino.position.set(0, 10, 0);
+					setTimeout(() => {
+						TetrominoModule.rotateTetromino();
+					}, 100);
+					showNotification('Testing rotation');
+				} else {
+					showNotification('Failed to spawn tetromino for rotation test');
+				}
+			} catch (error) {
+				console.error('Error in rotation test:', error);
+				showNotification('Error in rotation test');
+			}
+		}
+
+		function testDrop() {
+			try {
+				const tetromino = TetrominoModule.spawnTetromino();
+				if (tetromino) {
+					tetromino.position.set(0, 20, 0);
+					setTimeout(() => {
+						TetrominoModule.dropTetromino();
+					}, 100);
+					showNotification('Testing drop');
+				} else {
+					showNotification('Failed to spawn tetromino for drop test');
+				}
+			} catch (error) {
+				console.error('Error in drop test:', error);
+				showNotification('Error in drop test');
+			}
+		}
+
+		function testMultipleSpawns() {
+			try {
+				for (let i = 0; i < 5; i++) {
+					setTimeout(() => {
+						const tetromino = TetrominoModule.spawnTetromino();
+						if (tetromino) {
+							tetromino.position.set(
+								Math.random() * 10 - 5,
+								15 + Math.random() * 5,
+								Math.random() * 10 - 5
+							);
+						}
+					}, i * 500);
+				}
+				showNotification('Testing multiple spawns');
+			} catch (error) {
+				console.error('Error in multiple spawns test:', error);
+				showNotification('Error in multiple spawns test');
+			}
+		}
+
+		function testSticking() {
+			try {
+				const tetromino = TetrominoModule.spawnTetromino();
+				if (tetromino) {
+					tetromino.position.set(0, 2, 0);
+					showNotification('Testing sticking behaviour');
+				} else {
+					showNotification('Failed to spawn tetromino for sticking test');
+				}
+			} catch (error) {
+				console.error('Error in sticking test:', error);
+				showNotification('Error in sticking test');
+			}
+		}
+
+		function testCollisions() {
+			try {
+				const tetromino1 = TetrominoModule.spawnTetromino();
+				if (tetromino1) {
+					tetromino1.position.set(0, 2, 0);
+					
+					setTimeout(() => {
+						const tetromino2 = TetrominoModule.spawnTetromino();
+						if (tetromino2) {
+							tetromino2.position.set(0, 10, 0);
+							TetrominoModule.dropTetromino();
+						}
+					}, 500);
+					
+					showNotification('Testing collisions');
+				} else {
+					showNotification('Failed to spawn tetromino for collision test');
+				}
+			} catch (error) {
+				console.error('Error in collision test:', error);
+				showNotification('Error in collision test');
+			}
+		}
+
+		function onWindowResize() {
+			camera.aspect = window.innerWidth / window.innerHeight;
+			camera.updateProjectionMatrix();
+			renderer.setSize(window.innerWidth, window.innerHeight);
+		}
+
+		function updateDebugInfo() {
+			if (!tetrominoGroup) return;
+
+			const activeTetrominos = tetrominoGroup.children.length;
+			const physicsStatus = isPhysicsEnabled ? 'Enabled' : 'Disabled';
+			
+			debugInfo.innerHTML = `
+				Active Tetrominos: ${activeTetrominos}<br>
+				Physics: ${physicsStatus}<br>
+				FPS: ${Math.round(1000 / (performance.now() - lastFrameTime))}<br>
+				Camera Position: (${camera.position.x.toFixed(2)}, ${camera.position.y.toFixed(2)}, ${camera.position.z.toFixed(2)})
+			`;
+		}
+
+		let lastFrameTime = performance.now();
+		function animate() {
+			requestAnimationFrame(animate);
+			
+			const currentTime = performance.now();
+			const deltaTime = (currentTime - lastFrameTime) / 1000;
+			lastFrameTime = currentTime;
+
+			if (isPhysicsEnabled) {
+				TetrominoModule.update(deltaTime);
+			}
+
+			controls.update();
+			updateDebugInfo();
+			renderer.render(scene, camera);
+		}
+
+		// Cleanup on unload
+		window.addEventListener('unload', () => {
+			if (scene) scene.dispose();
+			if (renderer) renderer.dispose();
+			if (controls) controls.dispose();
+		});
+
+		// Start the application
+		init();
+	</script>
+</body>
+</html> 

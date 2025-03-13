@@ -1,330 +1,394 @@
 /**
- * Game Manager Module
+ * Game Manager
  * 
- * Handles the overall game flow, including game initialization,
- * game loop, scoring, and game state management.
+ * Handles the core game logic, state management, and game loop.
  */
 
-import { v4 as uuidv4 } from '../utils/uuid.js';
-import * as GameState from './gameState.js';
 import * as PlayerManager from './playerManager.js';
 import * as TetrominoManager from './tetrominoManager.js';
-import * as Constants from './constants.js';
+import * as ChessPieceManager from './chessPieceManager.js';
+import * as Network from '../utils/network.js';
+import { GAME_CONSTANTS } from './constants.js';
 
-// Game loop variables
-let gameLoopInterval = null;
-let lastUpdateTime = 0;
-let gameSpeed = 1000; // ms per tick
+// Game state
+let isInitialized = false;
+let isRunning = false;
 let isPaused = false;
-let gameId = null;
+let isGameOver = false;
+let winner = null;
+let lastUpdateTime = 0;
+let lastNetworkUpdate = 0;
+let isOfflineMode = false;
+let _homeZoneInitialized = false;
+
+// Game configuration
+let config = {
+	playerId: null,
+	gameId: null,
+	offline: false,
+	difficulty: 'normal',
+	boardWidth: GAME_CONSTANTS.BOARD_WIDTH,
+	boardHeight: GAME_CONSTANTS.BOARD_HEIGHT
+};
 
 /**
- * Initialize a new game
- * @param {Object} options - Game options
- * @returns {Object} The initialized game state
+ * Initialize the game
+ * @param {Object} options - Game initialization options
+ * @returns {Promise<void>}
  */
-export function initGame(options = {}) {
-	// Clear any existing game loop
-	if (gameLoopInterval) {
-		clearInterval(gameLoopInterval);
+export async function initGame(options = {}) {
+	try {
+		console.log('Initializing game with options:', options);
+		
+		// Update config
+		config = { ...config, ...options };
+		isOfflineMode = options.offline || false;
+		
+		// Initialize managers
+		await PlayerManager.init();
+		await TetrominoManager.init();
+		await ChessPieceManager.init();
+		
+		// Initialize game state
+		isInitialized = true;
+		isRunning = false;
+		isPaused = false;
+		isGameOver = false;
+		winner = null;
+		lastUpdateTime = 0;
+		lastNetworkUpdate = 0;
+		_homeZoneInitialized = false;
+		
+		console.log('Game initialized successfully');
+	} catch (error) {
+		console.error('Error initializing game:', error);
+		throw error;
 	}
-	
-	// Generate a new game ID
-	gameId = uuidv4();
-	
-	// Initialize game state
-	const gameState = GameState.initGameState({
-		width: options.width || Constants.INITIAL_BOARD_WIDTH,
-		height: options.height || Constants.INITIAL_BOARD_HEIGHT,
-		gameId
-	});
-	
-	// Set game speed
-	gameSpeed = options.speed || 1000;
-	
-	// Reset game variables
-	isPaused = false;
-	lastUpdateTime = Date.now();
-	
-	// Spawn the first tetromino
-	TetrominoManager.spawnTetromino();
-	
-	// Start the game loop
-	startGameLoop();
-	
-	return gameState;
 }
 
 /**
- * Start the game loop
+ * Start the game
+ * @param {string} gameId - Optional game ID to join
+ * @returns {Promise<boolean>}
  */
-function startGameLoop() {
-	if (gameLoopInterval) {
-		clearInterval(gameLoopInterval);
-	}
-	
-	gameLoopInterval = setInterval(() => {
-		if (!isPaused) {
-			update();
+export async function startGame(gameId = null) {
+	try {
+		console.log('Starting game...');
+		
+		if (!isInitialized) {
+			throw new Error('Game not initialized');
 		}
-	}, 100); // Run at 10 FPS, but only update based on game speed
+		
+		// Update game ID if provided
+		if (gameId) {
+			config.gameId = gameId;
+		}
+		
+		// Start game loop
+		isRunning = true;
+		isPaused = false;
+		lastUpdateTime = performance.now();
+		
+		// Initialize home zones if needed
+		if (!_homeZoneInitialized) {
+			await initHomeZones();
+		}
+		
+		console.log('Game started successfully');
+		return true;
+	} catch (error) {
+		console.error('Error starting game:', error);
+		throw error;
+	}
 }
 
 /**
  * Update the game state
+ * @param {number} timestamp - Current timestamp
  */
-function update() {
-	const currentTime = Date.now();
-	const deltaTime = currentTime - lastUpdateTime;
-	
-	// Only move the tetromino down if enough time has passed
-	if (deltaTime >= gameSpeed) {
-		// Move the tetromino down
-		TetrominoManager.moveTetromino('down');
-		
-		// Degrade home zones
-		const gameState = GameState.getGameState();
-		if (currentTime - gameState.lastDegradation >= Constants.DEGRADATION_INTERVAL) {
-			GameState.degradeHomeZones();
-			gameState.lastDegradation = currentTime;
+export function update(timestamp) {
+	try {
+		if (!isInitialized) {
+			console.warn('Game not initialized, cannot update');
+			return;
 		}
 		
-		// Take a snapshot of the game state for replay
-		takeGameStateSnapshot();
+		if (!isRunning || isPaused) {
+			return;
+		}
 		
-		// Reset the timer
-		lastUpdateTime = currentTime;
-	}
-	
-	// Check for game over
-	if (TetrominoManager.isGameOver()) {
-		endGame();
+		// Calculate delta time
+		const deltaTime = timestamp - lastUpdateTime;
+		lastUpdateTime = timestamp;
+		
+		// Update game logic
+		TetrominoManager.update(deltaTime);
+		ChessPieceManager.update(deltaTime);
+		
+		// Update home zones
+		updateHomeZones();
+		
+		// Update player scores in offline mode
+		if (isOfflineMode) {
+			updateOfflineScores();
+		}
+		
+		// Render the game
+		render();
+		
+		// Emit game state update if online
+		if (!isOfflineMode && timestamp - lastNetworkUpdate > 1000) {
+			emitGameStateUpdate();
+			lastNetworkUpdate = timestamp;
+		}
+	} catch (error) {
+		console.error('Error in game update:', error);
 	}
 }
 
 /**
- * Take a snapshot of the game state for replay
+ * Render the game
  */
-function takeGameStateSnapshot() {
-	const gameState = GameState.getGameState();
-	const currentTime = Date.now();
-	
-	// Only take a snapshot every 5 seconds
-	if (!gameState.lastSnapshot || currentTime - gameState.lastSnapshot >= 5000) {
-		// Create a simplified snapshot of the game state
-		const snapshot = {
-			timestamp: currentTime,
-			board: { ...gameState.board },
-			players: { ...gameState.players },
-			fallingPiece: gameState.fallingPiece ? { ...gameState.fallingPiece } : null
-		};
+function render() {
+	try {
+		// Update UI elements
+		updateScoreDisplay();
+		updateResourceDisplay();
 		
-		// Store the snapshot (in a real implementation, this would be sent to the server)
-		// For now, we'll just log it
-		console.log('Game state snapshot taken', snapshot);
+		// Update debug panel if it exists
+		if (window.DebugPanel) {
+			window.DebugPanel.update({
+				fps: calculateFPS(),
+				isRunning,
+				isPaused,
+				isGameOver,
+				winner,
+				playerId: config.playerId,
+				gameId: config.gameId
+			});
+		}
+	} catch (error) {
+		console.error('Error in game render:', error);
+	}
+}
+
+/**
+ * Initialize home zones
+ */
+async function initHomeZones() {
+	try {
+		if (_homeZoneInitialized) {
+			return;
+		}
 		
-		// Update the last snapshot time
-		gameState.lastSnapshot = currentTime;
+		// Initialize home zones for each player
+		const players = PlayerManager.getAllPlayers();
+		for (const player of players) {
+			await ChessPieceManager.initHomeZone(player.id);
+		}
+		
+		_homeZoneInitialized = true;
+	} catch (error) {
+		console.error('Error initializing home zones:', error);
+		throw error;
+	}
+}
+
+/**
+ * Update home zones
+ */
+function updateHomeZones() {
+	try {
+		if (!_homeZoneInitialized) {
+			return;
+		}
+		
+		// Update home zones for each player
+		const players = PlayerManager.getAllPlayers();
+		for (const player of players) {
+			ChessPieceManager.updateHomeZone(player.id);
+		}
+	} catch (error) {
+		console.error('Error updating home zones:', error);
+	}
+}
+
+/**
+ * Update offline scores
+ */
+function updateOfflineScores() {
+	try {
+		const players = PlayerManager.getAllPlayers();
+		for (const player of players) {
+			// Update score based on lines cleared and pieces captured
+			const score = calculatePlayerScore(player);
+			PlayerManager.updatePlayerScore(player.id, score);
+		}
+	} catch (error) {
+		console.error('Error updating offline scores:', error);
+	}
+}
+
+/**
+ * Calculate player score
+ * @param {Object} player - Player object
+ * @returns {number} - Calculated score
+ */
+function calculatePlayerScore(player) {
+	try {
+		let score = 0;
+		
+		// Add points for lines cleared
+		score += player.linesCleared * 100;
+		
+		// Add points for pieces captured
+		score += player.piecesCaptured * 50;
+		
+		// Cap score at 100
+		return Math.min(score, 100);
+	} catch (error) {
+		console.error('Error calculating player score:', error);
+		return 0;
+	}
+}
+
+/**
+ * Update score display
+ */
+function updateScoreDisplay() {
+	try {
+		const scoreElement = document.getElementById('score-display');
+		if (scoreElement) {
+			const player = PlayerManager.getPlayer(config.playerId);
+			if (player) {
+				scoreElement.textContent = `Score: ${player.score}`;
+			}
+		}
+	} catch (error) {
+		console.error('Error updating score display:', error);
+	}
+}
+
+/**
+ * Update resource display
+ */
+function updateResourceDisplay() {
+	try {
+		const resourceElement = document.getElementById('resource-display');
+		if (resourceElement) {
+			const player = PlayerManager.getPlayer(config.playerId);
+			if (player) {
+				resourceElement.textContent = `Resources: ${player.resources}`;
+			}
+		}
+	} catch (error) {
+		console.error('Error updating resource display:', error);
+	}
+}
+
+/**
+ * Calculate current FPS
+ * @returns {number} - Current FPS
+ */
+function calculateFPS() {
+	try {
+		const now = performance.now();
+		const delta = now - lastUpdateTime;
+		return Math.round(1000 / delta);
+	} catch (error) {
+		console.error('Error calculating FPS:', error);
+		return 0;
+	}
+}
+
+/**
+ * Emit game state update
+ */
+function emitGameStateUpdate() {
+	try {
+		if (!isOfflineMode && Network.isConnected()) {
+			const gameState = {
+				gameId: config.gameId,
+				playerId: config.playerId,
+				board: ChessPieceManager.getBoard(),
+				fallingPiece: TetrominoManager.getFallingPiece(),
+				homeZones: ChessPieceManager.getHomeZones(),
+				players: PlayerManager.getAllPlayers(),
+				isPaused,
+				isGameOver,
+				winner
+			};
+			
+			Network.emit('gameStateUpdate', gameState);
+		}
+	} catch (error) {
+		console.error('Error emitting game state update:', error);
 	}
 }
 
 /**
  * Pause the game
- * @returns {boolean} The new pause state
  */
 export function pauseGame() {
 	isPaused = true;
-	return isPaused;
 }
 
 /**
  * Resume the game
- * @returns {boolean} The new pause state
  */
 export function resumeGame() {
 	isPaused = false;
-	lastUpdateTime = Date.now(); // Reset the timer to prevent sudden drops
-	return isPaused;
 }
 
 /**
- * Toggle the game pause state
- * @returns {boolean} The new pause state
- */
-export function togglePause() {
-	return isPaused ? resumeGame() : pauseGame();
-}
-
-/**
- * End the current game
- * @returns {Object} The final game state
- */
-export function endGame() {
-	// Stop the game loop
-	if (gameLoopInterval) {
-		clearInterval(gameLoopInterval);
-		gameLoopInterval = null;
-	}
-	
-	// Set the game as paused
-	isPaused = true;
-	
-	// Get the final game state
-	const gameState = GameState.getGameState();
-	
-	// Determine the winner
-	const winner = PlayerManager.getWinner();
-	
-	// Create the final game result
-	const gameResult = {
-		gameId,
-		endTime: new Date().toISOString(),
-		winner: winner ? {
-			id: winner.id,
-			username: winner.username,
-			score: winner.score
-		} : null,
-		players: Object.values(gameState.players).map(player => ({
-			id: player.id,
-			username: player.username,
-			score: player.score,
-			remainingPieces: player.pieces.length
-		}))
-	};
-	
-	// In a real implementation, this would be sent to the server
-	console.log('Game ended', gameResult);
-	
-	return gameResult;
-}
-
-/**
- * Restart the game with the same players
- * @returns {Object} The new game state
- */
-export function restartGame() {
-	// Get the current players
-	const gameState = GameState.getGameState();
-	const players = Object.values(gameState.players);
-	
-	// Initialize a new game
-	initGame();
-	
-	// Add the players back
-	for (const player of players) {
-		PlayerManager.addPlayer(player.id, player.username, { userId: player.userId });
-	}
-	
-	return GameState.getGameState();
-}
-
-/**
- * Set the game speed
- * @param {number} speed - The new game speed in ms per tick
- * @returns {number} The new game speed
- */
-export function setGameSpeed(speed) {
-	gameSpeed = Math.max(100, Math.min(2000, speed));
-	return gameSpeed;
-}
-
-/**
- * Get the current game ID
- * @returns {string} The current game ID
- */
-export function getGameId() {
-	return gameId;
-}
-
-/**
- * Check if the game is paused
- * @returns {boolean} Whether the game is paused
+ * Check if game is paused
+ * @returns {boolean} - Whether the game is paused
  */
 export function isGamePaused() {
 	return isPaused;
 }
 
 /**
- * Get the current game speed
- * @returns {number} The current game speed in ms per tick
+ * Check if game is running
+ * @returns {boolean} - Whether the game is running
  */
-export function getGameSpeed() {
-	return gameSpeed;
+export function isGameRunning() {
+	return isRunning;
 }
 
 /**
- * Check if a player can make any valid chess moves
- * @param {string} playerId - The player ID
- * @returns {boolean} Whether the player can make any valid moves
+ * Check if game is over
+ * @returns {boolean} - Whether the game is over
  */
-export function canPlayerMakeChessMoves(playerId) {
-	const gameState = GameState.getGameState();
-	const player = gameState.players[playerId];
-	
-	if (!player) {
-		return false;
-	}
-	
-	// Check each piece to see if it has any valid moves
-	for (const piece of player.pieces) {
-		const validMoves = GameState.getValidMoves(piece, playerId);
-		if (validMoves && validMoves.length > 0) {
-			return true;
-		}
-	}
-	
-	// No valid moves found
-	return false;
+export function isGameOver() {
+	return isGameOver;
 }
 
 /**
- * Handle player action based on game state
- * @param {string} playerId - The player ID
- * @param {string} action - The action type ('move_chess_piece', 'place_tetris')
- * @param {Object} data - The action data
- * @returns {Object} The result of the action
+ * Get the winner
+ * @returns {string|null} - The winner's player ID or null
  */
-export function handlePlayerAction(playerId, action, data) {
-	// Check if the player exists
-	const player = PlayerManager.getPlayer(playerId);
-	if (!player) {
-		return { success: false, error: 'Player not found' };
-	}
-	
-	// If the player can't make chess moves, only allow tetris placement
-	const canMakeChessMoves = canPlayerMakeChessMoves(playerId);
-	
-	switch (action) {
-		case 'move_chess_piece':
-			// Only allow chess movement if the player can make valid moves
-			if (!canMakeChessMoves) {
-				return { 
-					success: false, 
-					error: 'No valid chess moves available. Place tetris pieces first to build the board.'
-				};
-			}
-			return PlayerManager.movePiece(data.pieceId, data.targetX, data.targetY, playerId);
-			
-		case 'place_tetris':
-			// Always allow tetris placement
-			return TetrominoManager.placeTetrisPiece(data.tetromino, data.x, data.y, playerId);
-			
-		default:
-			return { success: false, error: 'Invalid action' };
-	}
+export function getWinner() {
+	return winner;
 }
 
-export default {
-	initGame,
-	pauseGame,
-	resumeGame,
-	togglePause,
-	endGame,
-	restartGame,
-	setGameSpeed,
-	getGameId,
-	isGamePaused,
-	getGameSpeed,
-	canPlayerMakeChessMoves,
-	handlePlayerAction
-}; 
+/**
+ * Get the current game state
+ * @returns {Object} - The current game state
+ */
+export function getGameState() {
+	return {
+		isInitialized,
+		isRunning,
+		isPaused,
+		isGameOver,
+		winner,
+		playerId: config.playerId,
+		gameId: config.gameId,
+		offline: isOfflineMode,
+		board: ChessPieceManager.getBoard(),
+		fallingPiece: TetrominoManager.getFallingPiece(),
+		homeZones: ChessPieceManager.getHomeZones(),
+		players: PlayerManager.getAllPlayers()
+	};
+}

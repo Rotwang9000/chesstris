@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Chesstris Physics Engine Test</title>
+	<style>
+		body {
+			margin: 0;
+			padding: 0;
+			overflow: hidden;
+			background-color: #121212;
+			color: #ffffff;
+			font-family: Arial, sans-serif;
+		}
+		
+		#game-container {
+			width: 100vw;
+			height: 100vh;
+			position: relative;
+		}
+		
+		#controls-panel {
+			position: absolute;
+			top: 10px;
+			right: 10px;
+			background-color: rgba(0, 0, 0, 0.7);
+			padding: 10px;
+			border-radius: 5px;
+			z-index: 1000;
+			width: 250px;
+		}
+		
+		#controls-panel button {
+			margin: 5px;
+			padding: 8px 12px;
+			background-color: #2196F3;
+			color: white;
+			border: none;
+			border-radius: 3px;
+			cursor: pointer;
+		}
+		
+		#controls-panel button:hover {
+			background-color: #0b7dda;
+		}
+		
+		#controls-panel h3 {
+			margin-top: 0;
+			color: #90caf9;
+		}
+		
+		#status-display {
+			position: absolute;
+			bottom: 10px;
+			left: 10px;
+			background-color: rgba(0, 0, 0, 0.7);
+			padding: 5px 10px;
+			font-size: 12px;
+			border-radius: 3px;
+		}
+		
+		.control-group {
+			margin-bottom: 10px;
+			padding-bottom: 10px;
+			border-bottom: 1px solid #333;
+		}
+		
+		#keyboard-controls {
+			position: absolute;
+			bottom: 10px;
+			right: 10px;
+			background-color: rgba(0, 0, 0, 0.7);
+			padding: 10px;
+			border-radius: 5px;
+			font-size: 12px;
+		}
+		
+		.key {
+			display: inline-block;
+			background: #333;
+			padding: 2px 6px;
+			border-radius: 3px;
+			margin: 0 3px;
+			font-family: monospace;
+			border: 1px solid #555;
+		}
+		
+		#loading-indicator {
+			position: absolute;
+			top: 50%;
+			left: 50%;
+			transform: translate(-50%, -50%);
+			font-size: 24px;
+			color: #90caf9;
+		}
+	</style>
+</head>
+<body>
+	<div id="game-container">
+		<div id="loading-indicator">Loading Physics Engine Test...</div>
+		<div id="status-display">Initializing...</div>
+		<div id="keyboard-controls">
+			<h4>Keyboard Controls</h4>
+			<p>
+				<span class="key">←</span> <span class="key">→</span> Move Left/Right<br>
+				<span class="key">↑</span> <span class="key">↓</span> Move Forward/Back<br>
+				<span class="key">Space</span> Drop Faster<br>
+				<span class="key">R</span> Rotate Tetromino<br>
+				<span class="key">C</span> Change Camera
+			</p>
+		</div>
+	</div>
+	
+	<div id="controls-panel">
+		<h3>Physics Test Controls</h3>
+		
+		<div class="control-group">
+			<button id="btn-reset-camera">Reset Camera</button>
+			<button id="btn-top-view">Top View</button>
+			<button id="btn-side-view">Side View</button>
+		</div>
+		
+		<div class="control-group">
+			<button id="btn-spawn-tetromino">Spawn Tetromino</button>
+			<button id="btn-apply-force">Apply Random Force</button>
+			<button id="btn-spawn-multiple">Spawn Multiple</button>
+		</div>
+		
+		<div class="control-group">
+			<button id="btn-test-collision">Test Collision</button>
+			<button id="btn-test-sticking">Test Sticking</button>
+			<button id="btn-reset-board">Reset Board</button>
+		</div>
+	</div>
+
+	<!-- First load THREE.js globally -->
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r132/three.min.js"></script>
+	
+	<!-- Load OrbitControls -->
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r132/examples/js/controls/OrbitControls.js"></script>
+	
+	<!-- Load our physics engine modules -->
+	<script type="module">
+		import { init as initRenderer, resetCamera, topView, sideView } from './js/rendering/index.js';
+		import { TetrominoPhysics } from './js/physics/tetromino.js';
+		
+		// Ensure THREE.js is available globally
+		if (!window.THREE && typeof THREE !== 'undefined') {
+			window.THREE = THREE;
+		}
+		
+		// Store global references for UI access
+		window.resetCamera = resetCamera;
+		window.topView = topView;
+		window.sideView = sideView;
+		
+		// Initialize physics controller
+		let physicsController;
+		let renderer;
+		
+		// Initialize the test environment
+		async function initializeTest() {
+			try {
+				// Show loading message
+				updateStatus('Initializing renderer...');
+				
+				// Initialize the renderer
+				const container = document.getElementById('game-container');
+				renderer = await initRenderer(container, {
+					debug: true,
+					enableSkybox: true,
+					enableWireframes: true
+				});
+				
+				if (!renderer) {
+					throw new Error('Failed to initialize renderer');
+				}
+				
+				updateStatus('Initializing physics engine...');
+				
+				// Initialize physics controller
+				physicsController = new TetrominoPhysics(renderer);
+				await physicsController.init();
+				
+				// Set up button handlers
+				setupButtonHandlers();
+				
+				// Set up keyboard controls
+				setupKeyboardControls();
+				
+				// Hide loading indicator
+				document.getElementById('loading-indicator').style.display = 'none';
+				
+				updateStatus('Ready! Use controls to test physics.');
+				console.log('Physics test initialized successfully');
+				
+			} catch (error) {
+				updateStatus('Error: ' + error.message);
+				console.error('Initialization error:', error);
+			}
+		}
+		
+		// Set up button handlers
+		function setupButtonHandlers() {
+			// Camera controls
+			document.getElementById('btn-reset-camera').addEventListener('click', resetCamera);
+			document.getElementById('btn-top-view').addEventListener('click', topView);
+			document.getElementById('btn-side-view').addEventListener('click', sideView);
+			
+			// Tetromino controls
+			document.getElementById('btn-spawn-tetromino').addEventListener('click', () => {
+				physicsController.spawnTetromino();
+				updateStatus('Spawned new tetromino');
+			});
+			
+			document.getElementById('btn-apply-force').addEventListener('click', () => {
+				physicsController.applyRandomForce();
+				updateStatus('Applied random force');
+			});
+			
+			document.getElementById('btn-spawn-multiple').addEventListener('click', () => {
+				physicsController.spawnMultipleTetrominos(5);
+				updateStatus('Spawning multiple tetrominos');
+			});
+			
+			// Test controls
+			document.getElementById('btn-test-collision').addEventListener('click', () => {
+				physicsController.testCollision();
+				updateStatus('Testing collision physics');
+			});
+			
+			document.getElementById('btn-test-sticking').addEventListener('click', () => {
+				physicsController.testSticking();
+				updateStatus('Testing sticking behavior');
+			});
+			
+			document.getElementById('btn-reset-board').addEventListener('click', () => {
+				physicsController.resetBoard();
+				updateStatus('Board reset');
+			});
+		}
+		
+		// Set up keyboard controls
+		function setupKeyboardControls() {
+			document.addEventListener('keydown', (event) => {
+				if (!physicsController) return;
+				
+				switch (event.key) {
+					case 'ArrowLeft':
+						physicsController.move('left');
+						break;
+					case 'ArrowRight':
+						physicsController.move('right');
+						break;
+					case 'ArrowUp':
+						physicsController.move('forward');
+						break;
+					case 'ArrowDown':
+						physicsController.move('backward');
+						break;
+					case ' ': // Space
+						physicsController.dropFaster(true);
+						break;
+					case 'r':
+					case 'R':
+						physicsController.rotate();
+						break;
+					case 'c':
+					case 'C':
+						physicsController.toggleCamera();
+						break;
+				}
+			});
+			
+			document.addEventListener('keyup', (event) => {
+				if (!physicsController) return;
+				
+				if (event.key === ' ') {
+					physicsController.dropFaster(false);
+				}
+			});
+		}
+		
+		// Update status display
+		function updateStatus(message) {
+			const statusDisplay = document.getElementById('status-display');
+			statusDisplay.textContent = message;
+			console.log(message);
+		}
+		
+		// Initialize when DOM is ready
+		if (document.readyState === 'loading') {
+			document.addEventListener('DOMContentLoaded', initializeTest);
+		} else {
+			initializeTest();
+		}
+	</script>
+</body>
+</html> 

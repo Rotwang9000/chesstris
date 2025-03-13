@@ -7,8 +7,8 @@
  * - Transaction history
  */
 
-const { Connection, PublicKey, LAMPORTS_PER_SOL } = require('@solana/web3.js');
-const { v4: uuidv4 } = require('uuid');
+import { Connection, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
+import { v4 as uuidv4 } from 'uuid';
 
 // Payment configuration
 const paymentConfig = {
@@ -52,7 +52,7 @@ const solanaConnection = new Connection(paymentConfig.solana.rpcUrl, 'confirmed'
  * @param {string} packageType - Package type (e.g., 'Starter', 'Popular', 'Pro')
  * @returns {Promise<Object>} Payment intent details
  */
-async function createSolanaPaymentIntent(userId, amount, packageType) {
+export async function createSolanaPaymentIntent(userId, amount, packageType) {
 	try {
 		// Validate amount is one of the supported package amounts
 		if (!paymentConfig.solana.tokenRatios[amount]) {
@@ -108,7 +108,7 @@ async function createSolanaPaymentIntent(userId, amount, packageType) {
  * @param {string} referenceId - Reference ID from payment intent
  * @returns {Promise<Object>} Verification result
  */
-async function verifySolanaTransaction(transactionId, referenceId) {
+export async function verifySolanaTransaction(transactionId, referenceId) {
 	try {
 		// Check if we have a pending payment with this reference ID
 		if (!transactionDb.pending.has(referenceId)) {
@@ -215,7 +215,7 @@ async function verifySolanaTransaction(transactionId, referenceId) {
  * @param {number} amount - Token amount to add
  * @returns {number} New token balance
  */
-function addUserTokens(userId, amount) {
+export function addUserTokens(userId, amount) {
 	const currentBalance = userTokens.get(userId) || 0;
 	const newBalance = currentBalance + amount;
 	userTokens.set(userId, newBalance);
@@ -227,7 +227,7 @@ function addUserTokens(userId, amount) {
  * @param {string} userId - User ID
  * @returns {number} Token balance
  */
-function getUserTokenBalance(userId) {
+export function getUserTokenBalance(userId) {
 	return userTokens.get(userId) || 0;
 }
 
@@ -237,7 +237,7 @@ function getUserTokenBalance(userId) {
  * @param {string} status - Optional filter by status ('pending', 'completed', 'failed')
  * @returns {Array} Transaction history
  */
-function getUserTransactionHistory(userId, status = null) {
+export function getUserTransactionHistory(userId, status = null) {
 	const history = [];
 	
 	// Helper to filter and add transactions
@@ -275,29 +275,56 @@ function getUserTransactionHistory(userId, status = null) {
  * @param {number} usdAmount - Amount in USD
  * @returns {number} Token amount
  */
-function calculateTokenAmount(usdAmount) {
+export function calculateTokenAmount(usdAmount) {
 	// Find the closest package amount (exact match or lower)
 	const packageAmounts = Object.keys(paymentConfig.solana.tokenRatios)
 		.map(Number)
 		.sort((a, b) => a - b);
 	
-	let packageAmount = packageAmounts[0];
-	for (const amount of packageAmounts) {
-		if (amount <= usdAmount) {
-			packageAmount = amount;
-		} else {
-			break;
+	// Find the appropriate package rate to use
+	let packageAmount;
+	
+	// If the amount is greater than the largest package, use the largest package rate
+	if (usdAmount >= packageAmounts[packageAmounts.length - 1]) {
+		packageAmount = packageAmounts[packageAmounts.length - 1];
+	} 
+	// If the amount is less than the smallest package, use the smallest package rate
+	else if (usdAmount <= packageAmounts[0]) {
+		packageAmount = packageAmounts[0];
+	} 
+	// Otherwise, find the closest package without going over
+	else {
+		// Find the largest package that's smaller than or equal to the amount
+		for (let i = packageAmounts.length - 1; i >= 0; i--) {
+			if (packageAmounts[i] <= usdAmount) {
+				packageAmount = packageAmounts[i];
+				break;
+			}
+		}
+		
+		// If we're between packages (e.g., $20 is between $10 and $25),
+		// check if we should use the next higher package rate
+		const nextPackageIndex = packageAmounts.findIndex(amount => amount > usdAmount);
+		if (nextPackageIndex !== -1) {
+			const nextPackage = packageAmounts[nextPackageIndex];
+			// If we're closer to the next package, use its rate
+			if (nextPackage - usdAmount < usdAmount - packageAmount) {
+				packageAmount = nextPackage;
+			}
+		}
+	}
+	
+	// For amounts between standard packages, use the next higher package rate
+	// This ensures better value for customers
+	if (!packageAmounts.includes(usdAmount)) {
+		// Find the next higher package
+		const nextHigherPackage = packageAmounts.find(amount => amount > usdAmount);
+		if (nextHigherPackage && usdAmount > 10) {
+			// For amounts over $10, use the next higher package rate
+			packageAmount = nextHigherPackage;
 		}
 	}
 	
 	const tokensPerDollar = paymentConfig.solana.tokenRatios[packageAmount];
 	return usdAmount * tokensPerDollar;
-}
-
-module.exports = {
-	createSolanaPaymentIntent,
-	verifySolanaTransaction,
-	getUserTokenBalance,
-	getUserTransactionHistory,
-	calculateTokenAmount
-}; 
+} 

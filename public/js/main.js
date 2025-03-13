@@ -7,111 +7,109 @@
 import * as GameManager from './core/gameManager.js';
 import * as PlayerManager from './core/playerManager.js';
 import * as TetrominoManager from './core/tetrominoManager.js';
-import Renderer from './rendering/index.js'; 
+import * as InputController from './core/inputController.js';
+import { initCompatible as Renderer } from './rendering/compatibility.js'; 
 import * as Network from './utils/network.js';
 import * as Helpers from './utils/helpers.js';
 import * as UI from './ui/uiManager.js';
 import * as Marketplace from './ui/marketplaceUI.js';
 import SessionManager from './services/sessionManager.js';
 import WalletManager from './ui/walletManager.js';
+import DebugPanel from './ui/debugPanel.js';
 
 // Game state
 let isInitialized = false;
 let currentUser = null;
+let renderMode = '3d'; // Default to 3D mode
 
 /**
  * Initialize the application
  */
 async function init() {
 	try {
-		console.log('Initializing Chesstris...');
+		console.log('Initializing game...');
 		
-		// Initialize UI
-		UI.init();
-		UI.showLoadingScreen('Loading game...');
+		// Determine render mode from URL
+		determineRenderMode();
 		
-		// Initialize session management
+		// Initialize session
 		const session = SessionManager.initSession();
 		console.log('Session initialized:', session);
 		
-		// Initialize wallet UI
-		WalletManager.initWalletUI();
+		// Initialize network
+		await Network.init();
+		console.log('Network initialized');
 		
-		// Initialize marketplace UI
-		Marketplace.setupMarketplaceUI();
-		Marketplace.setupPaymentUI();
+		// Initialize game
+		await GameManager.initGame({
+			playerId: session.playerId,
+			offline: !Network.isConnected()
+		});
+		console.log('Game initialized');
 		
-		// Initialize network connection
-		try {
-			await Network.initSocket();
-			console.log('Network connection established');
-			
-			// Try to get current user from session or token
-			if (session.playerId) {
-				// Use player from session
-				currentUser = {
-					id: session.playerId,
-					name: session.username || 'Anonymous'
-				};
+		// Join the default game world if connected
+		if (Network.isConnected()) {
+			try {
+				console.log('Joining default game world...');
+				const result = await Network.joinGame('default-game', session.username || 'Anonymous');
+				console.log('Join game result:', result);
 				
-				// Initialize the game renderer
-				const gameContainer = document.getElementById('game-container');
-				if (!gameContainer) {
-					throw new Error('Game container element not found');
-				}
-				
-				const rendererSuccess = Renderer.init(gameContainer, {
-					debug: false,
-					texturePaths: {
-						board: './img/textures/board.png',
-						cell: './img/textures/cell.png',
-						homeZone: './img/textures/home_zone.png'
-					}
-				});
-				
-				if (rendererSuccess) {
-					console.log('Renderer initialized successfully');
+				if (result.success) {
+					console.log('Successfully joined default game world');
 				} else {
-					console.error('Failed to initialize renderer');
-					UI.showErrorScreen('Renderer Error', 'Failed to initialize the game renderer. Please refresh the page and try again.');
-					return;
+					console.error('Failed to join default game world:', result.message);
 				}
-				
-				// Initialize game state if GameManager.initGame exists
-				if (typeof GameManager.initGame === 'function') {
-					GameManager.initGame();
-				} else {
-					console.warn('GameManager.initGame not found, skipping game initialization');
-				}
-				
-				// Set up event listeners
-				setupEventListeners();
-				
-				// Hide loading screen
-				UI.hideLoadingScreen();
-				UI.showNotification('Welcome to Chesstris - DEBUG MODE ACTIVE', 'info');
-				
-				// Set initialized flag
-				isInitialized = true;
-				console.log('Chesstris initialized successfully');
-			} else {
-				// No session, show login UI
-				UI.hideLoadingScreen();
-				if (typeof UI.showLoginForm === 'function') {
-					UI.showLoginForm();
-				} else {
-					UI.showMainMenu();
-				}
+			} catch (error) {
+				console.error('Error joining default game world:', error);
 			}
-		} catch (error) {
-			console.error('Error connecting to server:', error);
-			UI.hideLoadingScreen();
-			UI.showErrorScreen('Connection Error', 'Unable to connect to server. Please check your internet connection and try again.');
 		}
+		
+		// Start the game
+		await GameManager.startGame();
+		console.log('Game started');
+		
+		// Initialize UI
+		UI.init();
+		console.log('UI initialized');
+		
+		// Hide loading screen
+		document.getElementById('loading-screen').style.display = 'none';
+		console.log('Loading screen hidden');
+		
+		// Initialize input controller
+		InputController.init();
+		console.log('Input controller initialized');
+		
+		// Set up event listeners
+		setupEventListeners();
+		console.log('Event listeners set up');
+		
+		// Start game loop
+		gameLoop();
+		console.log('Game loop started');
+		
+		// Set initialized flag
+		isInitialized = true;
+		console.log('Initialization complete');
 	} catch (error) {
-		console.error('Initialization error:', error);
-		UI.hideLoadingScreen();
-		UI.showErrorScreen('Initialization Error', 'Failed to initialize the application. Please refresh the page and try again.');
+		console.error('Error during initialization:', error);
+		document.getElementById('loading-error').textContent = 'Error: ' + error.message;
+		document.getElementById('loading-error').style.display = 'block';
+	}
+}
+
+/**
+ * Determine render mode from URL
+ */
+function determineRenderMode() {
+	// Check URL path for /2d or /2D
+	const path = window.location.pathname.toLowerCase();
+	if (path.endsWith('/2d')) {
+		renderMode = '2d';
+		console.log('2D render mode selected based on URL');
+	} else {
+		renderMode = '3d';
+		console.log('3D render mode selected based on URL');
 	}
 }
 
@@ -119,92 +117,74 @@ async function init() {
  * Set up event listeners
  */
 function setupEventListeners() {
-	// Network events
-	Network.on('game_update', handleGameUpdate);
-	Network.on('player_joined', handlePlayerJoined);
-	Network.on('player_left', handlePlayerLeft);
-	Network.on('game_over', handleGameOver);
-	
 	// UI events
 	UI.on('start_game', handleStartGame);
+	UI.on('create_game', handleCreateGame);
 	UI.on('join_game', handleJoinGame);
-	UI.on('leave_game', handleLeaveGame);
-	UI.on('login', handleLogin);
-	UI.on('register', handleRegister);
-	UI.on('logout', handleLogout);
+	UI.on('pause_game', handlePauseGame);
+	UI.on('resume_game', handleResumeGame);
+	UI.on('toggle_debug', toggleDebugPanel);
+	UI.on('toggle_render_mode', toggleRenderMode);
+	UI.on('toggle_sound', toggleSound);
+	UI.on('toggle_music', toggleMusic);
+	UI.on('send_chat', handleChatMessage);
+	UI.on('purchase_piece', handlePiecePurchase);
 	
-	// Keyboard events
-	document.addEventListener('keydown', handleKeyDown);
+	// Window events
+	window.addEventListener('resize', handleResize);
+	window.addEventListener('beforeunload', handleBeforeUnload);
+	
+	// Debug panel events
+	DebugPanel.on('toggle_wireframe', toggleWireframe);
+	DebugPanel.on('toggle_axes', toggleAxes);
+	DebugPanel.on('toggle_stats', toggleStats);
+	DebugPanel.on('toggle_grid', toggleGrid);
+	DebugPanel.on('toggle_shadows', toggleShadows);
+	DebugPanel.on('toggle_physics_debug', togglePhysicsDebug);
+	
+	console.log('Event listeners set up');
 }
 
 /**
- * Handle game update event
- * @param {Object} data - The game update data
+ * Handle window resize
  */
-function handleGameUpdate(data) {
-	// Update the game state
-	// This would typically sync the local game state with the server
-	console.log('Game update received:', data);
+function handleResize() {
+	// Update renderer size
+	if (typeof Renderer.resize === 'function') {
+		Renderer.resize();
+	}
 }
 
 /**
- * Handle player joined event
- * @param {Object} data - The player data
+ * Handle before unload
  */
-function handlePlayerJoined(data) {
-	console.log('Player joined:', data);
-	UI.showNotification(`${data.username} joined the game`, 'info');
+function handleBeforeUnload(event) {
+	// Save game state
+	if (isInitialized) {
+		SessionManager.saveSession();
+	}
 }
 
 /**
- * Handle player left event
- * @param {Object} data - The player data
+ * Handle start game
  */
-function handlePlayerLeft(data) {
-	console.log('Player left:', data);
-	UI.showNotification(`${data.username} left the game`, 'info');
-}
-
-/**
- * Handle game over event
- * @param {Object} data - The game over data
- */
-function handleGameOver(data) {
-	console.log('Game over:', data);
-	UI.showGameOverScreen(data);
-}
-
-/**
- * Handle start game event
- * @param {Object} options - Game options
- */
-async function handleStartGame(options) {
+async function handleStartGame(options = {}) {
 	try {
 		UI.showLoadingScreen('Starting game...');
 		
-		// Initialize the game
-		const gameState = GameManager.initGame(options);
+		// Start the game
+		const success = await GameManager.startGame();
 		
-		// If connected to the server, create a game
-		if (Network.isConnected()) {
-			try {
-				const gameData = await Network.createGame(options);
-				console.log('Game created on server:', gameData);
-			} catch (error) {
-				console.warn('Failed to create game on server:', error);
-				UI.showNotification('Playing in offline mode', 'warning');
-			}
-		}
-		
-		// Add the local player
-		const playerId = currentUser?.id || 'local_player';
-		const username = currentUser?.username || 'Player 1';
-		await PlayerManager.addPlayer(playerId, username, currentUser);
-		
-		// Show the game screen
+		if (success) {
 		UI.showGameScreen();
+			
+			// Set input mode to tetromino initially
+			InputController.setInputMode('tetromino');
 		
 		console.log('Game started successfully');
+		} else {
+			throw new Error('Failed to start game');
+		}
 	} catch (error) {
 		console.error('Failed to start game:', error);
 		UI.showErrorScreen('Failed to start game', error.message);
@@ -212,8 +192,40 @@ async function handleStartGame(options) {
 }
 
 /**
- * Handle join game event
- * @param {string} gameId - The game ID to join
+ * Handle create game
+ */
+async function handleCreateGame(options = {}) {
+	try {
+		UI.showLoadingScreen('Creating game...');
+		
+		// Create a new game
+		const gameData = await Network.createGame(options.username || SessionManager.getSession().username);
+		console.log('Game created:', gameData);
+		
+		// Initialize the game with the server data
+		await GameManager.initGame({
+			playerId: SessionManager.getSession().playerId,
+			gameId: gameData.gameId
+		});
+		
+		// Start the game
+		await GameManager.startGame(gameData.gameId);
+		
+		// Show the game screen
+		UI.showGameScreen();
+		
+		// Set input mode to tetromino initially
+		InputController.setInputMode('tetromino');
+		
+		console.log('Game created successfully');
+	} catch (error) {
+		console.error('Failed to create game:', error);
+		UI.showErrorScreen('Failed to create game', error.message);
+	}
+}
+
+/**
+ * Handle join game
  */
 async function handleJoinGame(gameId) {
 	try {
@@ -223,11 +235,14 @@ async function handleJoinGame(gameId) {
 		const gameData = await Network.joinGame(gameId);
 		console.log('Joined game:', gameData);
 		
-		// Initialize the game with the server data
-		const gameState = GameManager.initGame(gameData);
+		// Start the game with the provided game ID
+		await GameManager.startGame(gameId);
 		
 		// Show the game screen
 		UI.showGameScreen();
+		
+		// Set input mode to tetromino initially
+		InputController.setInputMode('tetromino');
 		
 		console.log('Joined game successfully');
 	} catch (error) {
@@ -237,187 +252,195 @@ async function handleJoinGame(gameId) {
 }
 
 /**
- * Handle leave game event
+ * Handle pause game
  */
-async function handleLeaveGame() {
+async function handlePauseGame() {
 	try {
-		// End the current game
-		const gameResult = GameManager.endGame();
-		
-		// If connected to the server, leave the game
-		if (Network.isConnected()) {
-			try {
-				await Network.leaveGame(GameManager.getGameId());
-			} catch (error) {
-				console.warn('Failed to leave game on server:', error);
-			}
-		}
-		
-		// Show the main menu
-		UI.showMainMenu();
-		
-		console.log('Left game successfully');
+		await GameManager.pauseGame();
+		UI.showPauseScreen();
 	} catch (error) {
-		console.error('Failed to leave game:', error);
-		UI.showNotification('Failed to leave game', 'error');
+		console.error('Failed to pause game:', error);
 	}
 }
 
 /**
- * Handle login event
- * @param {Object} credentials - Login credentials
+ * Handle resume game
  */
-async function handleLogin(credentials) {
+async function handleResumeGame() {
 	try {
-		UI.showLoadingScreen('Logging in...');
-		
-		// Login on the server
-		const userData = await Network.login(credentials.username, credentials.password);
-		
-		// Update current user
-		currentUser = userData.user;
-		UI.updateUserInfo(currentUser);
-		
-		// Show the main menu
-		UI.showMainMenu();
-		UI.showNotification('Logged in successfully', 'success');
-		
-		console.log('Logged in successfully');
+		await GameManager.resumeGame();
+		UI.hidePauseScreen();
 	} catch (error) {
-		console.error('Login failed:', error);
-		UI.hideLoadingScreen();
-		UI.showNotification('Login failed: ' + error.message, 'error');
+		console.error('Failed to resume game:', error);
 	}
 }
 
 /**
- * Handle register event
- * @param {Object} userData - User registration data
+ * Toggle debug panel
  */
-async function handleRegister(userData) {
+function toggleDebugPanel() {
+	DebugPanel.toggle();
+}
+
+/**
+ * Toggle render mode
+ */
+function toggleRenderMode() {
+	// This would require a full reload to switch between 2D and 3D
+	if (renderMode === '3d') {
+		window.location.href = window.location.origin + '/2d';
+	} else {
+		window.location.href = window.location.origin;
+	}
+}
+
+/**
+ * Toggle wireframe mode
+ */
+function toggleWireframe() {
+	if (typeof Renderer.toggleWireframe === 'function') {
+		Renderer.toggleWireframe();
+	}
+}
+
+/**
+ * Toggle axes helper
+ */
+function toggleAxes() {
+	if (typeof Renderer.toggleAxes === 'function') {
+		Renderer.toggleAxes();
+	}
+}
+
+/**
+ * Toggle stats panel
+ */
+function toggleStats() {
+	if (typeof Renderer.toggleStats === 'function') {
+		Renderer.toggleStats();
+	}
+}
+
+/**
+ * Toggle grid helper
+ */
+function toggleGrid() {
+	if (typeof Renderer.toggleGrid === 'function') {
+		Renderer.toggleGrid();
+	}
+}
+
+/**
+ * Toggle shadows
+ */
+function toggleShadows() {
+	if (typeof Renderer.toggleShadows === 'function') {
+		Renderer.toggleShadows();
+	}
+}
+
+/**
+ * Toggle physics debug
+ */
+function togglePhysicsDebug() {
+	if (typeof Renderer.togglePhysicsDebug === 'function') {
+		Renderer.togglePhysicsDebug();
+	}
+}
+
+/**
+ * Toggle sound
+ */
+function toggleSound() {
+	// TODO: Implement sound toggling
+	console.log('Sound toggled');
+}
+
+/**
+ * Toggle music
+ */
+function toggleMusic() {
+	// TODO: Implement music toggling
+	console.log('Music toggled');
+}
+
+/**
+ * Handle chat message
+ */
+async function handleChatMessage(message) {
 	try {
-		UI.showLoadingScreen('Creating account...');
-		
-		// Register on the server
-		const registeredUser = await Network.register(
-			userData.username,
-			userData.password,
-			userData.email
-		);
-		
-		// Update current user
-		currentUser = registeredUser.user;
-		UI.updateUserInfo(currentUser);
-		
-		// Show the main menu
-		UI.showMainMenu();
-		UI.showNotification('Account created successfully', 'success');
-		
-		console.log('Registered successfully');
+		await GameManager.sendChatMessage(message);
 	} catch (error) {
-		console.error('Registration failed:', error);
-		UI.hideLoadingScreen();
-		UI.showNotification('Registration failed: ' + error.message, 'error');
+		console.error('Failed to send chat message:', error);
 	}
 }
 
 /**
- * Handle logout event
+ * Handle piece purchase
  */
-function handleLogout() {
-	// Logout from the server
-	Network.logout();
-	
-	// Clear current user
-	currentUser = null;
-	UI.updateUserInfo(null);
-	
-	// Show the main menu
-	UI.showMainMenu();
-	UI.showNotification('Logged out successfully', 'info');
-	
-	console.log('Logged out successfully');
-}
-
-/**
- * Handle keyboard events
- * @param {KeyboardEvent} event - The keyboard event
- */
-function handleKeyDown(event) {
-	// Only handle keyboard events when in a game
-	if (!GameManager.getGameId() || GameManager.isGamePaused()) {
-		return;
-	}
-	
-	const playerId = currentUser?.id || 'local_player';
-	
-	switch (event.key) {
-		case 'ArrowLeft':
-			// Move tetromino left
-			GameManager.handlePlayerInput(playerId, 'move_tetromino', { direction: 'left' });
-			break;
-			
-		case 'ArrowRight':
-			// Move tetromino right
-			GameManager.handlePlayerInput(playerId, 'move_tetromino', { direction: 'right' });
-			break;
-			
-		case 'ArrowDown':
-			// Move tetromino down
-			GameManager.handlePlayerInput(playerId, 'move_tetromino', { direction: 'down' });
-			break;
-			
-		case 'ArrowUp':
-			// Rotate tetromino
-			GameManager.handlePlayerInput(playerId, 'rotate_tetromino', { direction: 'clockwise' });
-			break;
-			
-		case ' ':
-			// Hard drop
-			GameManager.handlePlayerInput(playerId, 'hard_drop');
-			break;
-			
-		case 'Escape':
-			// Toggle pause
-			GameManager.handlePlayerInput(playerId, 'toggle_pause', { isAdmin: true });
-			break;
+async function handlePiecePurchase(data) {
+	try {
+		await GameManager.purchasePiece(data.pieceType, data.x, data.y);
+	} catch (error) {
+		console.error('Failed to purchase piece:', error);
 	}
 }
 
 /**
- * Clean up the application
+ * Clean up resources when the application is unloaded
  */
 function cleanup() {
-	// End the current game
-	if (GameManager.getGameId()) {
-		GameManager.endGame();
-	}
-	
-	// Clean up the renderer
-	Renderer.cleanup();
+	try {
+		console.log('Cleaning up resources...');
+		
+		// Save session data
+		if (isInitialized) {
+			SessionManager.saveSession();
+		}
 	
 	// Disconnect from the server
 	if (Network.isConnected()) {
-		Network.getSocket().disconnect();
+			Network.disconnect();
 	}
 	
-	console.log('Application cleaned up');
+		console.log('Cleanup complete');
+	} catch (error) {
+		console.error('Error during cleanup:', error);
+	}
 }
 
-// Initialize the application when the DOM is loaded
+/**
+ * Main game loop
+ * @param {number} timestamp - Current timestamp
+ */
+function gameLoop(timestamp) {
+	try {
+		// Call the game manager's update function
+		if (isInitialized && !GameManager.isGamePaused()) {
+			GameManager.update(timestamp);
+		}
+		
+		// Request next frame
+		requestAnimationFrame(gameLoop);
+	} catch (error) {
+		console.error('Error in game loop:', error);
+	}
+}
+
+// Initialize the application when the DOM is ready
 document.addEventListener('DOMContentLoaded', init);
 
-// Clean up when the window is closed
+// Clean up resources when the page is unloaded
 window.addEventListener('beforeunload', cleanup);
 
-// Export for debugging
-window.Chesstris = {
+// Export functions for debugging
+window.debug = {
 	GameManager,
 	PlayerManager,
 	TetrominoManager,
-	Renderer,
+	InputController,
 	Network,
-	Helpers,
 	UI,
-	getCurrentUser: () => currentUser
+	SessionManager,
+	renderMode
 }; 

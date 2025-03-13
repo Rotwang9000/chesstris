@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shaktris Debug Page</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f0f0f0;
+        }
+        h1 {
+            color: #333;
+        }
+        #console {
+            background-color: #000;
+            color: #0f0;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: monospace;
+            height: 300px;
+            overflow-y: auto;
+        }
+        .error {
+            color: #f00;
+        }
+        .warning {
+            color: #ff0;
+        }
+        .info {
+            color: #0ff;
+        }
+        button {
+            margin: 10px 0;
+            padding: 8px 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <h1>Shaktris Debug Page</h1>
+    <p>This page helps debug loading issues with the Shaktris game.</p>
+    
+    <button id="testSocket">Test Socket.IO Connection</button>
+    <button id="testRenderer">Test Renderer</button>
+    <button id="testGameManager">Test Game Manager</button>
+    <button id="clearConsole">Clear Console</button>
+    
+    <h2>Console Output:</h2>
+    <div id="console"></div>
+    
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        // Console logging
+        const consoleElement = document.getElementById('console');
+        
+        function log(message, type = 'normal') {
+            const logEntry = document.createElement('div');
+            logEntry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logEntry.className = type;
+            consoleElement.appendChild(logEntry);
+            consoleElement.scrollTop = consoleElement.scrollHeight;
+        }
+        
+        // Override console methods
+        const originalConsole = {
+            log: console.log,
+            error: console.error,
+            warn: console.warn,
+            info: console.info
+        };
+        
+        console.log = function(message) {
+            originalConsole.log(message);
+            log(message);
+        };
+        
+        console.error = function(message) {
+            originalConsole.error(message);
+            log(message, 'error');
+        };
+        
+        console.warn = function(message) {
+            originalConsole.warn(message);
+            log(message, 'warning');
+        };
+        
+        console.info = function(message) {
+            originalConsole.info(message);
+            log(message, 'info');
+        };
+        
+        // Button handlers
+        document.getElementById('testSocket').addEventListener('click', function() {
+            try {
+                console.log('Testing Socket.IO connection...');
+                const socket = io();
+                
+                socket.on('connect', function() {
+                    console.log('Socket connected successfully! Socket ID: ' + socket.id);
+                    
+                    // Test emitting an event
+                    socket.emit('join_game', { 
+                        playerId: 'debug-' + Math.random().toString(36).substring(2, 9),
+                        username: 'Debug User'
+                    });
+                });
+                
+                socket.on('connect_error', function(error) {
+                    console.error('Socket connection error: ' + error);
+                });
+                
+                socket.on('game_update', function(data) {
+                    console.log('Received game_update event:', JSON.stringify(data).substring(0, 100) + '...');
+                });
+                
+                socket.on('player_joined', function(data) {
+                    console.log('Received player_joined event:', data);
+                });
+            } catch (error) {
+                console.error('Error testing Socket.IO: ' + error.message);
+            }
+        });
+        
+        document.getElementById('testRenderer').addEventListener('click', function() {
+            try {
+                console.log('Testing renderer...');
+                
+                // Create a test container
+                const container = document.createElement('div');
+                container.id = 'test-container';
+                container.style.width = '300px';
+                container.style.height = '200px';
+                container.style.backgroundColor = '#333';
+                document.body.appendChild(container);
+                
+                // Try to import the renderer module
+                import('./js/rendering/compatibility.js')
+                    .then(module => {
+                        console.log('Renderer module imported successfully');
+                        return module.initCompatible(container, {
+                            debug: true,
+                            renderMode: '2d'
+                        });
+                    })
+                    .then(() => {
+                        console.log('Renderer initialized successfully');
+                    })
+                    .catch(error => {
+                        console.error('Error initializing renderer: ' + error.message);
+                        if (error.stack) {
+                            console.error(error.stack);
+                        }
+                    });
+            } catch (error) {
+                console.error('Error testing renderer: ' + error.message);
+            }
+        });
+        
+        document.getElementById('testGameManager').addEventListener('click', function() {
+            try {
+                console.log('Testing Game Manager...');
+                
+                // Try to import the game manager module
+                import('./js/core/gameManager.js')
+                    .then(module => {
+                        console.log('Game Manager module imported successfully');
+                        console.log('Available functions:', Object.keys(module));
+                        
+                        if (typeof module.initGame === 'function') {
+                            return module.initGame({
+                                playerId: 'debug-' + Math.random().toString(36).substring(2, 9),
+                                offline: true
+                            });
+                        } else {
+                            throw new Error('initGame function not found');
+                        }
+                    })
+                    .then(() => {
+                        console.log('Game Manager initialized successfully');
+                    })
+                    .catch(error => {
+                        console.error('Error initializing Game Manager: ' + error.message);
+                        if (error.stack) {
+                            console.error(error.stack);
+                        }
+                    });
+            } catch (error) {
+                console.error('Error testing Game Manager: ' + error.message);
+            }
+        });
+        
+        document.getElementById('clearConsole').addEventListener('click', function() {
+            consoleElement.innerHTML = '';
+        });
+        
+        // Initial log
+        console.log('Debug page loaded');
+    </script>
+</body>
+</html> 

@@ -2,13 +2,17 @@
  * Tests for the payment service
  */
 
-const {
+import { jest } from '@jest/globals';
+
+// Import the functions from the payments module
+import {
 	createSolanaPaymentIntent,
 	verifySolanaTransaction,
 	getUserTokenBalance,
 	getUserTransactionHistory,
-	calculateTokenAmount
-} = require('../payments');
+	calculateTokenAmount,
+	addUserTokens
+} from '../payments.js';
 
 // Mock Solana connection
 jest.mock('@solana/web3.js', () => {
@@ -83,7 +87,7 @@ describe('Payment Service', () => {
 			const userId = 'test-user-balance';
 			
 			// Add tokens to user
-			require('../payments').addUserTokens(userId, 1000);
+			addUserTokens(userId, 1000);
 			
 			// Check balance
 			const balance = getUserTokenBalance(userId);

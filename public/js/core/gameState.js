@@ -1,26 +1,86 @@
 /**
  * Game State Module
  * 
- * Manages the core game state, including board state, piece positions,
- * player information, and gameplay status.
+ * Manages the client-side game state, including the board, players, and game settings.
  */
 
-import { v4 as uuidv4 } from '../utils/uuid.js';
-import * as Constants from './constants.js';
+import Network from '../utils/network-patch.js';
 
-// Game state singleton
-let gameState = {
-	board: {},
-	fallingPiece: null,
+// Default game state
+const DEFAULT_GAME_STATE = {
+	gameId: null,
+	playerId: null,
 	players: {},
-	currentPlayerId: null,
-	selectedPiece: null,
-	validMoves: [],
-	gameStatus: 'waiting', // 'waiting', 'playing', 'paused', 'gameOver'
-	difficulty: 'normal',
-	cooldowns: new Map(),
-	lastUpdate: Date.now()
+	board: [],
+	boardWidth: 20,
+	boardHeight: 20,
+	cellSize: 30,
+	fallingPiece: null,
+	ghostPiece: null,
+	homeZones: {},
+	isPaused: false,
+	isGameOver: false,
+	winner: null,
+	score: 0,
+	level: 1,
+	linesCleared: 0,
+	nextPiece: null,
+	heldPiece: null,
+	canHold: true,
+	offline: false,
+	linesPerLevel: 10
 };
+
+// Current game state
+let gameState = { ...DEFAULT_GAME_STATE };
+
+// Player ID
+let playerId = null;
+
+/**
+ * Initialize the game state
+ * @param {Object} config - Configuration options
+ * @returns {Object} The initialized game state
+ */
+export function initGameState(config = {}) {
+	// Reset game state
+	gameState = { ...DEFAULT_GAME_STATE, ...config };
+	
+	// Initialize the board as a 2D array
+	initializeBoard();
+	
+	// Initialize score-related properties
+	gameState.score = 0;
+	gameState.level = 1;
+	gameState.linesCleared = 0;
+	gameState.linesPerLevel = 10; // Lines needed to advance to the next level
+	
+	return gameState;
+}
+
+/**
+ * Initialize the board as a 2D array
+ */
+function initializeBoard() {
+	const { boardWidth, boardHeight } = gameState;
+	
+	// Create empty board
+	gameState.board = [];
+	
+	// Initialize board with empty cells
+	for (let y = 0; y < boardHeight; y++) {
+		gameState.board[y] = [];
+		for (let x = 0; x < boardWidth; x++) {
+			gameState.board[y][x] = {
+				x,
+				y,
+				type: null,
+				playerId: null,
+				inHomeZone: false
+			};
+		}
+	}
+}
 
 /**
  * Get the current game state
@@ -31,694 +91,775 @@ export function getGameState() {
 }
 
 /**
- * Reset the game state to initial values
- */
-export function resetGameState() {
-	gameState = {
-		board: {},
-		fallingPiece: null,
-		players: {},
-		currentPlayerId: null,
-		selectedPiece: null,
-		validMoves: [],
-		gameStatus: 'waiting',
-		difficulty: 'normal',
-		cooldowns: new Map(),
-		lastUpdate: Date.now()
-	};
-}
-
-/**
- * Update the game state with new values
- * @param {Object} newState - The new state to merge with the current state
+ * Update the game state
+ * @param {Object} newState - The new game state
+ * @returns {Object} The updated game state
  */
 export function updateGameState(newState) {
-	gameState = {
-		...gameState,
-		...newState,
-		lastUpdate: Date.now()
-	};
-}
-
-/**
- * Generate a unique ID
- * @returns {string} A unique identifier
- */
-export function generateId() {
-	return uuidv4();
-}
-
-/**
- * Initialize the game state
- * @param {Object} initialState - Optional initial state values
- * @returns {Object} The initialized game state
- */
-export function initGameState(initialState = {}) {
-	// Create a default empty board as a 2D array
-	const defaultBoard = Array(Constants.INITIAL_BOARD_HEIGHT).fill().map(() => 
-		Array(Constants.INITIAL_BOARD_WIDTH).fill(null)
-	);
+	// Merge the new state with the current state
+	gameState = { ...gameState, ...newState };
 	
-	// Reset the game state with default values
-	gameState = {
-		// Use a proper 2D array for the board instead of an empty object
-		board: defaultBoard,
-		players: {},
-		homeZones: {},
-		fallingPiece: null,
-		potions: {},
-		lastDegradation: null,
-		lastSnapshot: null,
-		gameId: generateId(),
-		gameStatus: 'waiting',
-		difficulty: 'normal',
-		...initialState
-	};
+	// Ensure the board is properly structured
+	ensureBoardStructure();
 	
-	console.log('Game state initialized with board dimensions:', 
-		gameState.board.length + 'x' + (gameState.board[0] ? gameState.board[0].length : 0));
+	// Dispatch a game state update event
+	dispatchGameStateUpdateEvent();
 	
 	return gameState;
 }
 
 /**
- * Set the current game ID
- * @param {string} gameId - The game ID
+ * Ensure the board is properly structured as a 2D array
  */
-export function setCurrentGameId(gameId) {
-	gameState.currentGameId = gameId;
-}
-
-/**
- * Get the current game ID
- * @returns {string} The current game ID
- */
-export function getCurrentGameId() {
-	return gameState.currentGameId;
-}
-
-/**
- * Check if a position has a valid cell (something to stand on)
- * @param {number} x - X coordinate
- * @param {number} y - Y coordinate
- * @returns {boolean} True if the position has a valid cell
- */
-export function hasValidCell(x, y) {
-	const key = `${x},${y}`;
-	return gameState.board[key] && gameState.board[key].type !== 'empty';
-}
-
-/**
- * Check if a position is within board bounds
- * @param {number} x - X coordinate
- * @param {number} y - Y coordinate
- * @returns {boolean} True if the position is within bounds
- */
-export function isInBounds(x, y) {
-	return x >= 0 && x < Constants.INITIAL_BOARD_WIDTH && y >= 0 && y < Constants.INITIAL_BOARD_HEIGHT;
-}
-
-/**
- * Find adjacent cells to a position
- * @param {number} x - X coordinate
- * @param {number} y - Y coordinate
- * @returns {Array} Array of adjacent cell positions
- */
-export function getAdjacentCells(x, y) {
-	const adjacentCells = [];
-	const directions = [
-		{ dx: 1, dy: 0 }, { dx: -1, dy: 0 },
-		{ dx: 0, dy: 1 }, { dx: 0, dy: -1 }
-	];
-
-	for (const dir of directions) {
-		const nx = x + dir.dx;
-		const ny = y + dir.dy;
-		if (isInBounds(nx, ny) && hasValidCell(nx, ny)) {
-			adjacentCells.push({ x: nx, y: ny });
-		}
-	}
-
-	return adjacentCells;
-}
-
-/**
- * Check if a cell belongs to a safe home zone
- * @param {number} x - X coordinate
- * @param {number} y - Y coordinate
- * @returns {boolean} True if the cell is in a safe home zone
- */
-export function isCellInSafeHomeZone(x, y) {
-	for (const playerId in gameState.homeZones) {
-		const zone = gameState.homeZones[playerId];
-
-		// Check if the cell is within this zone
-		if (x >= zone.x && x < zone.x + zone.width &&
-			y >= zone.y && y < zone.y + zone.height) {
-
-			// Check if this zone has at least one piece in it
-			let hasOccupiedCell = false;
-			for (let zx = zone.x; zx < zone.x + zone.width; zx++) {
-				for (let zy = zone.y; zy < zone.y + zone.height; zy++) {
-					const key = `${zx},${zy}`;
-					if (gameState.board[key] && gameState.board[key].piece) {
-						hasOccupiedCell = true;
-						break;
-					}
-				}
-				if (hasOccupiedCell) break;
-			}
-
-			if (hasOccupiedCell) {
-				return true;
-			}
-		}
-	}
-
-	return false;
-}
-
-/**
- * Generate a random color for a player
- * @returns {number} A random color
- */
-export function generatePlayerColor() {
-	return Math.floor(Math.random() * 0xFFFFFF);
-}
-
-/**
- * Find a suitable position for a new home zone
- * @returns {Object} The position for the new home zone
- */
-export function findHomeZonePosition() {
-	if (Object.keys(gameState.homeZones).length === 0) {
-		// First player - place in a random corner
-		const corners = [
-			{ x: 0, y: 0 },
-			{ x: Constants.INITIAL_BOARD_WIDTH - Constants.HOME_ZONE_WIDTH, y: 0 },
-			{ x: 0, y: Constants.INITIAL_BOARD_HEIGHT - Constants.HOME_ZONE_HEIGHT },
-			{ x: Constants.INITIAL_BOARD_WIDTH - Constants.HOME_ZONE_WIDTH, y: Constants.INITIAL_BOARD_HEIGHT - Constants.HOME_ZONE_HEIGHT }
-		];
-		return corners[Math.floor(Math.random() * corners.length)];
-	}
-
-	// Find an existing zone to place near
-	const existingZones = Object.values(gameState.homeZones);
-	const targetZone = existingZones[Math.floor(Math.random() * existingZones.length)];
-
-	// Determine distance to place the new zone
-	const distance = Constants.MIN_DISTANCE_BETWEEN_ZONES +
-		Math.floor(Math.random() * (Constants.MAX_DISTANCE_BETWEEN_ZONES - Constants.MIN_DISTANCE_BETWEEN_ZONES + 1));
-
-	// Possible directions from the target zone
-	const directions = [
-		{ dx: 1, dy: 0 }, { dx: -1, dy: 0 },
-		{ dx: 0, dy: 1 }, { dx: 0, dy: -1 }
-	];
-
-	// Try each direction
-	for (let i = 0; i < 10; i++) { // Limit attempts
-		const dir = directions[Math.floor(Math.random() * directions.length)];
-		const x = targetZone.x + (dir.dx * distance);
-		const y = targetZone.y + (dir.dy * distance);
-
-		// Ensure the zone fits within the board
-		if (x >= 0 && x + Constants.HOME_ZONE_WIDTH <= Constants.INITIAL_BOARD_WIDTH &&
-			y >= 0 && y + Constants.HOME_ZONE_HEIGHT <= Constants.INITIAL_BOARD_HEIGHT) {
-
-			// Check that this position doesn't overlap with existing zones
-			let overlaps = false;
-			for (const zone of existingZones) {
-				if (x < zone.x + zone.width && x + Constants.HOME_ZONE_WIDTH > zone.x &&
-					y < zone.y + zone.height && y + Constants.HOME_ZONE_HEIGHT > zone.y) {
-					overlaps = true;
-					break;
-				}
-			}
-
-			if (!overlaps) {
-				return { x, y };
-			}
-		}
-	}
-
-	// If all attempts fail, expand the board and try again
-	// Note: In a real implementation, we would need to handle board expansion properly
-	return findHomeZonePosition();
-}
-
-/**
- * Create a chess piece
- * @param {string} type - The piece type
- * @param {number} x - X coordinate
- * @param {number} y - Y coordinate
- * @param {string} playerId - The player ID
- * @returns {Object} The created piece
- */
-export function createChessPiece(type, x, y, playerId) {
-	const piece = {
-		id: uuidv4(),
-		type: type,
-		x: x,
-		y: y,
-		playerId: playerId,
-		color: gameState.players[playerId].color
-	};
-
-	const key = `${x},${y}`;
-	if (gameState.board[key]) {
-		gameState.board[key].piece = piece;
-	}
-
-	return piece;
-}
-
-/**
- * Add chess pieces to a player's home zone
- * @param {Object} player - The player object
- */
-export function addChessPiecesToHomeZone(player) {
-	const zone = player.homeZone;
+function ensureBoardStructure() {
+	const { boardWidth, boardHeight } = gameState;
 	
-	// Create cells for the home zone
-	for (let x = zone.x; x < zone.x + zone.width; x++) {
-		for (let y = zone.y; y < zone.y + zone.height; y++) {
-			const key = `${x},${y}`;
-			gameState.board[key] = {
-				type: 'cell',
-				color: player.color,
-				createdAt: Date.now()
+	// If board is not an array or is empty, initialize it
+	if (!Array.isArray(gameState.board) || gameState.board.length === 0) {
+		initializeBoard();
+		return;
+	}
+	
+	// Ensure each row exists and has the correct number of columns
+	for (let y = 0; y < boardHeight; y++) {
+		if (!Array.isArray(gameState.board[y])) {
+			gameState.board[y] = [];
+		}
+		
+		for (let x = 0; x < boardWidth; x++) {
+			if (!gameState.board[y][x]) {
+				gameState.board[y][x] = {
+					x,
+					y,
+					type: null,
+					playerId: null,
+					inHomeZone: false
+				};
+			}
+		}
+	}
+}
+
+/**
+ * Dispatch a game state update event
+ */
+function dispatchGameStateUpdateEvent() {
+	if (typeof window !== 'undefined') {
+		const event = new CustomEvent('gameStateUpdate', { 
+			detail: gameState 
+		});
+		window.dispatchEvent(event);
+	}
+}
+
+/**
+ * Set the player ID
+ * @param {string} id - The player ID
+ */
+export function setPlayerId(id) {
+	playerId = id;
+	gameState.playerId = id;
+}
+
+/**
+ * Get the player ID
+ * @returns {string} The player ID
+ */
+export function getPlayerId() {
+	return playerId;
+}
+
+/**
+ * Check if the game is paused
+ * @returns {boolean} Whether the game is paused
+ */
+export function isGamePaused() {
+	return gameState.isPaused;
+}
+
+/**
+ * Set the game paused state
+ * @param {boolean} paused - Whether the game is paused
+ */
+export function setGamePaused(paused) {
+	gameState.isPaused = paused;
+	dispatchGameStateUpdateEvent();
+}
+
+/**
+ * Get a cell from the board
+ * @param {number} x - The x coordinate
+ * @param {number} y - The y coordinate
+ * @returns {Object|null} The cell or null if out of bounds
+ */
+export function getCell(x, y) {
+	// Check if coordinates are valid
+	if (x < 0 || x >= gameState.boardWidth || y < 0 || y >= gameState.boardHeight) {
+		return null;
+	}
+	
+	// Ensure the board is properly structured
+	if (!gameState.board[y] || !gameState.board[y][x]) {
+		return {
+			x,
+			y,
+			type: null,
+			playerId: null,
+			inHomeZone: false
+		};
+	}
+	
+	return gameState.board[y][x];
+}
+
+/**
+ * Set a cell on the board
+ * @param {number} x - The x coordinate
+ * @param {number} y - The y coordinate
+ * @param {Object} cell - The cell data
+ */
+export function setCell(x, y, cell) {
+	// Check if coordinates are valid
+	if (x < 0 || x >= gameState.boardWidth || y < 0 || y >= gameState.boardHeight) {
+		return;
+	}
+	
+	// Ensure the board is properly structured
+	if (!gameState.board[y]) {
+		gameState.board[y] = [];
+	}
+	
+	// Set the cell
+	gameState.board[y][x] = { ...cell, x, y };
+	
+	// Dispatch a game state update event
+	dispatchGameStateUpdateEvent();
+}
+
+/**
+ * Get a chess piece from the board
+ * @param {number} x - The x coordinate
+ * @param {number} y - The y coordinate
+ * @returns {Object|null} The chess piece or null if not found
+ */
+export function getChessPiece(x, y) {
+	const cell = getCell(x, y);
+	
+	if (cell && cell.piece) {
+		return { ...cell.piece, x, y };
+	}
+	
+	return null;
+}
+
+/**
+ * Set a chess piece on the board
+ * @param {number} x - The x coordinate
+ * @param {number} y - The y coordinate
+ * @param {Object} piece - The chess piece data
+ */
+export function setChessPiece(x, y, piece) {
+	const cell = getCell(x, y);
+	
+	if (cell) {
+		setCell(x, y, { ...cell, piece });
+	}
+}
+
+/**
+ * Remove a chess piece from the board
+ * @param {number} x - The x coordinate
+ * @param {number} y - The y coordinate
+ */
+export function removeChessPiece(x, y) {
+	const cell = getCell(x, y);
+	
+	if (cell) {
+		const newCell = { ...cell };
+		delete newCell.piece;
+		setCell(x, y, newCell);
+	}
+}
+
+/**
+ * Check if a position is in a player's home zone
+ * @param {number} x - The x coordinate
+ * @param {number} y - The y coordinate
+ * @param {string} playerId - The player ID
+ * @returns {boolean} Whether the position is in the player's home zone
+ */
+export function isInHomeZone(x, y, playerIdToCheck) {
+	const playerToCheck = playerIdToCheck || playerId;
+	const homeZone = gameState.homeZones[playerToCheck];
+	
+	if (!homeZone) return false;
+	
+	return x >= homeZone.x && 
+		   x < homeZone.x + homeZone.width && 
+		   y >= homeZone.y && 
+		   y < homeZone.y + homeZone.height;
+}
+
+/**
+ * Get a player's home zone
+ * @param {string} playerIdToGet - The player ID
+ * @returns {Object|null} The home zone or null if not found
+ */
+export function getHomeZone(playerIdToGet) {
+	const playerToGet = playerIdToGet || playerId;
+	return gameState.homeZones[playerToGet] || null;
+}
+
+/**
+ * Set a player's home zone
+ * @param {string} playerIdToSet - The player ID
+ * @param {Object} homeZone - The home zone data
+ */
+export function setHomeZone(playerIdToSet, homeZone) {
+	const playerToSet = playerIdToSet || playerId;
+	gameState.homeZones[playerToSet] = homeZone;
+	
+	// Update cells in the home zone
+	const { x, y, width, height } = homeZone;
+	
+	for (let cy = y; cy < y + height; cy++) {
+		for (let cx = x; cx < x + width; cx++) {
+			const cell = getCell(cx, cy);
+			
+			if (cell) {
+				setCell(cx, cy, {
+					...cell,
+					inHomeZone: true,
+					playerId: playerToSet
+				});
+			}
+		}
+	}
+	
+	// Dispatch a game state update event
+	dispatchGameStateUpdateEvent();
+}
+
+/**
+ * Get a player's resources
+ * @param {string} playerIdToGet - The player ID
+ * @returns {number} The player's resources
+ */
+export function getPlayerResources(playerIdToGet) {
+	const playerToGet = playerIdToGet || playerId;
+	return gameState.players[playerToGet]?.resources || 0;
+}
+
+/**
+ * Set a player's resources
+ * @param {string} playerIdToSet - The player ID
+ * @param {number} resources - The resources amount
+ */
+export function setPlayerResources(playerIdToSet, resources) {
+	const playerToSet = playerIdToSet || playerId;
+	
+	// Anti-cheat: Validate resources value
+	if (typeof resources !== 'number' || resources < 0 || resources > 9999) {
+		console.error('Invalid resources value:', resources);
+		resources = Math.max(0, Math.min(9999, resources || 0));
+	}
+	
+	if (!gameState.players[playerToSet]) {
+		gameState.players[playerToSet] = {};
+	}
+	
+	// Anti-cheat: Store the previous value to check for suspicious jumps
+	const previousResources = gameState.players[playerToSet].resources || 0;
+	
+	// If this is a significant increase, check if it's valid
+	if (resources > previousResources + 20 && playerToSet === playerId) {
+		console.warn('Suspicious resource increase detected. Limiting increase.');
+		resources = previousResources + 20;
+	}
+	
+	gameState.players[playerToSet].resources = resources;
+	
+	// If connected to server, validate resources with server
+	if (Network.isConnected() && !isOfflineMode() && playerToSet === playerId) {
+		try {
+			Network.emit('updateResources', {
+				playerId: playerToSet,
+				resources: resources
+			});
+		} catch (error) {
+			console.error('Error sending resources update to server:', error);
+		}
+	}
+	
+	// Dispatch a game state update event
+	dispatchGameStateUpdateEvent();
+}
+
+/**
+ * Add resources to a player
+ * @param {string} playerIdToAdd - The player ID
+ * @param {number} amount - The amount to add
+ */
+export function addPlayerResources(playerIdToAdd, amount) {
+	const playerToAdd = playerIdToAdd || playerId;
+	const currentResources = getPlayerResources(playerToAdd);
+	setPlayerResources(playerToAdd, currentResources + amount);
+}
+
+/**
+ * Subtract resources from a player
+ * @param {string} playerIdToSubtract - The player ID
+ * @param {number} amount - The amount to subtract
+ * @returns {boolean} Whether the subtraction was successful
+ */
+export function subtractPlayerResources(playerIdToSubtract, amount) {
+	const playerToSubtract = playerIdToSubtract || playerId;
+	const currentResources = getPlayerResources(playerToSubtract);
+	
+	if (currentResources < amount) {
+		return false;
+	}
+	
+	setPlayerResources(playerToSubtract, currentResources - amount);
+	return true;
+}
+
+/**
+ * Reset the game state
+ */
+export function resetGameState() {
+	gameState = { ...DEFAULT_GAME_STATE, playerId };
+	initializeBoard();
+	dispatchGameStateUpdateEvent();
+}
+
+/**
+ * Set offline mode
+ * @param {boolean} offline - Whether the game is in offline mode
+ */
+export function setOfflineMode(offline) {
+	gameState.offline = offline;
+	dispatchGameStateUpdateEvent();
+}
+
+/**
+ * Check if the game is in offline mode
+ * @returns {boolean} Whether the game is in offline mode
+ */
+export function isOfflineMode() {
+	return gameState.offline;
+}
+
+/**
+ * Create a mock game state for offline mode
+ * @returns {Object} The mock game state
+ */
+export function createMockGameState() {
+	// Create a mock game state for offline mode
+	const mockState = {
+		...DEFAULT_GAME_STATE,
+		gameId: 'offline-game',
+		playerId,
+		offline: true,
+		players: {
+			[playerId]: {
+				name: 'You (Offline)',
+				resources: 10,
+				score: 0
+			}
+		}
+	};
+	
+	// Create a home zone for the player
+	mockState.homeZones = {
+		[playerId]: {
+			x: 0,
+			y: mockState.boardHeight - 4,
+			width: 4,
+			height: 4
+		}
+	};
+	
+	// Initialize the board
+	mockState.board = [];
+	
+	for (let y = 0; y < mockState.boardHeight; y++) {
+		mockState.board[y] = [];
+		for (let x = 0; x < mockState.boardWidth; x++) {
+			mockState.board[y][x] = {
+				x,
+				y,
+				type: null,
+				playerId: null,
+				inHomeZone: false
 			};
 		}
 	}
 	
-	// Add the home zone to the game state
-	gameState.homeZones[player.id] = {
-		x: zone.x,
-		y: zone.y,
-		width: zone.width,
-		height: zone.height,
-		playerId: player.id
+	// Set home zone cells
+	const homeZone = mockState.homeZones[playerId];
+	
+	for (let y = homeZone.y; y < homeZone.y + homeZone.height; y++) {
+		for (let x = homeZone.x; x < homeZone.x + homeZone.width; x++) {
+			mockState.board[y][x].inHomeZone = true;
+			mockState.board[y][x].playerId = playerId;
+		}
+	}
+	
+	// Add a king in the home zone
+	mockState.board[mockState.boardHeight - 2][1].piece = {
+		type: 'king',
+		playerId
 	};
 	
-	// Add chess pieces
-	// Pawns in the front row
-	for (let x = zone.x; x < zone.x + zone.width; x++) {
-		const piece = createChessPiece(Constants.PIECE_TYPES.PAWN, x, zone.y, player.id);
-		player.pieces.push(piece);
-	}
-	
-	// Other pieces in the back row
-	const backRow = zone.y + 1;
-	const pieces = [
-		Constants.PIECE_TYPES.ROOK,
-		Constants.PIECE_TYPES.KNIGHT,
-		Constants.PIECE_TYPES.BISHOP,
-		Constants.PIECE_TYPES.QUEEN,
-		Constants.PIECE_TYPES.KING,
-		Constants.PIECE_TYPES.BISHOP,
-		Constants.PIECE_TYPES.KNIGHT,
-		Constants.PIECE_TYPES.ROOK
-	];
-	
-	for (let i = 0; i < pieces.length; i++) {
-		const piece = createChessPiece(pieces[i], zone.x + i, backRow, player.id);
-		player.pieces.push(piece);
-	}
-}
-
-/**
- * Check valid moves for a chess piece
- * @param {Object} piece - The chess piece
- * @param {string} playerId - The player ID
- * @returns {Array} Array of valid moves
- */
-export function getValidMoves(piece, playerId) {
-	if (!piece) return [];
-
-	const validMoves = [];
-	const pattern = Constants.MOVEMENT_PATTERNS[piece.type];
-	const player = gameState.players[playerId];
-
-	for (const dir of pattern.moveDirections) {
-		const maxDist = pattern.maxDistance;
-
-		for (let dist = 1; dist <= maxDist; dist++) {
-			const targetX = piece.x + (dir.dx * dist);
-			const targetY = piece.y + (dir.dy * dist);
-
-			// Check if target is in bounds and has a valid cell to move to
-			if (!isInBounds(targetX, targetY) || !hasValidCell(targetX, targetY)) {
-				break;
-			}
-
-			const targetKey = `${targetX},${targetY}`;
-			const targetCell = gameState.board[targetKey];
-
-			// If there's a piece in the way
-			if (targetCell.piece) {
-				// If the piece belongs to the opponent, it's a valid attack move
-				if (targetCell.piece.playerId !== playerId) {
-					validMoves.push({ x: targetX, y: targetY, type: 'attack' });
-				}
-
-				// If not a knight, we can't jump over pieces
-				if (!pattern.canJump) {
-					break;
-				}
-			} else {
-				// Empty cell, valid move
-				validMoves.push({ x: targetX, y: targetY, type: 'move' });
-
-				// Check for potions
-				if (targetCell.potion) {
-					validMoves[validMoves.length - 1].hasPotion = true;
-				}
-			}
-		}
-	}
-
-	return validMoves;
-}
-
-/**
- * Apply potion effect to a player
- * @param {Object} potion - The potion object
- * @param {string} playerId - The player ID
- */
-export function applyPotionEffect(potion, playerId) {
-	if (!potion) return;
-
-	const player = gameState.players[playerId];
-	if (!player) return;
-
-	switch (potion.type) {
-		case Constants.POTION_TYPES.SPEED:
-			// Implementation would depend on how we track piece movement speed
-			break;
-		case Constants.POTION_TYPES.JUMP:
-			// Allow all pieces to jump for a limited time
-			player.specialAbilities = player.specialAbilities || {};
-			player.specialAbilities.jumpUntil = Date.now() + (60 * 1000); // 1 minute
-			break;
-		case Constants.POTION_TYPES.SHIELD:
-			// Select a random piece to shield
-			if (player.pieces.length > 0) {
-				const randomPiece = player.pieces[Math.floor(Math.random() * player.pieces.length)];
-				randomPiece.shielded = true;
-			}
-			break;
-		case Constants.POTION_TYPES.GROW:
-			// Expand home zone if possible
-			const zone = gameState.homeZones[playerId];
-			if (zone) {
-				zone.width = Math.min(zone.width + 1, Constants.HOME_ZONE_WIDTH + 2);
-			}
-			break;
-	}
-}
-
-/**
- * Spawn a new falling tetromino piece
- */
-export function spawnFallingPiece() {
-	const keys = Object.keys(Constants.TETROMINOES);
-	const type = keys[Math.floor(Math.random() * keys.length)];
-	const tetro = Constants.TETROMINOES[type];
-
-	// Random spawn position within board boundaries
-	let maxBlockX = Math.max(...tetro.blocks.map(b => b.x));
-	let maxBlockY = Math.max(...tetro.blocks.map(b => b.y));
-
-	let spawnX = Math.floor(Math.random() * (Constants.INITIAL_BOARD_WIDTH - maxBlockX));
-	let spawnY = Math.floor(Math.random() * (Constants.INITIAL_BOARD_HEIGHT - maxBlockY));
-
-	// Decide if this piece should be sponsored (20% chance)
-	const isSponsored = Math.random() < 0.2;
-	let sponsor = null;
-
-	if (isSponsored) {
-		sponsor = Constants.SPONSORS[Math.floor(Math.random() * Constants.SPONSORS.length)];
-	}
-
-	// Decide if any block should have a potion (10% chance)
-	const hasPotion = Math.random() < 0.1;
-	let potionBlock = null;
-	let potion = null;
-
-	if (hasPotion) {
-		const potionTypes = Object.values(Constants.POTION_TYPES);
-		const potionType = potionTypes[Math.floor(Math.random() * potionTypes.length)];
-
-		potion = {
-			id: uuidv4(),
-			type: potionType
-		};
-
-		// Choose a random block to place the potion on
-		potionBlock = Math.floor(Math.random() * tetro.blocks.length);
-	}
-
-	gameState.fallingPiece = {
-		type: type,
-		blocks: tetro.blocks,
-		color: tetro.color,
-		x: spawnX,
-		y: spawnY,
-		z: Constants.START_Z,
-		sponsor: sponsor,
-		potion: potion ? { blockIndex: potionBlock, data: potion } : null
+	// Add a pawn in the home zone
+	mockState.board[mockState.boardHeight - 3][2].piece = {
+		type: 'pawn',
+		playerId
 	};
 	
-	return gameState.fallingPiece;
+	return mockState;
 }
 
 /**
- * Check if a falling piece should stick to the board
- * @param {Object} piece - The falling piece
- * @returns {boolean} True if the piece should stick
+ * Pause the game
+ * @returns {boolean} Whether the pause was successful
  */
-export function shouldStickPiece(piece) {
-	// Check if the piece is close to the board
-	if (piece.z > 0.5) return false;
-	
-	// Check if any block of the piece has an adjacent cell
-	for (const block of piece.blocks) {
-		const cellX = piece.x + block.x;
-		const cellY = piece.y + block.y;
-		
-		if (isInBounds(cellX, cellY)) {
-			const hasNeighbor = getAdjacentCells(cellX, cellY).length > 0;
-			if (hasNeighbor) return true;
-		}
-	}
-	
-	return false;
-}
-
-/**
- * Lock a falling piece to the board
- * @returns {boolean} True if the piece was locked
- */
-export function lockFallingPiece() {
-	if (!gameState.fallingPiece) return false;
-	
-	let stuckAny = false;
-
-	for (let i = 0; i < gameState.fallingPiece.blocks.length; i++) {
-		const block = gameState.fallingPiece.blocks[i];
-		const cellX = gameState.fallingPiece.x + block.x;
-		const cellY = gameState.fallingPiece.y + block.y;
-
-		if (isInBounds(cellX, cellY)) {
-			// Check if this block has neighboring cells
-			const hasNeighbor = getAdjacentCells(cellX, cellY).length > 0;
-
-			if (hasNeighbor) {
-				stuckAny = true;
-				const key = `${cellX},${cellY}`;
-
-				// Create the cell
-				gameState.board[key] = {
-					type: 'cell',
-					color: gameState.fallingPiece.color,
-					createdAt: Date.now()
-				};
-
-				// If this block has a sponsor
-				if (gameState.fallingPiece.sponsor) {
-					gameState.board[key].sponsor = gameState.fallingPiece.sponsor;
-				}
-
-				// If this block has a potion
-				if (gameState.fallingPiece.potion && gameState.fallingPiece.potion.blockIndex === i) {
-					gameState.board[key].potion = gameState.fallingPiece.potion.data;
-					gameState.potions[gameState.fallingPiece.potion.data.id] = {
-						x: cellX,
-						y: cellY,
-						data: gameState.fallingPiece.potion.data
-					};
-				}
-			}
-		}
-	}
-
-	// Only lock the piece if at least one block stuck
-	if (stuckAny) {
-		gameState.fallingPiece = null;
+export async function pauseGame() {
+	// If already paused, do nothing
+	if (gameState.isPaused) {
 		return true;
 	}
+	
+	// If in offline mode, handle locally
+	if (isOfflineMode()) {
+		setGamePaused(true);
+		return true;
+	}
+	
+	try {
+		// Send pause request to server
+		await Network.emit('pauseGame', {
+			playerId,
+			gameId: gameState.gameId
+		});
+		
+		// The server will send back the updated game state
+		return true;
+	} catch (error) {
+		console.error('Error pausing game:', error);
+		
+		// If there's an error, handle locally
+		setGamePaused(true);
+		return true;
+	}
+}
 
+/**
+ * Resume the game
+ * @returns {boolean} Whether the resume was successful
+ */
+export async function resumeGame() {
+	// If not paused, do nothing
+	if (!gameState.isPaused) {
+		return true;
+	}
+	
+	// If in offline mode, handle locally
+	if (isOfflineMode()) {
+		setGamePaused(false);
+		return true;
+	}
+	
+	try {
+		// Send resume request to server
+		await Network.emit('resumeGame', {
+			playerId,
+			gameId: gameState.gameId
+		});
+		
+		// The server will send back the updated game state
+		return true;
+	} catch (error) {
+		console.error('Error resuming game:', error);
+		
+		// If there's an error, handle locally
+		setGamePaused(false);
+		return true;
+	}
+}
+
+/**
+ * Update the score based on lines cleared
+ * @param {number} linesCleared - Number of lines cleared in one move
+ */
+export function updateScore(linesCleared) {
+	// Validate input
+	if (typeof linesCleared !== 'number' || linesCleared < 0 || linesCleared > 4) {
+		console.error('Invalid lines cleared value:', linesCleared);
+		linesCleared = 0;
+	}
+	
+	const gameState = getGameState();
+	
+	// Points per line based on number of lines cleared at once
+	const pointsPerLine = {
+		1: 40,    // Single line
+		2: 100,   // Double line
+		3: 300,   // Triple line
+		4: 1200   // Tetris (four lines)
+	};
+	
+	// Calculate points (base points * level)
+	const points = (pointsPerLine[linesCleared] || 0) * gameState.level;
+	
+	// Anti-cheat: Store the previous score to check for suspicious jumps
+	const previousScore = gameState.score || 0;
+	const previousLinesCleared = gameState.linesCleared || 0;
+	
+	// Update score
+	gameState.score += points;
+	
+	// Update lines cleared
+	gameState.linesCleared += linesCleared;
+	
+	// Anti-cheat: Verify score change is valid
+	if (gameState.score - previousScore > 1200 * gameState.level) {
+		console.warn('Suspicious score increase detected. Reverting to safe values.');
+		gameState.score = previousScore + (pointsPerLine[linesCleared] || 0) * gameState.level;
+		gameState.linesCleared = previousLinesCleared + linesCleared;
+	}
+	
+	// Check for level up
+	if (gameState.linesCleared >= gameState.level * gameState.linesPerLevel) {
+		gameState.level++;
+		
+		// Anti-cheat: Ensure level doesn't jump too high
+		if (gameState.level > Math.floor(gameState.linesCleared / 10) + 1) {
+			gameState.level = Math.floor(gameState.linesCleared / 10) + 1;
+		}
+		
+		// Dispatch level up event
+		if (typeof window !== 'undefined') {
+			const levelUpEvent = new CustomEvent('levelUp', {
+				detail: { level: gameState.level }
+			});
+			window.dispatchEvent(levelUpEvent);
+		}
+	}
+	
+	// Dispatch score update event
+	if (typeof window !== 'undefined') {
+		const scoreUpdateEvent = new CustomEvent('scoreUpdate', {
+			detail: {
+				score: gameState.score,
+				linesCleared: gameState.linesCleared,
+				level: gameState.level
+			}
+		});
+		window.dispatchEvent(scoreUpdateEvent);
+	}
+	
+	// Update game state
+	updateGameState(gameState);
+	
+	// If connected to server, validate score with server
+	if (Network.isConnected() && !isOfflineMode()) {
+		try {
+			Network.emit('updateScore', {
+				playerId: getPlayerId(),
+				score: gameState.score,
+				linesCleared: gameState.linesCleared,
+				level: gameState.level
+			});
+		} catch (error) {
+			console.error('Error sending score update to server:', error);
+		}
+	}
+	
+	return points;
+}
+
+/**
+ * Get the current game level
+ * @returns {number} The current level
+ */
+export function getLevel() {
+	return getGameState().level || 1;
+}
+
+/**
+ * Get the current score
+ * @returns {number} The current score
+ */
+export function getScore() {
+	return getGameState().score || 0;
+}
+
+/**
+ * Get the number of lines cleared
+ * @returns {number} The number of lines cleared
+ */
+export function getLinesCleared() {
+	return getGameState().linesCleared || 0;
+}
+
+/**
+ * Set the game ID
+ * @param {string} id - The game ID
+ */
+export function setGameId(id) {
+	gameState.gameId = id;
+}
+
+/**
+ * Get the game ID
+ * @returns {string} The game ID
+ */
+export function getGameId() {
+	return gameState.gameId;
+}
+
+/**
+ * Set the board
+ * @param {Array} board - The game board
+ */
+export function setBoard(board) {
+	gameState.board = board;
+}
+
+/**
+ * Get the board
+ * @returns {Array} The game board
+ */
+export function getBoard() {
+	return gameState.board;
+}
+
+/**
+ * Set a player in the game state
+ * @param {string} playerId - The player ID
+ * @param {Object} playerData - The player data
+ */
+export function setPlayer(playerId, playerData) {
+	if (!gameState.players) {
+		gameState.players = {};
+	}
+	gameState.players[playerId] = playerData;
+}
+
+/**
+ * Get all players
+ * @returns {Object} All players
+ */
+export function getPlayers() {
+	return gameState.players || {};
+}
+
+/**
+ * Get the player's name
+ * @param {string} id - The player ID (optional, defaults to current player)
+ * @returns {string} The player's name
+ */
+export function getPlayerName(id = null) {
+	// If no ID is provided, use the current player ID
+	const playerId = id || getCurrentPlayerId();
+	
+	// Try to get the player from the game state
+	if (gameState.players && gameState.players[playerId]) {
+		return gameState.players[playerId].username || 'Anonymous';
+	}
+	
+	// If not found in game state, try to get from session storage
+	try {
+		if (typeof window !== 'undefined' && window.localStorage) {
+			const username = window.localStorage.getItem('username');
+			if (username) {
+				return username;
+			}
+		}
+	} catch (e) {
+		console.warn('Error accessing localStorage:', e);
+	}
+	
+	// Fall back to a default name
+	return 'Player ' + (playerId ? playerId.substring(0, 4) : Math.floor(Math.random() * 1000));
+}
+
+/**
+ * Get the current player ID
+ * @returns {string} The current player ID
+ */
+export function getCurrentPlayerId() {
+	// Try to get from game state
+	if (gameState.currentPlayerId) {
+		return gameState.currentPlayerId;
+	}
+	
+	// Try to get from session storage
+	try {
+		if (typeof window !== 'undefined' && window.localStorage) {
+			const playerId = window.localStorage.getItem('player_id');
+			if (playerId) {
+				return playerId;
+			}
+		}
+	} catch (e) {
+		console.warn('Error accessing localStorage:', e);
+	}
+	
+	// Fall back to a generated ID
+	return 'player-' + Math.random().toString(36).substring(2, 9);
+}
+
+/**
+ * Get all home zones
+ * @returns {Object} All home zones
+ */
+export function getHomeZones() {
+	return gameState.homeZones || {};
+}
+
+/**
+ * Generate a unique ID
+ * @returns {string} A UUID v4 string
+ */
+export function generateId() {
+	return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+		const r = Math.random() * 16 | 0;
+		const v = c === 'x' ? r : (r & 0x3 | 0x8);
+		return v.toString(16);
+	});
+}
+
+/**
+ * Check if a cell is in a safe home zone (has pieces in it)
+ * @param {number} x - X coordinate
+ * @param {number} y - Y coordinate
+ * @param {string} playerIdToCheck - Player ID to check
+ * @returns {boolean} True if the cell is in a safe home zone
+ */
+export function isCellInSafeHomeZone(x, y, playerIdToCheck) {
+	// First check if it's in a home zone at all
+	if (!isInHomeZone(x, y, playerIdToCheck)) {
+		return false;
+	}
+	
+	// Get the player's home zone
+	const homeZone = getHomeZone(playerIdToCheck);
+	if (!homeZone) {
+		return false;
+	}
+	
+	// Check if there are any chess pieces in the home zone
+	for (let i = 0; i < gameState.board.length; i++) {
+		for (let j = 0; j < gameState.board[i].length; j++) {
+			const cell = getCell(i, j);
+			if (cell && isInHomeZone(i, j, playerIdToCheck) && cell.chessPiece) {
+				return true;
+			}
+		}
+	}
+	
 	return false;
 }
-
-/**
- * Clear full rows on the board
- * @returns {Array} Array of cleared row indices
- */
-export function clearFullRows() {
-	// Collect all row indices
-	const filledRows = new Set();
-	const filledCols = new Set();
-
-	// Map to track cell counts in each row and column
-	const rowCounts = {};
-	const colCounts = {};
-
-	// Count occupied cells in each row and column
-	for (const key in gameState.board) {
-		const [x, y] = key.split(',').map(Number);
-
-		if (isInBounds(x, y) && gameState.board[key].type === 'cell') {
-			rowCounts[y] = (rowCounts[y] || 0) + 1;
-			colCounts[x] = (colCounts[x] || 0) + 1;
-
-			// Check if this row or column is now full
-			if (rowCounts[y] >= 8) {
-				filledRows.add(y);
-			}
-			if (colCounts[x] >= 8) {
-				filledCols.add(x);
-			}
-		}
-	}
-
-	// Clear filled rows
-	for (const y of filledRows) {
-		for (let x = 0; x < Constants.INITIAL_BOARD_WIDTH; x++) {
-			const key = `${x},${y}`;
-
-			// Only clear cells not in safe home zones
-			if (gameState.board[key] && !isCellInSafeHomeZone(x, y)) {
-				// If there's a piece, remove it from the player's collection
-				if (gameState.board[key].piece) {
-					const piece = gameState.board[key].piece;
-					gameState.players[piece.playerId].pieces = gameState.players[piece.playerId].pieces.filter(p => p.id !== piece.id);
-				}
-
-				// Remove the cell
-				delete gameState.board[key];
-			}
-		}
-	}
-
-	// Clear filled columns
-	for (const x of filledCols) {
-		for (let y = 0; y < Constants.INITIAL_BOARD_HEIGHT; y++) {
-			const key = `${x},${y}`;
-
-			// Only clear cells not in safe home zones
-			if (gameState.board[key] && !isCellInSafeHomeZone(x, y)) {
-				// If there's a piece, remove it from the player's collection
-				if (gameState.board[key].piece) {
-					const piece = gameState.board[key].piece;
-					gameState.players[piece.playerId].pieces = gameState.players[piece.playerId].pieces.filter(p => p.id !== piece.id);
-				}
-
-				// Remove the cell
-				delete gameState.board[key];
-			}
-		}
-	}
-	
-	return [...filledRows, ...filledCols];
-}
-
-/**
- * Degrade empty home zones over time
- * @returns {Array} Array of degraded zone player IDs
- */
-export function degradeHomeZones() {
-	const degradedZones = [];
-	
-	for (const playerId in gameState.homeZones) {
-		const zone = gameState.homeZones[playerId];
-
-		// Check if zone is empty
-		let hasOccupiedCell = false;
-		for (let x = zone.x; x < zone.x + zone.width; x++) {
-			for (let y = zone.y; y < zone.y + zone.height; y++) {
-				const key = `${x},${y}`;
-				if (gameState.board[key] && gameState.board[key].piece) {
-					hasOccupiedCell = true;
-					break;
-				}
-			}
-			if (hasOccupiedCell) break;
-		}
-
-		// If empty, degrade the zone
-		if (!hasOccupiedCell && zone.width > 0) {
-			// First remove empty cells
-			let emptyCellsRemoved = false;
-
-			for (let x = zone.x + zone.width - 1; x >= zone.x; x--) {
-				for (let y = zone.y; y < zone.y + zone.height; y++) {
-					const key = `${x},${y}`;
-					if (gameState.board[key] && !gameState.board[key].piece) {
-						delete gameState.board[key];
-						emptyCellsRemoved = true;
-						break;
-					}
-				}
-				if (emptyCellsRemoved) break;
-			}
-
-			// If no empty cells to remove, then shrink the zone
-			if (!emptyCellsRemoved) {
-				zone.width -= 1;
-				degradedZones.push(playerId);
-			}
-
-			// If width becomes 0, remove the home zone
-			if (zone.width <= 0) {
-				delete gameState.homeZones[playerId];
-			}
-		}
-	}
-	
-	gameState.lastDegradation = Date.now();
-	return degradedZones;
-}
-
-export default {
-	initGameState,
-	getGameState,
-	setCurrentGameId,
-	getCurrentGameId,
-	hasValidCell,
-	isInBounds,
-	getAdjacentCells,
-	isCellInSafeHomeZone,
-	generatePlayerColor,
-	findHomeZonePosition,
-	createChessPiece,
-	addChessPiecesToHomeZone,
-	getValidMoves,
-	applyPotionEffect,
-	spawnFallingPiece,
-	shouldStickPiece,
-	lockFallingPiece,
-	clearFullRows,
-	degradeHomeZones
-}; 

@@ -14,12 +14,6 @@ This document outlines potential gameplay enhancements for the Chesstris game. T
 
 ### 1. Balance Adjustments
 
-#### Chess Piece Energy System
-- Each piece requires energy to move (different costs based on piece type)
-- Energy regenerates over time
-- Forces more strategic decisions about when to move pieces
-- Prevents spamming of powerful pieces like the queen
-
 #### Piece Value Adjustments
 - Adjust purchase costs based on gameplay data
 - Consider time-based discounts/premiums

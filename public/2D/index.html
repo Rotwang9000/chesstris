@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Shaktris 2D - Chess meets Tetris</title>
+	<link rel="stylesheet" href="../styles.css">
+	<script src="/socket.io/socket.io.js" onerror="window.mockSocketConnected = true; window.socketInitialized = true; window.dispatchEvent(new CustomEvent('socketReady'));"></script>
+	<script>
+		window.is2DMode = true;
+	</script>
+</head>
+<body>
+	<div id="game-container">
+		<!-- Game canvas will be created here -->
+	</div>
+	
+	<div id="version-switcher">
+		<a href="/" class="version-button">3D Version</a>
+		<a href="/2D" class="version-button current">2D Version</a>
+	</div>
+	
+	<script type="module" src="../main.js"></script>
+	
+	<script>
+		// Add debug button functionality
+		document.addEventListener('DOMContentLoaded', function() {
+			const debugButton = document.createElement('button');
+			debugButton.id = 'debug-button';
+			debugButton.className = 'debug-button';
+			debugButton.textContent = 'Debug';
+			debugButton.addEventListener('click', function() {
+				const event = new CustomEvent('toggleDebug');
+				window.dispatchEvent(event);
+			});
+			document.body.appendChild(debugButton);
+		});
+	</script>
+</body>
+</html> 

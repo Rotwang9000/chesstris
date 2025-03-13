@@ -6,9 +6,9 @@
  * - Redis for real-time game state
  */
 
-const mongoose = require('mongoose');
-const Redis = require('ioredis');
-const { promisify } = require('util');
+import mongoose from 'mongoose';
+import Redis from 'ioredis';
+import { promisify } from 'util';
 
 // Configuration (would use environment variables in production)
 const config = {
@@ -164,7 +164,7 @@ async function closeConnections() {
 	}
 }
 
-module.exports = {
+export {
 	initDatabase,
 	closeConnections,
 	config

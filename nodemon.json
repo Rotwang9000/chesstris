@@ -1,0 +1,14 @@
+{
+	"watch": [
+		"server.js",
+		"server/**/*.js"
+	],
+	"ignore": [
+		"game-state.json",
+		"*.log",
+		"node_modules/*",
+		"public/**/*"
+	],
+	"ext": "js,json",
+	"verbose": true
+} 

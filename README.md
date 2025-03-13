@@ -1,631 +1,284 @@
-# Shaktris Dynamic Prototype
+# Shaktris
 
-Shaktris is a multiplayer prototype that fuses elements of chess and Tetris on a dynamically expanding 2D board rendered in 3D. In this game, each player is assigned a unique "home zone" (an 8×2 area randomly placed, although within 8 to 12 squares of another home zone) where their chess pieces reside. Tetromino pieces fall from the sky (along the Z‑axis) and stick to the board only if at least one block lands adjacent to an existing cell. The chess pieces can then use this as part of the board. So they need to build up the board towards their opponent to be able to move pieces into a place where they can attack.
-Full rows (any 8 in a line) are cleared, including any pieces on them, except for cells in a "safe" home zone that still has at least one piece. To encourage movement and clear abandoned zones, empty home zones degrade over time.
+A multiplayer game that combines elements of chess and Tetris on a dynamically expanding board.
 
-## Recent Rendering Improvements
+## Overview
 
-The game's 3D renderer has been significantly improved with the following features:
-
-1. **Proper Home Islands**: The game now correctly renders an 8×2 home zone area with a full set of chess pieces arranged in standard chess formation.
-
-2. **Skybox and Atmospheric Effects**: A gradient blue skybox provides depth to the scene, along with decorative cloud elements that enhance the visual appeal.
-
-3. **Falling Tetromino Pieces**: Tetromino pieces now fall from the sky and can be seen descending onto the board, providing visual feedback on game mechanics.
-
-4. **Improved Textures**: Enhanced textures for board cells, home zones, and general surfaces with proper texturing and lighting.
-
-5. **Camera Controls**: Added camera control functions (resetCamera, topView, sideView) for easier navigation of the 3D scene.
-
-6. **Visual Debug Tools**: Coordinate labels, wireframe outlines, and other visual aids assist during development and testing.
-
-7. **Fallback Mechanisms**: Placeholder textures are automatically generated if image files are missing, ensuring visual consistency.
-
-To test these rendering improvements, open the `/test.html` page, which provides a controlled environment with:
-- A proper home zone with standard chess pieces
-- A pathway of cells extending outward
-- Falling tetromino pieces
-- The skybox and clouds backdrop
-- Camera control buttons for different viewing angles
-
-## Core Gameplay Mechanics
-
-- **Tetris Piece Connectivity Rules:**  
-  Tetris pieces will only stick to the board if:
-  1. They are connected to other existing pieces
-  2. There is a continuous path back to the player's king
-  This forces players to build strategically from their king's position, preventing disconnected "islands" of pieces.
-  When a row is cleared, orphaned pieces will drop back, towards the player's king.
-
-- **Pawn Promotion:**  
-  Pawns are automatically promoted to knights once they have moved 8 spaces forward, increasing their utility in the late game.
-
-- **Asynchronous Turns:**  
-  Each player has their own gameplay cycle:
-  1. A tetris piece falls for the player to place
-  2. After placing the piece, they can move one of their chess pieces
-  3. Players don't need to wait for other players' turns
-  4. A minimum 10-second turn length helps human players compete with others, especially computer-controlled opponents
-  5. Different difficulty worlds adjust this timing to accommodate various skill levels
-
-- **Piece Acquisition:**  
-  Players can purchase additional pieces at any time using Solana:
-  - 0.1 SOL for a pawn
-  - 0.5 SOL for rooks, knights, or bishops
-  - 1.0 SOL for a queen
-  - Kings cannot be purchased
-
-
-- **King Capture Mechanics:**  
-  When a player captures an opponent's king:
-  1. The victor gains ownership of all the opponent's remaining pieces
-  2. 50% of the fees paid by the defeated player for extra pieces is awarded to the victor
-  3. This represents a "ransom" to allow the king to escape (and the defeated player to start a new game)
-
-- **Player Pause System:**  
-  Players can temporarily pause the game:
-  1. A player can freeze their pieces for up to 15 minutes
-  2. During the pause, their pieces cannot be captured and their cells won't be cleared
-  3. Their home zone is protected regardless of whether it contains pieces
-  4. Players can resume their game at any time during the pause period
-  5. If a player doesn't return within 15 minutes:
-     - Their main island (connected to king) is removed from the board
-     - Cells owned by other players on this island are reassigned based on proximity to kings
-     - Equidistant cells become neutral "no-man's land" (grey cells)
-     - Pieces not on the main island are returned to the home zone
-     - The home zone is expanded if needed to accommodate all returning pieces
-     - Any pieces that can't fit in the expanded home zone are lost
-  6. The pause system allows for natural breaks while preventing disruption to other players
+Shaktris is a unique game that fuses the strategic elements of chess with the block-dropping mechanics of Tetris. Players build paths with tetrominos and move chess pieces to capture their opponent's king.
 
 ## Features
 
-- **Multiplayer Support:**  
-  Uses Socket.IO to allow many players to connect simultaneously.
+- **Dual Rendering Modes**: 3D (default) and 2D (accessible via /2d)
+- **Universal Input System**: Keyboard, mouse, and touch controls
+- **Multiplayer Architecture**: Socket.IO-based real-time communication
+- **Modular Code Structure**: Separation of game logic and rendering
+- **Robust Error Handling**: Comprehensive try-catch blocks and fallback mechanisms
+- **Debug Panel**: Toggle with F9 key for real-time game state visualization
 
-- **Dynamic Board Expansion:**  
-  The board grows on the X/Y axis as new players join, with home zones allocated sequentially.
+## Getting Started
 
-- **Home Zones & Degradation:**  
-  Each player's 8×2 home zone is safe from clearance as long as at least one square is occupied. Home zones degrade by one square (empty spaces first, then takes pieces away too) every few minutes, eventually disappearing.
+### Prerequisites
 
-- **Falling Tetrominoes:**  
-  Tetromino pieces fall from above (Z‑axis) and stick to the board only if they land adjacent to an existing cell. Otherwise, they fall through and are discarded.
+- Node.js (v14 or higher)
+- npm (v6 or higher)
 
-- **3D Rendering with Three.js:**  
-  The board and falling pieces are rendered in 3D using Three.js (with OrbitControls for panning/zooming), but the gameplay itself occurs on the 2D X/Y plane.
+### Installation
 
-## Project Structure
+1. Clone the repository:
+   ```
+   git clone https://github.com/yourusername/shaktris.git
+   cd shaktris
+   ```
 
-```
-chess-tris-dynamic/
-├── package.json         # Node.js project config and dependencies
-├── server.js            # Node.js server (Express & Socket.IO)
-└── public/
-    ├── index.html       # Client HTML file (loads Three.js, OrbitControls, Socket.IO)
-    └── main.js          # Client-side JavaScript (renders the board and falling pieces)
-```
+2. Install dependencies:
+   ```
+   npm install
+   ```
 
-## Technical Details
+3. Start the server:
+   ```
+   node server.js
+   ```
 
-### Core Board Logic
+4. Open your browser and navigate to:
+   - 3D Mode: http://localhost:3020
+   - 2D Mode: http://localhost:3020/2d
 
-- **Board State:**  
-  The board is represented as a 2D array of cells. Each cell contains information about:
-  - Color (representing the player who owns it)
-  - Player ID
-  - Chess piece (if any)
-  - Creation timestamp
+## Architecture
 
-- **Path Finding:**  
-  A breadth-first search algorithm verifies connectivity between pieces and kings.
-  This is used for:
-  - Validating tetris piece placement
-  - Handling orphaned pieces after row clearing
-  - Managing island identification after pause expiration
+### Client-Side
 
-- **Island Identification:**  
-  Connected components are identified using a modified breadth-first search.
-  This allows detecting separate "islands" of connected cells for each player.
+The client-side code is organized into several modules:
 
-### Gameplay Systems
+- **Core**: Game logic independent of rendering
+  - `gameManager.js`: Coordinates game flow and components
+  - `gameState.js`: Manages the client-side game state
+  - `tetrominoManager.js`: Handles tetromino creation and movement
+  - `chessPieceManager.js`: Manages chess piece movement and captures
+  - `inputController.js`: Unified input handling across devices
 
-- **Turn Management:**  
-  - Each player has independent turn cycles
-  - Cooldown periods between turns (configurable by difficulty)
-  - Easy: 20 seconds, Normal: 10 seconds, Hard: 5 seconds
-  - Turn state tracks both tetris piece placement and chess movement
+- **Rendering**: Visual representation with 3D and 2D options
+  - `renderer.js`: Main rendering module
+  - `compatibility.js`: Ensures consistent API across rendering modes
+  - `3d/`: Three.js-based 3D rendering
+  - `2d/`: Canvas-based 2D rendering
 
-- **Row Clearing:**  
-  - Rows are cleared when all cells are filled
-  - Protected cells (in safe home zones or from paused players) are preserved
-  - Clearing triggers orphaned piece detection and relocation
-  - Cells above cleared rows shift down
+- **Utils**: Helper functions and utilities
+  - `network.js`: Socket.IO communication
+  - `network-patch.js`: Enhanced network functionality with fallbacks
+  - `helpers.js`: General utility functions
 
-- **Piece Movement:**  
-  - Chess piece movement follows standard chess rules
-  - Pawns track their movement distance for promotion
-  - Cannot capture pieces of paused players
-  - Movement validates king-connectivity paths
+- **UI**: User interface components
+  - `uiManager.js`: Manages UI elements and screens
+  - `debugPanel.js`: Interactive debug panel (toggle with F9)
 
-- **Pause System Implementation:**  
-  - Pause state stored in a Map with expiry times
-  - Game loop checks for expired pauses
-  - Pause expiry triggers complex island restructuring
-  - Client notifications for all pause-related events
+### Server-Side
 
-- **Economy System:**  
-  - Solana transaction validation (simulated)
-  - Purchase records for fee distribution
-  - Fee calculation when kings are captured
-  - Ownership transfer mechanisms
+The server-side code is organized into several modules:
 
-### Server-Client Communication
+- **Main Server** (`server.js`): Express.js server with Socket.IO integration
+- **Game Management** (`server/game/GameManager.js`): Core game logic and state management
+- **Routes** (`server/routes/`): API endpoints for game functionality
+- **Middleware** (`server/middleware/`): Authentication and request processing
+- **Database** (`server/database/`): Database connection and models
+- **Services** (`server/services/`): Additional services like payments
 
-- **Socket.IO Events:**  
-  - `boardUpdate`: Sends the current board state, falling piece, and paused players
-  - `playerPaused`/`playerResumed`: Notifies of player pause status changes
-  - `playerPauseExpired`: Indicates a player's pause has expired and their island removed
-  - `pieceRelocated`: Notifies when a piece is moved after island removal
-  - `pieceLost`: Notifies when a piece is lost due to lack of space
-  - `piecePurchased`: Indicates a successful piece purchase
-  - `feesAwarded`: Notifies of fee awards after king capture
-  - `moveSuccess`/`moveFailure`: Indicates success/failure of chess moves
-  - `placementSuccess`/`placementFailure`: Indicates success/failure of tetris placement
+### Server-Client Integration
 
-- **Client-to-Server Commands:**  
-  - `movePiece`: Request to move a chess piece
-  - `placePiece`: Request to place a tetris piece
-  - `pauseGame`/`resumeGame`: Control pause state
-  - `purchasePiece`: Buy new pieces with Solana
-  - `setDifficulty`: Admin command to adjust game difficulty
+The server and client communicate through:
 
-## How It Works
+1. **Socket.IO Events**: Real-time game state updates and player actions
+2. **REST API Endpoints**: Game state retrieval and player management
 
-### Server (server.js)
-- **Board State:**  
-  The board is represented as a 2D array of cells. Each cell contains either an empty object or if there is a useable cell there an object containing things like the colour, if any chess pieces are on it and the time it was created.
+The `GameManager` class on the server handles:
+- Player management (adding, removing)
+- Board management (expanding, updating)
+- Chess piece movement validation
+- Tetromino placement validation
+- Home zone management
+- Game state persistence
 
-- **Home Zones:**  
-  When a player connects, they are assigned a home zone (an 8×2 area along the bottom). Home zones are pre‑filled with chess pieces in a colour generated from the player's ID. They are protected from row clearance as long as at least one square remains filled or the player is paused.
+## Offline Mode
 
-- **Falling Tetrominoes:**  
-  A tetromino (selected randomly from a predefined set) falls from a specified starting Z‑height. As it descends, the server checks if any block of the tetromino lands adjacent to an existing cell and has a path to the player's king. If so, it "sticks" and is locked into the board; otherwise, if it falls too far, it's discarded.
+The game includes a robust offline mode that:
+1. Automatically detects when the server is unavailable
+2. Creates a mock socket for local game state management
+3. Simulates network events for consistent gameplay
+4. Persists game state in localStorage
+5. Provides a seamless experience without server connectivity
 
-- **Row Clearance:**  
-  A row is cleared if every cell is filled (unless the cell is in a safe home zone). When cleared, only non‑safe cells are removed, and rows above are shifted downward - each player maintains their starting direction which will be different to other players.
+## Debug Panel
 
-- **Home Zone Degradation:**  
-  A timer periodically checks for home zones that shrink every few minutes, helping to clean up abandoned areas and encourage gameplay.
+The debug panel (toggled with F9) provides real-time information about:
+1. Connection status (socket connected, socket ID)
+2. Game status (initialized, running, render mode)
+3. Player information (ID, score, level)
+4. Board information (dimensions, pieces)
+5. Home zone details
+6. Performance metrics (FPS, update times)
 
-- **Real‑time Updates:**  
-  The server broadcasts the updated board state, including the falling piece, home zones, and paused players to all connected clients via Socket.IO.
+## Controls
 
-### Client (public/index.html & public/main.js)
-- **Rendering:**  
-  The client uses Three.js to render the board and falling tetrominoes in a 3D scene. The view is set up to look at the X/Y plane, with falling pieces rendered using their Z‑axis value.
-  Pieces have the users username floating above them.
-  Own pieces "Glow".
-  Falling tetis pieces can be dragged around or use cursors
-  Chess pieces can be clicked, the cells which are possible to move to are highlighted and then the destination is clicked on.
-
-- **User Interface:**  
-  An info panel displays a simple title message. Future work might include player controls and additional UI elements.
-
-- **Real‑time Sync:**  
-  The client listens for `boardUpdate` events from the server and updates the scene accordingly.
-
-## Future Improvements
-
-- **Player Controls:**  
-  Extend the client to allow players to move their chess pieces or interact with the falling tetrominoes.
-
-- **Enhanced UI:**  
-  Add a scoreboard, player avatars, and more detailed game instructions.
-
-- **Game Rules & Logic:**  
-  Refine the collision detection, sticking logic, and home zone mechanics. Consider adding further game modes or dimensions.
-
-- **Performance & Scalability:**  
-  Optimise board rendering and network message handling to support a large number of concurrent players.
-
-- **Sponsorship:**  
-  The tetris pieces can be sponsored by an automated purchasing system. An image is shown on the cell and when a player lands or hovers on them an ad is shown.
-
-- **Advertiser Bidding System:**  
-  The game features a sophisticated bidding system for advertisers:
-  1. Advertisers can upload a square image, provide a link and descriptive text (up to 64 characters)
-  2. They place bids in SOL and specify the total number of cells they want to sponsor
-  3. When a player's tetromino piece falls, it's sponsored by an advertiser based on bid ranking
-  4. The highest bidder sponsors the first piece, second highest the second piece, and so on
-  5. The advertiser's image appears on the tetromino cells
-  6. When a player hovers over a sponsored cell, the advertiser's description is shown
-  7. Clicking on a sponsored cell opens the advertiser's link in a new window
-  8. The system tracks impressions and clicks for each advertiser
-  9. Once an advertiser's cell quota is reached, they're removed from the rotation
-
-- **Magic Potions:**  
-  Users can purchase, or perhaps a sponsor can give away something.. they float on a cell and have to be collected by landing on the cell. Can be in game enhancements or discount tokens etc.
-
-- **Paid Pieces:**  
-  Connect your crypto wallet and you can buy extra pieces to play which come with their own cell that can be placed anywhere. if a paid piece takes another paid piece, you win half the total cost the other person paid.
-
-- **AI Players:**  
-  API is public so that computer and AI players can also join in.
-
-- **Piece Customisation:**  
-  You can design the pattern that your pieces have. 
-
-## Testing Strategy
-
-The codebase includes comprehensive tests for all major gameplay systems:
-
-1. **Connectivity Tests:**
-   - Tests for the path-to-king validation
-   - Verification of orphaned piece handling
-   - Island identification accuracy
-
-2. **Pawn Promotion Tests:**
-   - Movement tracking
-   - Promotion trigger conditions
-   - Direction-specific promotion logic
-
-3. **Turn System Tests:**
-   - Cooldown enforcement
-   - Difficulty-based timing adjustments
-   - Player state tracking
-
-4. **Piece Purchase Tests:**
-   - Solana transaction validation
-   - Purchase restrictions
-   - Fee tracking for king captures
-
-5. **Pause System Tests:**
-   - Pause/resume functionality
-   - Expiration handling
-   - Island removal and piece relocation
-   - Home zone protection during pause
-
-To run tests:
-```bash
-npm test               # Run all tests
-npm run test:services  # Run database service tests
-npm run test:core      # Run core gameplay tests
-```
-
-## Contributing
-
-If you'd like to contribute, please fork the repository and submit a pull request with your proposed changes. Ensure that your code follows the existing style (using tabs, British English spellings, etc.) and includes comments where necessary.
+- **Arrow Keys**: Move tetromino/chess piece
+- **Q**: Rotate tetromino
+- **A**: Quick drop tetromino
+- **S**: Hold tetromino
+- **Space**: Hard drop tetromino
+- **P**: Pause game
+- **F9**: Toggle debug panel
+- **Mouse**: Click and drag chess pieces
+- **Touch**: Tap, double-tap, drag, and long press for mobile
 
 ## License
 
-This project is provided as-is under the [MIT License](LICENSE).
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-## Installation
+## Acknowledgements
 
-1. Clone the repository
-2. Install dependencies:
+- Three.js for 3D rendering
+- Socket.IO for real-time communication
+- Express.js for server-side routing
 
-```bash
-npm install
-```
+## Development
 
-3. Set up the environment variables:
-   - Copy `.env.example` to `.env`
-   - Set appropriate values for each variable
+### Module System
 
-4. Create required texture asset directories:
-   ```bash
-   mkdir -p public/img/textures
-   ```
+The project uses ES modules throughout. All JavaScript files are treated as ES modules, which means:
 
-5. Ensure texture files are in the correct location:
-   - Board texture: `public/img/textures/board.png`
-   - Cell texture: `public/img/textures/cell.png`
-   - Home zone texture: `public/img/textures/home_zone.png`
+1. Use `import` and `export` instead of `require` and `module.exports`
+2. Include the `.js` extension when importing local files
+3. Use `import.meta.url` instead of `__dirname` or `__filename`
 
-   If you don't have these files yet, you can use placeholder images during development.
+### Testing
 
-## Running the Application
+The project uses Jest for testing with ES modules support. All tests have been converted to use ES modules instead of CommonJS.
 
-```bash
-npm start
-```
+#### Running Tests
 
-For development with hot reloading:
-
-```bash
-npm run dev
-```
-
-## Testing
-
-The project uses Mocha for testing. We've implemented a custom ES module testing framework to handle mocking and stubbing:
+To run all tests:
 
 ```bash
 npm test
 ```
 
-### Test Database Setup
+To run a specific test file:
 
-Tests run using separate MongoDB and Redis databases:
-
-- MongoDB test database: `chesstris_test` 
-- Redis test database: Database `1` (production uses `0`)
-
-You can configure these in the `.env` file:
-
-```
-TEST_MONGO_URI=mongodb://localhost:27017/chesstris_test
-TEST_REDIS_URI=redis://localhost:6379/1
+```bash
+npm test -- path/to/test/file.test.js
 ```
 
-### Redis Installation on Windows
+For example, to run the tetrominoManager tests:
 
-Redis requires a Unix-like environment. On Windows, you can run Redis in one of two ways:
+```bash
+npm test -- tests/core/tetrominoManager.test.js
+```
 
-#### Option 1: Windows Subsystem for Linux (WSL2)
+To run tests with verbose output:
 
-1. Enable WSL2 in Windows
-2. Install Redis in WSL2:
-   ```bash
-   sudo apt-get update
-   sudo apt-get install redis-server
-   ```
-3. Start Redis in WSL2:
-   ```bash
-   sudo service redis-server start
-   ```
+```bash
+npm test -- --verbose
+```
 
-#### Option 2: Docker
+#### Debugging Tests
 
-1. Install Docker Desktop for Windows
-2. Run Redis container:
-   ```bash
-   docker run --name redis -p 6379:6379 -d redis
-   ```
+If tests are not exiting properly, you can use the `--detectOpenHandles` flag to identify the issue:
 
-### Testing with ES Modules
+```bash
+npm test -- --detectOpenHandles
+```
 
-Since we use ES modules, we've created a custom testing framework for mocking and stubbing:
+For more detailed information about test failures, use the `--verbose` flag:
+
+```bash
+npm test -- --verbose
+```
+
+#### Test Structure
+
+Tests are organized by module and functionality:
+
+- `tests/core/`: Tests for core game logic
+- `tests/gameplay/`: Tests for gameplay mechanics
+- `tests/security/`: Tests for security features
+- `tests/services/`: Tests for server-side services
+- `tests/utils/`: Tests for utility functions
+
+Each test file focuses on a specific component or service, with test suites structured to test both happy paths and edge cases.
+
+#### Mock Implementations
+
+Tests use Jest's mocking capabilities to isolate components:
 
 ```javascript
-// Import original modules
-import * as OriginalModule from '../path/to/module.js';
+// Example of mocking a function
+const mockFunction = jest.fn();
+mockFunction.mockReturnValue(expectedValue);
 
-// Create a proxy for mocking
-const Module = createTestProxy(OriginalModule);
-
-// Mock a function
-Module.someFunction = () => 'mocked value';
+// Example of spying on a function
+const spy = jest.spyOn(object, 'method');
 ```
 
-See the `tests/examples/example.test.js` file for more examples.
+#### Test Coverage
 
-## Architecture
+The test suite includes 24 test files with 267 passing tests, providing comprehensive coverage of the codebase.
 
-Chess-Tris combines real-time gameplay with persistent data storage:
+### Recent Improvements
 
-- **Redis** is used for real-time game state
-- **MongoDB** is used for persistent storage
-- **Socket.IO** handles real-time communication
-- **Express** powers the web server
+#### ES Module Conversion
 
-## Function Map and Test Coverage
+The entire codebase has been converted to use ES modules consistently:
 
-The following is a map of key functions in the codebase and whether they have proper test coverage:
+1. All CommonJS modules (`require`/`module.exports`) have been converted to ES modules (`import`/`export`)
+2. Database services (Redis and MongoDB connections) now use ES module syntax
+3. Test files have been updated to use ES modules and Jest's modern testing patterns
 
-### Server-Side Functions (GameManager)
+#### Test Suite Enhancements
 
-| Function | Description | Test Coverage |
-|----------|-------------|---------------|
-| `createGame()` | Creates a new game instance | ✅ Tested |
-| `addPlayer()` | Adds a player to a game | ✅ Tested |
-| `moveChessPiece()` | Handles chess piece movement | ✅ Tested |
-| `placeTetrisPiece()` | Places tetris pieces on the board | ✅ Tested |
-| `getGameState()` | Returns the current state of a game | ✅ Tested |
-| `_expandBoard()` | Dynamically expands the game board | ✅ Tested |
-| `_findFreeHomeZoneSpot()` | Finds a valid position for player home zones | ✅ Tested |
-| `_createHomeZoneForPlayer()` | Creates a player's home zone with chess pieces | ✅ Tested |
+The test suite has been significantly improved:
 
-### Client-Side Functions (Renderer)
+1. **Framework compatibility**: Tests now work properly with Jest and ES modules
+2. **Mocking improvements**: Updated to use Jest's mocking capabilities instead of Sinon
+3. **Assertion syntax**: Converted from Chai's assertion style to Jest's expect syntax
+4. **Timeout handling**: Added appropriate timeouts for long-running tests
+5. **Database cleanup**: Proper teardown of database connections after tests complete
 
-| Function | Description | Test Coverage |
-|----------|-------------|---------------|
-| `init()` | Initializes the rendering engine | ❌ Not tested |
-| `updateBoard()` | Updates the visual board based on game state | ❌ Not tested |
-| `createFloatingCell()` | Creates the 3D representation of a cell | ❌ Not tested |
-| `updateChessPieces()` | Updates chess piece positions | ❌ Not tested |
-| `updateFallingTetromino()` | Animates the falling tetromino piece | ❌ Not tested |
-| `addPotionToCell()` | Adds a potion effect to a cell | ❌ Not tested |
-| `animatePotionsAndParticles()` | Animates potion effects | ❌ Not tested |
-| `createPlayerNameLabel()` | Creates floating player name labels | ❌ Not tested |
+#### Redis Connection Handling
 
-### Session and Network Management
+Redis connection handling has been improved:
 
-| Function | Description | Test Coverage |
-|----------|-------------|---------------|
-| `SessionManager.initSession()` | Initializes or loads player session | ❌ Not tested |
-| `SessionManager.getSessionData()` | Returns current session data | ❌ Not tested |
-| `Network.initSocket()` | Initializes WebSocket connection | ✅ Mocked for tests |
-| `Network.emit()` | Sends data to the server | ✅ Mocked for tests |
+1. **ES module compatibility**: Redis client initialization now uses ES module syntax
+2. **Proper cleanup**: Redis connections are now properly closed after tests complete
+3. **Error handling**: Better error handling for Redis connection issues
+4. **Memory fallback**: In-memory fallback for Redis when not available in development environments
 
-### Important Implementation Notes
+These improvements ensure that the application can gracefully handle database connection issues and properly clean up resources when shutting down.
 
-1. **Board Coordinates**: The game board uses a coordinate system where (0,0) is the top-left corner. X increases to the right, and Y increases downward.
+## Database Setup
 
-2. **Home Zone Placement**: Home zones are placed with a minimum distance of 8-12 cells between them to ensure fair gameplay. The board expands dynamically as needed when new players join.
+### MongoDB
+The application uses MongoDB for persistent storage. Make sure you have MongoDB installed and running, or use the provided connection string to connect to a remote MongoDB instance.
 
-3. **Player Limits**: Each game supports up to 2048 players, though practical limits are much lower due to UI constraints.
+### Redis
+The application uses Redis for real-time game state management and pub/sub functionality. Make sure you have Redis installed and running, or the application will fall back to an in-memory implementation for development environments.
 
-4. **Tetris-First Gameplay**: Players must place tetris pieces to build the board before they can move chess pieces. This ensures a fair start where players need to expand from their home zone.
+#### Redis on Windows
+If you're running on Windows, you can install Redis using:
+- Windows Subsystem for Linux (WSL)
+- Docker
+- [Memurai](https://www.memurai.com/) (Redis-compatible Windows server)
 
-5. **Error Handling**: All rendering functions include error handling to prevent NaN values and ensure the game continues running even if individual rendering elements fail.
+## Game Joining
 
-## Refactoring Recommendations
+When you start the application, it automatically creates a default game world with ID 'default-game'. Players are automatically connected to this shared world when they first load the application.
 
-As the codebase has grown, some files like `renderer.js` have become too large and complex. Here's a proposed refactoring strategy:
+### Game Terminology
 
-### Refactoring the Renderer Module
+To clarify the terminology used throughout the codebase:
 
-The `renderer.js` file should be split into smaller modules based on functionality:
+1. **Game World**: The shared environment where all players interact. Currently, there is one default game world with ID 'default-game' that all players join automatically. This is the persistent space that contains the board, all players, and their chess pieces.
 
-1. **renderer-core.js**: Core initialization, scene setup, animation loop
-   - `init()`, `animate()`, `updateScene()`, `cleanup()`
-   - Camera and controls setup
-   - Main render loop
+2. **Player Game**: Each player's individual game experience within the shared world. This includes their tetrominos, score, and chess pieces. Players can join and leave the game world, but the world persists even when no players are present.
 
-2. **renderer-board.js**: Board and cell rendering
-   - `updateBoard()`, `createFloatingCell()`
-   - Cell decoration functions
-   - Board creation functions
+3. **Game Session**: A period of gameplay for a specific player, from joining to leaving the game world. Multiple game sessions can exist simultaneously within the same game world.
 
-3. **renderer-pieces.js**: Chess pieces visualization
-   - `updateChessPieces()`, `addChessPiece()`
-   - Piece movement animations
-   - Player labels
-
-4. **renderer-tetromino.js**: Tetris piece rendering
-   - `updateFallingTetromino()`, `updateGhostPiece()`
-   - Tetromino rotation and movement
-
-5. **renderer-effects.js**: Visual effects and decorations
-   - `addCellDecoration()`, `addPotionToCell()`
-   - Particle effects, animations
-   - Environment effects (clouds, skybox)
-
-6. **renderer-utils.js**: Helper functions
-   - `getFloatingHeight()`, `validateGeometryParams()`
-   - Random generation utilities
-   - Material management
-
-### Implementation Strategy
-
-1. Start by creating a new directory structure:
-```
-public/js/rendering/
-├── index.js           # Main entry point that exports all modules
-├── core.js            # Core renderer functionality
-├── board.js           # Board rendering
-├── pieces.js          # Chess pieces
-├── tetromino.js       # Tetris pieces
-├── effects.js         # Visual effects
-└── utils.js           # Helper functions
-```
-
-2. Move functions to appropriate files, ensuring proper imports/exports
-3. Update references throughout the codebase
-
-## Automated Testing Strategy
-
-Implementing automated tests for the renderer would bring several benefits:
-
-1. **Ensure visual consistency** across changes
-2. **Detect regressions** in rendering functionality
-3. **Validate game rule implementation** in the visual layer
-
-### Recommended Testing Approach
-
-1. **Unit Tests for Utility Functions**:
-   - Test geometry validation
-   - Test coordinate calculations
-   - Test random generators
-
-2. **Integration Tests for Rendering Components**:
-   - Test board generation with mock game states
-   - Test chess piece placement and movement
-   - Test Tetris piece rendering
-
-3. **Visual Regression Tests**:
-   - Capture screenshots of key game states
-   - Compare against baseline images
-   - Flag visual differences for review
-
-### Test Implementation
-
-```javascript
-// Example test for geometry validation
-import { validateGeometryParams } from '../public/js/rendering/utils.js';
-
-describe('Geometry Validation', () => {
-  test('should handle NaN values', () => {
-    const params = { radius: NaN, height: 1 };
-    const validated = validateGeometryParams(params);
-    expect(validated.radius).toBe(0.2); // Default radius value
-    expect(validated.height).toBe(1);   // Original valid value
-  });
-
-  test('should handle undefined values', () => {
-    const params = { width: undefined, depth: 3 };
-    const validated = validateGeometryParams(params);
-    expect(validated.width).toBe(0.5);  // Default width value
-    expect(validated.depth).toBe(3);    // Original valid value
-  });
-});
-```
-
-Implementing these testing strategies will make the codebase more robust and maintainable as the project continues to evolve.
-
-## Debugging the Renderer
-
-The Chesstris renderer has been refactored to be more robust and easier to debug. Here are some key features and debugging techniques:
-
-### Test Page
-
-A dedicated test page at `/test.html` provides a controlled environment for testing the renderer with a complete visualization of game elements:
-- A proper 8×2 home zone with full chess pieces arranged in standard formation
-- A path of cells extending from the home zone to the board center
-- Falling tetromino pieces that reset when they fall below the board
-- Wireframe outlines and labels on all elements for better visibility
-- Color-coded areas (Orange for home zone, Blue for regular cells)
-
-### Debug Controls
-
-Both the test page and main game include enhanced debug controls for easier navigation:
-- Reset Camera: Returns to the default view
-- Top View: Bird's eye view of the board
-- Side View: Shows the board from the side
-- View Home Zone: Focuses directly on the home zone with chess pieces
-
-These controls are available in the debug panel in the top-right corner of the screen, or via these console commands:
-```javascript
-window.resetCamera() // Reset to default view
-window.topView()     // Top-down view
-window.sideView()    // Side view
-```
-
-### Fallback Mechanisms
-
-The renderer includes several fallback mechanisms to ensure it continues to work even if some components fail:
-
-#### Texture Fallbacks
-- Placeholder textures are automatically generated when image files are not found
-- These placeholders include the name of the texture for easy identification
-- High-contrast patterns make them easy to spot during debugging
-
-#### Geometry Fallbacks
-- Wireframe outlines make objects visible even if textures or lighting fail
-- Text labels show coordinates and piece types
-
-#### Direct Debug Mode
-- A "Direct Test" button creates a scene with basic shapes to verify Three.js is working
-- Helps identify if issues are with Three.js setup or with our renderer code
-
-### Known Issues and Workarounds
-
-#### Missing Texture Files
-If you see 404 errors for texture files, ensure the following files exist:
-- public/img/textures/board.png
-- public/img/textures/cell.png
-- public/img/textures/home_zone.png
-
-The renderer will use placeholder textures if these files are missing.
-
-#### API Errors
-If you see errors related to the sponsors API, this is expected during development:
-```
-GET http://localhost:3020/api/sponsors/next 404 (Not Found)
-```
-
-The sponsors system is disabled by default in development mode. To enable it:
-1. Set `SPONSORS_API_ENABLED = true` in `public/js/utils/sponsors.js`
-2. Ensure your development server handles these API endpoints
+If you want to create or join a different game world, you can use the UI controls to do so, but the default experience is to join the shared 'default-game' world.

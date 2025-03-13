@@ -128,9 +128,17 @@ class GameManager {
 			
 			// Check if the player already exists
 			if (game.players[playerId]) {
-				return { 
-					success: false, 
-					error: 'Player already exists in this game' 
+				// Update the player's data and mark them as active
+				game.players[playerId].isActive = true;
+				game.players[playerId].username = username || game.players[playerId].username;
+				
+				console.log(`Player ${playerId} already exists in game ${gameId}, updating data and marking as active`);
+				
+				return {
+					success: true,
+					message: 'Player reconnected to existing game',
+					playerId,
+					gameId
 				};
 			}
 			
@@ -1064,4 +1072,5 @@ class GameManager {
 	}
 }
 
+// Export the GameManager class
 export default GameManager;

@@ -1,17 +1,14 @@
 /**
  * THREE.js Module
- * This is a stub that re-exports THREE from the global scope
+ * This module imports Three.js using ES modules and re-exports the commonly used classes
  */
 
-// Get THREE from global scope
-const THREE = window.THREE || {};
+// Import Three.js using ES modules
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-// Check what version of Three.js we're using and log it
-if (THREE.REVISION) {
-	console.log('Three.js Version:', THREE.REVISION);
-} else {
-	console.warn('THREE.js not found in global scope');
-}
+// Log the version
+console.log('Three.js Version:', THREE.REVISION);
 
 // Export THREE as default
 export default THREE;
@@ -57,5 +54,5 @@ export const BackSide = THREE.BackSide;
 export const AdditiveBlending = THREE.AdditiveBlending;
 export const NormalBlending = THREE.NormalBlending;
 
-// Export OrbitControls if available
-export const OrbitControls = THREE.OrbitControls; 
+// Export OrbitControls
+export { OrbitControls }; 
