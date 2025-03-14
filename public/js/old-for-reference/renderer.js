@@ -94,6 +94,8 @@ export function init(container, options = {}) {
 		controls.maxDistance = 50;
 		controls.maxPolarAngle = Math.PI / 2;
 
+		window.OrbitControls = OrbitControls;
+
 		// Create groups
 		boardGroup = new Group();
 		piecesGroup = new Group();

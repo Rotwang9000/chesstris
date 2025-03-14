@@ -295,114 +295,132 @@ export function updatePlayerLabels(camera) {
 }
 
 /**
- * Create a chess piece with the specified type
- * @param {string} type - Piece type (pawn, rook, knight, bishop, queen, king)
- * @param {Object} options - Additional options
- * @returns {THREE.Mesh} The mesh representing the chess piece
+ * Creates a chess piece with the specified type and options
+ * @param {string} type - The type of chess piece
+ * @param {Object} options - Options for the chess piece
+ * @returns {THREE.Group} The chess piece group
  */
 export function createChessPiece(type, options = {}) {
 	try {
-		const defaults = {
-			color: 0x2196F3,
-			scale: 0.5,
+		// Default options
+		const pieceOptions = {
+			color: 0xFFFFFF,
+			scale: 1,
 			position: { x: 0, y: 0, z: 0 },
 			ownerName: 'Player',
-			showLabel: true
+			...options
 		};
 		
-		const pieceOptions = { ...defaults, ...options };
+		// Create a group for the piece
+		const pieceGroup = new THREE.Group();
 		
-		// Set a standard height for all pieces for better visibility
-		const pieceHeight = 1.5;
+		// Determine piece geometry and height based on type
+		let geometry, pieceHeight;
 		
-		// Create different geometries based on piece type
-		let geometry;
-		const cacheKey = `${type}-${pieceOptions.scale}`;
-		
-		if (pieceGeometryCache[cacheKey]) {
-			geometry = pieceGeometryCache[cacheKey];
-		} else {
 			switch (type.toLowerCase()) {
 				case 'pawn':
-					geometry = new THREE.CylinderGeometry(
-						0.2 * pieceOptions.scale, 
-						0.3 * pieceOptions.scale, 
-						pieceHeight * pieceOptions.scale,
-						12
-					);
+				pieceHeight = 0.5;
+				geometry = new THREE.CylinderGeometry(0.2, 0.3, pieceHeight, 8);
 					break;
 				case 'rook':
-					geometry = new THREE.BoxGeometry(
-						0.4 * pieceOptions.scale, 
-						pieceHeight * pieceOptions.scale, 
-						0.4 * pieceOptions.scale
-					);
+				pieceHeight = 0.7;
+				geometry = new THREE.BoxGeometry(0.4, pieceHeight, 0.4);
 					break;
 				case 'knight':
-					// For knight, return a group object instead
-					return createKnightPiece(pieceOptions, pieceHeight);
+				pieceHeight = 0.7;
+				// Create a simple knight shape (L-shaped)
+				const knightGroup = new THREE.Group();
+				
+				// Base
+				const baseGeometry = new THREE.CylinderGeometry(0.2, 0.3, 0.4, 8);
+				const baseMaterial = new THREE.MeshStandardMaterial({ color: pieceOptions.color });
+				const base = new THREE.Mesh(baseGeometry, baseMaterial);
+				base.position.y = 0.2;
+				
+				// Head
+				const headGeometry = new THREE.BoxGeometry(0.25, 0.3, 0.4);
+				const headMaterial = new THREE.MeshStandardMaterial({ color: pieceOptions.color });
+				const head = new THREE.Mesh(headGeometry, headMaterial);
+				head.position.set(0, 0.5, 0.05);
+				
+				knightGroup.add(base);
+				knightGroup.add(head);
+				
+				// Position and scale
+				knightGroup.scale.set(pieceOptions.scale, pieceOptions.scale, pieceOptions.scale);
+				knightGroup.position.set(
+					pieceOptions.position.x,
+					pieceOptions.position.y,
+					pieceOptions.position.z
+				);
+				
+				// Store piece data
+				knightGroup.userData = {
+					type: 'chessPiece',
+					pieceType: type,
+					owner: pieceOptions.ownerName
+				};
+				
+				return knightGroup;
 				case 'bishop':
-					geometry = new THREE.ConeGeometry(
-						0.25 * pieceOptions.scale, 
-						pieceHeight * pieceOptions.scale,
-						16
-					);
+				pieceHeight = 0.8;
+				geometry = new THREE.ConeGeometry(0.2, pieceHeight, 8);
 					break;
 				case 'queen':
-					// For queen, return a group object instead
-					return createQueenPiece(pieceOptions, pieceHeight);
+				pieceHeight = 0.9;
+				geometry = new THREE.CylinderGeometry(0.2, 0.3, pieceHeight, 8);
+				break;
 				case 'king':
-					// For king, return a group object instead
-					return createKingPiece(pieceOptions, pieceHeight);
-				default:
-					// Default to a simple box for unknown pieces
-					geometry = new THREE.BoxGeometry(
-						0.3 * pieceOptions.scale, 
-						pieceHeight * pieceOptions.scale, 
-						0.3 * pieceOptions.scale
-					);
-			}
-			
-			pieceGeometryCache[cacheKey] = geometry;
+				pieceHeight = 1.0;
+				
+				// Create a king with a cross on top
+				const kingGroup = new THREE.Group();
+				
+				// Base
+				const kingBaseGeometry = new THREE.CylinderGeometry(0.2, 0.3, 0.7, 8);
+				const kingBaseMaterial = new THREE.MeshStandardMaterial({ color: pieceOptions.color });
+				const kingBase = new THREE.Mesh(kingBaseGeometry, kingBaseMaterial);
+				kingBase.position.y = 0.35;
+				
+				// Cross (vertical)
+				const crossVerticalGeometry = new THREE.BoxGeometry(0.1, 0.3, 0.1);
+				const crossMaterial = new THREE.MeshStandardMaterial({ color: pieceOptions.color });
+				const crossVertical = new THREE.Mesh(crossVerticalGeometry, crossMaterial);
+				crossVertical.position.y = 0.85;
+				
+				// Cross (horizontal)
+				const crossHorizontalGeometry = new THREE.BoxGeometry(0.3, 0.1, 0.1);
+				const crossHorizontal = new THREE.Mesh(crossHorizontalGeometry, crossMaterial);
+				crossHorizontal.position.y = 0.75;
+				
+				kingGroup.add(kingBase);
+				kingGroup.add(crossVertical);
+				kingGroup.add(crossHorizontal);
+				
+				// Position and scale
+				kingGroup.scale.set(pieceOptions.scale, pieceOptions.scale, pieceOptions.scale);
+				kingGroup.position.set(
+					pieceOptions.position.x,
+					pieceOptions.position.y,
+					pieceOptions.position.z
+				);
+				
+				// Store piece data
+				kingGroup.userData = {
+					type: 'chessPiece',
+					pieceType: type,
+					owner: pieceOptions.ownerName
+				};
+				
+				return kingGroup;
+			default:
+				pieceHeight = 0.5;
+				geometry = new THREE.SphereGeometry(0.3, 8, 8);
 		}
 		
-		// Create piece material - use MeshBasicMaterial for visibility in any lighting
-		const material = new THREE.MeshBasicMaterial({ 
-			color: pieceOptions.color,
-			wireframe: false
-		});
-		
-		// Create mesh
+		// Create the piece
+		const material = new THREE.MeshStandardMaterial({ color: pieceOptions.color });
 		const piece = new THREE.Mesh(geometry, material);
-		piece.castShadow = true;
-		piece.receiveShadow = true;
-		
-		// Add wireframe for better visibility
-		try {
-			const edgesGeometry = new THREE.EdgesGeometry(geometry);
-			const wireframeMaterial = new THREE.LineBasicMaterial({ 
-				color: 0xFFFFFF, 
-				linewidth: 1 
-			});
-			const wireframe = new THREE.LineSegments(edgesGeometry, wireframeMaterial);
-			piece.add(wireframe);
-		} catch (e) {
-			console.warn('Could not create piece wireframe:', e);
-			// Use a simple wireframe mesh as fallback
-			const wireGeometry = new THREE.BoxGeometry(
-				0.4 * pieceOptions.scale,
-				pieceHeight * pieceOptions.scale,
-				0.4 * pieceOptions.scale
-			);
-			const wireMaterial = new THREE.MeshBasicMaterial({
-				color: 0xFFFFFF,
-				wireframe: true,
-				transparent: true,
-				opacity: 0.5
-			});
-			const wireBox = new THREE.Mesh(wireGeometry, wireMaterial);
-			piece.add(wireBox);
-		}
 		
 		// Position the piece at the center of its cell
 		piece.position.set(
@@ -418,291 +436,11 @@ export function createChessPiece(type, options = {}) {
 			owner: pieceOptions.ownerName
 		};
 		
-		// Add player name label if requested
-		if (pieceOptions.showLabel) {
-			const canvas = document.createElement('canvas');
-			canvas.width = 256;
-			canvas.height = 64;
-			const ctx = canvas.getContext('2d');
-			
-			// Draw text background
-			ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-			ctx.fillRect(0, 0, canvas.width, canvas.height);
-			
-			// Draw text
-			ctx.fillStyle = 'white';
-			ctx.font = 'bold 24px Arial';
-			ctx.textAlign = 'center';
-			ctx.textBaseline = 'middle';
-			ctx.fillText(`${type.toUpperCase()}`, canvas.width / 2, canvas.height / 2);
-			
-			const texture = new THREE.CanvasTexture(canvas);
-			const labelMaterial = new THREE.SpriteMaterial({ map: texture });
-			const label = new THREE.Sprite(labelMaterial);
-			
-			// Position label above the piece
-			label.position.set(0, pieceHeight * pieceOptions.scale + 0.2, 0);
-			label.scale.set(1, 0.25, 1);
-			piece.add(label);
-		}
-		
-		// Add to pieces group if available
-		if (window.piecesGroup) {
-			window.piecesGroup.add(piece);
-		}
-		
 		return piece;
 	} catch (error) {
 		console.error('Error creating chess piece:', error);
-		return null;
+		return new THREE.Group(); // Return empty group on error
 	}
-}
-
-/**
- * Create a knight piece using basic geometries
- */
-function createKnightPiece(pieceOptions, pieceHeight) {
-	const knightGroup = new THREE.Group();
-	
-	// Create base cylinder
-	const baseGeometry = new THREE.CylinderGeometry(
-		0.25 * pieceOptions.scale, 
-		0.3 * pieceOptions.scale, 
-		pieceHeight * 0.7 * pieceOptions.scale,
-		8
-	);
-	const baseMaterial = new THREE.MeshBasicMaterial({ color: pieceOptions.color });
-	const base = new THREE.Mesh(baseGeometry, baseMaterial);
-	
-	// Create head sphere
-	const headGeometry = new THREE.SphereGeometry(
-		0.25 * pieceOptions.scale, 
-		8, 
-		8
-	);
-	const headMaterial = new THREE.MeshBasicMaterial({ color: pieceOptions.color });
-	const head = new THREE.Mesh(headGeometry, headMaterial);
-	head.position.y = pieceHeight * 0.45 * pieceOptions.scale;
-	
-	// Add parts to group
-	knightGroup.add(base);
-	knightGroup.add(head);
-	
-	// Add wireframes for better visibility
-	try {
-		const baseWireframe = new THREE.LineSegments(
-			new THREE.EdgesGeometry(baseGeometry),
-			new THREE.LineBasicMaterial({ color: 0xFFFFFF })
-		);
-		const headWireframe = new THREE.LineSegments(
-			new THREE.EdgesGeometry(headGeometry),
-			new THREE.LineBasicMaterial({ color: 0xFFFFFF })
-		);
-		base.add(baseWireframe);
-		head.add(headWireframe);
-	} catch (e) {
-		console.warn('Could not create knight wireframes:', e);
-	}
-	
-	// Position the piece
-	knightGroup.position.set(
-		pieceOptions.position.x,
-		pieceHeight * pieceOptions.scale / 2 + pieceOptions.position.y,
-		pieceOptions.position.z
-	);
-	
-	// Store piece data
-	knightGroup.userData = {
-		type: 'chessPiece',
-		pieceType: 'knight',
-		owner: pieceOptions.ownerName
-	};
-	
-	// Add label
-	if (pieceOptions.showLabel) {
-		const canvas = document.createElement('canvas');
-		canvas.width = 256;
-		canvas.height = 64;
-		const ctx = canvas.getContext('2d');
-		
-		ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-		ctx.fillRect(0, 0, canvas.width, canvas.height);
-		
-		ctx.fillStyle = 'white';
-		ctx.font = 'bold 24px Arial';
-		ctx.textAlign = 'center';
-		ctx.textBaseline = 'middle';
-		ctx.fillText('KNIGHT', canvas.width / 2, canvas.height / 2);
-		
-		const texture = new THREE.CanvasTexture(canvas);
-		const labelMaterial = new THREE.SpriteMaterial({ map: texture });
-		const label = new THREE.Sprite(labelMaterial);
-		
-		label.position.set(0, pieceHeight * pieceOptions.scale + 0.2, 0);
-		label.scale.set(1, 0.25, 1);
-		knightGroup.add(label);
-	}
-	
-	// Add to pieces group if available
-	if (window.piecesGroup) {
-		window.piecesGroup.add(knightGroup);
-	}
-	
-	return knightGroup;
-}
-
-/**
- * Create a queen piece using basic geometries
- */
-function createQueenPiece(pieceOptions, pieceHeight) {
-	const queenGroup = new THREE.Group();
-	
-	// Create base cylinder
-	const baseGeometry = new THREE.CylinderGeometry(
-		0.25 * pieceOptions.scale, 
-		0.4 * pieceOptions.scale, 
-		pieceHeight * 0.8 * pieceOptions.scale,
-		8
-	);
-	const baseMaterial = new THREE.MeshBasicMaterial({ color: pieceOptions.color });
-	const base = new THREE.Mesh(baseGeometry, baseMaterial);
-	
-	// Create crown sphere
-	const crownGeometry = new THREE.SphereGeometry(
-		0.3 * pieceOptions.scale, 
-		8, 
-		8
-	);
-	const crownMaterial = new THREE.MeshBasicMaterial({ color: pieceOptions.color });
-	const crown = new THREE.Mesh(crownGeometry, crownMaterial);
-	crown.position.y = pieceHeight * 0.5 * pieceOptions.scale;
-	
-	// Add parts to group
-	queenGroup.add(base);
-	queenGroup.add(crown);
-	
-	// Position the piece
-	queenGroup.position.set(
-		pieceOptions.position.x,
-		pieceHeight * pieceOptions.scale / 2 + pieceOptions.position.y,
-		pieceOptions.position.z
-	);
-	
-	// Store piece data
-	queenGroup.userData = {
-		type: 'chessPiece',
-		pieceType: 'queen',
-		owner: pieceOptions.ownerName
-	};
-	
-	// Add label
-	if (pieceOptions.showLabel) {
-		const canvas = document.createElement('canvas');
-		canvas.width = 256;
-		canvas.height = 64;
-		const ctx = canvas.getContext('2d');
-		
-		ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-		ctx.fillRect(0, 0, canvas.width, canvas.height);
-		
-		ctx.fillStyle = 'white';
-		ctx.font = 'bold 24px Arial';
-		ctx.textAlign = 'center';
-		ctx.textBaseline = 'middle';
-		ctx.fillText('QUEEN', canvas.width / 2, canvas.height / 2);
-		
-		const texture = new THREE.CanvasTexture(canvas);
-		const labelMaterial = new THREE.SpriteMaterial({ map: texture });
-		const label = new THREE.Sprite(labelMaterial);
-		
-		label.position.set(0, pieceHeight * pieceOptions.scale + 0.2, 0);
-		label.scale.set(1, 0.25, 1);
-		queenGroup.add(label);
-	}
-	
-	// Add to pieces group if available
-	if (window.piecesGroup) {
-		window.piecesGroup.add(queenGroup);
-	}
-	
-	return queenGroup;
-}
-
-/**
- * Create a king piece using basic geometries
- */
-function createKingPiece(pieceOptions, pieceHeight) {
-	const kingGroup = new THREE.Group();
-	
-	// Create base cylinder
-	const baseGeometry = new THREE.CylinderGeometry(
-		0.3 * pieceOptions.scale, 
-		0.4 * pieceOptions.scale, 
-		pieceHeight * 0.7 * pieceOptions.scale,
-		8
-	);
-	const baseMaterial = new THREE.MeshBasicMaterial({ color: pieceOptions.color });
-	const base = new THREE.Mesh(baseGeometry, baseMaterial);
-	
-	// Create top cube
-	const topGeometry = new THREE.BoxGeometry(
-		0.2 * pieceOptions.scale, 
-		0.3 * pieceOptions.scale, 
-		0.2 * pieceOptions.scale
-	);
-	const topMaterial = new THREE.MeshBasicMaterial({ color: pieceOptions.color });
-	const top = new THREE.Mesh(topGeometry, topMaterial);
-	top.position.y = pieceHeight * 0.4 * pieceOptions.scale;
-	
-	// Add parts to group
-	kingGroup.add(base);
-	kingGroup.add(top);
-	
-	// Position the piece
-	kingGroup.position.set(
-		pieceOptions.position.x,
-		pieceHeight * pieceOptions.scale / 2 + pieceOptions.position.y,
-		pieceOptions.position.z
-	);
-	
-	// Store piece data
-	kingGroup.userData = {
-		type: 'chessPiece',
-		pieceType: 'king',
-		owner: pieceOptions.ownerName
-	};
-	
-	// Add label
-	if (pieceOptions.showLabel) {
-		const canvas = document.createElement('canvas');
-		canvas.width = 256;
-		canvas.height = 64;
-		const ctx = canvas.getContext('2d');
-		
-		ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-		ctx.fillRect(0, 0, canvas.width, canvas.height);
-		
-		ctx.fillStyle = 'white';
-		ctx.font = 'bold 24px Arial';
-		ctx.textAlign = 'center';
-		ctx.textBaseline = 'middle';
-		ctx.fillText('KING', canvas.width / 2, canvas.height / 2);
-		
-		const texture = new THREE.CanvasTexture(canvas);
-		const labelMaterial = new THREE.SpriteMaterial({ map: texture });
-		const label = new THREE.Sprite(labelMaterial);
-		
-		label.position.set(0, pieceHeight * pieceOptions.scale + 0.2, 0);
-		label.scale.set(1, 0.25, 1);
-		kingGroup.add(label);
-	}
-	
-	// Add to pieces group if available
-	if (window.piecesGroup) {
-		window.piecesGroup.add(kingGroup);
-	}
-	
-	return kingGroup;
 }
 
 // Export default object with all functions

@@ -1,249 +1,448 @@
 /**
- * Constants Module
+ * Game Constants
  * 
- * Central location for all game constants and configuration values.
+ * Contains all game constants and configuration values.
  */
 
-// Board dimensions
-export const INITIAL_BOARD_WIDTH = 10;
-export const INITIAL_BOARD_HEIGHT = 20;
-export const CELL_SIZE = 1;
-export const CELL_HEIGHT = 0.5;
+// Game constants
+export const GAME_CONSTANTS = {
+	// Board dimensions
+	BOARD_WIDTH: 10,
+	BOARD_HEIGHT: 20,
+	
+	// Cell size
+	CELL_SIZE: 30,
+	
+	// Game modes
+	GAME_MODE: {
+		SINGLE_PLAYER: 'single_player',
+		MULTIPLAYER: 'multiplayer',
+		TUTORIAL: 'tutorial'
+	},
+	
+	// Render modes
+	RENDER_MODE: {
+		MODE_2D: '2d',
+		MODE_3D: '3d'
+	},
+	
+	// Game states
+	GAME_STATE: {
+		LOADING: 'loading',
+		READY: 'ready',
+		PLAYING: 'playing',
+		PAUSED: 'paused',
+		GAME_OVER: 'game_over'
+	},
+	
+	// Input modes
+	INPUT_MODE: {
+		TETROMINO: 'tetromino',
+		CHESS: 'chess',
+		UI: 'ui'
+	},
+	
+	// Game speeds (ms per tick)
+	SPEED: {
+		SLOW: 1000,
+		NORMAL: 800,
+		FAST: 500,
+		TURBO: 200,
+		MAX: 100
+	},
+	
+	// Lock delay (ms)
+	LOCK_DELAY: 500,
+	
+	// Lines per level
+	LINES_PER_LEVEL: 10,
+	
+	// Scoring
+	SCORING: {
+		SOFT_DROP: 1,
+		HARD_DROP: 2,
+		SINGLE: 100,
+		DOUBLE: 300,
+		TRIPLE: 500,
+		TETRIS: 800,
+		BACK_TO_BACK_MULTIPLIER: 1.5,
+		COMBO_MULTIPLIER: 50,
+		CHESS_CAPTURE: 200,
+		CHESS_CHECK: 500,
+		CHESS_CHECKMATE: 1000
+	},
+	
+	// Network update rate (ms)
+	NETWORK_UPDATE_RATE: 100,
+	
+	// Input constants
+	KEY_REPEAT_DELAY: 150,
+	SWIPE_THRESHOLD: 30,
+	
+	// Animation durations (ms)
+	ANIMATION: {
+		PIECE_MOVE: 100,
+		PIECE_ROTATE: 100,
+		LINE_CLEAR: 200,
+		LEVEL_UP: 500
+	},
+	
+	// Debug settings
+	DEBUG: {
+		SHOW_GRID: true,
+		SHOW_COLLISION: false,
+		SHOW_FPS: true,
+		LOG_LEVEL: 'info' // 'debug', 'info', 'warn', 'error'
+	},
+	
+	// Game settings
+	SETTINGS: {
+		GRAVITY_FACTOR: 0.8,
+		LINES_PER_LEVEL: 10,
+		NEXT_PIECES: 3,
+		GHOST_PIECE_ENABLED: true,
+		HOLD_ENABLED: true
+	}
+};
 
-// Game settings
-export const HOME_ZONE_WIDTH = 8;
-export const HOME_ZONE_HEIGHT = 2;
-export const COOLDOWN_EASY = 20000;    // 20 seconds
-export const COOLDOWN_NORMAL = 10000;  // 10 seconds
-export const COOLDOWN_HARD = 5000;     // 5 seconds
-export const PAUSE_DURATION = 900000;  // 15 minutes
+// Keyboard controls
+export const KEYBOARD_CONTROLS = {
+	// Tetromino controls
+	MOVE_LEFT: 'ArrowLeft',
+	MOVE_RIGHT: 'ArrowRight',
+	MOVE_DOWN: 'ArrowDown',
+	MOVE_UP: 'ArrowUp', // Used for chess
+	ROTATE: 'z',
+	COUNTER_ROTATE: 'x',
+	HARD_DROP: ' ', // Space
+	QUICK_DROP: 'Shift',
+	HOLD: 'c',
+	
+	// Chess controls
+	SELECT: 'Enter',
+	CONFIRM: 'Enter',
+	CANCEL: 'Escape',
+	
+	// Game controls
+	PAUSE: 'p',
+	MUTE: 'm',
+	DEBUG: 'F12',
+	
+	// New controls
+	LEFT: ['ArrowLeft', 'a', 'A'],
+	RIGHT: ['ArrowRight', 'd', 'D'],
+	DOWN: ['ArrowDown', 's', 'S'],
+	ROTATE: ['ArrowUp', 'w', 'W'],
+	HARD_DROP: [' ', 'Space'],
+	HOLD: ['Shift', 'c', 'C'],
+	PAUSE: ['Escape', 'p', 'P']
+};
 
-// Tetromino properties
-export const START_Z = 20;
-export const FALL_SPEED = 0.05;
-export const TETROMINO_COLORS = {
-	I: 0x00ffff, // Cyan
-	J: 0x0000ff, // Blue
-	L: 0xffa500, // Orange
-	O: 0xffff00, // Yellow
-	S: 0x00ff00, // Green
-	T: 0x800080, // Purple
-	Z: 0xff0000  // Red
+// Touch controls
+export const TOUCH_CONTROLS = {
+	SWIPE_LEFT: 'swipe_left',
+	SWIPE_RIGHT: 'swipe_right',
+	SWIPE_DOWN: 'swipe_down',
+	SWIPE_UP: 'swipe_up',
+	TAP: 'tap',
+	DOUBLE_TAP: 'double_tap',
+	LONG_PRESS: 'long_press'
+};
+
+// Player colors
+export const PLAYER_COLORS = {
+	WHITE: 0xFFFFFF,
+	BLACK: 0x000000
+};
+
+// Tetromino types
+export const TETROMINO_TYPES = {
+	I: {
+		shape: [
+			[0, 0, 0, 0],
+			[1, 1, 1, 1],
+			[0, 0, 0, 0],
+			[0, 0, 0, 0]
+		],
+		color: 0x00FFFF // Cyan
+	},
+	J: {
+		shape: [
+			[1, 0, 0],
+			[1, 1, 1],
+			[0, 0, 0]
+		],
+		color: 0x0000FF // Blue
+	},
+	L: {
+		shape: [
+			[0, 0, 1],
+			[1, 1, 1],
+			[0, 0, 0]
+		],
+		color: 0xFF7F00 // Orange
+	},
+	O: {
+		shape: [
+			[1, 1],
+			[1, 1]
+		],
+		color: 0xFFFF00 // Yellow
+	},
+	S: {
+		shape: [
+			[0, 1, 1],
+			[1, 1, 0],
+			[0, 0, 0]
+		],
+		color: 0x00FF00 // Green
+	},
+	T: {
+		shape: [
+			[0, 1, 0],
+			[1, 1, 1],
+			[0, 0, 0]
+		],
+		color: 0x800080 // Purple
+	},
+	Z: {
+		shape: [
+			[1, 1, 0],
+			[0, 1, 1],
+			[0, 0, 0]
+		],
+		color: 0xFF0000 // Red
+	}
 };
 
 // Tetromino shapes
-export const TETROMINOES = {
-	I: {
-		blocks: [
-			{ x: 0, y: 0 }, { x: 0, y: 1 }, { x: 0, y: 2 }, { x: 0, y: 3 }
-		],
-		color: TETROMINO_COLORS.I
+export const TETROMINO_SHAPES = {
+	I: [
+		[0, 0, 0, 0],
+		[1, 1, 1, 1],
+		[0, 0, 0, 0],
+		[0, 0, 0, 0]
+	],
+	J: [
+		[1, 0, 0],
+		[1, 1, 1],
+		[0, 0, 0]
+	],
+	L: [
+		[0, 0, 1],
+		[1, 1, 1],
+		[0, 0, 0]
+	],
+	O: [
+		[1, 1],
+		[1, 1]
+	],
+	S: [
+		[0, 1, 1],
+		[1, 1, 0],
+		[0, 0, 0]
+	],
+	T: [
+		[0, 1, 0],
+		[1, 1, 1],
+		[0, 0, 0]
+	],
+	Z: [
+		[1, 1, 0],
+		[0, 1, 1],
+		[0, 0, 0]
+	]
+};
+
+// Tetromino colors
+export const TETROMINO_COLORS = {
+	I: '#00FFFF', // Cyan
+	J: '#0000FF', // Blue
+	L: '#FF7F00', // Orange
+	O: '#FFFF00', // Yellow
+	S: '#00FF00', // Green
+	T: '#800080', // Purple
+	Z: '#FF0000'  // Red
+};
+
+// Chess piece types
+export const CHESS_PIECE_TYPES = {
+	PAWN: {
+		value: 1,
+		moves: [
+			{ dx: 0, dy: 1, capture: false },
+			{ dx: 0, dy: 2, capture: false, firstMoveOnly: true },
+			{ dx: -1, dy: 1, capture: true, requireCapture: true },
+			{ dx: 1, dy: 1, capture: true, requireCapture: true }
+		]
 	},
-	J: {
-		blocks: [
-			{ x: 0, y: 0 }, { x: 0, y: 1 }, { x: 0, y: 2 }, { x: -1, y: 2 }
-		],
-		color: TETROMINO_COLORS.J
+	KNIGHT: {
+		value: 3,
+		moves: [
+			{ dx: 1, dy: 2 },
+			{ dx: 2, dy: 1 },
+			{ dx: 2, dy: -1 },
+			{ dx: 1, dy: -2 },
+			{ dx: -1, dy: -2 },
+			{ dx: -2, dy: -1 },
+			{ dx: -2, dy: 1 },
+			{ dx: -1, dy: 2 }
+		]
 	},
-	L: {
-		blocks: [
-			{ x: 0, y: 0 }, { x: 0, y: 1 }, { x: 0, y: 2 }, { x: 1, y: 2 }
-		],
-		color: TETROMINO_COLORS.L
+	BISHOP: {
+		value: 3,
+		moves: [
+			{ dx: 1, dy: 1, sliding: true },
+			{ dx: 1, dy: -1, sliding: true },
+			{ dx: -1, dy: -1, sliding: true },
+			{ dx: -1, dy: 1, sliding: true }
+		]
 	},
-	O: {
-		blocks: [
-			{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }
-		],
-		color: TETROMINO_COLORS.O
+	ROOK: {
+		value: 5,
+		moves: [
+			{ dx: 0, dy: 1, sliding: true },
+			{ dx: 1, dy: 0, sliding: true },
+			{ dx: 0, dy: -1, sliding: true },
+			{ dx: -1, dy: 0, sliding: true }
+		]
 	},
-	S: {
-		blocks: [
-			{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 1 }
-		],
-		color: TETROMINO_COLORS.S
+	QUEEN: {
+		value: 9,
+		moves: [
+			{ dx: 0, dy: 1, sliding: true },
+			{ dx: 1, dy: 1, sliding: true },
+			{ dx: 1, dy: 0, sliding: true },
+			{ dx: 1, dy: -1, sliding: true },
+			{ dx: 0, dy: -1, sliding: true },
+			{ dx: -1, dy: -1, sliding: true },
+			{ dx: -1, dy: 0, sliding: true },
+			{ dx: -1, dy: 1, sliding: true }
+		]
 	},
-	T: {
-		blocks: [
-			{ x: 0, y: 0 }, { x: -1, y: 1 }, { x: 0, y: 1 }, { x: 1, y: 1 }
-		],
-		color: TETROMINO_COLORS.T
-	},
-	Z: {
-		blocks: [
-			{ x: 0, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }
-		],
-		color: TETROMINO_COLORS.Z
+	KING: {
+		value: 0, // Infinite value
+		moves: [
+			{ dx: 0, dy: 1 },
+			{ dx: 1, dy: 1 },
+			{ dx: 1, dy: 0 },
+			{ dx: 1, dy: -1 },
+			{ dx: 0, dy: -1 },
+			{ dx: -1, dy: -1 },
+			{ dx: -1, dy: 0 },
+			{ dx: -1, dy: 1 }
+		]
 	}
 };
 
 // Chess piece values
-export const PIECE_VALUES = {
-	'pawn': 0.1,
-	'knight': 0.5,
-	'bishop': 0.5,
-	'rook': 0.5,
-	'queen': 1.0
+export const CHESS_PIECE_VALUES = {
+	[CHESS_PIECE_TYPES.KING]: 0, // Infinite value, but 0 for calculation
+	[CHESS_PIECE_TYPES.QUEEN]: 9,
+	[CHESS_PIECE_TYPES.ROOK]: 5,
+	[CHESS_PIECE_TYPES.BISHOP]: 3,
+	[CHESS_PIECE_TYPES.KNIGHT]: 3,
+	[CHESS_PIECE_TYPES.PAWN]: 1
 };
 
-// Market settings
-export const MARKET_REFRESH_INTERVAL = 30 * 60 * 1000; // 30 minutes
-
-// Analytics
-export const IMPRESSION_FREQUENCY = 0.2;
-export const CLICK_VALUE = 0.01;
-
-// Home zone configuration
-export const MIN_DISTANCE_BETWEEN_ZONES = 8;
-export const MAX_DISTANCE_BETWEEN_ZONES = 12;
-export const DEGRADATION_INTERVAL = 5 * 60 * 1000; // 5 minutes
-
-// Tetromino configuration
-export const PIECE_HOVER_HEIGHT = 0.2;
-
-// Chess piece types
-export const PIECE_TYPES = {
-	PAWN: 'pawn',
-	ROOK: 'rook',
-	KNIGHT: 'knight',
-	BISHOP: 'bishop',
-	QUEEN: 'queen',
-	KING: 'king'
+// Network events
+export const NETWORK_EVENTS = {
+	CONNECT: 'connect',
+	DISCONNECT: 'disconnect',
+	JOIN_ROOM: 'join_room',
+	LEAVE_ROOM: 'leave_room',
+	GAME_START: 'game_start',
+	GAME_END: 'game_end',
+	PLAYER_MOVE: 'player_move',
+	PLAYER_ACTION: 'player_action',
+	GAME_STATE: 'game_state',
+	CHAT_MESSAGE: 'chat_message',
+	ERROR: 'error'
 };
 
-// Movement patterns for chess pieces
-export const MOVEMENT_PATTERNS = {
-	[PIECE_TYPES.PAWN]: {
-		moveDirections: [{ dx: 0, dy: 1 }],
-		attackDirections: [{ dx: 1, dy: 1 }, { dx: -1, dy: 1 }],
-		maxDistance: 1,
-		canJump: false
-	},
-	[PIECE_TYPES.ROOK]: {
-		moveDirections: [
-			{ dx: 1, dy: 0 }, { dx: -1, dy: 0 },
-			{ dx: 0, dy: 1 }, { dx: 0, dy: -1 }
-		],
-		attackDirections: [
-			{ dx: 1, dy: 0 }, { dx: -1, dy: 0 },
-			{ dx: 0, dy: 1 }, { dx: 0, dy: -1 }
-		],
-		maxDistance: Infinity,
-		canJump: false
-	},
-	[PIECE_TYPES.KNIGHT]: {
-		moveDirections: [
-			{ dx: 1, dy: 2 }, { dx: 2, dy: 1 },
-			{ dx: -1, dy: 2 }, { dx: -2, dy: 1 },
-			{ dx: 1, dy: -2 }, { dx: 2, dy: -1 },
-			{ dx: -1, dy: -2 }, { dx: -2, dy: -1 }
-		],
-		attackDirections: [
-			{ dx: 1, dy: 2 }, { dx: 2, dy: 1 },
-			{ dx: -1, dy: 2 }, { dx: -2, dy: 1 },
-			{ dx: 1, dy: -2 }, { dx: 2, dy: -1 },
-			{ dx: -1, dy: -2 }, { dx: -2, dy: -1 }
-		],
-		maxDistance: 1,
-		canJump: true
-	},
-	[PIECE_TYPES.BISHOP]: {
-		moveDirections: [
-			{ dx: 1, dy: 1 }, { dx: -1, dy: 1 },
-			{ dx: 1, dy: -1 }, { dx: -1, dy: -1 }
-		],
-		attackDirections: [
-			{ dx: 1, dy: 1 }, { dx: -1, dy: 1 },
-			{ dx: 1, dy: -1 }, { dx: -1, dy: -1 }
-		],
-		maxDistance: Infinity,
-		canJump: false
-	},
-	[PIECE_TYPES.QUEEN]: {
-		moveDirections: [
-			{ dx: 1, dy: 0 }, { dx: -1, dy: 0 },
-			{ dx: 0, dy: 1 }, { dx: 0, dy: -1 },
-			{ dx: 1, dy: 1 }, { dx: -1, dy: 1 },
-			{ dx: 1, dy: -1 }, { dx: -1, dy: -1 }
-		],
-		attackDirections: [
-			{ dx: 1, dy: 0 }, { dx: -1, dy: 0 },
-			{ dx: 0, dy: 1 }, { dx: 0, dy: -1 },
-			{ dx: 1, dy: 1 }, { dx: -1, dy: 1 },
-			{ dx: 1, dy: -1 }, { dx: -1, dy: -1 }
-		],
-		maxDistance: Infinity,
-		canJump: false
-	},
-	[PIECE_TYPES.KING]: {
-		moveDirections: [
-			{ dx: 1, dy: 0 }, { dx: -1, dy: 0 },
-			{ dx: 0, dy: 1 }, { dx: 0, dy: -1 },
-			{ dx: 1, dy: 1 }, { dx: -1, dy: 1 },
-			{ dx: 1, dy: -1 }, { dx: -1, dy: -1 }
-		],
-		attackDirections: [
-			{ dx: 1, dy: 0 }, { dx: -1, dy: 0 },
-			{ dx: 0, dy: 1 }, { dx: 0, dy: -1 },
-			{ dx: 1, dy: 1 }, { dx: -1, dy: 1 },
-			{ dx: 1, dy: -1 }, { dx: -1, dy: -1 }
-		],
-		maxDistance: 1,
-		canJump: false
-	}
+// Socket events (for client-server communication)
+export const SOCKET_EVENTS = {
+	CONNECT: 'connect',
+	DISCONNECT: 'disconnect',
+	JOIN_GAME: 'join_game',
+	LEAVE_GAME: 'leave_game',
+	PLAYER_READY: 'player_ready',
+	PLAYER_MOVE: 'player_move',
+	PLACE_TETROMINO: 'place_tetromino',
+	MOVE_CHESS_PIECE: 'move_chess_piece',
+	GAME_STATE_UPDATE: 'game_state_update',
+	CHAT_MESSAGE: 'chat_message',
+	ERROR: 'error',
+	PING: 'ping',
+	PONG: 'pong'
 };
 
-// Sponsor options for tetromino blocks
-export const SPONSORS = [
-	{ id: 'sponsor1', name: 'TechCorp', image: 'techcorp.png', adUrl: 'https://example.com/ad1' },
-	{ id: 'sponsor2', name: 'GameFusion', image: 'gamefusion.png', adUrl: 'https://example.com/ad2' },
-	{ id: 'sponsor3', name: 'ChessWorld', image: 'chessworld.png', adUrl: 'https://example.com/ad3' }
-];
-
-// Types of magic potions
-export const POTION_TYPES = {
-	SPEED: 'speed', // Move pieces faster
-	JUMP: 'jump',   // Allow pieces to jump over others
-	SHIELD: 'shield', // Protect a piece from capture
-	GROW: 'grow'    // Expand home zone
+// API endpoints
+export const API_ENDPOINTS = {
+	LOGIN: '/api/login',
+	LOGOUT: '/api/logout',
+	REGISTER: '/api/register',
+	PROFILE: '/api/profile',
+	LEADERBOARD: '/api/leaderboard',
+	GAMES: '/api/games',
+	MATCHMAKING: '/api/matchmaking',
+	GAME: '/api/game',
+	PLAYER: '/api/player',
+	SCORES: '/api/scores'
 };
 
-// Theme configuration
-export const THEMES = {
-	default: {
-		name: 'Default',
-		boardColor: 0x333333,
-		gridColor: 0x444444,
-		backgroundColor: 0x222222,
-		highlightColor: 0x00ff00,
-		attackHighlightColor: 0xff0000
-	},
-	russian: {
-		name: 'Russian',
-		boardColor: 0x3b0000,
-		gridColor: 0x4b0000,
-		backgroundColor: 0x220000,
-		highlightColor: 0xE5B022,
-		attackHighlightColor: 0xD52B1E
-	}
+// Local storage keys
+export const STORAGE_KEYS = {
+	SESSION_ID: 'shaktris_session_id',
+	PLAYER_ID: 'shaktris_player_id',
+	PLAYER_NAME: 'shaktris_player_name',
+	HIGH_SCORES: 'shaktris_high_scores',
+	SETTINGS: 'shaktris_settings'
 };
 
-export default {
-	INITIAL_BOARD_WIDTH,
-	INITIAL_BOARD_HEIGHT,
-	CELL_SIZE,
-	CELL_HEIGHT,
-	HOME_ZONE_WIDTH,
-	HOME_ZONE_HEIGHT,
-	MIN_DISTANCE_BETWEEN_ZONES,
-	MAX_DISTANCE_BETWEEN_ZONES,
-	DEGRADATION_INTERVAL,
-	START_Z,
-	PIECE_HOVER_HEIGHT,
-	PIECE_TYPES,
-	MOVEMENT_PATTERNS,
-	TETROMINOES,
-	SPONSORS,
-	POTION_TYPES,
-	THEMES
-}; 
+// Direction constants
+export const DIRECTION = {
+	UP: 'up',
+	RIGHT: 'right',
+	DOWN: 'down',
+	LEFT: 'left'
+};
+
+// Event types
+export const EVENT_TYPES = {
+	PIECE_MOVE: 'piece_move',
+	PIECE_ROTATE: 'piece_rotate',
+	PIECE_LOCK: 'piece_lock',
+	LINE_CLEAR: 'line_clear',
+	LEVEL_UP: 'level_up',
+	GAME_OVER: 'game_over',
+	CHESS_MOVE: 'chess_move',
+	CHESS_CAPTURE: 'chess_capture'
+};
+
+// Sound effects
+export const SOUND_EFFECTS = {
+	MOVE: 'move',
+	ROTATE: 'rotate',
+	LOCK: 'lock',
+	LINE_CLEAR: 'line_clear',
+	TETRIS: 'tetris',
+	LEVEL_UP: 'level_up',
+	GAME_OVER: 'game_over',
+	CHESS_MOVE: 'chess_move',
+	CHESS_CAPTURE: 'chess_capture',
+	MENU_SELECT: 'menu_select',
+	MENU_CONFIRM: 'menu_confirm'
+};
+
+// Default settings
+export const DEFAULT_SETTINGS = {
+	volume: 0.5,
+	musicVolume: 0.3,
+	sfxVolume: 0.7,
+	renderMode: GAME_CONSTANTS.RENDER_MODE.MODE_3D,
+	showGhost: true,
+	showGrid: true,
+	showNextPieces: true,
+	showHeldPiece: true
+};

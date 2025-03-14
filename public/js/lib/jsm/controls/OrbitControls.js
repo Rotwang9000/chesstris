@@ -7,7 +7,8 @@
 import * as THREE from 'three';
 
 // Get OrbitControls from global scope
-const OrbitControls = window.OrbitControls || window.THREE.OrbitControls || 
+const OrbitControls = window.OrbitControls || window.THREE?.OrbitControls 
+
 // Fallback implementation if not available globally
 class FallbackOrbitControls {
 	constructor(camera, domElement) {
@@ -101,7 +102,7 @@ class FallbackOrbitControls {
 };
 
 // Log whether we're using the global or fallback implementation
-if (window.OrbitControls || window.THREE.OrbitControls) {
+if (window.OrbitControls || window.THREE?.OrbitControls) {
 	console.log('Using global OrbitControls');
 } else {
 	console.warn('Using fallback OrbitControls implementation');

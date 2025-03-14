@@ -569,7 +569,7 @@ describe('PlayerManager Module', () => {
 			const playerId = 'potion-collector';
 			const pieceId = 'collector-piece';
 			const potion = {
-				type: Constants.POTION_TYPES.SPEED,
+				type: 1,
 				strength: 2
 			};
 			

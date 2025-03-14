@@ -1,64 +1,102 @@
 /**
- * Game Constants
- * Contains constants used throughout the game
+ * Constants Configuration
+ * 
+ * Contains all constants used by the rendering modules.
  */
 
+// Export constants as an object
 export const Constants = {
 	// Board dimensions
-	BOARD_SIZE: 8,
-	CELL_SIZE: 1,
-	BOARD_HEIGHT: 0.5,
+	BOARD_WIDTH: 10,
+	BOARD_HEIGHT: 20,
 	
-	// Game settings
-	GRAVITY: 0.02,
-	FALLING_SPEED: 0.5,
-	MOVE_SPEED: 0.2,
+	// Cell size
+	CELL_SIZE: 30,
 	
-	// Rendering settings
-	SHADOW_MAP_SIZE: 2048,
+	// Camera settings
 	FOV: 60,
 	NEAR_PLANE: 0.1,
 	FAR_PLANE: 1000,
 	
-	// Colors
-	COLORS: {
-		BOARD_LIGHT: 0xEEEEEE,
-		BOARD_DARK: 0x888888,
-		PLAYER_1: 0x2196F3,
-		PLAYER_2: 0xF44336,
-		GHOST: 0x80CBC4,
-		HIGHLIGHT: 0xFFEB3B
+	// Render modes
+	RENDER_MODE: {
+		MODE_2D: '2d',
+		MODE_3D: '3d'
 	},
 	
-	// Tetromino shapes
-	SHAPES: {
-		I: [
-			[1, 1, 1, 1]
-		],
-		J: [
-			[1, 0, 0],
-			[1, 1, 1]
-		],
-		L: [
-			[0, 0, 1],
-			[1, 1, 1]
-		],
-		O: [
-			[1, 1],
-			[1, 1]
-		],
-		S: [
-			[0, 1, 1],
-			[1, 1, 0]
-		],
-		T: [
-			[0, 1, 0],
-			[1, 1, 1]
-		],
-		Z: [
-			[1, 1, 0],
-			[0, 1, 1]
-		]
+	// Colors
+	COLORS: {
+		BACKGROUND: 0x87CEEB,
+		GRID: 0xCCCCCC,
+		HOME_ZONE: 0xFFD54F,
+		CELL: 0x4FC3F7
+	},
+	
+	// Texture paths
+	TEXTURE_PATHS: {
+		BOARD: './assets/textures/board.png',
+		CELL: './assets/textures/cell.png',
+		HOME_ZONE: './assets/textures/home_zone.png'
+	},
+	
+	// Tetromino types
+	TETROMINO_TYPES: {
+		I: {
+			shape: [
+				[0, 0, 0, 0],
+				[1, 1, 1, 1],
+				[0, 0, 0, 0],
+				[0, 0, 0, 0]
+			],
+			color: 0x00FFFF // Cyan
+		},
+		J: {
+			shape: [
+				[1, 0, 0],
+				[1, 1, 1],
+				[0, 0, 0]
+			],
+			color: 0x0000FF // Blue
+		},
+		L: {
+			shape: [
+				[0, 0, 1],
+				[1, 1, 1],
+				[0, 0, 0]
+			],
+			color: 0xFF7F00 // Orange
+		},
+		O: {
+			shape: [
+				[1, 1],
+				[1, 1]
+			],
+			color: 0xFFFF00 // Yellow
+		},
+		S: {
+			shape: [
+				[0, 1, 1],
+				[1, 1, 0],
+				[0, 0, 0]
+			],
+			color: 0x00FF00 // Green
+		},
+		T: {
+			shape: [
+				[0, 1, 0],
+				[1, 1, 1],
+				[0, 0, 0]
+			],
+			color: 0x800080 // Purple
+		},
+		Z: {
+			shape: [
+				[1, 1, 0],
+				[0, 1, 1],
+				[0, 0, 0]
+			],
+			color: 0xFF0000 // Red
+		}
 	}
 };
 

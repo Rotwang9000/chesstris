@@ -98,26 +98,25 @@ function simulatePhysics() {
 				z: activeTetromino.position.z + currentVelocity.z * deltaTime
 			};
 			
-			// Get board state from game state
-			const gameState = window.GameState ? window.GameState.getGameState() : null;
-			const board = gameState ? gameState.board : null;
+			// Get the board from the game state
+			const board = window.GameState ? window.GameState.getBoard() : null;
 			
-			// Check for collisions with the board
+			// Detect collision with the board
 			const collisionResult = detectBoardCollision(newPosition, activeTetromino.userData, board);
 			
 			if (collisionResult.collision) {
-				// Handle collision based on type
+				// Handle collision
 				if (collisionResult.shouldStick) {
-					// Stick the tetromino to the board
+					// Tetromino should stick to the board
 					handleTetrominoStick(activeTetromino, collisionResult);
-				} else if (collisionResult.shouldDissolve) {
-					// Dissolve the tetromino
-					startDissolveTetromino(activeTetromino);
-					activeTetromino = null;
-					scheduleRespawn();
 				} else {
-					// Bounce off the surface
+					// Bounce off the board
 					handleBounce(collisionResult.normal);
+					
+					// Apply bounce to position
+					activeTetromino.position.x += currentVelocity.x * deltaTime;
+					activeTetromino.position.y += currentVelocity.y * deltaTime;
+					activeTetromino.position.z += currentVelocity.z * deltaTime;
 				}
 			} else {
 				// No collision, update position
@@ -129,17 +128,19 @@ function simulatePhysics() {
 				if (activeTetromino.rotation.x) activeTetromino.rotation.x *= ROTATION_DAMPING;
 				if (activeTetromino.rotation.z) activeTetromino.rotation.z *= ROTATION_DAMPING;
 				
-				// Snap to grid if velocity is small enough
+				// Check if we should snap to grid
 				snapToGridIfNeeded();
 				
-				// Update ghost piece
-				updateGhostPiece();
-				
-				// Check if fallen too far
-				if (newPosition.y < -20) {
-					console.log('Tetromino fell too far, respawning...');
-					respawnTetromino();
+				// If the tetromino falls below a certain threshold, reset it
+				if (activeTetromino.position.y < -10) {
+					console.log('Tetromino fell off the board, resetting...');
+					resetTetromino();
 				}
+			}
+			
+			// Update ghost piece
+			if (board) {
+				updateGhostForActiveTetromino(board);
 			}
 		}
 	} catch (error) {
@@ -417,10 +418,11 @@ function handleTetrominoStick(tetromino, collisionResult) {
 	const gridZ = Math.round(tetromino.position.z);
 	tetromino.position.x = gridX;
 	tetromino.position.z = gridZ;
-	tetromino.position.y = GROUND_Y + 0.5; // Position slightly above the board
+	tetromino.position.y = GROUND_Y + 0.25; // Position slightly above the board
 	
 	// Reset rotation to align with grid
 	tetromino.rotation.x = 0;
+	tetromino.rotation.y = 0;
 	tetromino.rotation.z = 0;
 	
 	// Notify the game that a piece has been placed
@@ -433,12 +435,20 @@ function handleTetrominoStick(tetromino, collisionResult) {
 				y: GROUND_Y,
 				z: gridZ
 			},
-			playerId: tetromino.userData.playerId
+			playerId: tetromino.userData.playerId,
+			type: tetromino.userData.type
 		};
 		
 		// Call the game's place tetromino function
 		window.GameState.placeTetromino(tetrominoData);
+		
+		console.log('Tetromino placed at position:', gridX, GROUND_Y, gridZ);
+	} else {
+		console.warn('GameState.placeTetromino function not available');
 	}
+	
+	// Clear the active tetromino reference
+	activeTetromino = null;
 	
 	// Spawn a new tetromino after a delay
 	setTimeout(() => {
@@ -459,8 +469,16 @@ function resetTetromino() {
 	// Clear the ghost piece
 	clearGhostPiece();
 	
-	// Get a new tetromino from the game state if available
+	// Request a new tetromino from the game manager
+	if (window.GameManager && typeof window.GameManager.spawnNewTetromino === 'function') {
+		window.GameManager.spawnNewTetromino();
+	} else if (TetrominoManager && typeof TetrominoManager.spawnTetromino === 'function') {
+		TetrominoManager.spawnTetromino();
+	} else {
+		console.warn('No tetromino spawning function available');
+		// Fallback: Get a new tetromino from the game state if available
 	updateFallingTetromino(window.GameState ? window.GameState.getGameState() : null);
+	}
 }
 
 /**
@@ -560,48 +578,40 @@ function clearGhostPiece() {
 }
 
 /**
- * Updates the falling tetromino based on the current game state
- * @param {Object} gameState - The current game state
+ * Update the falling tetromino based on the game state
+ * @param {Object} gameState - The game state
  */
 export function updateFallingTetromino(gameState) {
 	try {
-		// Check if tetrominoGroup is initialized
-		if (!tetrominoGroup) {
-			console.error('tetrominoGroup is not initialized');
+		// Clear existing tetromino
+		if (tetrominoGroup) {
+		while (tetrominoGroup.children.length > 0) {
+				tetrominoGroup.remove(tetrominoGroup.children[0]);
+			}
+		}
+		
+		// If no game state or no falling piece, return
+		if (!gameState || !gameState.fallingPiece) {
+			activeTetromino = null;
 			return;
 		}
 		
-		// If we have an active tetromino, skip updating from game state
-		if (activeTetromino) return;
+		const { fallingPiece } = gameState;
+		const { shape, position, color, playerId } = fallingPiece;
 		
-		// Clear existing tetromino
-		while (tetrominoGroup.children.length > 0) {
-			const child = tetrominoGroup.children[0];
-			tetrominoGroup.remove(child);
-			if (child.geometry) child.geometry.dispose();
-			if (child.material) child.material.dispose();
-		}
-		
-		// If no game state or falling piece, there's nothing to do
-		if (!gameState || !gameState.fallingPiece) return;
-		
-		// Get the falling piece data
-		const { shape, position, rotation, playerId } = gameState.fallingPiece;
-		
-		// Create a new 3D group for the tetromino
+		// Create a new tetromino group
 		const tetrominoGroup3D = new THREE.Group();
-		
-		// Store the tetromino data in userData for physics calculations
 		tetrominoGroup3D.userData = {
-			shape: shape,
-			playerId: playerId,
-			type: gameState.fallingPiece.type || 'unknown'
+			shape,
+			playerId,
+			type: fallingPiece.type || 'I'
 		};
 		
-		// Get player color
-		let playerColor = 0xFFFFFF; // Default white
+		// Determine player color
+		let playerColor = color || 0x2196F3; // Default blue
 		if (playerId && gameState.players && gameState.players[playerId]) {
-			playerColor = gameState.players[playerId].color || 0xFFFFFF;
+			const player = gameState.players[playerId];
+			playerColor = player.color || playerColor;
 		}
 		
 		// Render each block in the tetromino
@@ -629,6 +639,8 @@ export function updateFallingTetromino(gameState) {
 					});
 					
 					const blockMesh = new THREE.Mesh(blockGeometry, blockMaterial);
+					blockMesh.castShadow = true;
+					blockMesh.receiveShadow = true;
 					
 					// Position the block relative to the tetromino center
 					blockMesh.position.set(localX, 0, localZ);
@@ -639,17 +651,13 @@ export function updateFallingTetromino(gameState) {
 			}
 		}
 		
-		// Position the tetromino
+		// Position the tetromino - ensure it's at the correct height
+		// Use the position from the game state, but ensure y is set correctly
 		tetrominoGroup3D.position.set(
 			position.x,
-			position.y,
+			position.y || 5, // Start higher up if no y position is provided
 			position.z
 		);
-	
-	// Apply rotation
-	if (rotation) {
-		tetrominoGroup3D.rotation.y = THREE.MathUtils.degToRad(rotation);
-	}
 	
 	// Add the tetromino group to the scene
 	tetrominoGroup.add(tetrominoGroup3D);
@@ -657,12 +665,8 @@ export function updateFallingTetromino(gameState) {
 	// Set as active tetromino
 	activeTetromino = tetrominoGroup3D;
 	
-	// Reset velocity for new tetromino
+		// Reset velocity for new tetromino with a downward direction
 	currentVelocity = { x: 0, y: -fallingSpeed, z: 0 };
-	
-	// Add some random horizontal velocity
-	currentVelocity.x = (Math.random() - 0.5) * 0.3;
-	currentVelocity.z = (Math.random() - 0.5) * 0.3;
 	
 	// Update ghost piece
 	if (gameState.board) {

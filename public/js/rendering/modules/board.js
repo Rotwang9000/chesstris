@@ -6,7 +6,12 @@
 import * as THREE from 'three';
 import { Constants } from '../../config/constants.js';
 import { getFloatingHeight } from './utils.js';
-import { addCellDecoration, addCellBottom } from './effects.js';
+import { 
+	addCellDecoration, 
+	addCellBottom, 
+	createTreeForCell, 
+	createMushroomForCell 
+} from './effects.js';
 
 // Shared variables
 let boardGroup;
@@ -21,131 +26,147 @@ const cellGeometryCache = {};
  * @param {THREE.Group} group - The group to add board elements to
  * @param {Object} materialSet - Materials to use for rendering
  */
-export function init(group, materialSet) {
+export function init(group, materialSet = null) {
 	boardGroup = group;
-	materials = materialSet || {};
+	if (materialSet) {
+		materials = materialSet;
+	}
 	decorationPositions = new Map();
 }
 
 /**
  * Updates the board based on the game state
  * @param {Object} gameState - The game state
- * @param {THREE.BufferGeometry} topGeometry - Geometry for the top of cells
  */
-export function updateBoard(gameState, topGeometry) {
+export function updateBoard(gameState) {
 	try {
+		// Check if board group is initialized
 		if (!boardGroup) {
 			console.error('Board group not initialized');
 			return;
 		}
 		
-		if (!gameState || !gameState.board) {
-			console.warn('Game state or board not available');
-			return;
-		}
-		
-		// Store previous count to avoid unnecessary logging
-		const prevActiveCellCount = boardGroup.userData.activeCellCount || 0;
-		
-		// Clear existing cells
+		// Clear existing board
 		while (boardGroup.children.length > 0) {
-			const child = boardGroup.children[0];
-			boardGroup.remove(child);
-			if (child.geometry) child.geometry.dispose();
-			if (child.material) {
-				if (Array.isArray(child.material)) {
-					child.material.forEach(m => m.dispose());
-				} else {
-					child.material.dispose();
-				}
+			boardGroup.remove(boardGroup.children[0]);
+		}
+
+		// Get board data
+		let boardData = null;
+		
+		// Try to get board data from gameState
+		if (gameState && gameState.board) {
+			boardData = gameState.board;
+			console.log('Using board data from gameState');
+		} else {
+			// Try to get board data from ChessPieceManager
+			try {
+				// Dynamic import to avoid circular dependencies
+				import('../../../js/core/chessPieceManager.js').then(module => {
+					const ChessPieceManager = module.default || module;
+					if (ChessPieceManager && typeof ChessPieceManager.getBoard === 'function') {
+						try {
+							boardData = ChessPieceManager.getBoard();
+							console.log('Using board data from ChessPieceManager');
+							
+							// Check if boardData is valid
+							if (boardData && Array.isArray(boardData) && boardData.length > 0) {
+								renderBoardFromData(boardData);
+							} else {
+								console.warn('Invalid board data from ChessPieceManager, rendering default board');
+								renderDefaultBoard();
+							}
+						} catch (error) {
+							console.error('Error getting board data from ChessPieceManager:', error);
+							renderDefaultBoard();
+						}
+					} else {
+						console.warn('ChessPieceManager or getBoard method not found');
+						renderDefaultBoard();
+					}
+				}).catch(error => {
+					console.error('Error importing ChessPieceManager:', error);
+					renderDefaultBoard();
+				});
+				return; // Return early as we'll render asynchronously
+			} catch (error) {
+				console.error('Error getting board data from ChessPieceManager:', error);
+				renderDefaultBoard();
+				return;
 			}
 		}
+
+		// Render board based on available data
+		if (boardData) {
+			renderBoardFromData(boardData);
+		} else {
+			renderDefaultBoard();
+		}
+	} catch (error) {
+		console.error('Error updating board:', error);
+		renderDefaultBoard();
+	}
+}
+
+/**
+ * Render board from provided board data
+ * @param {Array} boardData - 2D array of board data
+ */
+function renderBoardFromData(boardData) {
+	try {
+		if (!boardData || !Array.isArray(boardData)) {
+			console.warn('Invalid board data, rendering default board');
+			renderDefaultBoard();
+			return;
+		}
+
+		const boardSize = boardData.length;
 		
-		const board = gameState.board;
-		let activeCellCount = 0;
-		
-		// We'll use this to keep track of cells to add decorations to
-		const cellsToDecorate = [];
-		
-		// Process the board in a single pass
-		for (let z = 0; z < board.length; z++) {
-			const row = board[z];
-			if (!row) continue;
-			
-			for (let x = 0; x < row.length; x++) {
-				const cell = row[x];
-				if (!cell || !cell.active) continue;
+		// Create cells based on board data
+		for (let z = 0; z < boardSize; z++) {
+			for (let x = 0; x < boardSize; x++) {
+				const cell = boardData[z][x];
 				
-				activeCellCount++;
-				
-				// Get cell color - use player color if available
-				let cellColor = 0x42a5f5; // Default blue
-				let isHomeZone = false;
-				
-				if (cell.playerId && gameState.players && gameState.players[cell.playerId]) {
-					cellColor = gameState.players[cell.playerId].color || cellColor;
-					isHomeZone = cell.isHomeZone || false;
-				}
-				
-				// Create cell - use MeshBasicMaterial for better visibility
-				const cellMesh = createCell(x, z, {
-					color: cellColor,
-					isHomeZone: isHomeZone,
-					// Use standard material for better appearance
-					material: new THREE.MeshStandardMaterial({
-						color: isHomeZone ? 0xFFD700 : cellColor, // Gold for home zones
-						metalness: 0.3,
-						roughness: 0.7
-					})
-				});
-				
-				// Random chance to add a decoration
-				if (Math.random() < 0.2) {
-					cellsToDecorate.push({ x, z, cellSize: 1 });
-				}
-				
-				// If there's a chess piece on this cell, add it
-				if (cell.chessPiece && cell.chessPiece.type && window.piecesModule) {
-					const pieceColor = gameState.players[cell.chessPiece.owner]?.color || 0xFF00FF;
+				if (cell) {
+					const isHomeZone = cell.isHomeZone || false;
+					const color = cell.color || ((x + z) % 2 === 0 ? 0x4FC3F7 : 0x29B6F6);
 					
-					// Add chess piece with height offset to sit on top of the cell
-					window.piecesModule.addChessPiece(
-						cell.chessPiece,
-						cell.chessPiece.owner,
-						x,
-						z
-					);
-				}
-				
-				// If there's a potion on this cell, add it
-				if (cell.potion && typeof addPotionToCell === 'function') {
-					addPotionToCell({
-						x,
-						z,
-						type: cell.potion.type,
-						color: cell.potion.color || 0x00FFFF,
-						createdAt: cell.potion.createdAt || Date.now()
+					createCell(x - boardSize/2 + 0.5, z - boardSize/2 + 0.5, {
+						color: color,
+						isHomeZone: isHomeZone
 					});
 				}
 			}
 		}
 		
-		// Add decorations to random cells
-		if (typeof addCellDecoration === 'function' && cellsToDecorate.length > 0) {
-			cellsToDecorate.forEach(cell => {
-				addCellDecoration(cell.x, cell.z, cell.cellSize);
-			});
-		}
+		console.log('Board rendered from data');
+	} catch (error) {
+		console.error('Error rendering board from data:', error);
+		renderDefaultBoard();
+	}
+}
+
+/**
+ * Render default checkerboard pattern
+ */
+function renderDefaultBoard() {
+	try {
+		console.log('Rendering default board');
+		const boardSize = 8;
 		
-		// Store the active cell count
-		boardGroup.userData.activeCellCount = activeCellCount;
-		
-		// Only log if the count changed significantly
-		if (Math.abs(activeCellCount - prevActiveCellCount) > 5) {
-			console.log(`Board updated with ${activeCellCount} active cells`);
+		// Create default checkerboard pattern
+		for (let z = 0; z < boardSize; z++) {
+			for (let x = 0; x < boardSize; x++) {
+				const color = (x + z) % 2 === 0 ? 0x4FC3F7 : 0x29B6F6;
+				
+				createCell(x - boardSize/2 + 0.5, z - boardSize/2 + 0.5, {
+					color: color,
+					isHomeZone: false
+				});
+			}
 		}
 	} catch (error) {
-		console.error('Error updating board:', error);
+		console.error('Error rendering default board:', error);
 	}
 }
 
@@ -207,55 +228,35 @@ export function createFloatingCell(cell, x, z, cellSize = 1, topGeometry, decora
 		const cellDepth = cellSize;
 		const cellHeight = baseHeight;
 		
-		// Create the cell top (the visible part)
-		const topMesh = new THREE.Mesh(
-			topGeometry || new THREE.BoxGeometry(cellWidth, cellHeight, cellDepth),
-			cellMaterial
-		);
-		
-		// Position the top at the correct height
-		topMesh.position.y = floatingHeight + (cellHeight / 2);
-		
-		// Add top to cell group
-		cellGroup.add(topMesh);
-		
-		// Add a wireframe outline for better visibility
-		const wireGeometry = new THREE.EdgesGeometry(topMesh.geometry);
-		const wireMaterial = new THREE.LineBasicMaterial({ color: 0xFFFFFF });
-		const wireframe = new THREE.LineSegments(wireGeometry, wireMaterial);
-		topMesh.add(wireframe);
-		
-		// Add a debug text label showing coordinates
-		if (window.Constants && window.Constants.DEBUG_LOGGING === true) {
-			const canvas = document.createElement('canvas');
-			canvas.width = 64;
-			canvas.height = 64;
-			const ctx = canvas.getContext('2d');
-			ctx.fillStyle = '#ffffff';
-			ctx.textAlign = 'center';
-			ctx.textBaseline = 'middle';
-			ctx.font = '24px Arial';
-			ctx.fillText(`${x},${z}`, 32, 32);
-			
-			const labelTexture = new THREE.CanvasTexture(canvas);
-			const labelMaterial = new THREE.SpriteMaterial({ map: labelTexture });
-			const label = new THREE.Sprite(labelMaterial);
-			label.scale.set(0.5, 0.5, 1);
-			label.position.y = floatingHeight + 0.5;
-			cellGroup.add(label);
+		// Use cached geometry if available
+		const geometryKey = `${cellWidth}_${cellDepth}_${cellHeight}`;
+		if (!cellGeometryCache[geometryKey]) {
+			cellGeometryCache[geometryKey] = new THREE.BoxGeometry(cellWidth, cellHeight, cellDepth);
 		}
 		
-		// Position the cell group at the correct coordinates
-		cellGroup.position.set(x, 0, z);
+		// Create cell mesh
+		const cellMesh = new THREE.Mesh(cellGeometryCache[geometryKey], cellMaterial);
+		cellMesh.position.set(0, 0, 0);
+		cellGroup.add(cellMesh);
 		
-		// Add metadata
-		cellGroup.userData = {
-			type: 'cell',
-			x: x,
-			z: z,
-			playerId: cell.playerId,
-			isHomeZone: cell.isHomeZone
-		};
+		// Add bottom part to make it look like a floating island
+		const bottom = addCellBottom(x, z, cellSize, cellColor);
+		cellGroup.add(bottom);
+		
+		// Add decorations based on cell type
+		if (!cell.isHomeZone) {
+			// Add trees or mushrooms with a random chance
+			if (Math.random() < 0.3) { // 30% chance for a tree
+				const tree = createTreeForCell(x, z, cellSize);
+				cellGroup.add(tree);
+			} else if (Math.random() < 0.2) { // 20% chance for a mushroom
+				const mushroom = createMushroomForCell(x, z, cellSize);
+				cellGroup.add(mushroom);
+			}
+		}
+		
+		// Position the cell group
+		cellGroup.position.set(x, floatingHeight, z);
 		
 		// Add to board group
 		boardGroup.add(cellGroup);
@@ -462,13 +463,8 @@ export function addIslandDecorations(width, height) {
  */
 export function createCell(x, z, options = {}) {
 	try {
-		// Log more details in debug mode
-		if (Constants.DEBUG_LOGGING) {
-			console.log(`Creating cell at ${x},${z} with options:`, options);
-		}
-		
 		// Check if boardGroup exists
-		if (!window.boardGroup) {
+		if (!boardGroup) {
 			console.error('Board group not initialized. Cannot create cell.');
 			return null;
 		}
@@ -505,27 +501,22 @@ export function createCell(x, z, options = {}) {
 		}
 		const geometry = cellGeometryCache[geometryKey];
 		
-		// For testing, use MeshBasicMaterial which doesn't require lighting
+		// Create material
 		let cellMaterial;
 		if (cellOptions.material) {
-			// Use provided material
 			cellMaterial = cellOptions.material;
 		} else if (cellOptions.texture) {
-			// Use texture with MeshBasicMaterial for visibility in any lighting
-			cellMaterial = new THREE.MeshBasicMaterial({
+			cellMaterial = new THREE.MeshStandardMaterial({
 				map: cellOptions.texture,
-				color: cellOptions.isHomeZone ? 0xFFFF00 : cellOptions.color, // Make home zones YELLOW for better visibility
+				color: cellOptions.isHomeZone ? 0xFFD54F : cellOptions.color,
 				transparent: cellOptions.transparent,
-				opacity: cellOptions.opacity,
-				wireframe: false
+				opacity: cellOptions.opacity
 			});
 		} else {
-			// Use color only with better visibility for testing
-			cellMaterial = new THREE.MeshBasicMaterial({
-				color: cellOptions.isHomeZone ? 0xFFFF00 : cellOptions.color,
+			cellMaterial = new THREE.MeshStandardMaterial({
+				color: cellOptions.isHomeZone ? 0xFFD54F : cellOptions.color,
 				transparent: cellOptions.transparent,
-				opacity: cellOptions.opacity,
-				wireframe: false
+				opacity: cellOptions.opacity
 			});
 		}
 		
@@ -535,59 +526,8 @@ export function createCell(x, z, options = {}) {
 		cell.receiveShadow = cellOptions.receiveShadow;
 		cell.castShadow = true;
 		
-		// Add a wireframe outline for better visibility
-		try {
-			const edgesGeometry = new THREE.EdgesGeometry(geometry);
-			const wireframeMaterial = new THREE.LineBasicMaterial({ color: 0xFFFFFF, linewidth: 2 });
-			const wireframe = new THREE.LineSegments(edgesGeometry, wireframeMaterial);
-			cell.add(wireframe);
-		} catch (e) {
-			console.warn('Could not create wireframe outline:', e);
-			
-			// Fallback: Create a wireframe box that surrounds the cell
-			const wireGeometry = new THREE.BoxGeometry(
-				cellOptions.width + 0.02, 
-				cellOptions.height + 0.02, 
-				cellOptions.depth + 0.02
-			);
-			const wireMaterial = new THREE.MeshBasicMaterial({ 
-				color: 0xFFFFFF, 
-				wireframe: true, 
-				transparent: true,
-				opacity: 0.5
-			});
-			const wireBox = new THREE.Mesh(wireGeometry, wireMaterial);
-			cell.add(wireBox);
-		}
-		
-		// Add debug text label to show coordinates
-		// Create a canvas texture with the coordinates
-		const canvas = document.createElement('canvas');
-		canvas.width = 64;
-		canvas.height = 64;
-		const ctx = canvas.getContext('2d');
-		
-		// Draw background
-		ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-		ctx.fillRect(0, 0, canvas.width, canvas.height);
-		
-		// Draw text
-		ctx.fillStyle = 'white';
-		ctx.font = 'bold 20px Arial';
-		ctx.textAlign = 'center';
-		ctx.textBaseline = 'middle';
-		ctx.fillText(`${x},${z}`, canvas.width/2, canvas.height/2);
-		
-		// Create sprite with the canvas texture
-		const texture = new THREE.CanvasTexture(canvas);
-		const labelMaterial = new THREE.SpriteMaterial({ map: texture });
-		const label = new THREE.Sprite(labelMaterial);
-		label.position.set(0, cellOptions.height + 0.1, 0);
-		label.scale.set(0.5, 0.5, 0.5);
-		cell.add(label);
-		
 		// Add to board group
-		window.boardGroup.add(cell);
+		boardGroup.add(cell);
 		
 		// Store cell data for later reference
 		cell.userData = {

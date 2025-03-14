@@ -1,1087 +1,883 @@
 /**
- * 3D Renderer Module
+ * 3D Renderer
  * 
- * Main entry point for the 3D rendering system using Three.js
+ * Handles 3D rendering using Three.js.
  */
 
-import * as GameState from '../core/gameState.js';
-import * as TetrominoManager from '../core/tetrominoManager.js';
-import * as ChessPieceManager from '../core/chessPieceManager.js';
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GAME_CONSTANTS } from '../core/constants.js';
 
 // Three.js components
-let scene, camera, renderer, controls;
-let boardGroup, tetrominoGroup, chessPieceGroup, ghostGroup;
+let scene = null;
+let camera = null;
+let renderer = null;
+let controls = null;
+let raycaster = null;
+let mouse = null;
 
-// Game state
-let gameState = null;
+// Game objects
+let board = null;
+let tetrominos = {};
+let chessPieces = {};
+let homeZones = {};
 
-// Constants
-const CELL_SIZE = 1;
-const BOARD_COLOR = 0x1a1a1a;
-const GRID_COLOR = 0x333333;
-const HOME_ZONE_COLOR_1 = 0x2c3e50;
-const HOME_ZONE_COLOR_2 = 0xc0392b;
+// Visual effects
+let particles = [];
+let lights = [];
+let skybox = null;
 
-// Tetromino colors
-const TETROMINO_COLORS = {
-	'I': 0x00bcd4, // Cyan
-	'O': 0xffeb3b, // Yellow
-	'T': 0x9c27b0, // Purple
-	'J': 0x2196f3, // Blue
-	'L': 0xff9800, // Orange
-	'S': 0x4caf50, // Green
-	'Z': 0xf44336  // Red
+// Debug helpers
+let debugMode = false;
+let axesHelper = null;
+let gridHelper = null;
+let stats = null;
+
+// Canvas element
+let canvas = null;
+
+// Animation
+let animationFrame = null;
+let clock = null;
+
+// Materials
+const materials = {
+	board: null,
+	grid: null,
+	tetromino: {},
+	chessPiece: {},
+	homeZone: {},
+	particle: null
 };
 
-// Chess piece colors
-const CHESS_PIECE_COLORS = {
-	player: 0xffffff, // White for player pieces
-	opponent: 0xc62828 // Soviet red for opponent pieces
-};
-
-// Russian-themed chess piece names
-const RUSSIAN_PIECE_NAMES = {
-	pawn: 'Peshka',     // Russian Pawn
-	rook: 'Ladya',      // Russian Rook (Castle)
-	knight: 'Kon',      // Russian Knight (Horse)
-	bishop: 'Slon',     // Russian Bishop (Elephant)
-	queen: 'Ferz',      // Russian Queen
-	king: 'Korol'       // Russian King
+// Colors
+const COLORS = {
+	background: 0x1a1a2e,
+	board: 0x333333,
+	grid: 0x444444,
+	ambient: 0xffffff,
+	directional: 0xffffff,
+	point: 0x00ffff,
+	particle: 0x88ccff
 };
 
 /**
  * Initialize the 3D renderer
+ * @param {HTMLCanvasElement} canvasElement - Canvas element
+ * @returns {Promise<void>}
  */
-function init() {
-	console.log('Initializing 3D renderer...');
-	
-	// Create scene
-	scene = new THREE.Scene();
-	scene.background = new THREE.Color(0x121212);
-	
-	// Create camera
-	camera = new THREE.PerspectiveCamera(
-		60, // Field of view
-		window.innerWidth / window.innerHeight, // Aspect ratio
-		0.1, // Near clipping plane
-		1000 // Far clipping plane
-	);
-	camera.position.set(10, 15, 20);
-	camera.lookAt(0, 0, 0);
-	
-	// Create renderer
-	renderer = new THREE.WebGLRenderer({ antialias: true });
-	renderer.setSize(window.innerWidth, window.innerHeight);
-	renderer.setPixelRatio(window.devicePixelRatio);
-	renderer.shadowMap.enabled = true;
-	
-	// Add renderer to DOM
-	const container = document.getElementById('game-container');
-	container.innerHTML = '';
-	container.appendChild(renderer.domElement);
-	
-	// Add orbit controls
-	controls = new THREE.OrbitControls(camera, renderer.domElement);
-	controls.enableDamping = true;
-	controls.dampingFactor = 0.25;
-	controls.screenSpacePanning = false;
-	controls.maxPolarAngle = Math.PI / 2;
-	
-	// Create groups for organizing objects
-	boardGroup = new THREE.Group();
-	tetrominoGroup = new THREE.Group();
-	chessPieceGroup = new THREE.Group();
-	ghostGroup = new THREE.Group();
-	
-	scene.add(boardGroup);
-	scene.add(tetrominoGroup);
-	scene.add(chessPieceGroup);
-	scene.add(ghostGroup);
-	
-	// Add lighting
-	addLighting();
-	
-	// Add camera controls UI
-	addCameraControls();
-	
-	// Add game info display
-	addGameInfoDisplay();
-	
-	// Add event listeners
-	window.addEventListener('resize', onWindowResize);
-	
-	// Start animation loop
-	animate();
-	
-	// Initialize game state
-	initGameState();
-	
-	console.log('3D renderer initialized');
-}
-
-/**
- * Add lighting to the scene
- */
-function addLighting() {
-	// Ambient light
-	const ambientLight = new THREE.AmbientLight(0x404040, 0.5);
-	scene.add(ambientLight);
-	
-	// Directional light (sun)
-	const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-	directionalLight.position.set(10, 20, 10);
-	directionalLight.castShadow = true;
-	
-	// Configure shadow properties
-	directionalLight.shadow.mapSize.width = 2048;
-	directionalLight.shadow.mapSize.height = 2048;
-	directionalLight.shadow.camera.near = 0.5;
-	directionalLight.shadow.camera.far = 50;
-	directionalLight.shadow.camera.left = -20;
-	directionalLight.shadow.camera.right = 20;
-	directionalLight.shadow.camera.top = 20;
-	directionalLight.shadow.camera.bottom = -20;
-	
-	scene.add(directionalLight);
-	
-	// Point light (for additional highlights)
-	const pointLight = new THREE.PointLight(0xffffff, 0.5);
-	pointLight.position.set(-10, 15, -10);
-	scene.add(pointLight);
-}
-
-/**
- * Handle window resize
- */
-function onWindowResize() {
-	camera.aspect = window.innerWidth / window.innerHeight;
-	camera.updateProjectionMatrix();
-	renderer.setSize(window.innerWidth, window.innerHeight);
-}
-
-/**
- * Animation loop
- */
-function animate() {
-	requestAnimationFrame(animate);
-	
-	// Update controls
-	controls.update();
-	
-	// Render scene
-	renderer.render(scene, camera);
-}
-
-/**
- * Initialize game state
- */
-function initGameState() {
-	// Get game state
-	gameState = GameState.getGameState();
-	
-	// Create board
-	createBoard();
-	
-	// Add event listener for game state updates
-	window.addEventListener('gameStateUpdate', handleGameStateUpdate);
-	
-	// If in offline mode, create a mock game state
-	if (GameState.isOfflineMode()) {
-		const mockState = GameState.createMockGameState();
-		GameState.updateGameState(mockState);
+export async function init(canvasElement) {
+	try {
+		console.log('Initializing 3D renderer');
+		
+		// Store canvas
+		canvas = canvasElement;
+		
+		// Initialize clock
+		clock = new THREE.Clock();
+		
+		// Create scene
+		scene = new THREE.Scene();
+		scene.background = new THREE.Color(COLORS.background);
+		scene.fog = new THREE.FogExp2(COLORS.background, 0.02);
+		
+		// Create camera
+		const aspect = canvas.clientWidth / canvas.clientHeight;
+		camera = new THREE.PerspectiveCamera(75, aspect, 0.1, 1000);
+		camera.position.set(15, 20, 30);
+		camera.lookAt(0, 0, 0);
+		
+		// Create renderer
+		renderer = new THREE.WebGLRenderer({ 
+			canvas: canvas,
+			antialias: true,
+			alpha: true
+		});
+		renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+		renderer.setPixelRatio(window.devicePixelRatio);
+		renderer.shadowMap.enabled = true;
+		renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+		renderer.outputEncoding = THREE.sRGBEncoding;
+		renderer.toneMapping = THREE.ACESFilmicToneMapping;
+		renderer.toneMappingExposure = 1.2;
+		
+		// Create controls
+		controls = new OrbitControls(camera, renderer.domElement);
+		controls.enableDamping = true;
+		controls.dampingFactor = 0.25;
+		controls.screenSpacePanning = false;
+		controls.maxPolarAngle = Math.PI / 2;
+		controls.minDistance = 10;
+		controls.maxDistance = 50;
+		
+		// Create raycaster for mouse interaction
+		raycaster = new THREE.Raycaster();
+		mouse = new THREE.Vector2();
+		
+		// Initialize materials
+		initMaterials();
+		
+		// Add lights
+		addLights();
+		
+		// Create skybox
+		createSkybox();
+		
+		// Create board
+		createBoard();
+		
+		// Add particles
+		addParticles();
+		
+		// Add debug helpers if in debug mode
+		if (debugMode) {
+			addDebugHelpers();
+		}
+		
+		// Handle window resize
+		window.addEventListener('resize', handleResize);
+		
+		console.log('3D renderer initialized');
+	} catch (error) {
+		console.error('Error initializing 3D renderer:', error);
+		throw error;
 	}
 }
 
 /**
- * Handle game state updates
- * @param {CustomEvent} event - The game state update event
+ * Initialize materials
  */
-function handleGameStateUpdate(event) {
-	gameState = event.detail;
-	
-	// Update board
-	updateBoard();
-	
-	// Update falling piece
-	updateFallingPiece();
-	
-	// Update ghost piece
-	updateGhostPiece();
-	
-	// Update chess pieces
-	updateChessPieces();
+function initMaterials() {
+	try {
+		// Board material
+		materials.board = new THREE.MeshStandardMaterial({ 
+			color: COLORS.board,
+			roughness: 0.8,
+			metalness: 0.2
+		});
+		
+		// Grid material
+		materials.grid = new THREE.LineBasicMaterial({ 
+			color: COLORS.grid,
+			transparent: true,
+			opacity: 0.5
+		});
+		
+		// Particle material
+		materials.particle = new THREE.PointsMaterial({
+			color: COLORS.particle,
+			size: 0.5,
+			transparent: true,
+			opacity: 0.7,
+			blending: THREE.AdditiveBlending,
+			depthWrite: false
+		});
+	} catch (error) {
+		console.error('Error initializing materials:', error);
+	}
+}
+
+/**
+ * Add lights to the scene
+ */
+function addLights() {
+	try {
+		// Ambient light
+		const ambientLight = new THREE.AmbientLight(COLORS.ambient, 0.5);
+		scene.add(ambientLight);
+		lights.push(ambientLight);
+		
+		// Directional light (sun)
+		const directionalLight = new THREE.DirectionalLight(COLORS.directional, 0.8);
+		directionalLight.position.set(50, 200, 100);
+		directionalLight.castShadow = true;
+		directionalLight.shadow.mapSize.width = 2048;
+		directionalLight.shadow.mapSize.height = 2048;
+		directionalLight.shadow.camera.near = 0.5;
+		directionalLight.shadow.camera.far = 500;
+		directionalLight.shadow.camera.left = -50;
+		directionalLight.shadow.camera.right = 50;
+		directionalLight.shadow.camera.top = 50;
+		directionalLight.shadow.camera.bottom = -50;
+		directionalLight.shadow.bias = -0.0001;
+		scene.add(directionalLight);
+		lights.push(directionalLight);
+		
+		// Point light (center of board)
+		const pointLight = new THREE.PointLight(COLORS.point, 0.8, 50);
+		pointLight.position.set(0, 10, 0);
+		pointLight.castShadow = true;
+		pointLight.shadow.mapSize.width = 1024;
+		pointLight.shadow.mapSize.height = 1024;
+		scene.add(pointLight);
+		lights.push(pointLight);
+		
+		// Add some colored point lights around the board
+		const colors = [0xff0000, 0x00ff00, 0x0000ff, 0xffff00];
+		const positions = [
+			[-20, 10, -20],
+			[20, 10, -20],
+			[-20, 10, 20],
+			[20, 10, 20]
+		];
+		
+		for (let i = 0; i < colors.length; i++) {
+			const light = new THREE.PointLight(colors[i], 0.3, 50);
+			light.position.set(...positions[i]);
+			scene.add(light);
+			lights.push(light);
+		}
+	} catch (error) {
+		console.error('Error adding lights:', error);
+	}
+}
+
+/**
+ * Create skybox
+ */
+function createSkybox() {
+	try {
+		// Create a simple gradient skybox
+		const vertexShader = `
+			varying vec3 vWorldPosition;
+			
+			void main() {
+				vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+				vWorldPosition = worldPosition.xyz;
+				gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+			}
+		`;
+		
+		const fragmentShader = `
+			uniform vec3 topColor;
+			uniform vec3 bottomColor;
+			uniform float offset;
+			uniform float exponent;
+			
+			varying vec3 vWorldPosition;
+			
+			void main() {
+				float h = normalize(vWorldPosition + offset).y;
+				gl_FragColor = vec4(mix(bottomColor, topColor, max(pow(max(h, 0.0), exponent), 0.0)), 1.0);
+			}
+		`;
+		
+		const uniforms = {
+			topColor: { value: new THREE.Color(0x0077ff) },
+			bottomColor: { value: new THREE.Color(0x000000) },
+			offset: { value: 33 },
+			exponent: { value: 0.6 }
+		};
+		
+		const skyGeo = new THREE.SphereGeometry(400, 32, 15);
+		const skyMat = new THREE.ShaderMaterial({
+			uniforms: uniforms,
+			vertexShader: vertexShader,
+			fragmentShader: fragmentShader,
+			side: THREE.BackSide
+		});
+		
+		skybox = new THREE.Mesh(skyGeo, skyMat);
+		scene.add(skybox);
+	} catch (error) {
+		console.error('Error creating skybox:', error);
+	}
 }
 
 /**
  * Create the game board
  */
 function createBoard() {
-	// Clear existing board
-	while (boardGroup.children.length > 0) {
-		boardGroup.remove(boardGroup.children[0]);
-	}
-	
-	const { boardWidth, boardHeight } = gameState;
-	
-	// Create board base
-	const boardGeometry = new THREE.BoxGeometry(
-		boardWidth * CELL_SIZE,
-		0.5,
-		boardHeight * CELL_SIZE
-	);
-	const boardMaterial = new THREE.MeshStandardMaterial({
-		color: BOARD_COLOR,
-		roughness: 0.7,
-		metalness: 0.2
-	});
-	const boardMesh = new THREE.Mesh(boardGeometry, boardMaterial);
-	boardMesh.position.set(
-		(boardWidth * CELL_SIZE) / 2 - CELL_SIZE / 2,
-		-0.25,
-		(boardHeight * CELL_SIZE) / 2 - CELL_SIZE / 2
-	);
-	boardMesh.receiveShadow = true;
-	boardGroup.add(boardMesh);
-	
-	// Create grid lines
-	const gridMaterial = new THREE.LineBasicMaterial({ color: GRID_COLOR });
-	
-	// Horizontal lines
-	for (let z = 0; z <= boardHeight; z++) {
-		const points = [
-			new THREE.Vector3(0, 0, z * CELL_SIZE),
-			new THREE.Vector3(boardWidth * CELL_SIZE, 0, z * CELL_SIZE)
-		];
-		const geometry = new THREE.BufferGeometry().setFromPoints(points);
-		const line = new THREE.Line(geometry, gridMaterial);
-		boardGroup.add(line);
-	}
-	
-	// Vertical lines
-	for (let x = 0; x <= boardWidth; x++) {
-		const points = [
-			new THREE.Vector3(x * CELL_SIZE, 0, 0),
-			new THREE.Vector3(x * CELL_SIZE, 0, boardHeight * CELL_SIZE)
-		];
-		const geometry = new THREE.BufferGeometry().setFromPoints(points);
-		const line = new THREE.Line(geometry, gridMaterial);
-		boardGroup.add(line);
-	}
-	
-	// Center the board
-	boardGroup.position.set(
-		-(boardWidth * CELL_SIZE) / 2,
-		0,
-		-(boardHeight * CELL_SIZE) / 2
-	);
-}
-
-/**
- * Update the board based on the current game state
- */
-function updateBoard() {
-	// Update home zones
-	updateHomeZones();
-	
-	// Update cells
-	updateCells();
-}
-
-/**
- * Update home zones
- */
-function updateHomeZones() {
-	// Remove existing home zones
-	boardGroup.children.forEach(child => {
-		if (child.userData && child.userData.type === 'homeZone') {
-			boardGroup.remove(child);
+	try {
+		// Create board group
+		board = new THREE.Group();
+		
+		// Create board base
+		const boardWidth = GAME_CONSTANTS.BOARD_WIDTH;
+		const boardHeight = GAME_CONSTANTS.BOARD_HEIGHT;
+		const boardGeometry = new THREE.BoxGeometry(boardWidth, 1, boardHeight);
+		const boardMesh = new THREE.Mesh(boardGeometry, materials.board);
+		boardMesh.position.set(boardWidth / 2 - 0.5, -0.5, boardHeight / 2 - 0.5);
+		boardMesh.receiveShadow = true;
+		board.add(boardMesh);
+		
+		// Create grid lines
+		// Horizontal lines
+		for (let z = 0; z <= boardHeight; z++) {
+			const points = [
+				new THREE.Vector3(0, 0, z),
+				new THREE.Vector3(boardWidth, 0, z)
+			];
+			const geometry = new THREE.BufferGeometry().setFromPoints(points);
+			const line = new THREE.Line(geometry, materials.grid);
+			board.add(line);
 		}
-	});
-	
-	// Add home zones
-	const { homeZones } = gameState;
-	
-	if (!homeZones) return;
-	
-	for (const playerId in homeZones) {
-		const zone = homeZones[playerId];
-		const color = playerId === gameState.playerId ? HOME_ZONE_COLOR_1 : HOME_ZONE_COLOR_2;
 		
-		const geometry = new THREE.BoxGeometry(
-			zone.width * CELL_SIZE,
-			0.1,
-			zone.height * CELL_SIZE
-		);
-		const material = new THREE.MeshStandardMaterial({
-			color,
-			transparent: true,
-			opacity: 0.7,
-			roughness: 0.5,
-			metalness: 0.2
-		});
-		const mesh = new THREE.Mesh(geometry, material);
-		
-		mesh.position.set(
-			zone.x * CELL_SIZE + (zone.width * CELL_SIZE) / 2,
-			0.01, // Slightly above the board
-			zone.y * CELL_SIZE + (zone.height * CELL_SIZE) / 2
-		);
-		
-		mesh.userData = {
-			type: 'homeZone',
-			playerId
-		};
-		
-		boardGroup.add(mesh);
-	}
-}
-
-/**
- * Update cells based on the current game state
- */
-function updateCells() {
-	// Remove existing tetromino cells
-	boardGroup.children.forEach(child => {
-		if (child.userData && child.userData.type === 'tetrominoCell') {
-			boardGroup.remove(child);
+		// Vertical lines
+		for (let x = 0; x <= boardWidth; x++) {
+			const points = [
+				new THREE.Vector3(x, 0, 0),
+				new THREE.Vector3(x, 0, boardHeight)
+			];
+			const geometry = new THREE.BufferGeometry().setFromPoints(points);
+			const line = new THREE.Line(geometry, materials.grid);
+			board.add(line);
 		}
-	});
-	
-	const { board, boardWidth, boardHeight } = gameState;
-	
-	if (!board) return;
-	
-	// Add tetromino cells
-	for (let y = 0; y < boardHeight; y++) {
-		if (!board[y]) continue;
 		
-		for (let x = 0; x < boardWidth; x++) {
-			if (!board[y][x]) continue;
+		// Add board to scene
+		scene.add(board);
+		
+		// Add a reflective floor beneath the board
+		const floorGeometry = new THREE.PlaneGeometry(100, 100);
+		const floorMaterial = new THREE.MeshStandardMaterial({
+			color: 0x111111,
+			roughness: 0.1,
+			metalness: 0.5,
+			side: THREE.DoubleSide
+		});
+		const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+		floor.rotation.x = -Math.PI / 2;
+		floor.position.y = -1;
+		floor.receiveShadow = true;
+		scene.add(floor);
+	} catch (error) {
+		console.error('Error creating board:', error);
+	}
+}
+
+/**
+ * Add particles to the scene
+ */
+function addParticles() {
+	try {
+		// Create particle system
+		const particleCount = 1000;
+		const positions = new Float32Array(particleCount * 3);
+		
+		for (let i = 0; i < particleCount; i++) {
+			const i3 = i * 3;
+			positions[i3] = (Math.random() - 0.5) * 100;
+			positions[i3 + 1] = Math.random() * 50;
+			positions[i3 + 2] = (Math.random() - 0.5) * 100;
+		}
+		
+		const geometry = new THREE.BufferGeometry();
+		geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+		
+		const particleSystem = new THREE.Points(geometry, materials.particle);
+		scene.add(particleSystem);
+		particles.push(particleSystem);
+	} catch (error) {
+		console.error('Error adding particles:', error);
+	}
+}
+
+/**
+ * Add debug helpers to the scene
+ */
+function addDebugHelpers() {
+	try {
+		// Axes helper
+		axesHelper = new THREE.AxesHelper(20);
+		scene.add(axesHelper);
+		
+		// Grid helper
+		gridHelper = new THREE.GridHelper(50, 50);
+		scene.add(gridHelper);
+		
+		// Stats
+		stats = new Stats();
+		document.body.appendChild(stats.dom);
+	} catch (error) {
+		console.error('Error adding debug helpers:', error);
+	}
+}
+
+/**
+ * Handle window resize
+ */
+export function handleResize() {
+	try {
+		if (!camera || !renderer || !canvas) return;
+		
+		// Update camera aspect ratio
+		camera.aspect = canvas.clientWidth / canvas.clientHeight;
+		camera.updateProjectionMatrix();
+		
+		// Update renderer size
+		renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+	} catch (error) {
+		console.error('Error handling resize:', error);
+	}
+}
+
+/**
+ * Render the game
+ * @param {Object} gameState - Current game state
+ */
+export function render(gameState) {
+	try {
+		if (!scene || !camera || !renderer) return;
+		
+		// Update controls
+		if (controls) {
+			controls.update();
+		}
+		
+		// Update particles
+		updateParticles();
+		
+		// Update lights
+		updateLights();
+		
+		// Update game objects based on game state
+		updateGameObjects(gameState);
+		
+		// Render scene
+		renderer.render(scene, camera);
+	} catch (error) {
+		console.error('Error rendering game:', error);
+	}
+}
+
+/**
+ * Update particles
+ */
+function updateParticles() {
+	try {
+		const time = clock.getElapsedTime() * 0.1;
+		
+		// Update each particle system
+		particles.forEach(particleSystem => {
+			const positions = particleSystem.geometry.attributes.position.array;
 			
-			const cell = board[y][x];
+			for (let i = 0; i < positions.length; i += 3) {
+				// Slowly move particles upward
+				positions[i + 1] += 0.01;
+				
+				// If particle is too high, reset it to the bottom
+				if (positions[i + 1] > 50) {
+					positions[i + 1] = 0;
+				}
+				
+				// Add some gentle wave motion
+				positions[i] += Math.sin(time + positions[i]) * 0.01;
+				positions[i + 2] += Math.cos(time + positions[i + 2]) * 0.01;
+			}
 			
-			if (cell.type === 'tetromino') {
-				const geometry = new THREE.BoxGeometry(CELL_SIZE, CELL_SIZE, CELL_SIZE);
-				const material = new THREE.MeshStandardMaterial({
-					color: TETROMINO_COLORS[cell.tetrominoType] || 0xffffff,
-					roughness: 0.5,
-					metalness: 0.2
-				});
-				const mesh = new THREE.Mesh(geometry, material);
-				
-				mesh.position.set(
-					x * CELL_SIZE + CELL_SIZE / 2,
-					CELL_SIZE / 2,
-					y * CELL_SIZE + CELL_SIZE / 2
-				);
-				
-				mesh.castShadow = true;
-				mesh.receiveShadow = true;
-				
-				mesh.userData = {
-					type: 'tetrominoCell',
-					x,
-					y,
-					tetrominoType: cell.tetrominoType
-				};
-				
-				boardGroup.add(mesh);
+			particleSystem.geometry.attributes.position.needsUpdate = true;
+		});
+	} catch (error) {
+		console.error('Error updating particles:', error);
+	}
+}
+
+/**
+ * Update lights
+ */
+function updateLights() {
+	try {
+		const time = clock.getElapsedTime();
+		
+		// Update point lights (excluding the first two which are ambient and directional)
+		for (let i = 2; i < lights.length; i++) {
+			const light = lights[i];
+			
+			// Make lights pulse
+			light.intensity = 0.3 + Math.sin(time * 2 + i) * 0.1;
+			
+			// Make lights orbit slightly
+			const radius = 20;
+			const angle = time * 0.5 + (i * Math.PI / 2);
+			light.position.x = Math.cos(angle) * radius;
+			light.position.z = Math.sin(angle) * radius;
+		}
+	} catch (error) {
+		console.error('Error updating lights:', error);
+	}
+}
+
+/**
+ * Update game objects based on game state
+ * @param {Object} gameState - Current game state
+ */
+function updateGameObjects(gameState) {
+	try {
+		if (!gameState) return;
+		
+		// Update tetrominos
+		updateTetrominos(gameState.fallingPiece);
+		
+		// Update chess pieces
+		updateChessPieces(gameState.board);
+		
+		// Update home zones
+		updateHomeZones(gameState.homeZones);
+	} catch (error) {
+		console.error('Error updating game objects:', error);
+	}
+}
+
+/**
+ * Update tetrominos
+ * @param {Object} fallingPiece - Current falling piece
+ */
+function updateTetrominos(fallingPiece) {
+	try {
+		// Clear existing tetrominos
+		Object.values(tetrominos).forEach(tetromino => {
+			if (tetromino.parent) {
+				tetromino.parent.remove(tetromino);
+			}
+		});
+		tetrominos = {};
+		
+		// If no falling piece, return
+		if (!fallingPiece) return;
+		
+		// Create tetromino group
+		const tetromino = new THREE.Group();
+		
+		// Get tetromino shape and color
+		const shape = fallingPiece.shape;
+		const colorHex = fallingPiece.color || 0x00ff00;
+		const color = new THREE.Color(colorHex);
+		
+		// Create or get material for this color
+		if (!materials.tetromino[colorHex]) {
+			materials.tetromino[colorHex] = new THREE.MeshStandardMaterial({ 
+				color: color,
+				roughness: 0.7,
+				metalness: 0.3,
+				emissive: color,
+				emissiveIntensity: 0.2
+			});
+		}
+		
+		// Create blocks
+		for (let y = 0; y < shape.length; y++) {
+			for (let x = 0; x < shape[y].length; x++) {
+				if (shape[y][x]) {
+					// Create a slightly rounded cube for each block
+					const blockGeometry = new THREE.BoxGeometry(0.95, 0.95, 0.95, 2, 2, 2);
+					// Round the edges
+					for (let i = 0; i < blockGeometry.attributes.position.array.length; i += 3) {
+						const x = blockGeometry.attributes.position.array[i];
+						const y = blockGeometry.attributes.position.array[i + 1];
+						const z = blockGeometry.attributes.position.array[i + 2];
+						const length = Math.sqrt(x * x + y * y + z * z);
+						const factor = 0.95 / length;
+						blockGeometry.attributes.position.array[i] *= factor;
+						blockGeometry.attributes.position.array[i + 1] *= factor;
+						blockGeometry.attributes.position.array[i + 2] *= factor;
+					}
+					
+					const block = new THREE.Mesh(blockGeometry, materials.tetromino[colorHex]);
+					block.position.set(x, 0, y);
+					block.castShadow = true;
+					block.receiveShadow = true;
+					tetromino.add(block);
+					
+					// Add a point light inside the block for glow effect
+					const light = new THREE.PointLight(color, 0.5, 2);
+					light.position.set(x, 0, y);
+					tetromino.add(light);
+				}
 			}
 		}
-	}
-}
-
-/**
- * Update the falling tetromino
- */
-function updateFallingPiece() {
-	// Clear existing falling piece
-	while (tetrominoGroup.children.length > 0) {
-		tetrominoGroup.remove(tetrominoGroup.children[0]);
-	}
-	
-	const { fallingPiece } = gameState;
-	
-	if (!fallingPiece) return;
-	
-	const { type, x, y, shape } = fallingPiece;
-	
-	// Create falling piece
-	for (const [blockX, blockY] of shape) {
-		const geometry = new THREE.BoxGeometry(CELL_SIZE, CELL_SIZE, CELL_SIZE);
-		const material = new THREE.MeshStandardMaterial({
-			color: TETROMINO_COLORS[type] || 0xffffff,
-			roughness: 0.5,
-			metalness: 0.2
-		});
-		const mesh = new THREE.Mesh(geometry, material);
 		
-		mesh.position.set(
-			(x + blockX) * CELL_SIZE + CELL_SIZE / 2,
-			CELL_SIZE / 2,
-			(y + blockY) * CELL_SIZE + CELL_SIZE / 2
-		);
+		// Position tetromino
+		tetromino.position.set(fallingPiece.x, 0, fallingPiece.y);
 		
-		mesh.castShadow = true;
-		mesh.receiveShadow = true;
+		// Add to scene
+		scene.add(tetromino);
 		
-		tetrominoGroup.add(mesh);
+		// Store tetromino
+		tetrominos[fallingPiece.id || 'current'] = tetromino;
+	} catch (error) {
+		console.error('Error updating tetrominos:', error);
 	}
-	
-	// Position the tetromino group
-	tetrominoGroup.position.copy(boardGroup.position);
-}
-
-/**
- * Update the ghost piece
- */
-function updateGhostPiece() {
-	// Clear existing ghost piece
-	while (ghostGroup.children.length > 0) {
-		ghostGroup.remove(ghostGroup.children[0]);
-	}
-	
-	const { ghostPiece } = gameState;
-	
-	if (!ghostPiece) return;
-	
-	const { type, x, y, shape } = ghostPiece;
-	
-	// Create ghost piece
-	for (const [blockX, blockY] of shape) {
-		const geometry = new THREE.BoxGeometry(CELL_SIZE, CELL_SIZE, CELL_SIZE);
-		const material = new THREE.MeshStandardMaterial({
-			color: TETROMINO_COLORS[type] || 0xffffff,
-			transparent: true,
-			opacity: 0.3,
-			roughness: 0.5,
-			metalness: 0.2
-		});
-		const mesh = new THREE.Mesh(geometry, material);
-		
-		mesh.position.set(
-			(x + blockX) * CELL_SIZE + CELL_SIZE / 2,
-			CELL_SIZE / 2,
-			(y + blockY) * CELL_SIZE + CELL_SIZE / 2
-		);
-		
-		ghostGroup.add(mesh);
-	}
-	
-	// Position the ghost group
-	ghostGroup.position.copy(boardGroup.position);
-}
-
-/**
- * Create a chess piece mesh with Russian-themed design
- * @param {string} type - The piece type
- * @param {string} playerId - The player ID
- * @param {number} x - The x coordinate
- * @param {number} y - The y coordinate
- * @returns {THREE.Group} The chess piece group
- */
-function createChessPieceMesh(type, playerId, x, y) {
-	const isCurrentPlayer = playerId === gameState.playerId;
-	const pieceGroup = new THREE.Group();
-	
-	// Base piece (cylinder for Russian style)
-	const baseGeometry = new THREE.CylinderGeometry(CELL_SIZE * 0.35, CELL_SIZE * 0.4, CELL_SIZE * 0.3, 16);
-	const baseMaterial = new THREE.MeshStandardMaterial({
-		color: isCurrentPlayer ? CHESS_PIECE_COLORS.player : CHESS_PIECE_COLORS.opponent,
-		roughness: 0.3,
-		metalness: 0.7
-	});
-	const baseMesh = new THREE.Mesh(baseGeometry, baseMaterial);
-	baseMesh.position.y = CELL_SIZE * 0.15;
-	baseMesh.castShadow = true;
-	baseMesh.receiveShadow = true;
-	pieceGroup.add(baseMesh);
-	
-	// Add distinctive shape based on piece type
-	let topMesh;
-	
-	switch (type) {
-		case 'pawn':
-			// Russian Peshka - Simple dome top
-			const pawnTopGeometry = new THREE.SphereGeometry(CELL_SIZE * 0.2, 16, 16, 0, Math.PI * 2, 0, Math.PI / 2);
-			const pawnTopMaterial = new THREE.MeshStandardMaterial({
-				color: isCurrentPlayer ? CHESS_PIECE_COLORS.player : CHESS_PIECE_COLORS.opponent,
-				roughness: 0.3,
-				metalness: 0.7
-			});
-			topMesh = new THREE.Mesh(pawnTopGeometry, pawnTopMaterial);
-			topMesh.position.y = CELL_SIZE * 0.3;
-			topMesh.rotation.x = Math.PI;
-			break;
-			
-		case 'rook':
-			// Russian Ladya - Tower with crenellations
-			const rookGroup = new THREE.Group();
-			
-			// Main tower
-			const rookTowerGeometry = new THREE.CylinderGeometry(CELL_SIZE * 0.25, CELL_SIZE * 0.25, CELL_SIZE * 0.4, 8);
-			const rookTowerMaterial = new THREE.MeshStandardMaterial({
-				color: isCurrentPlayer ? CHESS_PIECE_COLORS.player : CHESS_PIECE_COLORS.opponent,
-				roughness: 0.3,
-				metalness: 0.7
-			});
-			const rookTower = new THREE.Mesh(rookTowerGeometry, rookTowerMaterial);
-			rookTower.position.y = CELL_SIZE * 0.5;
-			rookGroup.add(rookTower);
-			
-			// Crenellations (battlements)
-			for (let i = 0; i < 4; i++) {
-				const angle = (i / 4) * Math.PI * 2;
-				const crenel = new THREE.Mesh(
-					new THREE.BoxGeometry(CELL_SIZE * 0.1, CELL_SIZE * 0.1, CELL_SIZE * 0.1),
-					rookTowerMaterial
-				);
-				crenel.position.set(
-					Math.cos(angle) * CELL_SIZE * 0.2,
-					CELL_SIZE * 0.75,
-					Math.sin(angle) * CELL_SIZE * 0.2
-				);
-				rookGroup.add(crenel);
-			}
-			
-			topMesh = rookGroup;
-			break;
-			
-		case 'knight':
-			// Russian Kon - Horse head
-			const knightGroup = new THREE.Group();
-			
-			// Neck
-			const knightNeckGeometry = new THREE.CylinderGeometry(
-				CELL_SIZE * 0.15, 
-				CELL_SIZE * 0.2, 
-				CELL_SIZE * 0.3, 
-				8
-			);
-			const knightMaterial = new THREE.MeshStandardMaterial({
-				color: isCurrentPlayer ? CHESS_PIECE_COLORS.player : CHESS_PIECE_COLORS.opponent,
-				roughness: 0.3,
-				metalness: 0.7
-			});
-			const knightNeck = new THREE.Mesh(knightNeckGeometry, knightMaterial);
-			knightNeck.position.y = CELL_SIZE * 0.45;
-			knightNeck.rotation.x = Math.PI * 0.15;
-			knightGroup.add(knightNeck);
-			
-			// Head
-			const knightHeadGeometry = new THREE.SphereGeometry(CELL_SIZE * 0.18, 16, 16);
-			const knightHead = new THREE.Mesh(knightHeadGeometry, knightMaterial);
-			knightHead.position.set(CELL_SIZE * 0.1, CELL_SIZE * 0.6, 0);
-			knightGroup.add(knightHead);
-			
-			// Ears
-			const earGeometry = new THREE.ConeGeometry(CELL_SIZE * 0.05, CELL_SIZE * 0.1, 8);
-			const leftEar = new THREE.Mesh(earGeometry, knightMaterial);
-			leftEar.position.set(CELL_SIZE * 0.15, CELL_SIZE * 0.75, CELL_SIZE * 0.05);
-			leftEar.rotation.x = -Math.PI * 0.25;
-			knightGroup.add(leftEar);
-			
-			const rightEar = new THREE.Mesh(earGeometry, knightMaterial);
-			rightEar.position.set(CELL_SIZE * 0.15, CELL_SIZE * 0.75, -CELL_SIZE * 0.05);
-			rightEar.rotation.x = Math.PI * 0.25;
-			knightGroup.add(rightEar);
-			
-			topMesh = knightGroup;
-			break;
-			
-		case 'bishop':
-			// Russian Slon - Elephant with tusks
-			const bishopGroup = new THREE.Group();
-			
-			// Main head
-			const bishopHeadGeometry = new THREE.SphereGeometry(CELL_SIZE * 0.25, 16, 16);
-			const bishopMaterial = new THREE.MeshStandardMaterial({
-				color: isCurrentPlayer ? CHESS_PIECE_COLORS.player : CHESS_PIECE_COLORS.opponent,
-				roughness: 0.3,
-				metalness: 0.7
-			});
-			const bishopHead = new THREE.Mesh(bishopHeadGeometry, bishopMaterial);
-			bishopHead.position.y = CELL_SIZE * 0.5;
-			bishopGroup.add(bishopHead);
-			
-			// Trunk
-			const trunkGeometry = new THREE.CylinderGeometry(
-				CELL_SIZE * 0.05, 
-				CELL_SIZE * 0.08, 
-				CELL_SIZE * 0.2, 
-				8
-			);
-			const trunk = new THREE.Mesh(trunkGeometry, bishopMaterial);
-			trunk.position.set(CELL_SIZE * 0.2, CELL_SIZE * 0.5, 0);
-			trunk.rotation.z = -Math.PI * 0.5;
-			bishopGroup.add(trunk);
-			
-			// Tusks
-			const tuskGeometry = new THREE.CylinderGeometry(
-				CELL_SIZE * 0.03, 
-				CELL_SIZE * 0.03, 
-				CELL_SIZE * 0.15, 
-				8
-			);
-			const tuskMaterial = new THREE.MeshStandardMaterial({
-				color: isCurrentPlayer ? 0xf0f0f0 : 0xffcccc,
-				roughness: 0.2,
-				metalness: 0.8
-			});
-			
-			const leftTusk = new THREE.Mesh(tuskGeometry, tuskMaterial);
-			leftTusk.position.set(CELL_SIZE * 0.1, CELL_SIZE * 0.4, CELL_SIZE * 0.1);
-			leftTusk.rotation.set(Math.PI * 0.1, 0, Math.PI * 0.25);
-			bishopGroup.add(leftTusk);
-			
-			const rightTusk = new THREE.Mesh(tuskGeometry, tuskMaterial);
-			rightTusk.position.set(CELL_SIZE * 0.1, CELL_SIZE * 0.4, -CELL_SIZE * 0.1);
-			rightTusk.rotation.set(-Math.PI * 0.1, 0, Math.PI * 0.25);
-			bishopGroup.add(rightTusk);
-			
-			topMesh = bishopGroup;
-			break;
-			
-		case 'queen':
-			// Russian Ferz - Onion dome with crown
-			const queenGroup = new THREE.Group();
-			
-			// Base cylinder
-			const queenBaseGeometry = new THREE.CylinderGeometry(
-				CELL_SIZE * 0.2, 
-				CELL_SIZE * 0.25, 
-				CELL_SIZE * 0.2, 
-				16
-			);
-			const queenMaterial = new THREE.MeshStandardMaterial({
-				color: isCurrentPlayer ? CHESS_PIECE_COLORS.player : CHESS_PIECE_COLORS.opponent,
-				roughness: 0.3,
-				metalness: 0.7
-			});
-			const queenBase = new THREE.Mesh(queenBaseGeometry, queenMaterial);
-			queenBase.position.y = CELL_SIZE * 0.4;
-			queenGroup.add(queenBase);
-			
-			// Onion dome
-			const onionPoints = [];
-			for (let i = 0; i <= 10; i++) {
-				const t = i / 10;
-				const bulgeAmount = 0.2 * Math.sin(t * Math.PI);
-				onionPoints.push(
-					new THREE.Vector2(
-						CELL_SIZE * (0.15 + bulgeAmount) * (1 - t),
-						CELL_SIZE * 0.3 * t
-					)
-				);
-			}
-			
-			const onionGeometry = new THREE.LatheGeometry(onionPoints, 16);
-			const onionDome = new THREE.Mesh(onionGeometry, queenMaterial);
-			onionDome.position.y = CELL_SIZE * 0.5;
-			queenGroup.add(onionDome);
-			
-			// Crown points
-			const crownPoints = [];
-			for (let i = 0; i < 8; i++) {
-				const angle = (i / 8) * Math.PI * 2;
-				const point = new THREE.Vector3(
-					Math.cos(angle) * CELL_SIZE * 0.12,
-					CELL_SIZE * 0.8,
-					Math.sin(angle) * CELL_SIZE * 0.12
-				);
-				
-				// Create small sphere for each point
-				const pointSphere = new THREE.Mesh(
-					new THREE.SphereGeometry(CELL_SIZE * 0.03, 8, 8),
-					new THREE.MeshStandardMaterial({
-						color: isCurrentPlayer ? 0xf0f0f0 : 0xffcccc,
-						roughness: 0.2,
-						metalness: 0.9
-					})
-				);
-				pointSphere.position.copy(point);
-				queenGroup.add(pointSphere);
-			}
-			
-			topMesh = queenGroup;
-			break;
-			
-		case 'king':
-			// Russian Korol - Onion dome with Orthodox cross
-			const kingGroup = new THREE.Group();
-			
-			// Base cylinder
-			const kingBaseGeometry = new THREE.CylinderGeometry(
-				CELL_SIZE * 0.2, 
-				CELL_SIZE * 0.25, 
-				CELL_SIZE * 0.2, 
-				16
-			);
-			const kingMaterial = new THREE.MeshStandardMaterial({
-				color: isCurrentPlayer ? CHESS_PIECE_COLORS.player : CHESS_PIECE_COLORS.opponent,
-				roughness: 0.3,
-				metalness: 0.7
-			});
-			const kingBase = new THREE.Mesh(kingBaseGeometry, kingMaterial);
-			kingBase.position.y = CELL_SIZE * 0.4;
-			kingGroup.add(kingBase);
-			
-			// Onion dome (same as queen but slightly larger)
-			const kingOnionPoints = [];
-			for (let i = 0; i <= 10; i++) {
-				const t = i / 10;
-				const bulgeAmount = 0.2 * Math.sin(t * Math.PI);
-				kingOnionPoints.push(
-					new THREE.Vector2(
-						CELL_SIZE * (0.18 + bulgeAmount) * (1 - t),
-						CELL_SIZE * 0.35 * t
-					)
-				);
-			}
-			
-			const kingOnionGeometry = new THREE.LatheGeometry(kingOnionPoints, 16);
-			const kingOnionDome = new THREE.Mesh(kingOnionGeometry, kingMaterial);
-			kingOnionDome.position.y = CELL_SIZE * 0.5;
-			kingGroup.add(kingOnionDome);
-			
-			// Orthodox cross (three horizontal bars)
-			const crossMaterial = new THREE.MeshStandardMaterial({
-				color: isCurrentPlayer ? 0xf0f0f0 : 0xffcccc,
-				roughness: 0.2,
-				metalness: 0.9
-			});
-			
-			// Vertical part
-			const verticalCross = new THREE.Mesh(
-				new THREE.BoxGeometry(CELL_SIZE * 0.05, CELL_SIZE * 0.3, CELL_SIZE * 0.05),
-				crossMaterial
-			);
-			verticalCross.position.y = CELL_SIZE * 0.9;
-			kingGroup.add(verticalCross);
-			
-			// Top horizontal bar
-			const topBar = new THREE.Mesh(
-				new THREE.BoxGeometry(CELL_SIZE * 0.2, CELL_SIZE * 0.05, CELL_SIZE * 0.05),
-				crossMaterial
-			);
-			topBar.position.y = CELL_SIZE * 1.0;
-			kingGroup.add(topBar);
-			
-			// Middle horizontal bar
-			const middleBar = new THREE.Mesh(
-				new THREE.BoxGeometry(CELL_SIZE * 0.25, CELL_SIZE * 0.05, CELL_SIZE * 0.05),
-				crossMaterial
-			);
-			middleBar.position.y = CELL_SIZE * 0.9;
-			kingGroup.add(middleBar);
-			
-			// Bottom horizontal bar (slanted)
-			const bottomBar = new THREE.Mesh(
-				new THREE.BoxGeometry(CELL_SIZE * 0.15, CELL_SIZE * 0.05, CELL_SIZE * 0.05),
-				crossMaterial
-			);
-			bottomBar.position.y = CELL_SIZE * 0.8;
-			bottomBar.rotation.z = Math.PI * 0.1;
-			kingGroup.add(bottomBar);
-			
-			topMesh = kingGroup;
-			break;
-			
-		default:
-			// Default small sphere
-			const defaultTopGeometry = new THREE.SphereGeometry(CELL_SIZE * 0.15, 16, 16);
-			const defaultTopMaterial = new THREE.MeshStandardMaterial({
-				color: isCurrentPlayer ? CHESS_PIECE_COLORS.player : CHESS_PIECE_COLORS.opponent,
-				roughness: 0.3,
-				metalness: 0.7
-			});
-			topMesh = new THREE.Mesh(defaultTopGeometry, defaultTopMaterial);
-			topMesh.position.y = CELL_SIZE * 0.4;
-	}
-	
-	pieceGroup.add(topMesh);
-	
-	// Add name label in Cyrillic
-	const canvas = document.createElement('canvas');
-	canvas.width = 128;
-	canvas.height = 32;
-	const ctx = canvas.getContext('2d');
-	
-	// Draw text background
-	ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-	ctx.fillRect(0, 0, canvas.width, canvas.height);
-	
-	// Draw text
-	ctx.fillStyle = isCurrentPlayer ? '#ffffff' : '#ffcccc';
-	ctx.font = 'bold 16px Arial';
-	ctx.textAlign = 'center';
-	ctx.textBaseline = 'middle';
-	ctx.fillText(RUSSIAN_PIECE_NAMES[type], canvas.width / 2, canvas.height / 2);
-	
-	const texture = new THREE.CanvasTexture(canvas);
-	const labelMaterial = new THREE.SpriteMaterial({ map: texture });
-	const label = new THREE.Sprite(labelMaterial);
-	
-	// Position label above the piece
-	label.position.set(0, CELL_SIZE * 1.2, 0);
-	label.scale.set(CELL_SIZE * 0.8, CELL_SIZE * 0.2, 1);
-	pieceGroup.add(label);
-	
-	// Position the piece group
-	pieceGroup.position.set(
-		x * CELL_SIZE + CELL_SIZE / 2,
-		0,
-		y * CELL_SIZE + CELL_SIZE / 2
-	);
-	
-	// Add user data
-	pieceGroup.userData = {
-		type: 'chessPiece',
-		pieceType: type,
-		playerId,
-		x,
-		y
-	};
-	
-	return pieceGroup;
 }
 
 /**
  * Update chess pieces
+ * @param {Array} board - Game board
  */
-function updateChessPieces() {
-	// Clear existing chess pieces
-	while (chessPieceGroup.children.length > 0) {
-		chessPieceGroup.remove(chessPieceGroup.children[0]);
-	}
-	
-	const { board, boardWidth, boardHeight } = gameState;
-	
-	if (!board) return;
-	
-	// Add chess pieces
-	for (let y = 0; y < boardHeight; y++) {
-		if (!board[y]) continue;
+function updateChessPieces(board) {
+	try {
+		// Clear existing chess pieces
+		Object.values(chessPieces).forEach(piece => {
+			if (piece.parent) {
+				piece.parent.remove(piece);
+			}
+		});
+		chessPieces = {};
 		
-		for (let x = 0; x < boardWidth; x++) {
-			if (!board[y][x]) continue;
-			
-			const cell = board[y][x];
-			
-			if (cell.piece) {
-				const { type, playerId } = cell.piece;
-				const pieceMesh = createChessPieceMesh(type, playerId, x, y);
-				chessPieceGroup.add(pieceMesh);
+		// If no board, return
+		if (!board) return;
+		
+		// Create chess pieces
+		for (let z = 0; z < board.length; z++) {
+			for (let x = 0; x < board[z].length; x++) {
+				const cell = board[z][x];
+				if (cell && cell.type && cell.type.includes('chess')) {
+					createChessPiece(cell, x, z);
+				}
 			}
 		}
+	} catch (error) {
+		console.error('Error updating chess pieces:', error);
 	}
-	
-	// Position the chess piece group
-	chessPieceGroup.position.copy(boardGroup.position);
 }
 
 /**
- * Add camera control buttons to the UI
+ * Create a chess piece
+ * @param {Object} piece - Chess piece data
+ * @param {number} x - X position
+ * @param {number} z - Z position
  */
-function addCameraControls() {
-	// Create camera presets container
-	const cameraPresets = document.createElement('div');
-	cameraPresets.className = 'camera-presets';
-	document.body.appendChild(cameraPresets);
-	
-	// Top view button
-	const topViewButton = document.createElement('button');
-	topViewButton.textContent = 'Top View';
-	topViewButton.addEventListener('click', () => {
-		camera.position.set(0, 20, 0);
-		camera.lookAt(0, 0, 0);
-	});
-	cameraPresets.appendChild(topViewButton);
-	
-	// Player view button
-	const playerViewButton = document.createElement('button');
-	playerViewButton.textContent = 'Player View';
-	playerViewButton.addEventListener('click', () => {
-		camera.position.set(0, 10, 20);
-		camera.lookAt(0, 0, 0);
-	});
-	cameraPresets.appendChild(playerViewButton);
-	
-	// Side view button
-	const sideViewButton = document.createElement('button');
-	sideViewButton.textContent = 'Side View';
-	sideViewButton.addEventListener('click', () => {
-		camera.position.set(20, 10, 0);
-		camera.lookAt(0, 0, 0);
-	});
-	cameraPresets.appendChild(sideViewButton);
-	
-	// Isometric view button
-	const isoViewButton = document.createElement('button');
-	isoViewButton.textContent = 'Isometric View';
-	isoViewButton.addEventListener('click', () => {
-		camera.position.set(15, 15, 15);
-		camera.lookAt(0, 0, 0);
-	});
-	cameraPresets.appendChild(isoViewButton);
-	
-	// Reset view button
-	const resetViewButton = document.createElement('button');
-	resetViewButton.textContent = 'Reset View';
-	resetViewButton.addEventListener('click', () => {
-		camera.position.set(10, 15, 20);
-		camera.lookAt(0, 0, 0);
-	});
-	cameraPresets.appendChild(resetViewButton);
-	
-	// Make functions available globally
-	window.topView = () => {
-		camera.position.set(0, 20, 0);
-		camera.lookAt(0, 0, 0);
-	};
-	
-	window.playerView = () => {
-		camera.position.set(0, 10, 20);
-		camera.lookAt(0, 0, 0);
-	};
-	
-	window.sideView = () => {
-		camera.position.set(20, 10, 0);
-		camera.lookAt(0, 0, 0);
-	};
-	
-	window.isoView = () => {
-		camera.position.set(15, 15, 15);
-		camera.lookAt(0, 0, 0);
-	};
-	
-	window.resetCamera = () => {
-		camera.position.set(10, 15, 20);
-		camera.lookAt(0, 0, 0);
-	};
+function createChessPiece(piece, x, z) {
+	try {
+		// Get piece type and color
+		const type = piece.type.replace('chess_', '');
+		const colorHex = piece.color || 0xffffff;
+		const color = new THREE.Color(colorHex);
+		
+		// Create or get material for this color
+		if (!materials.chessPiece[colorHex]) {
+			materials.chessPiece[colorHex] = new THREE.MeshStandardMaterial({ 
+				color: color,
+				roughness: 0.5,
+				metalness: 0.7,
+				emissive: color,
+				emissiveIntensity: 0.1
+			});
+		}
+		
+		// Create piece geometry based on type
+		let geometry;
+		let height = 1;
+		
+		switch (type) {
+			case 'pawn':
+				geometry = new THREE.ConeGeometry(0.3, 0.8, 16);
+				height = 0.4;
+				break;
+			case 'knight':
+				geometry = new THREE.TorusKnotGeometry(0.3, 0.1, 64, 16);
+				height = 0.5;
+				break;
+			case 'bishop':
+				geometry = new THREE.ConeGeometry(0.4, 1, 16);
+				height = 0.6;
+				break;
+			case 'rook':
+				geometry = new THREE.BoxGeometry(0.6, 0.9, 0.6);
+				height = 0.5;
+				break;
+			case 'queen':
+				geometry = new THREE.DodecahedronGeometry(0.4, 2);
+				height = 0.7;
+				break;
+			case 'king':
+				geometry = new THREE.CylinderGeometry(0.3, 0.4, 1, 16);
+				height = 0.8;
+				break;
+			default:
+				geometry = new THREE.SphereGeometry(0.4, 16, 16);
+				height = 0.4;
+		}
+		
+		// Create piece group
+		const pieceGroup = new THREE.Group();
+		
+		// Create piece mesh
+		const pieceMesh = new THREE.Mesh(geometry, materials.chessPiece[colorHex]);
+		pieceMesh.position.y = height / 2;
+		pieceMesh.castShadow = true;
+		pieceMesh.receiveShadow = true;
+		pieceGroup.add(pieceMesh);
+		
+		// Add a base
+		const baseGeometry = new THREE.CylinderGeometry(0.4, 0.4, 0.1, 16);
+		const baseMesh = new THREE.Mesh(baseGeometry, materials.chessPiece[colorHex]);
+		baseMesh.position.y = 0.05;
+		baseMesh.castShadow = true;
+		baseMesh.receiveShadow = true;
+		pieceGroup.add(baseMesh);
+		
+		// Position the piece group
+		pieceGroup.position.set(x, 0, z);
+		
+		// Add to scene
+		scene.add(pieceGroup);
+		
+		// Store chess piece
+		chessPieces[`${piece.id || `${type}-${x}-${z}`}`] = pieceGroup;
+	} catch (error) {
+		console.error('Error creating chess piece:', error);
+	}
 }
 
 /**
- * Add game info display to the UI
+ * Update home zones
+ * @param {Object} homeZones - Home zones data
  */
-function addGameInfoDisplay() {
-	// Create game info container
-	const gameInfo = document.createElement('div');
-	gameInfo.className = 'game-info-3d';
-	document.body.appendChild(gameInfo);
-	
-	// Add title
-	const title = document.createElement('h3');
-	title.textContent = 'Game Info';
-	gameInfo.appendChild(title);
-	
-	// Add score
-	const scoreItem = document.createElement('div');
-	scoreItem.className = 'info-item-3d';
-	
-	const scoreLabel = document.createElement('span');
-	scoreLabel.className = 'info-label-3d';
-	scoreLabel.textContent = 'Score:';
-	
-	const scoreValue = document.createElement('span');
-	scoreValue.className = 'info-value-3d';
-	scoreValue.id = 'score-value-3d';
-	scoreValue.textContent = '0';
-	
-	scoreItem.appendChild(scoreLabel);
-	scoreItem.appendChild(scoreValue);
-	gameInfo.appendChild(scoreItem);
-	
-	// Add level
-	const levelItem = document.createElement('div');
-	levelItem.className = 'info-item-3d';
-	
-	const levelLabel = document.createElement('span');
-	levelLabel.className = 'info-label-3d';
-	levelLabel.textContent = 'Level:';
-	
-	const levelValue = document.createElement('span');
-	levelValue.className = 'info-value-3d';
-	levelValue.id = 'level-value-3d';
-	levelValue.textContent = '1';
-	
-	levelItem.appendChild(levelLabel);
-	levelItem.appendChild(levelValue);
-	gameInfo.appendChild(levelItem);
-	
-	// Add lines cleared
-	const linesItem = document.createElement('div');
-	linesItem.className = 'info-item-3d';
-	
-	const linesLabel = document.createElement('span');
-	linesLabel.className = 'info-label-3d';
-	linesLabel.textContent = 'Lines:';
-	
-	const linesValue = document.createElement('span');
-	linesValue.className = 'info-value-3d';
-	linesValue.id = 'lines-value-3d';
-	linesValue.textContent = '0';
-	
-	linesItem.appendChild(linesLabel);
-	linesItem.appendChild(linesValue);
-	gameInfo.appendChild(linesItem);
-	
-	// Add next piece preview section
-	const nextPieceSection = document.createElement('div');
-	nextPieceSection.className = 'next-piece-preview-3d';
-	
-	const nextPieceTitle = document.createElement('h4');
-	nextPieceTitle.textContent = 'Next Piece';
-	nextPieceSection.appendChild(nextPieceTitle);
-	
-	const nextPieceValue = document.createElement('div');
-	nextPieceValue.id = 'next-piece-value-3d';
-	nextPieceValue.textContent = '-';
-	nextPieceSection.appendChild(nextPieceValue);
-	
-	gameInfo.appendChild(nextPieceSection);
-	
-	// Add event listener for game state updates
-	window.addEventListener('gameStateUpdate', updateGameInfo);
+function updateHomeZones(homeZones) {
+	try {
+		// Clear existing home zones
+		Object.values(homeZones).forEach(zone => {
+			if (zone.parent) {
+				zone.parent.remove(zone);
+			}
+		});
+		homeZones = {};
+		
+		// If no home zones, return
+		if (!homeZones) return;
+		
+		// Create home zones
+		Object.entries(homeZones).forEach(([playerId, zone]) => {
+			createHomeZone(playerId, zone);
+		});
+	} catch (error) {
+		console.error('Error updating home zones:', error);
+	}
 }
 
 /**
- * Update game info display based on game state
- * @param {CustomEvent} event - The game state update event
+ * Create a home zone
+ * @param {string} playerId - Player ID
+ * @param {Object} zone - Home zone data
  */
-function updateGameInfo(event) {
-	const state = event.detail;
-	
-	// Update score
-	const scoreElement = document.getElementById('score-value-3d');
-	if (scoreElement && state.score !== undefined) {
-		scoreElement.textContent = state.score;
-	}
-	
-	// Update level
-	const levelElement = document.getElementById('level-value-3d');
-	if (levelElement && state.level !== undefined) {
-		levelElement.textContent = state.level;
-	}
-	
-	// Update lines cleared
-	const linesElement = document.getElementById('lines-value-3d');
-	if (linesElement && state.linesCleared !== undefined) {
-		linesElement.textContent = state.linesCleared;
-	}
-	
-	// Update next piece
-	const nextPieceElement = document.getElementById('next-piece-value-3d');
-	if (nextPieceElement && state.nextPiece !== undefined) {
-		nextPieceElement.textContent = state.nextPiece.type || '-';
+function createHomeZone(playerId, zone) {
+	try {
+		// Get zone position and size
+		const { x, y, width, height } = zone;
+		const colorHex = zone.color || 0x0000ff;
+		
+		// Create or get material for this color
+		if (!materials.homeZone[colorHex]) {
+			materials.homeZone[colorHex] = new THREE.MeshBasicMaterial({ 
+				color: colorHex,
+				transparent: true,
+				opacity: 0.2,
+				side: THREE.DoubleSide
+			});
+		}
+		
+		// Create zone geometry
+		const geometry = new THREE.PlaneGeometry(width, height);
+		
+		// Create zone mesh
+		const zoneMesh = new THREE.Mesh(geometry, materials.homeZone[colorHex]);
+		zoneMesh.rotation.x = -Math.PI / 2;
+		zoneMesh.position.set(x + width / 2, 0.01, y + height / 2);
+		
+		// Add to scene
+		scene.add(zoneMesh);
+		
+		// Store home zone
+		homeZones[playerId] = zoneMesh;
+	} catch (error) {
+		console.error('Error creating home zone:', error);
 	}
 }
 
-// Export functions
-export {
-	init,
-	scene,
-	camera,
-	renderer,
-	controls
-}; 
+/**
+ * Update the renderer
+ * @param {number} deltaTime - Time since last update
+ */
+export function update(deltaTime) {
+	try {
+		// Nothing to update in the renderer itself
+	} catch (error) {
+		console.error('Error updating renderer:', error);
+	}
+}
+
+/**
+ * Clear the canvas
+ */
+export function clear() {
+	try {
+		// Nothing to clear in Three.js
+	} catch (error) {
+		console.error('Error clearing canvas:', error);
+	}
+}
+
+/**
+ * Set debug mode
+ * @param {boolean} enabled - Whether debug mode is enabled
+ */
+export function setDebugMode(enabled) {
+	try {
+		debugMode = enabled;
+		
+		if (enabled) {
+			// Add debug helpers
+			addDebugHelpers();
+		} else {
+			// Remove debug helpers
+			if (axesHelper) {
+				scene.remove(axesHelper);
+				axesHelper = null;
+			}
+			
+			if (gridHelper) {
+				scene.remove(gridHelper);
+				gridHelper = null;
+			}
+			
+			if (stats) {
+				document.body.removeChild(stats.dom);
+				stats = null;
+			}
+		}
+	} catch (error) {
+		console.error('Error setting debug mode:', error);
+	}
+}
+
+/**
+ * Dispose of renderer resources
+ */
+export function dispose() {
+	try {
+		// Cancel animation frame
+		if (animationFrame) {
+			cancelAnimationFrame(animationFrame);
+			animationFrame = null;
+		}
+		
+		// Remove event listeners
+		window.removeEventListener('resize', handleResize);
+		
+		// Dispose of Three.js resources
+		if (renderer) {
+			renderer.dispose();
+			renderer = null;
+		}
+		
+		// Clear references
+		scene = null;
+		camera = null;
+		controls = null;
+		raycaster = null;
+		mouse = null;
+		board = null;
+		tetrominos = {};
+		chessPieces = {};
+		homeZones = {};
+		particles = [];
+		lights = [];
+		skybox = null;
+		axesHelper = null;
+		gridHelper = null;
+		canvas = null;
+		clock = null;
+	} catch (error) {
+		console.error('Error disposing renderer:', error);
+	}
+} 

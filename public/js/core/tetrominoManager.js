@@ -1,853 +1,893 @@
 /**
- * Tetromino Manager Module
+ * Tetromino Manager
  * 
- * Handles tetris piece generation, movement, and placement.
- * This module focuses on the game logic for tetrominos, while
- * the rendering/modules/tetromino.js handles the visual representation.
+ * Handles tetromino creation, movement, and collision detection.
  */
 
-import * as GameState from './gameState.js';
-import Network from '../utils/network-patch.js';
+import { GAME_CONSTANTS, TETROMINO_TYPES } from './constants.js';
+import * as ChessPieceManager from './chessPieceManager.js';
+import * as GameManager from './gameManager.js';
+import * as PlayerManager from './playerManager.js';
+import { generateId } from '../utils/helpers.js';
 
-// Tetromino shapes
-const SHAPES = {
-	I: [
-		[0, 0, 0, 0],
-		[1, 1, 1, 1],
-		[0, 0, 0, 0],
-		[0, 0, 0, 0]
-	],
-	O: [
-		[1, 1],
-		[1, 1]
-	],
-	T: [
-		[0, 1, 0],
-		[1, 1, 1],
-		[0, 0, 0]
-	],
-	J: [
-		[1, 0, 0],
-		[1, 1, 1],
-		[0, 0, 0]
-	],
-	L: [
-		[0, 0, 1],
-		[1, 1, 1],
-		[0, 0, 0]
-	],
-	S: [
-		[0, 1, 1],
-		[1, 1, 0],
-		[0, 0, 0]
-	],
-	Z: [
-		[1, 1, 0],
-		[0, 1, 1],
-		[0, 0, 0]
-	]
-};
+// Tetromino bag
+let bag = [];
 
-// Tetromino colors - Russian-themed
-const COLORS = {
-	I: 0xc62828, // Kremlin Wall - Deep red
-	O: 0x6a1b9a, // Red Square - Purple
-	T: 0x1565c0, // Saint Basil's Cathedral - Deep blue
-	J: 0xffb300, // Winter Palace - Amber
-	L: 0x558b2f, // Lenin's Mausoleum - Green
-	S: 0xe65100, // Cathedral of Christ the Saviour - Orange
-	Z: 0x00695c  // Peterhof Palace - Teal
-};
-
-// Tetromino starting position
-const STARTING_HEIGHT = 0;
-const STARTING_X_OFFSET = 4; // Center of the board
-
-// Current falling tetromino
+// Current falling piece
 let fallingPiece = null;
 
-// Next tetromino
-let nextPiece = null;
-
-// Ghost piece (shadow)
+// Ghost piece (preview of where the piece will land)
 let ghostPiece = null;
 
-// Falling speed (cells per second)
-let fallingSpeed = 1;
+// Next pieces
+let nextPieces = [];
 
-// Last update time
-let lastUpdateTime = 0;
+// Held piece
+let heldPiece = null;
+let hasHeldThisTurn = false;
 
-// Game loop interval
-let gameLoopInterval = null;
+// Lock delay
+const LOCK_DELAY = GAME_CONSTANTS.LOCK_DELAY || 500; // ms
+let lockDelayTimer = 0;
+let lastMoveTime = 0;
 
-/**
- * Generate a random tetromino type
- * @returns {string} The tetromino type (I, O, T, J, L, S, Z)
- */
-function getRandomType() {
-	const types = Object.keys(SHAPES);
-	return types[Math.floor(Math.random() * types.length)];
-}
+// Drop speed
+let dropSpeed = GAME_CONSTANTS.SPEED.NORMAL;
+let dropCounter = 0;
 
-/**
- * Create a new tetromino
- * @param {string} type - The tetromino type (I, O, T, J, L, S, Z)
- * @param {number} x - The x coordinate (center of the board by default)
- * @param {number} y - The y coordinate (top of the board by default)
- * @returns {Object} The tetromino object
- */
-function createTetromino(type, x, y) {
-	// Get the game state
-	const gameState = GameState.getGameState();
-	
-	// Calculate the center of the board if x is not provided
-	const centerX = x !== undefined ? x : Math.floor(gameState.boardWidth / 2) - 1;
-	
-	return {
-		type,
-		rotation: 0,
-		x: centerX,
-		y: y !== undefined ? y : STARTING_HEIGHT,
-		shape: getTetrominoShape(type, 0),
-		color: COLORS[type]
-	};
-}
+// Lines per level
+const LINES_PER_LEVEL = GAME_CONSTANTS.LINES_PER_LEVEL || 10;
 
 /**
- * Get the tetromino shape based on type and rotation
- * @param {string} type - The tetromino type
- * @param {number} rotation - The rotation (0, 1, 2, 3)
- * @returns {Array} The tetromino shape as an array of [x, y] coordinates
+ * Initialize the tetromino manager
+ * @returns {Promise<void>}
  */
-export function getTetrominoShape(type, rotation) {
-	// Get the shape matrix
-	const shapeMatrix = SHAPES[type];
-	
-	// Skip rotation for O piece (square)
-	if (type === 'O') {
-		return getShapeCoordinates(shapeMatrix);
-	}
-	
-	// Rotate the shape
-	const rotatedShape = getRotatedShape(shapeMatrix, rotation);
-	
-	// Convert to coordinates
-	return getShapeCoordinates(rotatedShape);
-}
-
-/**
- * Get the coordinates of filled cells in a shape matrix
- * @param {Array} shapeMatrix - The shape matrix
- * @returns {Array} Array of [x, y] coordinates
- */
-function getShapeCoordinates(shapeMatrix) {
-	const coordinates = [];
-	
-	for (let y = 0; y < shapeMatrix.length; y++) {
-		for (let x = 0; x < shapeMatrix[y].length; x++) {
-			if (shapeMatrix[y][x]) {
-				coordinates.push([x, y]);
-			}
-		}
-	}
-	
-	return coordinates;
-}
-
-/**
- * Rotate a shape matrix
- * @param {Array} shapeMatrix - The shape matrix
- * @param {number} rotation - The rotation (0, 1, 2, 3)
- * @returns {Array} The rotated shape matrix
- */
-function getRotatedShape(shapeMatrix, rotation) {
-	// Normalize rotation to 0-3
-	rotation = ((rotation % 4) + 4) % 4;
-	
-	// Skip rotation if 0
-	if (rotation === 0) {
-		return shapeMatrix;
-	}
-	
-	const height = shapeMatrix.length;
-	const width = shapeMatrix[0].length;
-	let rotatedMatrix;
-	
-	switch (rotation) {
-		case 1: // 90 degrees clockwise
-			rotatedMatrix = Array(width).fill().map(() => Array(height).fill(0));
-			for (let y = 0; y < height; y++) {
-				for (let x = 0; x < width; x++) {
-					rotatedMatrix[x][height - 1 - y] = shapeMatrix[y][x];
-				}
-			}
-			break;
-		case 2: // 180 degrees
-			rotatedMatrix = Array(height).fill().map(() => Array(width).fill(0));
-			for (let y = 0; y < height; y++) {
-				for (let x = 0; x < width; x++) {
-					rotatedMatrix[height - 1 - y][width - 1 - x] = shapeMatrix[y][x];
-				}
-			}
-			break;
-		case 3: // 270 degrees clockwise
-			rotatedMatrix = Array(width).fill().map(() => Array(height).fill(0));
-			for (let y = 0; y < height; y++) {
-				for (let x = 0; x < width; x++) {
-					rotatedMatrix[width - 1 - x][y] = shapeMatrix[y][x];
-				}
-			}
-			break;
-		default:
-			rotatedMatrix = shapeMatrix;
-	}
-	
-	return rotatedMatrix;
-}
-
-/**
- * Spawn a new tetromino at the top of the board
- * @returns {Object|null} The spawned tetromino or null if game over
- */
-export function spawnTetromino() {
+export async function init() {
 	try {
-		console.log('Spawning new tetromino');
+		console.log('Initializing tetromino manager');
 		
-		// Get the game state
-		const gameState = GameState.getGameState();
+		// Reset state
+		bag = [];
+		fallingPiece = null;
+		ghostPiece = null;
+		nextPieces = [];
+		heldPiece = null;
+		hasHeldThisTurn = false;
+		lockDelayTimer = 0;
+		lastMoveTime = 0;
+		dropSpeed = GAME_CONSTANTS.SPEED.NORMAL;
+		dropCounter = 0;
 		
-		// If there's a next piece, use it
-		if (nextPiece) {
-			console.log(`Using next piece of type ${nextPiece.type}`);
-			fallingPiece = nextPiece;
-		} else {
-			// Create a new tetromino at the top center of the board
-			const type = getRandomType();
-			console.log(`No next piece, creating new tetromino of type ${type}`);
-			fallingPiece = createTetromino(type, STARTING_X_OFFSET, STARTING_HEIGHT);
-		}
+		// Fill the bag
+		fillBag();
 		
-		// Generate the next piece
-		nextPiece = generateNextPiece();
-		console.log(`Generated next piece of type ${nextPiece.type}`);
+		// Fill next pieces
+		fillNextPieces();
 		
-		// Update the ghost piece
-		updateGhostPiece();
+		// Create first piece
+		createNewPiece();
 		
-		// Check if the spawn position is valid
-		if (!isValidPosition(fallingPiece, fallingPiece.x, fallingPiece.y)) {
-			console.warn('Game over: Cannot spawn tetromino at starting position');
-			
-			// Game over if the spawn position is invalid
-			gameState.isGameOver = true;
-			GameState.updateGameState(gameState);
-			
-			// Play game over sound
-			if (window.SoundManager) {
-				window.SoundManager.playSound('gameOver');
-			}
-			
-			return null;
-		}
-		
-		console.log(`Successfully spawned tetromino of type ${fallingPiece.type} at position (${fallingPiece.x}, ${fallingPiece.y})`);
-		
-		// Update the game state
-		gameState.fallingPiece = fallingPiece;
-		gameState.nextPiece = nextPiece;
-		gameState.ghostPiece = ghostPiece;
-		
-		// Dispatch a game state update event
-		GameState.updateGameState(gameState);
-		
-		// Play spawn sound
-		if (window.SoundManager) {
-			window.SoundManager.playSound('spawn');
-		}
-		
-		return fallingPiece;
+		console.log('Tetromino manager initialized');
 	} catch (error) {
-		console.error('Error spawning tetromino:', error);
-		return null;
+		console.error('Error initializing tetromino manager:', error);
+		throw error;
 	}
 }
 
 /**
- * Generate the next tetromino
- * @returns {Object} The next tetromino
+ * Update tetromino state
+ * @param {number} deltaTime - Time since last update in ms
  */
-function generateNextPiece() {
-	const type = getRandomType();
-	return createTetromino(type, STARTING_X_OFFSET, STARTING_HEIGHT);
-}
-
-/**
- * Get the falling tetromino
- * @returns {Object} The falling tetromino
- */
-export function getFallingPiece() {
-	return fallingPiece;
-}
-
-/**
- * Set the falling tetromino
- * @param {Object} piece - The tetromino to set as falling
- */
-export function setFallingPiece(piece) {
-	fallingPiece = piece;
-	
-	// Update the ghost piece
-	updateGhostPiece();
-	
-	// Update the game state
-	const gameState = GameState.getGameState();
-	gameState.fallingPiece = fallingPiece;
-	gameState.ghostPiece = ghostPiece;
-	
-	// Dispatch a game state update event
-	GameState.updateGameState(gameState);
-}
-
-/**
- * Move the tetromino
- * @param {number} dx - The x direction (-1 for left, 1 for right)
- * @param {number} dy - The y direction (1 for down)
- * @returns {boolean} Whether the move was successful
- */
-export async function moveTetromino(dx, dy) {
-	// Get the falling piece
-	const fallingPiece = getFallingPiece();
-	
-	// If there's no falling piece, return
-	if (!fallingPiece) {
-		return false;
-	}
-	
-	// Calculate the new position
-	const newX = fallingPiece.x + dx;
-	const newY = fallingPiece.y + dy;
-	
-	// Check if the new position is valid
-	if (!isValidPosition(fallingPiece, newX, newY)) {
-		// If moving down and the position is invalid, lock the piece
-		if (dy > 0) {
-			lockTetromino();
-			return false;
-		}
-		
-		// If moving horizontally and hitting a wall, try to bounce
-		if (dx !== 0 && dy === 0) {
-			// Check if we can bounce by moving up
-			if (isValidPosition(fallingPiece, newX, fallingPiece.y - 1)) {
-				fallingPiece.x = newX;
-				fallingPiece.y = fallingPiece.y - 1;
-				
-				// Update the ghost piece
-				updateGhostPiece();
-				
-				// Update the game state
-				const gameState = GameState.getGameState();
-				gameState.fallingPiece = fallingPiece;
-				gameState.ghostPiece = ghostPiece;
-				
-				// Dispatch a game state update event
-				GameState.updateGameState(gameState);
-				
-				// Play bounce sound
-				if (window.SoundManager) {
-					window.SoundManager.playSound('bounce');
-				}
-				
-				return true;
-			}
-			
-			return false;
-		}
-		
-		return false;
-	}
-	
-	// Update the position
-	fallingPiece.x = newX;
-	fallingPiece.y = newY;
-	
-	// Update the ghost piece
-	updateGhostPiece();
-	
-	// Update the game state
-	const gameState = GameState.getGameState();
-	gameState.fallingPiece = fallingPiece;
-	gameState.ghostPiece = ghostPiece;
-	
-	// Dispatch a game state update event
-	GameState.updateGameState(gameState);
-	
-	// Play move sound
-	if (window.SoundManager && dx !== 0) {
-		window.SoundManager.playSound('move');
-	}
-	
-	return true;
-}
-
-/**
- * Rotate the tetromino
- * @returns {boolean} Whether the rotation was successful
- */
-export async function rotateTetromino() {
-	// Get the falling piece
-	const fallingPiece = getFallingPiece();
-	
-	// If there's no falling piece, return
-	if (!fallingPiece) {
-		return false;
-	}
-	
-	// Skip rotation for O piece (square)
-	if (fallingPiece.type === 'O') {
-		return true;
-	}
-	
-	// Calculate the new rotation
-	const newRotation = (fallingPiece.rotation + 1) % 4;
-	
-	// Get the rotated shape
-	const rotatedShape = getTetrominoShape(fallingPiece.type, newRotation);
-	
-	// Check if the rotated position is valid
-	if (!isValidPosition({ ...fallingPiece, shape: rotatedShape }, fallingPiece.x, fallingPiece.y)) {
-		// Try wall kicks
-		const wallKicks = getWallKicks(fallingPiece.type, fallingPiece.rotation, newRotation);
-		
-		let validKickFound = false;
-		
-		for (const [kickX, kickY] of wallKicks) {
-			if (isValidPosition({ ...fallingPiece, shape: rotatedShape }, fallingPiece.x + kickX, fallingPiece.y + kickY)) {
-				// Apply the wall kick
-				fallingPiece.x += kickX;
-				fallingPiece.y += kickY;
-				validKickFound = true;
-				break;
-			}
-		}
-		
-		if (!validKickFound) {
-			return false;
-		}
-	}
-	
-	// Update the rotation
-	fallingPiece.rotation = newRotation;
-	fallingPiece.shape = rotatedShape;
-	
-	// Update the ghost piece
-	updateGhostPiece();
-	
-	// Update the game state
-	const gameState = GameState.getGameState();
-	gameState.fallingPiece = fallingPiece;
-	gameState.ghostPiece = ghostPiece;
-	
-	// Dispatch a game state update event
-	GameState.updateGameState(gameState);
-	
-	// Play sound effect
-	if (window.SoundManager) {
-		window.SoundManager.playSound('rotate');
-	}
-	
-	return true;
-}
-
-/**
- * Get wall kicks for a tetromino rotation
- * @param {string} type - The tetromino type
- * @param {number} fromRotation - The current rotation
- * @param {number} toRotation - The target rotation
- * @returns {Array} Array of [x, y] offsets to try
- */
-function getWallKicks(type, fromRotation, toRotation) {
-	// Basic wall kicks (try left, right, up)
-	const basicKicks = [
-		[0, 0],   // No kick
-		[-1, 0],  // Left
-		[1, 0],   // Right
-		[0, -1],  // Up
-		[-1, -1], // Left and up
-		[1, -1]   // Right and up
-	];
-	
-	// Special wall kicks for I piece
-	if (type === 'I') {
-		return [
-			...basicKicks,
-			[-2, 0], // Far left
-			[2, 0],  // Far right
-			[0, -2]  // Far up
-		];
-	}
-	
-	return basicKicks;
-}
-
-/**
- * Drop the tetromino to the bottom
- * This function is triggered by the 'A' key or double tap on mobile
- * @returns {boolean} Whether the drop was successful
- */
-export async function dropTetromino() {
-	// Get the falling piece
-	const fallingPiece = getFallingPiece();
-	
-	// If there's no falling piece, return
-	if (!fallingPiece) {
-		return false;
-	}
-	
-	// Get the ghost piece
-	const ghost = getGhostPiece();
-	
-	if (!ghost) {
-		return false;
-	}
-	
-	// Move the piece to the ghost position
-	fallingPiece.y = ghost.y;
-	
-	// Update the game state
-	const gameState = GameState.getGameState();
-	gameState.fallingPiece = fallingPiece;
-	
-	// Dispatch a game state update event
-	GameState.updateGameState(gameState);
-	
-	// Lock the tetromino
-	lockTetromino();
-	
-	// Play drop sound
-	if (window.SoundManager) {
-		window.SoundManager.playSound('drop');
-	}
-	
-	return true;
-}
-
-/**
- * Lock the tetromino in place
- */
-function lockTetromino() {
-	// Get the falling piece
-	const fallingPiece = getFallingPiece();
-	
-	// If there's no falling piece, return
-	if (!fallingPiece) {
-		return;
-	}
-	
-	// Get the game state
-	const gameState = GameState.getGameState();
-	
-	// Add the tetromino to the board
-	for (const [blockX, blockY] of fallingPiece.shape) {
-		const x = fallingPiece.x + blockX;
-		const y = fallingPiece.y + blockY;
-		
-		// Skip if out of bounds
-		if (x < 0 || x >= gameState.boardWidth || y < 0 || y >= gameState.boardHeight) {
-			continue;
-		}
-		
-		// Set the cell
-		if (!gameState.board[y]) {
-			gameState.board[y] = [];
-		}
-		
-		gameState.board[y][x] = {
-			type: 'tetromino',
-			tetrominoType: fallingPiece.type,
-			color: fallingPiece.color
-		};
-	}
-	
-	// Clear the falling piece
-	gameState.fallingPiece = null;
-	setFallingPiece(null);
-	
-	// Check for completed rows
-	const rowsCleared = checkCompletedRows();
-	
-	// Update score based on rows cleared
-	if (rowsCleared > 0) {
-		// Calculate score
-		const scoreMultiplier = [0, 100, 300, 500, 800]; // Points for 0, 1, 2, 3, 4 rows
-		const score = scoreMultiplier[rowsCleared] * (gameState.level || 1);
-		
-		// Update game state
-		gameState.score = (gameState.score || 0) + score;
-		gameState.linesCleared = (gameState.linesCleared || 0) + rowsCleared;
-		
-		// Update level
-		const newLevel = Math.floor(gameState.linesCleared / 10) + 1;
-		if (newLevel !== gameState.level) {
-			gameState.level = newLevel;
-			fallingSpeed = 1 + (newLevel - 1) * 0.5; // Increase speed with level
-		}
-		
-		// Play sound effect
-		if (window.SoundManager) {
-			if (rowsCleared === 4) {
-				window.SoundManager.playSound('tetris');
-			} else {
-				window.SoundManager.playSound('lineClear');
-			}
-		}
-	}
-	
-	// Spawn a new tetromino
-	spawnTetromino();
-	
-	// Dispatch a game state update event
-	GameState.updateGameState(gameState);
-}
-
-/**
- * Check for completed rows and clear them
- * @returns {number} The number of rows cleared
- */
-function checkCompletedRows() {
-	// Get the game state
-	const gameState = GameState.getGameState();
-	const { board, boardWidth, boardHeight } = gameState;
-	
-	// Keep track of completed rows
-	const completedRows = [];
-	
-	// Check each row
-	for (let y = 0; y < boardHeight; y++) {
-		if (!board[y]) continue;
-		
-		let isRowComplete = true;
-		
-		// Check if the row is complete
-		for (let x = 0; x < boardWidth; x++) {
-			if (!board[y][x] || board[y][x].type !== 'tetromino') {
-				isRowComplete = false;
-				break;
-			}
-		}
-		
-		// Add to completed rows
-		if (isRowComplete) {
-			completedRows.push(y);
-		}
-	}
-	
-	// Clear completed rows
-	for (const y of completedRows) {
-		// Remove the row
-		board[y] = Array(boardWidth).fill(null);
-		
-		// Shift rows down
-		for (let row = y; row > 0; row--) {
-			board[row] = board[row - 1] ? [...board[row - 1]] : Array(boardWidth).fill(null);
-		}
-		
-		// Clear the top row
-		board[0] = Array(boardWidth).fill(null);
-	}
-	
-	return completedRows.length;
-}
-
-/**
- * Check if a tetromino position is valid
- * @param {Object} piece - The tetromino to check
- * @param {number} x - The x coordinate
- * @param {number} y - The y coordinate
- * @returns {boolean} Whether the position is valid
- */
-function isValidPosition(piece, x, y) {
-	if (!piece) return false;
-	
-	// Get the game state
-	const gameState = GameState.getGameState();
-	
-	// Check each cell of the tetromino
-	for (const [blockX, blockY] of piece.shape) {
-		const boardX = x + blockX;
-		const boardY = y + blockY;
-		
-		// Check if out of bounds
-		if (boardX < 0 || boardY < 0 || boardX >= gameState.boardWidth || boardY >= gameState.boardHeight) {
-			return false;
-		}
-		
-		// Check if collides with another piece
-		if (gameState.board[boardY] && 
-			gameState.board[boardY][boardX] && 
-			gameState.board[boardY][boardX].type === 'tetromino') {
-			return false;
-		}
-	}
-	
-	return true;
-}
-
-/**
- * Update the ghost piece (preview of where the tetromino will land)
- */
-function updateGhostPiece() {
+export function update(deltaTime) {
 	try {
-		// If there's no falling piece, clear the ghost piece
 		if (!fallingPiece) {
-			console.log('No falling piece, clearing ghost piece');
-			ghostPiece = null;
+			createNewPiece();
 			return;
 		}
 		
-		console.log(`Updating ghost piece for tetromino of type ${fallingPiece.type}`);
+		// Update drop counter
+		dropCounter += deltaTime;
 		
-		// Create a copy of the falling piece
-		ghostPiece = { ...fallingPiece };
+		// Calculate drop speed based on level
+		const currentDropSpeed = calculateDropSpeed();
 		
-		// Move the ghost piece down until it collides
-		let y = fallingPiece.y;
-		
-		while (isValidPosition(fallingPiece, fallingPiece.x, y + 1)) {
-			y++;
+		// Move piece down if enough time has passed
+		if (dropCounter >= currentDropSpeed) {
+			dropCounter = 0;
+			
+			// Try to move piece down
+			if (!movePieceDown()) {
+				// If piece can't move down, start lock delay
+				lockDelayTimer += deltaTime;
+				
+				// Lock piece if lock delay has passed
+				if (lockDelayTimer >= LOCK_DELAY) {
+					lockPiece();
+					lockDelayTimer = 0;
+				}
+			} else {
+				// Reset lock delay if piece moved down
+				lockDelayTimer = 0;
+			}
 		}
 		
-		// Set the ghost piece position
-		ghostPiece.y = y;
+		// Update ghost piece
+		updateGhostPiece();
+	} catch (error) {
+		console.error('Error updating tetromino:', error);
+	}
+}
+
+/**
+ * Calculate drop speed based on level
+ * @returns {number} Drop speed in ms
+ */
+function calculateDropSpeed() {
+	try {
+		// Get current level
+		const level = GameManager.getLevel();
 		
-		console.log(`Ghost piece positioned at (${ghostPiece.x}, ${ghostPiece.y}), ${y - fallingPiece.y} cells below the falling piece`);
+		// Calculate drop speed
+		// Formula: baseSpeed * (0.8 - ((level - 1) * 0.007))^(level - 1)
+		const baseSpeed = GAME_CONSTANTS.SPEED.NORMAL;
+		const speedFactor = Math.pow(0.8 - ((level - 1) * 0.007), level - 1);
 		
-		// Update the game state
-		const gameState = GameState.getGameState();
-		gameState.ghostPiece = ghostPiece;
-		GameState.updateGameState(gameState);
+		return Math.max(baseSpeed * speedFactor, GAME_CONSTANTS.SPEED.MAX);
+	} catch (error) {
+		console.error('Error calculating drop speed:', error);
+		return GAME_CONSTANTS.SPEED.NORMAL;
+	}
+}
+
+/**
+ * Creates a new tetromino piece
+ * @returns {Object} The new piece
+ */
+function createNewPiece() {
+	try {
+		// Reset held piece flag
+		hasHeldThisTurn = false;
+		
+		// Get next piece from queue
+		const nextPiece = nextPieces.shift();
+		
+		// Fill next pieces if needed
+		if (!nextPiece || nextPieces.length < 3) {
+			fillNextPieces();
+		}
+		
+		// If still no next piece, use a default piece (I)
+		const pieceType = nextPiece || 'I';
+		
+		// Check if TETROMINO_TYPES is defined and has the piece type
+		if (!TETROMINO_TYPES || !TETROMINO_TYPES[pieceType]) {
+			console.error('TETROMINO_TYPES is not defined or does not have the piece type:', pieceType);
+			
+			// Create a default piece
+			fallingPiece = {
+				id: generateId(),
+				type: 'I',
+				shape: [[0, 0, 0, 0], [1, 1, 1, 1], [0, 0, 0, 0], [0, 0, 0, 0]],
+				color: 0x00FFFF,
+				x: Math.floor(GAME_CONSTANTS.BOARD_WIDTH / 2) - 2,
+				y: 0,
+				rotation: 0
+			};
+			
+			// Update ghost piece
+			updateGhostPiece();
+			
+			return fallingPiece;
+		}
+		
+		// Create new piece
+		fallingPiece = {
+			id: generateId(),
+			type: pieceType,
+			shape: TETROMINO_TYPES[pieceType].shape,
+			color: TETROMINO_TYPES[pieceType].color,
+			x: Math.floor(GAME_CONSTANTS.BOARD_WIDTH / 2) - Math.floor(TETROMINO_TYPES[pieceType].shape[0].length / 2),
+			y: 0,
+			rotation: 0
+		};
+		
+		// Check if new piece collides with existing pieces
+		if (isCollision(fallingPiece.shape, fallingPiece.x, fallingPiece.y)) {
+			// Game over
+			GameManager.endGame();
+			return null;
+		}
+		
+		// Update ghost piece
+		updateGhostPiece();
+		
+		return fallingPiece;
+	} catch (error) {
+		console.error('Error creating new piece:', error);
+		
+		// Create a default piece as fallback
+		fallingPiece = {
+			id: generateId(),
+			type: 'I',
+			shape: [[0, 0, 0, 0], [1, 1, 1, 1], [0, 0, 0, 0], [0, 0, 0, 0]],
+			color: 0x00FFFF,
+			x: Math.floor(GAME_CONSTANTS.BOARD_WIDTH / 2) - 2,
+			y: 0,
+			rotation: 0
+		};
+		
+		// Update ghost piece
+		updateGhostPiece();
+		
+		return fallingPiece;
+	}
+}
+
+/**
+ * Fill the next pieces queue
+ */
+function fillNextPieces() {
+	try {
+		// Fill bag if empty
+		if (bag.length === 0) {
+			fillBag();
+		}
+		
+		// If bag is still empty after trying to fill it, create a default bag
+		if (bag.length === 0) {
+			console.warn('Failed to fill bag, using default pieces');
+			bag = ['I', 'J', 'L', 'O', 'S', 'T', 'Z'];
+		}
+		
+		// Add pieces to next pieces queue
+		while (nextPieces.length < 3) {
+			// Get next piece from bag
+			const nextPiece = bag.shift();
+			
+			// Add to next pieces
+			if (nextPiece) {
+				nextPieces.push(nextPiece);
+			}
+			
+			// Fill bag if empty
+			if (bag.length === 0) {
+				fillBag();
+			}
+		}
+		
+		console.log('Next pieces queue filled:', nextPieces);
+	} catch (error) {
+		console.error('Error filling next pieces:', error);
+		
+		// Create default next pieces as fallback
+		nextPieces = ['I', 'J', 'L'];
+	}
+}
+
+/**
+ * Fill the tetromino bag with all piece types in random order
+ */
+function fillBag() {
+	try {
+		// Check if TETROMINO_TYPES is defined
+		if (!TETROMINO_TYPES) {
+			console.error('TETROMINO_TYPES is not defined');
+			
+			// Use default piece types
+			bag = shuffleArray(['I', 'J', 'L', 'O', 'S', 'T', 'Z']);
+			return;
+		}
+		
+		// Create array with all piece types
+		const pieceTypes = Object.keys(TETROMINO_TYPES);
+		
+		// If no piece types found, use default piece types
+		if (!pieceTypes || pieceTypes.length === 0) {
+			console.warn('No piece types found in TETROMINO_TYPES, using default piece types');
+			bag = shuffleArray(['I', 'J', 'L', 'O', 'S', 'T', 'Z']);
+			return;
+		}
+		
+		// Shuffle array
+		bag = shuffleArray([...pieceTypes]);
+		
+		console.log('Bag filled with piece types:', bag);
+	} catch (error) {
+		console.error('Error filling bag:', error);
+		
+		// Use default piece types as fallback
+		bag = ['I', 'J', 'L', 'O', 'S', 'T', 'Z'];
+	}
+}
+
+/**
+ * Shuffle an array using Fisher-Yates algorithm
+ * @param {Array} array - Array to shuffle
+ * @returns {Array} Shuffled array
+ */
+function shuffleArray(array) {
+	for (let i = array.length - 1; i > 0; i--) {
+		const j = Math.floor(Math.random() * (i + 1));
+		[array[i], array[j]] = [array[j], array[i]];
+	}
+	return array;
+}
+
+/**
+ * Update the ghost piece position
+ */
+function updateGhostPiece() {
+	try {
+		if (!fallingPiece) return;
+		
+		// Create ghost piece
+		ghostPiece = {
+			...fallingPiece,
+			y: fallingPiece.y
+		};
+		
+		// Move ghost piece down until it collides
+		while (!isCollision(ghostPiece.shape, ghostPiece.x, ghostPiece.y + 1)) {
+			ghostPiece.y++;
+		}
 	} catch (error) {
 		console.error('Error updating ghost piece:', error);
 	}
 }
 
 /**
- * Get the ghost piece (preview of where the tetromino will land)
- * @returns {Object|null} The ghost piece or null if no falling piece
+ * Move the falling piece left
+ * @returns {boolean} Whether the piece was moved
+ */
+export function movePieceLeft() {
+	try {
+		if (!fallingPiece) return false;
+		
+		// Check if piece can move left
+		if (!isCollision(fallingPiece.shape, fallingPiece.x - 1, fallingPiece.y)) {
+			// Move piece left
+			fallingPiece.x--;
+			
+			// Reset lock delay
+			lockDelayTimer = 0;
+			
+			// Update ghost piece
+			updateGhostPiece();
+			
+			// Update last move time
+			lastMoveTime = Date.now();
+			
+			return true;
+		}
+		
+		return false;
+	} catch (error) {
+		console.error('Error moving piece left:', error);
+		return false;
+	}
+}
+
+/**
+ * Move the falling piece right
+ * @returns {boolean} Whether the piece was moved
+ */
+export function movePieceRight() {
+	try {
+		if (!fallingPiece) return false;
+		
+		// Check if piece can move right
+		if (!isCollision(fallingPiece.shape, fallingPiece.x + 1, fallingPiece.y)) {
+			// Move piece right
+			fallingPiece.x++;
+			
+			// Reset lock delay
+			lockDelayTimer = 0;
+			
+			// Update ghost piece
+			updateGhostPiece();
+			
+			// Update last move time
+			lastMoveTime = Date.now();
+			
+			return true;
+		}
+		
+		return false;
+	} catch (error) {
+		console.error('Error moving piece right:', error);
+		return false;
+	}
+}
+
+/**
+ * Get all pieces (falling, ghost, next, held)
+ * @returns {Object} All pieces
+ */
+export function getAllPieces() {
+	return { fallingPiece, ghostPiece, nextPieces, heldPiece };
+}
+
+/**
+ * Get next pieces
+ * @returns {Array} Next pieces
+ */
+export function getNextPieces() {
+	return nextPieces;
+}
+
+/**
+ * Get current piece
+ * @returns {Object} Current piece
+ */
+export function getCurrentPiece() {
+	return fallingPiece;
+}
+
+/**
+ * Move the falling piece down
+ * @returns {boolean} Whether the piece was moved
+ */
+export function movePieceDown() {
+	try {
+		if (!fallingPiece) return false;
+		
+		// Check if piece can move down
+		if (!isCollision(fallingPiece.shape, fallingPiece.x, fallingPiece.y + 1)) {
+			// Move piece down
+			fallingPiece.y++;
+			
+			// Update last move time
+			lastMoveTime = Date.now();
+			
+			return true;
+		}
+		
+		return false;
+	} catch (error) {
+		console.error('Error moving piece down:', error);
+		return false;
+	}
+}
+
+/**
+ * Soft drop the falling piece
+ * @returns {boolean} Whether the piece was moved
+ */
+export function softDrop() {
+	try {
+		if (!fallingPiece) return false;
+		
+		// Move piece down
+		const moved = movePieceDown();
+		
+		// Add score if piece moved
+		if (moved) {
+			GameManager.addScore(GAME_CONSTANTS.SCORING.SOFT_DROP, 'soft_drop');
+		}
+		
+		return moved;
+	} catch (error) {
+		console.error('Error soft dropping piece:', error);
+		return false;
+	}
+}
+
+/**
+ * Hard drop the falling piece
+ * @returns {boolean} Whether the piece was locked
+ */
+export function hardDrop() {
+	try {
+		if (!fallingPiece) return false;
+		
+		// Calculate distance to drop
+		let distance = 0;
+		
+		// Move piece down until it collides
+		while (!isCollision(fallingPiece.shape, fallingPiece.x, fallingPiece.y + 1)) {
+			fallingPiece.y++;
+			distance++;
+		}
+		
+		// Add score based on distance
+		GameManager.addScore(distance * GAME_CONSTANTS.SCORING.HARD_DROP, 'hard_drop');
+		
+		// Lock piece
+		return lockPiece();
+	} catch (error) {
+		console.error('Error hard dropping piece:', error);
+		return false;
+	}
+}
+
+/**
+ * Rotate the falling piece
+ * @param {boolean} clockwise - Whether to rotate clockwise
+ * @returns {boolean} Whether the piece was rotated
+ */
+export function rotatePiece(clockwise = true) {
+	try {
+		if (!fallingPiece) return false;
+		
+		// Get current rotation
+		const currentRotation = fallingPiece.rotation;
+		
+		// Calculate new rotation
+		const newRotation = clockwise
+			? (currentRotation + 1) % 4
+			: (currentRotation + 3) % 4;
+		
+		// Rotate shape
+		const newShape = rotateShape(fallingPiece.shape, clockwise);
+		
+		// Try to place the rotated piece
+		// First try without wall kicks
+		if (!isCollision(newShape, fallingPiece.x, fallingPiece.y)) {
+			// Update piece
+			fallingPiece.shape = newShape;
+			fallingPiece.rotation = newRotation;
+			
+			// Reset lock delay
+			lockDelayTimer = 0;
+			
+			// Update ghost piece
+			updateGhostPiece();
+			
+			return true;
+		}
+		
+		// Try with wall kicks
+		const wallKicks = getWallKicks(fallingPiece.type, currentRotation, clockwise);
+		
+		for (const [dx, dy] of wallKicks) {
+			if (!isCollision(newShape, fallingPiece.x + dx, fallingPiece.y + dy)) {
+				// Update piece
+				fallingPiece.shape = newShape;
+				fallingPiece.rotation = newRotation;
+				fallingPiece.x += dx;
+				fallingPiece.y += dy;
+				
+				// Reset lock delay
+				lockDelayTimer = 0;
+				
+				// Update ghost piece
+				updateGhostPiece();
+				
+				return true;
+			}
+		}
+		
+		return false;
+	} catch (error) {
+		console.error('Error rotating piece:', error);
+		return false;
+	}
+}
+
+/**
+ * Rotate a tetromino shape
+ * @param {Array} shape - Shape to rotate
+ * @param {boolean} clockwise - Whether to rotate clockwise
+ * @returns {Array} Rotated shape
+ */
+function rotateShape(shape, clockwise = true) {
+	try {
+		const rows = shape.length;
+		const cols = shape[0].length;
+		const newShape = Array(cols).fill().map(() => Array(rows).fill(0));
+		
+		for (let y = 0; y < rows; y++) {
+			for (let x = 0; x < cols; x++) {
+				if (clockwise) {
+					newShape[x][rows - 1 - y] = shape[y][x];
+				} else {
+					newShape[cols - 1 - x][y] = shape[y][x];
+				}
+			}
+		}
+		
+		return newShape;
+	} catch (error) {
+		console.error('Error rotating shape:', error);
+		return shape;
+	}
+}
+
+/**
+ * Get wall kicks for a rotation
+ * @param {string} type - Piece type
+ * @param {number} rotation - Current rotation
+ * @param {boolean} clockwise - Whether rotation is clockwise
+ * @returns {Array} Wall kicks
+ */
+function getWallKicks(type, rotation, clockwise) {
+	// Default wall kicks
+	const defaultKicks = [
+		[0, 0],
+		[-1, 0],
+		[1, 0],
+		[0, -1],
+		[-1, -1],
+		[1, -1]
+	];
+	
+	// Return default kicks
+	return defaultKicks;
+}
+
+/**
+ * Hold the current piece
+ * @returns {boolean} Whether the piece was held
+ */
+export function holdPiece() {
+	try {
+		if (!fallingPiece) return false;
+		
+		// Check if piece has already been held this turn
+		if (hasHeldThisTurn) return false;
+		
+		// Set held flag
+		hasHeldThisTurn = true;
+		
+		// Store current piece type
+		const currentType = fallingPiece.type;
+		
+		// Check if there's already a held piece
+		if (heldPiece) {
+			// Swap pieces
+			const tempType = heldPiece;
+			heldPiece = currentType;
+			
+			// Create new piece with held piece type
+			fallingPiece = {
+				id: generateId(),
+				type: tempType,
+				shape: TETROMINO_TYPES[tempType].shape,
+				color: TETROMINO_TYPES[tempType].color,
+				x: Math.floor(GAME_CONSTANTS.BOARD_WIDTH / 2) - Math.floor(TETROMINO_TYPES[tempType].shape[0].length / 2),
+				y: 0,
+				rotation: 0
+			};
+		} else {
+			// Store current piece
+			heldPiece = currentType;
+			
+			// Create new piece
+			createNewPiece();
+		}
+		
+		// Update ghost piece
+		updateGhostPiece();
+		
+		return true;
+	} catch (error) {
+		console.error('Error holding piece:', error);
+		return false;
+	}
+}
+
+/**
+ * Locks the current falling piece into the board
+ * @returns {boolean} Whether the piece was locked
+ */
+function lockPiece() {
+	try {
+		if (!fallingPiece) return false;
+		
+		// Add piece to board
+		const board = ChessPieceManager.getBoard();
+		const shape = fallingPiece.shape;
+		const color = fallingPiece.color;
+		
+		for (let y = 0; y < shape.length; y++) {
+			for (let x = 0; x < shape[y].length; x++) {
+				if (shape[y][x]) {
+					const boardX = fallingPiece.x + x;
+					const boardY = fallingPiece.y + y;
+					
+					// Ensure board is large enough (rows)
+					while (boardY >= board.length) {
+						board.push(Array(GAME_CONSTANTS.BOARD_WIDTH).fill(null));
+					}
+					
+					// Ensure the row has enough columns
+					if (!board[boardY]) {
+						board[boardY] = Array(GAME_CONSTANTS.BOARD_WIDTH).fill(null);
+					}
+					
+					// Ensure the specific column exists
+					if (boardX >= board[boardY].length) {
+						// Extend the row to accommodate the piece
+						const extension = Array(boardX - board[boardY].length + 1).fill(null);
+						board[boardY] = [...board[boardY], ...extension];
+					}
+					
+					// Add tetromino block to board
+					board[boardY][boardX] = {
+						id: `${fallingPiece.id}-${x}-${y}`,
+						type: 'tetromino',
+						color
+					};
+				}
+			}
+		}
+		
+		// Check for cleared lines
+		const clearedLines = checkClearedLines();
+		
+		// Update score
+		updateScore(clearedLines);
+		
+		// Create new piece
+		createNewPiece();
+		
+		return true;
+	} catch (error) {
+		console.error('Error locking piece:', error);
+		return false;
+	}
+}
+
+/**
+ * Check for cleared lines
+ * @returns {number} Number of cleared lines
+ */
+function checkClearedLines() {
+	try {
+		const board = ChessPieceManager.getBoard();
+		let clearedLines = 0;
+		
+		// Check each row
+		for (let y = 0; y < board.length; y++) {
+			// Skip if row doesn't exist
+			if (!board[y]) continue;
+			
+			// Check if row is full
+			const isFull = board[y].every(cell => cell !== null);
+			
+			if (isFull) {
+				// Remove row
+				board.splice(y, 1);
+				
+				// Add empty row at top
+				board.unshift(Array(GAME_CONSTANTS.BOARD_WIDTH).fill(null));
+				
+				// Increment cleared lines
+				clearedLines++;
+				
+				// Decrement y to check the same row again (since rows shifted down)
+				y--;
+			}
+		}
+		
+		return clearedLines;
+	} catch (error) {
+		console.error('Error checking cleared lines:', error);
+		return 0;
+	}
+}
+
+/**
+ * Update score based on cleared lines
+ * @param {number} clearedLines - Number of cleared lines
+ */
+function updateScore(clearedLines) {
+	try {
+		if (clearedLines === 0) return;
+		
+		// Get current level
+		const level = GameManager.getLevel();
+		
+		// Calculate score
+		let score = 0;
+		
+		switch (clearedLines) {
+			case 1:
+				score = GAME_CONSTANTS.SCORING.SINGLE * level;
+				break;
+			case 2:
+				score = GAME_CONSTANTS.SCORING.DOUBLE * level;
+				break;
+			case 3:
+				score = GAME_CONSTANTS.SCORING.TRIPLE * level;
+				break;
+			case 4:
+				score = GAME_CONSTANTS.SCORING.TETRIS * level;
+				break;
+			default:
+				score = clearedLines * GAME_CONSTANTS.SCORING.SINGLE * level;
+		}
+		
+		// Add score
+		GameManager.addScore(score, `clear_${clearedLines}`);
+		
+		// Add lines
+		GameManager.addLines(clearedLines);
+	} catch (error) {
+		console.error('Error updating score:', error);
+	}
+}
+
+/**
+ * Check if a piece collides with the board or boundaries
+ * @param {Array} shape - Piece shape
+ * @param {number} x - X position
+ * @param {number} y - Y position
+ * @returns {boolean} Whether the piece collides
+ */
+function isCollision(shape, x, y) {
+	try {
+		const board = ChessPieceManager.getBoard();
+		
+		// Check each cell of the piece
+		for (let pieceY = 0; pieceY < shape.length; pieceY++) {
+			for (let pieceX = 0; pieceX < shape[pieceY].length; pieceX++) {
+				// Skip empty cells
+				if (!shape[pieceY][pieceX]) continue;
+				
+				// Calculate board position
+				const boardX = x + pieceX;
+				const boardY = y + pieceY;
+				
+				// Check boundaries
+				if (boardX < 0 || boardX >= GAME_CONSTANTS.BOARD_WIDTH || boardY < 0) {
+					return true;
+				}
+				
+				// Check if position is outside the board (vertically)
+				if (boardY >= board.length) {
+					continue; // Allow piece to extend beyond current board height
+				}
+				
+				// Check if position is occupied
+				if (board[boardY] && board[boardY][boardX]) {
+					return true;
+				}
+			}
+		}
+		
+		return false;
+	} catch (error) {
+		console.error('Error checking collision:', error);
+		return true; // Assume collision on error
+	}
+}
+
+/**
+ * Get the falling piece
+ * @returns {Object|null} - The falling piece or null if none
+ */
+export function getFallingPiece() {
+	return fallingPiece;
+}
+
+/**
+ * Get the ghost piece
+ * @returns {Object|null} - The ghost piece or null if none
  */
 export function getGhostPiece() {
 	return ghostPiece;
 }
 
 /**
- * Start the game loop
+ * Get the next piece type
+ * @returns {string|null} - The next piece type or null if none
  */
-export function startGameLoop() {
-	// Clear any existing interval
-	if (gameLoopInterval) {
-		clearInterval(gameLoopInterval);
-	}
-	
-	// Set the last update time
-	lastUpdateTime = Date.now();
-	
-	// Start the game loop
-	gameLoopInterval = setInterval(updateGame, 16); // ~60 FPS
+export function getNextPiece() {
+	return nextPieces.length > 0 ? nextPieces[0] : null;
 }
 
 /**
- * Stop the game loop
+ * Get the held piece type
+ * @returns {string|null} - The held piece type or null if none
  */
-export function stopGameLoop() {
-	if (gameLoopInterval) {
-		clearInterval(gameLoopInterval);
-		gameLoopInterval = null;
-	}
+export function getHeldPiece() {
+	return heldPiece;
 }
 
 /**
- * Update the game
+ * Reset the tetromino manager
  */
-function updateGame() {
-	// Get the game state
-	const gameState = GameState.getGameState();
-	
-	// Skip if paused or game over
-	if (gameState.isPaused || gameState.isGameOver) {
-		return;
-	}
-	
-	// Get the current time
-	const currentTime = Date.now();
-	const deltaTime = (currentTime - lastUpdateTime) / 1000; // Convert to seconds
-	
-	// Update the last update time
-	lastUpdateTime = currentTime;
-	
-	// Move the tetromino down based on falling speed
-	if (fallingPiece) {
-		// Calculate how far to move down
-		const fallDistance = fallingSpeed * deltaTime;
-		
-		// Accumulate fractional movement
-		fallingPiece.fallAccumulator = (fallingPiece.fallAccumulator || 0) + fallDistance;
-		
-		// Move down if accumulated enough
-		if (fallingPiece.fallAccumulator >= 1) {
-			// Get the number of cells to move down
-			const cellsToMove = Math.floor(fallingPiece.fallAccumulator);
-			
-			// Reset the accumulator
-			fallingPiece.fallAccumulator -= cellsToMove;
-			
-			// Move down
-			for (let i = 0; i < cellsToMove; i++) {
-				if (!moveTetromino(0, 1)) {
-					break;
-				}
-			}
-		}
-	} else {
-		// Spawn a new tetromino if there isn't one
-		spawnTetromino();
-	}
-}
-
-/**
- * Initialize the tetromino manager
- */
-export function init() {
-	// Get the game state
-	const gameState = GameState.getGameState();
-	
-	// Set initial values
-	fallingPiece = null;
-	nextPiece = null;
-	ghostPiece = null;
-	fallingSpeed = 1;
-	lastUpdateTime = Date.now();
-	
-	// Start the game loop
-	startGameLoop();
-	
-	// Spawn the first tetromino
-	spawnTetromino();
-	
-	console.log('Tetromino manager initialized');
-}
-
-// Export functions
-export default {
-	init,
-	getTetrominoShape,
-	spawnTetromino,
-	getFallingPiece,
-	setFallingPiece,
-	moveTetromino,
-	rotateTetromino,
-	dropTetromino,
-	getGhostPiece,
-	startGameLoop,
-	stopGameLoop
-};
+export function reset() {
+	init();
+} 

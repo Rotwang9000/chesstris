@@ -6,8 +6,12 @@
  */
 
 // Make sure THREE is available
-if (typeof THREE === 'undefined') {
-	console.error('THREE.js is not loaded. Please load THREE.js before using this script.');
+let THREE;
+if (typeof window !== 'undefined') {
+	THREE = window.THREE;
+	if (!THREE) {
+		console.warn('THREE.js is not loaded. Texture generation will be disabled.');
+	}
 }
 
 /**
@@ -16,10 +20,16 @@ if (typeof THREE === 'undefined') {
  * @param {number} width - The width of the texture
  * @param {number} height - The height of the texture
  * @param {string} color - The background color in hex format
- * @returns {THREE.Texture} The created texture
+ * @returns {THREE.Texture|null} The created texture or null if THREE is not available
  */
 function createPlaceholderTexture(name, width = 512, height = 512, color = '#444444') {
 	try {
+		// Check if THREE is available
+		if (!THREE) {
+			console.warn(`Cannot create texture "${name}" because THREE.js is not loaded.`);
+			return null;
+		}
+		
 		// Create canvas
 		const canvas = document.createElement('canvas');
 		canvas.width = width;
@@ -274,8 +284,15 @@ function getContrastColor(hexColor) {
 /**
  * Generate all required textures and store them in the materials object
  * @param {Object} materials - The object to store the textures in
+ * @returns {Object} The materials object with textures
  */
 function generateAllTextures(materials = {}) {
+	// Check if THREE is available
+	if (!THREE) {
+		console.warn('Cannot generate textures because THREE.js is not loaded.');
+		return materials;
+	}
+	
 	// Generate board texture
 	materials.board = createPlaceholderTexture('board', 512, 512, '#5d4037');
 	
@@ -288,13 +305,13 @@ function generateAllTextures(materials = {}) {
 	// Generate birch texture
 	materials.birch = createPlaceholderTexture('birch', 512, 1024, '#f5f5f5');
 	
-	console.log('All textures generated successfully!');
 	return materials;
 }
 
 // Export functions for use in other modules
 export {
 	createPlaceholderTexture,
+	createPlaceholderTexture as createTexture,
 	generateAllTextures,
 	adjustColor,
 	getContrastColor

@@ -34,129 +34,136 @@
 			pointer-events: none;
 		}
 		
-		#loading-screen {
+		#score-display {
+			position: absolute;
+			top: 20px;
+			left: 20px;
+			font-size: 24px;
+			font-weight: bold;
+			color: #ffffff;
+			text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+			pointer-events: auto;
+		}
+		
+		#level-display {
+			position: absolute;
+			top: 60px;
+			left: 20px;
+			font-size: 18px;
+			color: #ffffff;
+			text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+			pointer-events: auto;
+		}
+		
+		#lines-display {
+			position: absolute;
+			top: 90px;
+			left: 20px;
+			font-size: 18px;
+			color: #ffffff;
+			text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+			pointer-events: auto;
+		}
+		
+		#next-piece-display {
+			position: absolute;
+			top: 20px;
+			right: 20px;
+			width: 120px;
+			height: 120px;
+			background-color: rgba(0, 0, 0, 0.5);
+			border-radius: 5px;
+			padding: 10px;
+			pointer-events: auto;
+		}
+		
+		#hold-piece-display {
+			position: absolute;
+			top: 170px;
+			right: 20px;
+			width: 120px;
+			height: 120px;
+			background-color: rgba(0, 0, 0, 0.5);
+			border-radius: 5px;
+			padding: 10px;
+			pointer-events: auto;
+		}
+		
+		#controls {
+			position: absolute;
+			bottom: 20px;
+			left: 20px;
+			display: flex;
+			gap: 10px;
+			pointer-events: auto;
+		}
+		
+		button {
+			background-color: #333;
+			color: #fff;
+			border: none;
+			padding: 10px 15px;
+			border-radius: 5px;
+			cursor: pointer;
+			font-size: 16px;
+			transition: background-color 0.3s;
+		}
+		
+		button:hover {
+			background-color: #555;
+		}
+		
+		.screen {
 			position: absolute;
 			top: 0;
 			left: 0;
 			width: 100%;
 			height: 100%;
-			background-color: #121212;
 			display: flex;
 			flex-direction: column;
 			justify-content: center;
 			align-items: center;
-			z-index: 10;
+			z-index: 100;
 		}
 		
-		#loading-progress {
-			width: 300px;
-			height: 20px;
-			background-color: #333;
-			border-radius: 10px;
-			margin-top: 20px;
-			overflow: hidden;
+		#loading-screen {
+			background-color: #121212;
 		}
 		
-		#loading-bar {
-			width: 0%;
-			height: 100%;
-			background-color: #4CAF50;
-			transition: width 0.3s ease;
+		.spinner {
+			width: 50px;
+			height: 50px;
+			border: 5px solid rgba(255, 255, 255, 0.3);
+			border-radius: 50%;
+			border-top-color: #fff;
+			animation: spin 1s ease-in-out infinite;
+			margin-bottom: 20px;
 		}
 		
-		#loading-text {
-			margin-top: 10px;
-			font-size: 16px;
-			color: #aaa;
-		}
-		
-		#loading-error {
-			margin-top: 20px;
-			color: #e74c3c;
-			display: none;
-			text-align: center;
-			max-width: 80%;
-		}
-		
-		#score-display, #resource-display {
-			position: absolute;
-			top: 20px;
-			background-color: rgba(0, 0, 0, 0.7);
-			padding: 10px;
-			border-radius: 5px;
-			font-size: 18px;
-			pointer-events: none;
-		}
-		
-		#score-display {
-			left: 20px;
-		}
-		
-		#resource-display {
-			right: 20px;
-		}
-		
-		.game-button {
-			background-color: #4CAF50;
-			color: white;
-			border: none;
-			padding: 10px 20px;
-			text-align: center;
-			text-decoration: none;
-			display: inline-block;
-			font-size: 16px;
-			margin: 4px 2px;
-			cursor: pointer;
-			border-radius: 5px;
-			pointer-events: auto;
-		}
-		
-		.game-button:hover {
-			background-color: #45a049;
-		}
-		
-		.game-button:disabled {
-			background-color: #cccccc;
-			color: #666666;
-			cursor: not-allowed;
+		@keyframes spin {
+			to {
+				transform: rotate(360deg);
+			}
 		}
 	</style>
+	<!-- Three.js from CDN -->
+	<script type="importmap">
+		{
+			"imports": {
+				"three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+				"three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+			}
+		}
+	</script>
+	<!-- Stats.js for performance monitoring -->
+	<script src="https://cdn.jsdelivr.net/npm/stats.js@0.17.0/build/stats.min.js"></script>
+	<!-- Socket.IO client -->
+	<script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.2/dist/socket.io.min.js"></script>
 </head>
 
 <body>
-	<div id="game-container"></div>
-	
-	<div id="ui-container">
-		<div id="score-display">Score: 0</div>
-		<div id="resource-display">Resources: 0</div>
-	</div>
-	
-	<div id="loading-screen">
-		<h1>Shaktris</h1>
-		<div id="loading-progress">
-			<div id="loading-bar"></div>
-		</div>
-		<div id="loading-text">Loading game...</div>
-		<div id="loading-error"></div>
-	</div>
-	
+	<!-- Game will create its own UI elements -->
 	<script type="module" src="js/main.js"></script>
-	<script>
-		// Simulate loading progress
-		let progress = 0;
-		const loadingBar = document.getElementById('loading-bar');
-		const loadingText = document.getElementById('loading-text');
-		
-		const loadingInterval = setInterval(() => {
-			progress += Math.random() * 10;
-			if (progress > 100) {
-				progress = 100;
-				clearInterval(loadingInterval);
-			}
-			loadingBar.style.width = `${progress}%`;
-			loadingText.textContent = `Loading game... ${Math.floor(progress)}%`;
-		}, 200);
-	</script>
 </body>
 
 </html>
