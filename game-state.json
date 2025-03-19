@@ -1,0 +1,2985 @@
+{
+  "id": "default-game",
+  "players": {
+    "debug-885c39e": {
+      "id": "debug-885c39e",
+      "username": "Debug User",
+      "color": 3447003,
+      "homeZone": {
+        "x": 11,
+        "y": 26
+      },
+      "pieces": [
+        {
+          "id": "debug-885c39e_pawn_0",
+          "type": "pawn",
+          "player": "debug-885c39e",
+          "x": 11,
+          "y": 26,
+          "moveCount": 0
+        },
+        {
+          "id": "debug-885c39e_pawn_1",
+          "type": "pawn",
+          "player": "debug-885c39e",
+          "x": 12,
+          "y": 26,
+          "moveCount": 0
+        },
+        {
+          "id": "debug-885c39e_pawn_2",
+          "type": "pawn",
+          "player": "debug-885c39e",
+          "x": 13,
+          "y": 26,
+          "moveCount": 0
+        },
+        {
+          "id": "debug-885c39e_pawn_3",
+          "type": "pawn",
+          "player": "debug-885c39e",
+          "x": 14,
+          "y": 26,
+          "moveCount": 0
+        },
+        {
+          "id": "debug-885c39e_pawn_4",
+          "type": "pawn",
+          "player": "debug-885c39e",
+          "x": 15,
+          "y": 26,
+          "moveCount": 0
+        },
+        {
+          "id": "debug-885c39e_pawn_5",
+          "type": "pawn",
+          "player": "debug-885c39e",
+          "x": 16,
+          "y": 26,
+          "moveCount": 0
+        },
+        {
+          "id": "debug-885c39e_pawn_6",
+          "type": "pawn",
+          "player": "debug-885c39e",
+          "x": 17,
+          "y": 26,
+          "moveCount": 0
+        },
+        {
+          "id": "debug-885c39e_pawn_7",
+          "type": "pawn",
+          "player": "debug-885c39e",
+          "x": 18,
+          "y": 26,
+          "moveCount": 0
+        },
+        {
+          "type": "rook",
+          "id": "debug-885c39e_rook_1",
+          "player": "debug-885c39e",
+          "x": 11,
+          "y": 27
+        },
+        {
+          "type": "knight",
+          "id": "debug-885c39e_knight_1",
+          "player": "debug-885c39e",
+          "x": 12,
+          "y": 27
+        },
+        {
+          "type": "bishop",
+          "id": "debug-885c39e_bishop_1",
+          "player": "debug-885c39e",
+          "x": 13,
+          "y": 27
+        },
+        {
+          "type": "queen",
+          "id": "debug-885c39e_queen",
+          "player": "debug-885c39e",
+          "x": 14,
+          "y": 27
+        },
+        {
+          "type": "king",
+          "id": "debug-885c39e_king",
+          "player": "debug-885c39e",
+          "x": 15,
+          "y": 27
+        },
+        {
+          "type": "bishop",
+          "id": "debug-885c39e_bishop_2",
+          "player": "debug-885c39e",
+          "x": 16,
+          "y": 27
+        },
+        {
+          "type": "knight",
+          "id": "debug-885c39e_knight_2",
+          "player": "debug-885c39e",
+          "x": 17,
+          "y": 27
+        },
+        {
+          "type": "rook",
+          "id": "debug-885c39e_rook_2",
+          "player": "debug-885c39e",
+          "x": 18,
+          "y": 27
+        }
+      ],
+      "score": 0,
+      "joinedAt": 1741809887062,
+      "socketId": null,
+      "isActive": false
+    },
+    "debug-tryl713": {
+      "id": "debug-tryl713",
+      "username": "Debug User",
+      "color": 15158332,
+      "homeZone": {
+        "x": 2,
+        "y": 2
+      },
+      "pieces": [
+        {
+          "id": "debug-tryl713_pawn_0",
+          "type": "pawn",
+          "player": "debug-tryl713",
+          "x": 2,
+          "y": 2,
+          "moveCount": 0
+        },
+        {
+          "id": "debug-tryl713_pawn_1",
+          "type": "pawn",
+          "player": "debug-tryl713",
+          "x": 3,
+          "y": 2,
+          "moveCount": 0
+        },
+        {
+          "id": "debug-tryl713_pawn_2",
+          "type": "pawn",
+          "player": "debug-tryl713",
+          "x": 4,
+          "y": 2,
+          "moveCount": 0
+        },
+        {
+          "id": "debug-tryl713_pawn_3",
+          "type": "pawn",
+          "player": "debug-tryl713",
+          "x": 5,
+          "y": 2,
+          "moveCount": 0
+        },
+        {
+          "id": "debug-tryl713_pawn_4",
+          "type": "pawn",
+          "player": "debug-tryl713",
+          "x": 6,
+          "y": 2,
+          "moveCount": 0
+        },
+        {
+          "id": "debug-tryl713_pawn_5",
+          "type": "pawn",
+          "player": "debug-tryl713",
+          "x": 7,
+          "y": 2,
+          "moveCount": 0
+        },
+        {
+          "id": "debug-tryl713_pawn_6",
+          "type": "pawn",
+          "player": "debug-tryl713",
+          "x": 8,
+          "y": 2,
+          "moveCount": 0
+        },
+        {
+          "id": "debug-tryl713_pawn_7",
+          "type": "pawn",
+          "player": "debug-tryl713",
+          "x": 9,
+          "y": 2,
+          "moveCount": 0
+        },
+        {
+          "type": "rook",
+          "id": "debug-tryl713_rook_1",
+          "player": "debug-tryl713",
+          "x": 2,
+          "y": 3
+        },
+        {
+          "type": "knight",
+          "id": "debug-tryl713_knight_1",
+          "player": "debug-tryl713",
+          "x": 3,
+          "y": 3
+        },
+        {
+          "type": "bishop",
+          "id": "debug-tryl713_bishop_1",
+          "player": "debug-tryl713",
+          "x": 4,
+          "y": 3
+        },
+        {
+          "type": "queen",
+          "id": "debug-tryl713_queen",
+          "player": "debug-tryl713",
+          "x": 5,
+          "y": 3
+        },
+        {
+          "type": "king",
+          "id": "debug-tryl713_king",
+          "player": "debug-tryl713",
+          "x": 6,
+          "y": 3
+        },
+        {
+          "type": "bishop",
+          "id": "debug-tryl713_bishop_2",
+          "player": "debug-tryl713",
+          "x": 7,
+          "y": 3
+        },
+        {
+          "type": "knight",
+          "id": "debug-tryl713_knight_2",
+          "player": "debug-tryl713",
+          "x": 8,
+          "y": 3
+        },
+        {
+          "type": "rook",
+          "id": "debug-tryl713_rook_2",
+          "player": "debug-tryl713",
+          "x": 9,
+          "y": 3
+        }
+      ],
+      "score": 0,
+      "joinedAt": 1741814326207,
+      "socketId": null,
+      "isActive": false
+    },
+    "player-1741815169239": {
+      "id": "player-1741815169239",
+      "username": "Debug User",
+      "color": 3066993,
+      "homeZone": {
+        "x": 14,
+        "y": 2
+      },
+      "pieces": [
+        {
+          "id": "player-1741815169239_pawn_0",
+          "type": "pawn",
+          "player": "player-1741815169239",
+          "x": 14,
+          "y": 2,
+          "moveCount": 0
+        },
+        {
+          "id": "player-1741815169239_pawn_1",
+          "type": "pawn",
+          "player": "player-1741815169239",
+          "x": 15,
+          "y": 2,
+          "moveCount": 0
+        },
+        {
+          "id": "player-1741815169239_pawn_2",
+          "type": "pawn",
+          "player": "player-1741815169239",
+          "x": 16,
+          "y": 2,
+          "moveCount": 0
+        },
+        {
+          "id": "player-1741815169239_pawn_3",
+          "type": "pawn",
+          "player": "player-1741815169239",
+          "x": 17,
+          "y": 2,
+          "moveCount": 0
+        },
+        {
+          "id": "player-1741815169239_pawn_4",
+          "type": "pawn",
+          "player": "player-1741815169239",
+          "x": 18,
+          "y": 2,
+          "moveCount": 0
+        },
+        {
+          "id": "player-1741815169239_pawn_5",
+          "type": "pawn",
+          "player": "player-1741815169239",
+          "x": 19,
+          "y": 2,
+          "moveCount": 0
+        },
+        {
+          "id": "player-1741815169239_pawn_6",
+          "type": "pawn",
+          "player": "player-1741815169239",
+          "x": 20,
+          "y": 2,
+          "moveCount": 0
+        },
+        {
+          "id": "player-1741815169239_pawn_7",
+          "type": "pawn",
+          "player": "player-1741815169239",
+          "x": 21,
+          "y": 2,
+          "moveCount": 0
+        },
+        {
+          "type": "rook",
+          "id": "player-1741815169239_rook_1",
+          "player": "player-1741815169239",
+          "x": 14,
+          "y": 3
+        },
+        {
+          "type": "knight",
+          "id": "player-1741815169239_knight_1",
+          "player": "player-1741815169239",
+          "x": 15,
+          "y": 3
+        },
+        {
+          "type": "bishop",
+          "id": "player-1741815169239_bishop_1",
+          "player": "player-1741815169239",
+          "x": 16,
+          "y": 3
+        },
+        {
+          "type": "queen",
+          "id": "player-1741815169239_queen",
+          "player": "player-1741815169239",
+          "x": 17,
+          "y": 3
+        },
+        {
+          "type": "king",
+          "id": "player-1741815169239_king",
+          "player": "player-1741815169239",
+          "x": 18,
+          "y": 3
+        },
+        {
+          "type": "bishop",
+          "id": "player-1741815169239_bishop_2",
+          "player": "player-1741815169239",
+          "x": 19,
+          "y": 3
+        },
+        {
+          "type": "knight",
+          "id": "player-1741815169239_knight_2",
+          "player": "player-1741815169239",
+          "x": 20,
+          "y": 3
+        },
+        {
+          "type": "rook",
+          "id": "player-1741815169239_rook_2",
+          "player": "player-1741815169239",
+          "x": 21,
+          "y": 3
+        }
+      ],
+      "score": 0,
+      "joinedAt": 1741815169299,
+      "isActive": false,
+      "socketId": null
+    },
+    "player-pmgkj9h": {
+      "id": "player-pmgkj9h",
+      "username": "DebugUser",
+      "color": 15965202,
+      "homeZone": {
+        "x": 2,
+        "y": 20
+      },
+      "pieces": [
+        {
+          "id": "player-pmgkj9h_pawn_0",
+          "type": "pawn",
+          "player": "player-pmgkj9h",
+          "x": 2,
+          "y": 20,
+          "moveCount": 0
+        },
+        {
+          "id": "player-pmgkj9h_pawn_1",
+          "type": "pawn",
+          "player": "player-pmgkj9h",
+          "x": 3,
+          "y": 20,
+          "moveCount": 0
+        },
+        {
+          "id": "player-pmgkj9h_pawn_2",
+          "type": "pawn",
+          "player": "player-pmgkj9h",
+          "x": 4,
+          "y": 20,
+          "moveCount": 0
+        },
+        {
+          "id": "player-pmgkj9h_pawn_3",
+          "type": "pawn",
+          "player": "player-pmgkj9h",
+          "x": 5,
+          "y": 20,
+          "moveCount": 0
+        },
+        {
+          "id": "player-pmgkj9h_pawn_4",
+          "type": "pawn",
+          "player": "player-pmgkj9h",
+          "x": 6,
+          "y": 20,
+          "moveCount": 0
+        },
+        {
+          "id": "player-pmgkj9h_pawn_5",
+          "type": "pawn",
+          "player": "player-pmgkj9h",
+          "x": 7,
+          "y": 20,
+          "moveCount": 0
+        },
+        {
+          "id": "player-pmgkj9h_pawn_6",
+          "type": "pawn",
+          "player": "player-pmgkj9h",
+          "x": 8,
+          "y": 20,
+          "moveCount": 0
+        },
+        {
+          "id": "player-pmgkj9h_pawn_7",
+          "type": "pawn",
+          "player": "player-pmgkj9h",
+          "x": 9,
+          "y": 20,
+          "moveCount": 0
+        },
+        {
+          "type": "rook",
+          "id": "player-pmgkj9h_rook_1",
+          "player": "player-pmgkj9h",
+          "x": 2,
+          "y": 21
+        },
+        {
+          "type": "knight",
+          "id": "player-pmgkj9h_knight_1",
+          "player": "player-pmgkj9h",
+          "x": 3,
+          "y": 21
+        },
+        {
+          "type": "bishop",
+          "id": "player-pmgkj9h_bishop_1",
+          "player": "player-pmgkj9h",
+          "x": 4,
+          "y": 21
+        },
+        {
+          "type": "queen",
+          "id": "player-pmgkj9h_queen",
+          "player": "player-pmgkj9h",
+          "x": 5,
+          "y": 21
+        },
+        {
+          "type": "king",
+          "id": "player-pmgkj9h_king",
+          "player": "player-pmgkj9h",
+          "x": 6,
+          "y": 21
+        },
+        {
+          "type": "bishop",
+          "id": "player-pmgkj9h_bishop_2",
+          "player": "player-pmgkj9h",
+          "x": 7,
+          "y": 21
+        },
+        {
+          "type": "knight",
+          "id": "player-pmgkj9h_knight_2",
+          "player": "player-pmgkj9h",
+          "x": 8,
+          "y": 21
+        },
+        {
+          "type": "rook",
+          "id": "player-pmgkj9h_rook_2",
+          "player": "player-pmgkj9h",
+          "x": 9,
+          "y": 21
+        }
+      ],
+      "score": 0,
+      "joinedAt": 1741816163345,
+      "socketId": null,
+      "isActive": false
+    },
+    "0v6p7dframxs": {
+      "id": "0v6p7dframxs",
+      "username": "Player_0v6p7",
+      "color": 10181046,
+      "homeZone": {
+        "x": 14,
+        "y": 14
+      },
+      "pieces": [
+        {
+          "id": "0v6p7dframxs_pawn_0",
+          "type": "pawn",
+          "player": "0v6p7dframxs",
+          "x": 14,
+          "y": 14,
+          "moveCount": 0
+        },
+        {
+          "id": "0v6p7dframxs_pawn_1",
+          "type": "pawn",
+          "player": "0v6p7dframxs",
+          "x": 15,
+          "y": 14,
+          "moveCount": 0
+        },
+        {
+          "id": "0v6p7dframxs_pawn_2",
+          "type": "pawn",
+          "player": "0v6p7dframxs",
+          "x": 16,
+          "y": 14,
+          "moveCount": 0
+        },
+        {
+          "id": "0v6p7dframxs_pawn_3",
+          "type": "pawn",
+          "player": "0v6p7dframxs",
+          "x": 17,
+          "y": 14,
+          "moveCount": 0
+        },
+        {
+          "id": "0v6p7dframxs_pawn_4",
+          "type": "pawn",
+          "player": "0v6p7dframxs",
+          "x": 18,
+          "y": 14,
+          "moveCount": 0
+        },
+        {
+          "id": "0v6p7dframxs_pawn_5",
+          "type": "pawn",
+          "player": "0v6p7dframxs",
+          "x": 19,
+          "y": 14,
+          "moveCount": 0
+        },
+        {
+          "id": "0v6p7dframxs_pawn_6",
+          "type": "pawn",
+          "player": "0v6p7dframxs",
+          "x": 20,
+          "y": 14,
+          "moveCount": 0
+        },
+        {
+          "id": "0v6p7dframxs_pawn_7",
+          "type": "pawn",
+          "player": "0v6p7dframxs",
+          "x": 21,
+          "y": 14,
+          "moveCount": 0
+        },
+        {
+          "type": "rook",
+          "id": "0v6p7dframxs_rook_1",
+          "player": "0v6p7dframxs",
+          "x": 14,
+          "y": 15
+        },
+        {
+          "type": "knight",
+          "id": "0v6p7dframxs_knight_1",
+          "player": "0v6p7dframxs",
+          "x": 15,
+          "y": 15
+        },
+        {
+          "type": "bishop",
+          "id": "0v6p7dframxs_bishop_1",
+          "player": "0v6p7dframxs",
+          "x": 16,
+          "y": 15
+        },
+        {
+          "type": "queen",
+          "id": "0v6p7dframxs_queen",
+          "player": "0v6p7dframxs",
+          "x": 17,
+          "y": 15
+        },
+        {
+          "type": "king",
+          "id": "0v6p7dframxs_king",
+          "player": "0v6p7dframxs",
+          "x": 18,
+          "y": 15
+        },
+        {
+          "type": "bishop",
+          "id": "0v6p7dframxs_bishop_2",
+          "player": "0v6p7dframxs",
+          "x": 19,
+          "y": 15
+        },
+        {
+          "type": "knight",
+          "id": "0v6p7dframxs_knight_2",
+          "player": "0v6p7dframxs",
+          "x": 20,
+          "y": 15
+        },
+        {
+          "type": "rook",
+          "id": "0v6p7dframxs_rook_2",
+          "player": "0v6p7dframxs",
+          "x": 21,
+          "y": 15
+        }
+      ],
+      "score": 0,
+      "joinedAt": 1741865069187,
+      "socketId": null,
+      "isActive": false
+    },
+    "o0bhcglj3dsi": {
+      "id": "o0bhcglj3dsi",
+      "username": "Player_o0bhc",
+      "color": 1752220,
+      "homeZone": {
+        "x": 8,
+        "y": 8
+      },
+      "pieces": [
+        {
+          "id": "o0bhcglj3dsi_pawn_0",
+          "type": "pawn",
+          "player": "o0bhcglj3dsi",
+          "x": 8,
+          "y": 8,
+          "moveCount": 0
+        },
+        {
+          "id": "o0bhcglj3dsi_pawn_1",
+          "type": "pawn",
+          "player": "o0bhcglj3dsi",
+          "x": 9,
+          "y": 8,
+          "moveCount": 0
+        },
+        {
+          "id": "o0bhcglj3dsi_pawn_2",
+          "type": "pawn",
+          "player": "o0bhcglj3dsi",
+          "x": 10,
+          "y": 8,
+          "moveCount": 0
+        },
+        {
+          "id": "o0bhcglj3dsi_pawn_3",
+          "type": "pawn",
+          "player": "o0bhcglj3dsi",
+          "x": 11,
+          "y": 8,
+          "moveCount": 0
+        },
+        {
+          "id": "o0bhcglj3dsi_pawn_4",
+          "type": "pawn",
+          "player": "o0bhcglj3dsi",
+          "x": 12,
+          "y": 8,
+          "moveCount": 0
+        },
+        {
+          "id": "o0bhcglj3dsi_pawn_5",
+          "type": "pawn",
+          "player": "o0bhcglj3dsi",
+          "x": 13,
+          "y": 8,
+          "moveCount": 0
+        },
+        {
+          "id": "o0bhcglj3dsi_pawn_6",
+          "type": "pawn",
+          "player": "o0bhcglj3dsi",
+          "x": 14,
+          "y": 8,
+          "moveCount": 0
+        },
+        {
+          "id": "o0bhcglj3dsi_pawn_7",
+          "type": "pawn",
+          "player": "o0bhcglj3dsi",
+          "x": 15,
+          "y": 8,
+          "moveCount": 0
+        },
+        {
+          "type": "rook",
+          "id": "o0bhcglj3dsi_rook_1",
+          "player": "o0bhcglj3dsi",
+          "x": 8,
+          "y": 9
+        },
+        {
+          "type": "knight",
+          "id": "o0bhcglj3dsi_knight_1",
+          "player": "o0bhcglj3dsi",
+          "x": 9,
+          "y": 9
+        },
+        {
+          "type": "bishop",
+          "id": "o0bhcglj3dsi_bishop_1",
+          "player": "o0bhcglj3dsi",
+          "x": 10,
+          "y": 9
+        },
+        {
+          "type": "queen",
+          "id": "o0bhcglj3dsi_queen",
+          "player": "o0bhcglj3dsi",
+          "x": 11,
+          "y": 9
+        },
+        {
+          "type": "king",
+          "id": "o0bhcglj3dsi_king",
+          "player": "o0bhcglj3dsi",
+          "x": 12,
+          "y": 9
+        },
+        {
+          "type": "bishop",
+          "id": "o0bhcglj3dsi_bishop_2",
+          "player": "o0bhcglj3dsi",
+          "x": 13,
+          "y": 9
+        },
+        {
+          "type": "knight",
+          "id": "o0bhcglj3dsi_knight_2",
+          "player": "o0bhcglj3dsi",
+          "x": 14,
+          "y": 9
+        },
+        {
+          "type": "rook",
+          "id": "o0bhcglj3dsi_rook_2",
+          "player": "o0bhcglj3dsi",
+          "x": 15,
+          "y": 9
+        }
+      ],
+      "score": 0,
+      "joinedAt": 1741867439403,
+      "socketId": null,
+      "isActive": false
+    }
+  },
+  "board": [
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-tryl713",
+        "color": 15158332,
+        "created": 1741814326207,
+        "chessPiece": {
+          "id": "debug-tryl713_pawn_0",
+          "type": "pawn",
+          "player": "debug-tryl713",
+          "x": 2,
+          "y": 2,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-tryl713",
+        "color": 15158332,
+        "created": 1741814326207,
+        "chessPiece": {
+          "id": "debug-tryl713_pawn_1",
+          "type": "pawn",
+          "player": "debug-tryl713",
+          "x": 3,
+          "y": 2,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-tryl713",
+        "color": 15158332,
+        "created": 1741814326207,
+        "chessPiece": {
+          "id": "debug-tryl713_pawn_2",
+          "type": "pawn",
+          "player": "debug-tryl713",
+          "x": 4,
+          "y": 2,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-tryl713",
+        "color": 15158332,
+        "created": 1741814326207,
+        "chessPiece": {
+          "id": "debug-tryl713_pawn_3",
+          "type": "pawn",
+          "player": "debug-tryl713",
+          "x": 5,
+          "y": 2,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-tryl713",
+        "color": 15158332,
+        "created": 1741814326207,
+        "chessPiece": {
+          "id": "debug-tryl713_pawn_4",
+          "type": "pawn",
+          "player": "debug-tryl713",
+          "x": 6,
+          "y": 2,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-tryl713",
+        "color": 15158332,
+        "created": 1741814326207,
+        "chessPiece": {
+          "id": "debug-tryl713_pawn_5",
+          "type": "pawn",
+          "player": "debug-tryl713",
+          "x": 7,
+          "y": 2,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-tryl713",
+        "color": 15158332,
+        "created": 1741814326207,
+        "chessPiece": {
+          "id": "debug-tryl713_pawn_6",
+          "type": "pawn",
+          "player": "debug-tryl713",
+          "x": 8,
+          "y": 2,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-tryl713",
+        "color": 15158332,
+        "created": 1741814326207,
+        "chessPiece": {
+          "id": "debug-tryl713_pawn_7",
+          "type": "pawn",
+          "player": "debug-tryl713",
+          "x": 9,
+          "y": 2,
+          "moveCount": 0
+        }
+      },
+      null,
+      null,
+      null,
+      null,
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-1741815169239",
+        "color": 3066993,
+        "created": 1741815169299,
+        "chessPiece": {
+          "id": "player-1741815169239_pawn_0",
+          "type": "pawn",
+          "player": "player-1741815169239",
+          "x": 14,
+          "y": 2,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-1741815169239",
+        "color": 3066993,
+        "created": 1741815169299,
+        "chessPiece": {
+          "id": "player-1741815169239_pawn_1",
+          "type": "pawn",
+          "player": "player-1741815169239",
+          "x": 15,
+          "y": 2,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-1741815169239",
+        "color": 3066993,
+        "created": 1741815169299,
+        "chessPiece": {
+          "id": "player-1741815169239_pawn_2",
+          "type": "pawn",
+          "player": "player-1741815169239",
+          "x": 16,
+          "y": 2,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-1741815169239",
+        "color": 3066993,
+        "created": 1741815169299,
+        "chessPiece": {
+          "id": "player-1741815169239_pawn_3",
+          "type": "pawn",
+          "player": "player-1741815169239",
+          "x": 17,
+          "y": 2,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-1741815169239",
+        "color": 3066993,
+        "created": 1741815169299,
+        "chessPiece": {
+          "id": "player-1741815169239_pawn_4",
+          "type": "pawn",
+          "player": "player-1741815169239",
+          "x": 18,
+          "y": 2,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-1741815169239",
+        "color": 3066993,
+        "created": 1741815169299,
+        "chessPiece": {
+          "id": "player-1741815169239_pawn_5",
+          "type": "pawn",
+          "player": "player-1741815169239",
+          "x": 19,
+          "y": 2,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-1741815169239",
+        "color": 3066993,
+        "created": 1741815169299,
+        "chessPiece": {
+          "id": "player-1741815169239_pawn_6",
+          "type": "pawn",
+          "player": "player-1741815169239",
+          "x": 20,
+          "y": 2,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-1741815169239",
+        "color": 3066993,
+        "created": 1741815169299,
+        "chessPiece": {
+          "id": "player-1741815169239_pawn_7",
+          "type": "pawn",
+          "player": "player-1741815169239",
+          "x": 21,
+          "y": 2,
+          "moveCount": 0
+        }
+      },
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-tryl713",
+        "color": 15158332,
+        "created": 1741814326207,
+        "chessPiece": {
+          "type": "rook",
+          "id": "debug-tryl713_rook_1",
+          "player": "debug-tryl713",
+          "x": 2,
+          "y": 3
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-tryl713",
+        "color": 15158332,
+        "created": 1741814326207,
+        "chessPiece": {
+          "type": "knight",
+          "id": "debug-tryl713_knight_1",
+          "player": "debug-tryl713",
+          "x": 3,
+          "y": 3
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-tryl713",
+        "color": 15158332,
+        "created": 1741814326207,
+        "chessPiece": {
+          "type": "bishop",
+          "id": "debug-tryl713_bishop_1",
+          "player": "debug-tryl713",
+          "x": 4,
+          "y": 3
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-tryl713",
+        "color": 15158332,
+        "created": 1741814326207,
+        "chessPiece": {
+          "type": "queen",
+          "id": "debug-tryl713_queen",
+          "player": "debug-tryl713",
+          "x": 5,
+          "y": 3
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-tryl713",
+        "color": 15158332,
+        "created": 1741814326207,
+        "chessPiece": {
+          "type": "king",
+          "id": "debug-tryl713_king",
+          "player": "debug-tryl713",
+          "x": 6,
+          "y": 3
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-tryl713",
+        "color": 15158332,
+        "created": 1741814326207,
+        "chessPiece": {
+          "type": "bishop",
+          "id": "debug-tryl713_bishop_2",
+          "player": "debug-tryl713",
+          "x": 7,
+          "y": 3
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-tryl713",
+        "color": 15158332,
+        "created": 1741814326207,
+        "chessPiece": {
+          "type": "knight",
+          "id": "debug-tryl713_knight_2",
+          "player": "debug-tryl713",
+          "x": 8,
+          "y": 3
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-tryl713",
+        "color": 15158332,
+        "created": 1741814326207,
+        "chessPiece": {
+          "type": "rook",
+          "id": "debug-tryl713_rook_2",
+          "player": "debug-tryl713",
+          "x": 9,
+          "y": 3
+        }
+      },
+      null,
+      null,
+      null,
+      null,
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-1741815169239",
+        "color": 3066993,
+        "created": 1741815169299,
+        "chessPiece": {
+          "type": "rook",
+          "id": "player-1741815169239_rook_1",
+          "player": "player-1741815169239",
+          "x": 14,
+          "y": 3
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-1741815169239",
+        "color": 3066993,
+        "created": 1741815169299,
+        "chessPiece": {
+          "type": "knight",
+          "id": "player-1741815169239_knight_1",
+          "player": "player-1741815169239",
+          "x": 15,
+          "y": 3
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-1741815169239",
+        "color": 3066993,
+        "created": 1741815169299,
+        "chessPiece": {
+          "type": "bishop",
+          "id": "player-1741815169239_bishop_1",
+          "player": "player-1741815169239",
+          "x": 16,
+          "y": 3
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-1741815169239",
+        "color": 3066993,
+        "created": 1741815169299,
+        "chessPiece": {
+          "type": "queen",
+          "id": "player-1741815169239_queen",
+          "player": "player-1741815169239",
+          "x": 17,
+          "y": 3
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-1741815169239",
+        "color": 3066993,
+        "created": 1741815169299,
+        "chessPiece": {
+          "type": "king",
+          "id": "player-1741815169239_king",
+          "player": "player-1741815169239",
+          "x": 18,
+          "y": 3
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-1741815169239",
+        "color": 3066993,
+        "created": 1741815169299,
+        "chessPiece": {
+          "type": "bishop",
+          "id": "player-1741815169239_bishop_2",
+          "player": "player-1741815169239",
+          "x": 19,
+          "y": 3
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-1741815169239",
+        "color": 3066993,
+        "created": 1741815169299,
+        "chessPiece": {
+          "type": "knight",
+          "id": "player-1741815169239_knight_2",
+          "player": "player-1741815169239",
+          "x": 20,
+          "y": 3
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-1741815169239",
+        "color": 3066993,
+        "created": 1741815169299,
+        "chessPiece": {
+          "type": "rook",
+          "id": "player-1741815169239_rook_2",
+          "player": "player-1741815169239",
+          "x": 21,
+          "y": 3
+        }
+      },
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      {
+        "type": "HOME_ZONE",
+        "playerId": "o0bhcglj3dsi",
+        "color": 1752220,
+        "created": 1741867439404,
+        "chessPiece": {
+          "id": "o0bhcglj3dsi_pawn_0",
+          "type": "pawn",
+          "player": "o0bhcglj3dsi",
+          "x": 8,
+          "y": 8,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "o0bhcglj3dsi",
+        "color": 1752220,
+        "created": 1741867439404,
+        "chessPiece": {
+          "id": "o0bhcglj3dsi_pawn_1",
+          "type": "pawn",
+          "player": "o0bhcglj3dsi",
+          "x": 9,
+          "y": 8,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "o0bhcglj3dsi",
+        "color": 1752220,
+        "created": 1741867439404,
+        "chessPiece": {
+          "id": "o0bhcglj3dsi_pawn_2",
+          "type": "pawn",
+          "player": "o0bhcglj3dsi",
+          "x": 10,
+          "y": 8,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "o0bhcglj3dsi",
+        "color": 1752220,
+        "created": 1741867439404,
+        "chessPiece": {
+          "id": "o0bhcglj3dsi_pawn_3",
+          "type": "pawn",
+          "player": "o0bhcglj3dsi",
+          "x": 11,
+          "y": 8,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "o0bhcglj3dsi",
+        "color": 1752220,
+        "created": 1741867439404,
+        "chessPiece": {
+          "id": "o0bhcglj3dsi_pawn_4",
+          "type": "pawn",
+          "player": "o0bhcglj3dsi",
+          "x": 12,
+          "y": 8,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "o0bhcglj3dsi",
+        "color": 1752220,
+        "created": 1741867439404,
+        "chessPiece": {
+          "id": "o0bhcglj3dsi_pawn_5",
+          "type": "pawn",
+          "player": "o0bhcglj3dsi",
+          "x": 13,
+          "y": 8,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "o0bhcglj3dsi",
+        "color": 1752220,
+        "created": 1741867439404,
+        "chessPiece": {
+          "id": "o0bhcglj3dsi_pawn_6",
+          "type": "pawn",
+          "player": "o0bhcglj3dsi",
+          "x": 14,
+          "y": 8,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "o0bhcglj3dsi",
+        "color": 1752220,
+        "created": 1741867439404,
+        "chessPiece": {
+          "id": "o0bhcglj3dsi_pawn_7",
+          "type": "pawn",
+          "player": "o0bhcglj3dsi",
+          "x": 15,
+          "y": 8,
+          "moveCount": 0
+        }
+      },
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      {
+        "type": "HOME_ZONE",
+        "playerId": "o0bhcglj3dsi",
+        "color": 1752220,
+        "created": 1741867439404,
+        "chessPiece": {
+          "type": "rook",
+          "id": "o0bhcglj3dsi_rook_1",
+          "player": "o0bhcglj3dsi",
+          "x": 8,
+          "y": 9
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "o0bhcglj3dsi",
+        "color": 1752220,
+        "created": 1741867439404,
+        "chessPiece": {
+          "type": "knight",
+          "id": "o0bhcglj3dsi_knight_1",
+          "player": "o0bhcglj3dsi",
+          "x": 9,
+          "y": 9
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "o0bhcglj3dsi",
+        "color": 1752220,
+        "created": 1741867439404,
+        "chessPiece": {
+          "type": "bishop",
+          "id": "o0bhcglj3dsi_bishop_1",
+          "player": "o0bhcglj3dsi",
+          "x": 10,
+          "y": 9
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "o0bhcglj3dsi",
+        "color": 1752220,
+        "created": 1741867439404,
+        "chessPiece": {
+          "type": "queen",
+          "id": "o0bhcglj3dsi_queen",
+          "player": "o0bhcglj3dsi",
+          "x": 11,
+          "y": 9
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "o0bhcglj3dsi",
+        "color": 1752220,
+        "created": 1741867439404,
+        "chessPiece": {
+          "type": "king",
+          "id": "o0bhcglj3dsi_king",
+          "player": "o0bhcglj3dsi",
+          "x": 12,
+          "y": 9
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "o0bhcglj3dsi",
+        "color": 1752220,
+        "created": 1741867439404,
+        "chessPiece": {
+          "type": "bishop",
+          "id": "o0bhcglj3dsi_bishop_2",
+          "player": "o0bhcglj3dsi",
+          "x": 13,
+          "y": 9
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "o0bhcglj3dsi",
+        "color": 1752220,
+        "created": 1741867439404,
+        "chessPiece": {
+          "type": "knight",
+          "id": "o0bhcglj3dsi_knight_2",
+          "player": "o0bhcglj3dsi",
+          "x": 14,
+          "y": 9
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "o0bhcglj3dsi",
+        "color": 1752220,
+        "created": 1741867439404,
+        "chessPiece": {
+          "type": "rook",
+          "id": "o0bhcglj3dsi_rook_2",
+          "player": "o0bhcglj3dsi",
+          "x": 15,
+          "y": 9
+        }
+      },
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      {
+        "type": "HOME_ZONE",
+        "playerId": "0v6p7dframxs",
+        "color": 10181046,
+        "created": 1741865069188,
+        "chessPiece": {
+          "id": "0v6p7dframxs_pawn_0",
+          "type": "pawn",
+          "player": "0v6p7dframxs",
+          "x": 14,
+          "y": 14,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "0v6p7dframxs",
+        "color": 10181046,
+        "created": 1741865069188,
+        "chessPiece": {
+          "id": "0v6p7dframxs_pawn_1",
+          "type": "pawn",
+          "player": "0v6p7dframxs",
+          "x": 15,
+          "y": 14,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "0v6p7dframxs",
+        "color": 10181046,
+        "created": 1741865069188,
+        "chessPiece": {
+          "id": "0v6p7dframxs_pawn_2",
+          "type": "pawn",
+          "player": "0v6p7dframxs",
+          "x": 16,
+          "y": 14,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "0v6p7dframxs",
+        "color": 10181046,
+        "created": 1741865069188,
+        "chessPiece": {
+          "id": "0v6p7dframxs_pawn_3",
+          "type": "pawn",
+          "player": "0v6p7dframxs",
+          "x": 17,
+          "y": 14,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "0v6p7dframxs",
+        "color": 10181046,
+        "created": 1741865069188,
+        "chessPiece": {
+          "id": "0v6p7dframxs_pawn_4",
+          "type": "pawn",
+          "player": "0v6p7dframxs",
+          "x": 18,
+          "y": 14,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "0v6p7dframxs",
+        "color": 10181046,
+        "created": 1741865069188,
+        "chessPiece": {
+          "id": "0v6p7dframxs_pawn_5",
+          "type": "pawn",
+          "player": "0v6p7dframxs",
+          "x": 19,
+          "y": 14,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "0v6p7dframxs",
+        "color": 10181046,
+        "created": 1741865069188,
+        "chessPiece": {
+          "id": "0v6p7dframxs_pawn_6",
+          "type": "pawn",
+          "player": "0v6p7dframxs",
+          "x": 20,
+          "y": 14,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "0v6p7dframxs",
+        "color": 10181046,
+        "created": 1741865069188,
+        "chessPiece": {
+          "id": "0v6p7dframxs_pawn_7",
+          "type": "pawn",
+          "player": "0v6p7dframxs",
+          "x": 21,
+          "y": 14,
+          "moveCount": 0
+        }
+      },
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      {
+        "type": "HOME_ZONE",
+        "playerId": "0v6p7dframxs",
+        "color": 10181046,
+        "created": 1741865069188,
+        "chessPiece": {
+          "type": "rook",
+          "id": "0v6p7dframxs_rook_1",
+          "player": "0v6p7dframxs",
+          "x": 14,
+          "y": 15
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "0v6p7dframxs",
+        "color": 10181046,
+        "created": 1741865069188,
+        "chessPiece": {
+          "type": "knight",
+          "id": "0v6p7dframxs_knight_1",
+          "player": "0v6p7dframxs",
+          "x": 15,
+          "y": 15
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "0v6p7dframxs",
+        "color": 10181046,
+        "created": 1741865069188,
+        "chessPiece": {
+          "type": "bishop",
+          "id": "0v6p7dframxs_bishop_1",
+          "player": "0v6p7dframxs",
+          "x": 16,
+          "y": 15
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "0v6p7dframxs",
+        "color": 10181046,
+        "created": 1741865069188,
+        "chessPiece": {
+          "type": "queen",
+          "id": "0v6p7dframxs_queen",
+          "player": "0v6p7dframxs",
+          "x": 17,
+          "y": 15
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "0v6p7dframxs",
+        "color": 10181046,
+        "created": 1741865069188,
+        "chessPiece": {
+          "type": "king",
+          "id": "0v6p7dframxs_king",
+          "player": "0v6p7dframxs",
+          "x": 18,
+          "y": 15
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "0v6p7dframxs",
+        "color": 10181046,
+        "created": 1741865069188,
+        "chessPiece": {
+          "type": "bishop",
+          "id": "0v6p7dframxs_bishop_2",
+          "player": "0v6p7dframxs",
+          "x": 19,
+          "y": 15
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "0v6p7dframxs",
+        "color": 10181046,
+        "created": 1741865069188,
+        "chessPiece": {
+          "type": "knight",
+          "id": "0v6p7dframxs_knight_2",
+          "player": "0v6p7dframxs",
+          "x": 20,
+          "y": 15
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "0v6p7dframxs",
+        "color": 10181046,
+        "created": 1741865069188,
+        "chessPiece": {
+          "type": "rook",
+          "id": "0v6p7dframxs_rook_2",
+          "player": "0v6p7dframxs",
+          "x": 21,
+          "y": 15
+        }
+      },
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-pmgkj9h",
+        "color": 15965202,
+        "created": 1741816163345,
+        "chessPiece": {
+          "id": "player-pmgkj9h_pawn_0",
+          "type": "pawn",
+          "player": "player-pmgkj9h",
+          "x": 2,
+          "y": 20,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-pmgkj9h",
+        "color": 15965202,
+        "created": 1741816163345,
+        "chessPiece": {
+          "id": "player-pmgkj9h_pawn_1",
+          "type": "pawn",
+          "player": "player-pmgkj9h",
+          "x": 3,
+          "y": 20,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-pmgkj9h",
+        "color": 15965202,
+        "created": 1741816163345,
+        "chessPiece": {
+          "id": "player-pmgkj9h_pawn_2",
+          "type": "pawn",
+          "player": "player-pmgkj9h",
+          "x": 4,
+          "y": 20,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-pmgkj9h",
+        "color": 15965202,
+        "created": 1741816163345,
+        "chessPiece": {
+          "id": "player-pmgkj9h_pawn_3",
+          "type": "pawn",
+          "player": "player-pmgkj9h",
+          "x": 5,
+          "y": 20,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-pmgkj9h",
+        "color": 15965202,
+        "created": 1741816163345,
+        "chessPiece": {
+          "id": "player-pmgkj9h_pawn_4",
+          "type": "pawn",
+          "player": "player-pmgkj9h",
+          "x": 6,
+          "y": 20,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-pmgkj9h",
+        "color": 15965202,
+        "created": 1741816163345,
+        "chessPiece": {
+          "id": "player-pmgkj9h_pawn_5",
+          "type": "pawn",
+          "player": "player-pmgkj9h",
+          "x": 7,
+          "y": 20,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-pmgkj9h",
+        "color": 15965202,
+        "created": 1741816163345,
+        "chessPiece": {
+          "id": "player-pmgkj9h_pawn_6",
+          "type": "pawn",
+          "player": "player-pmgkj9h",
+          "x": 8,
+          "y": 20,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-pmgkj9h",
+        "color": 15965202,
+        "created": 1741816163345,
+        "chessPiece": {
+          "id": "player-pmgkj9h_pawn_7",
+          "type": "pawn",
+          "player": "player-pmgkj9h",
+          "x": 9,
+          "y": 20,
+          "moveCount": 0
+        }
+      },
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-pmgkj9h",
+        "color": 15965202,
+        "created": 1741816163345,
+        "chessPiece": {
+          "type": "rook",
+          "id": "player-pmgkj9h_rook_1",
+          "player": "player-pmgkj9h",
+          "x": 2,
+          "y": 21
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-pmgkj9h",
+        "color": 15965202,
+        "created": 1741816163345,
+        "chessPiece": {
+          "type": "knight",
+          "id": "player-pmgkj9h_knight_1",
+          "player": "player-pmgkj9h",
+          "x": 3,
+          "y": 21
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-pmgkj9h",
+        "color": 15965202,
+        "created": 1741816163345,
+        "chessPiece": {
+          "type": "bishop",
+          "id": "player-pmgkj9h_bishop_1",
+          "player": "player-pmgkj9h",
+          "x": 4,
+          "y": 21
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-pmgkj9h",
+        "color": 15965202,
+        "created": 1741816163345,
+        "chessPiece": {
+          "type": "queen",
+          "id": "player-pmgkj9h_queen",
+          "player": "player-pmgkj9h",
+          "x": 5,
+          "y": 21
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-pmgkj9h",
+        "color": 15965202,
+        "created": 1741816163345,
+        "chessPiece": {
+          "type": "king",
+          "id": "player-pmgkj9h_king",
+          "player": "player-pmgkj9h",
+          "x": 6,
+          "y": 21
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-pmgkj9h",
+        "color": 15965202,
+        "created": 1741816163345,
+        "chessPiece": {
+          "type": "bishop",
+          "id": "player-pmgkj9h_bishop_2",
+          "player": "player-pmgkj9h",
+          "x": 7,
+          "y": 21
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-pmgkj9h",
+        "color": 15965202,
+        "created": 1741816163345,
+        "chessPiece": {
+          "type": "knight",
+          "id": "player-pmgkj9h_knight_2",
+          "player": "player-pmgkj9h",
+          "x": 8,
+          "y": 21
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "player-pmgkj9h",
+        "color": 15965202,
+        "created": 1741816163345,
+        "chessPiece": {
+          "type": "rook",
+          "id": "player-pmgkj9h_rook_2",
+          "player": "player-pmgkj9h",
+          "x": 9,
+          "y": 21
+        }
+      },
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-885c39e",
+        "color": 3447003,
+        "created": 1741809887062,
+        "chessPiece": {
+          "id": "debug-885c39e_pawn_0",
+          "type": "pawn",
+          "player": "debug-885c39e",
+          "x": 11,
+          "y": 26,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-885c39e",
+        "color": 3447003,
+        "created": 1741809887062,
+        "chessPiece": {
+          "id": "debug-885c39e_pawn_1",
+          "type": "pawn",
+          "player": "debug-885c39e",
+          "x": 12,
+          "y": 26,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-885c39e",
+        "color": 3447003,
+        "created": 1741809887062,
+        "chessPiece": {
+          "id": "debug-885c39e_pawn_2",
+          "type": "pawn",
+          "player": "debug-885c39e",
+          "x": 13,
+          "y": 26,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-885c39e",
+        "color": 3447003,
+        "created": 1741809887062,
+        "chessPiece": {
+          "id": "debug-885c39e_pawn_3",
+          "type": "pawn",
+          "player": "debug-885c39e",
+          "x": 14,
+          "y": 26,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-885c39e",
+        "color": 3447003,
+        "created": 1741809887062,
+        "chessPiece": {
+          "id": "debug-885c39e_pawn_4",
+          "type": "pawn",
+          "player": "debug-885c39e",
+          "x": 15,
+          "y": 26,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-885c39e",
+        "color": 3447003,
+        "created": 1741809887062,
+        "chessPiece": {
+          "id": "debug-885c39e_pawn_5",
+          "type": "pawn",
+          "player": "debug-885c39e",
+          "x": 16,
+          "y": 26,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-885c39e",
+        "color": 3447003,
+        "created": 1741809887062,
+        "chessPiece": {
+          "id": "debug-885c39e_pawn_6",
+          "type": "pawn",
+          "player": "debug-885c39e",
+          "x": 17,
+          "y": 26,
+          "moveCount": 0
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-885c39e",
+        "color": 3447003,
+        "created": 1741809887062,
+        "chessPiece": {
+          "id": "debug-885c39e_pawn_7",
+          "type": "pawn",
+          "player": "debug-885c39e",
+          "x": 18,
+          "y": 26,
+          "moveCount": 0
+        }
+      },
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-885c39e",
+        "color": 3447003,
+        "created": 1741809887062,
+        "chessPiece": {
+          "type": "rook",
+          "id": "debug-885c39e_rook_1",
+          "player": "debug-885c39e",
+          "x": 11,
+          "y": 27
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-885c39e",
+        "color": 3447003,
+        "created": 1741809887062,
+        "chessPiece": {
+          "type": "knight",
+          "id": "debug-885c39e_knight_1",
+          "player": "debug-885c39e",
+          "x": 12,
+          "y": 27
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-885c39e",
+        "color": 3447003,
+        "created": 1741809887062,
+        "chessPiece": {
+          "type": "bishop",
+          "id": "debug-885c39e_bishop_1",
+          "player": "debug-885c39e",
+          "x": 13,
+          "y": 27
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-885c39e",
+        "color": 3447003,
+        "created": 1741809887062,
+        "chessPiece": {
+          "type": "queen",
+          "id": "debug-885c39e_queen",
+          "player": "debug-885c39e",
+          "x": 14,
+          "y": 27
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-885c39e",
+        "color": 3447003,
+        "created": 1741809887062,
+        "chessPiece": {
+          "type": "king",
+          "id": "debug-885c39e_king",
+          "player": "debug-885c39e",
+          "x": 15,
+          "y": 27
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-885c39e",
+        "color": 3447003,
+        "created": 1741809887062,
+        "chessPiece": {
+          "type": "bishop",
+          "id": "debug-885c39e_bishop_2",
+          "player": "debug-885c39e",
+          "x": 16,
+          "y": 27
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-885c39e",
+        "color": 3447003,
+        "created": 1741809887062,
+        "chessPiece": {
+          "type": "knight",
+          "id": "debug-885c39e_knight_2",
+          "player": "debug-885c39e",
+          "x": 17,
+          "y": 27
+        }
+      },
+      {
+        "type": "HOME_ZONE",
+        "playerId": "debug-885c39e",
+        "color": 3447003,
+        "created": 1741809887062,
+        "chessPiece": {
+          "type": "rook",
+          "id": "debug-885c39e_rook_2",
+          "player": "debug-885c39e",
+          "x": 18,
+          "y": 27
+        }
+      },
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  ],
+  "settings": {
+    "minHomeZoneDistance": 8,
+    "maxHomeZoneDistance": 12,
+    "expandBoardAsNeeded": true,
+    "cellSize": 1
+  },
+  "startTime": 1741809886815,
+  "lastUpdate": 1741867439404
+}

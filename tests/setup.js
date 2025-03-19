@@ -13,6 +13,8 @@ dotenv.config();
 
 // Set test environment
 process.env.NODE_ENV = 'test';
+process.env.PORT = 3030; // Use a different port for tests
+process.env.MONGODB_URI = 'mongodb://localhost:27017/shaktris_test';
 
 // Define test database URIs if not already set
 process.env.TEST_MONGO_URI = process.env.TEST_MONGO_URI || 'mongodb://localhost:27017/chesstris_test';
@@ -27,18 +29,7 @@ import { setupMockFetch, restoreFetch } from './mockFetch.js';
 // Import server for proper shutdown
 let mainServer;
 let srcServer;
-try {
-	// Try to import both server modules
-	mainServer = await import('../server.js');
-} catch (error) {
-	console.log('Main server module not found, will try src folder');
-}
-
-try {
-	srcServer = await import('../src/server.js');
-} catch (error) {
-	console.log('Src server module not found');
-}
+import('../server.js');
 
 if (!mainServer && !srcServer) {
 	console.log('No server modules found, will not attempt shutdown');
@@ -166,4 +157,30 @@ async function checkRedisConnection() {
 		console.error('  docker run --name redis -p 6379:6379 -d redis');
 		return false;
 	}
-} 
+}
+
+// Setup test environment
+const chai = require('chai');
+global.expect = chai.expect;
+
+// Mock Socket.IO
+jest.mock('socket.io', () => {
+  return jest.fn(() => ({
+    on: jest.fn(),
+    emit: jest.fn(),
+  }));
+});
+
+// Prevent server from starting during tests
+jest.mock('../server', () => {
+  return {
+    // Mock any server exports you need for tests
+    startServer: jest.fn(),
+  };
+});
+
+// Clean up after tests
+afterAll(() => {
+  // Log instead of trying to shut down server
+  console.log('Test completed, no server to shut down in test environment');
+}); 

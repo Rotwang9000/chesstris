@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Shaktris - 2D Mode</title>
+	<link rel="stylesheet" href="styles.css">
+	<script>
+		// Set 2D mode flag
+		window.is2DMode = true;
+	</script>
+</head>
+<body>
+	<div id="game-container"></div>
+	
+	<div id="ui-container">
+		<!-- Player Info -->
+		<div id="player-info">
+			<div id="player-name"></div>
+			<div id="score-display">Score: 0</div>
+		</div>
+		
+		<!-- Game Controls -->
+		<div id="game-controls">
+			<button id="start-button" class="primary-button">Start Game</button>
+			<button id="pause-button" class="control-button">Pause</button>
+			<button id="settings-button" class="control-button">Settings</button>
+		</div>
+		
+		<!-- Tetris Info -->
+		<div id="tetris-info">
+			<div id="next-piece-display">
+				<div class="info-label">Next</div>
+				<canvas id="next-piece-canvas" width="120" height="120"></canvas>
+			</div>
+			
+			<div id="held-piece-display">
+				<div class="info-label">Hold</div>
+				<canvas id="held-piece-canvas" width="120" height="120"></canvas>
+			</div>
+		</div>
+		
+		<!-- Chess Info -->
+		<div id="chess-info">
+			<div id="captured-pieces">
+				<div class="info-label">Captured</div>
+				<div id="captured-pieces-container"></div>
+			</div>
+		</div>
+		
+		<!-- Energy Meter -->
+		<div id="energy-meter-container">
+			<div class="info-label">Energy</div>
+			<div id="energy-meter">
+				<div id="energy-bar"></div>
+			</div>
+			<div id="energy-value">100%</div>
+		</div>
+		
+		<!-- Controls Info -->
+		<div id="controls-display">
+			<div class="info-label">Controls</div>
+			<div class="control-item">
+				<div class="control-key">↑</div>
+				<div class="control-action">Rotate Tetromino / Move Chess</div>
+			</div>
+			<div class="control-item">
+				<div class="control-key">←→</div>
+				<div class="control-action">Move Tetromino / Chess</div>
+			</div>
+			<div class="control-item">
+				<div class="control-key">↓</div>
+				<div class="control-action">Soft Drop / Move Chess</div>
+			</div>
+			<div class="control-item">
+				<div class="control-key">Space</div>
+				<div class="control-action">Hard Drop / Select Chess</div>
+			</div>
+			<div class="control-item">
+				<div class="control-key">Shift</div>
+				<div class="control-action">Hold Tetromino</div>
+			</div>
+			<div class="control-item">
+				<div class="control-key">P</div>
+				<div class="control-action">Pause Game</div>
+			</div>
+		</div>
+	</div>
+	
+	<!-- Loading Screen -->
+	<div id="loading-screen">
+		<div id="loading-content">
+			<h2>Loading Shaktris...</h2>
+			<div class="spinner"></div>
+		</div>
+	</div>
+	
+	<!-- Menu Screen -->
+	<div id="menu-screen">
+		<div id="menu-content">
+			<h1 class="game-title">SHAKTRIS</h1>
+			<p class="game-tagline">Chess + Tetris = Shaktris</p>
+			
+			<div class="menu-buttons">
+				<button id="menu-start-button" class="primary-button">Start Game</button>
+				<button id="menu-settings-button" class="secondary-button">Settings</button>
+				<div class="render-mode-toggle">
+					<button id="render-2d-button" class="toggle-button active">2D Mode</button>
+					<button id="render-3d-button" class="toggle-button">3D Mode</button>
+				</div>
+			</div>
+		</div>
+	</div>
+	
+	<!-- Game Over Screen -->
+	<div id="game-over-screen">
+		<div id="game-over-content">
+			<h2>Game Over</h2>
+			<div id="game-over-stats">
+				<p id="final-score">Score: 0</p>
+				<p id="game-over-reason"></p>
+			</div>
+			<button id="restart-button" class="primary-button">Play Again</button>
+			<button id="back-to-menu-button" class="secondary-button">Back to Menu</button>
+		</div>
+	</div>
+	
+	<!-- Settings Screen -->
+	<div id="settings-screen">
+		<div id="settings-content">
+			<h2>Settings</h2>
+			
+			<div class="settings-section">
+				<h3>Game</h3>
+				<div class="setting-item">
+					<label for="ghost-piece-toggle">Show Ghost Piece</label>
+					<input type="checkbox" id="ghost-piece-toggle" checked>
+				</div>
+				<div class="setting-item">
+					<label for="game-speed">Game Speed</label>
+					<select id="game-speed">
+						<option value="slow">Slow</option>
+						<option value="normal" selected>Normal</option>
+						<option value="fast">Fast</option>
+					</select>
+				</div>
+			</div>
+			
+			<div class="settings-section">
+				<h3>Display</h3>
+				<div class="setting-item">
+					<label for="render-mode">Render Mode</label>
+					<select id="render-mode">
+						<option value="2d" selected>2D Mode</option>
+						<option value="3d">3D Mode</option>
+					</select>
+				</div>
+			</div>
+			
+			<div class="settings-section">
+				<h3>Audio</h3>
+				<div class="setting-item">
+					<label for="music-volume">Music Volume</label>
+					<input type="range" id="music-volume" min="0" max="100" value="50">
+				</div>
+				<div class="setting-item">
+					<label for="sfx-volume">SFX Volume</label>
+					<input type="range" id="sfx-volume" min="0" max="100" value="70">
+				</div>
+				<div class="setting-item">
+					<label for="mute-toggle">Mute All</label>
+					<input type="checkbox" id="mute-toggle">
+				</div>
+			</div>
+			
+			<div class="settings-buttons">
+				<button id="settings-save-button" class="primary-button">Save</button>
+				<button id="settings-cancel-button" class="secondary-button">Cancel</button>
+			</div>
+		</div>
+	</div>
+	
+	<!-- Pause Screen -->
+	<div id="pause-screen">
+		<div id="pause-content">
+			<h2>Game Paused</h2>
+			<button id="resume-button" class="primary-button">Resume</button>
+			<button id="pause-settings-button" class="secondary-button">Settings</button>
+			<button id="quit-button" class="danger-button">Quit Game</button>
+		</div>
+	</div>
+	
+	<!-- Debug Panel -->
+	<div id="debug-panel">
+		<div class="debug-section">
+			<div class="debug-section-title">Game State</div>
+			<div id="debug-game-state"></div>
+		</div>
+		<div class="debug-section">
+			<div class="debug-section-title">Player</div>
+			<div id="debug-player"></div>
+		</div>
+		<div class="debug-section">
+			<div class="debug-section-title">Tetromino</div>
+			<div id="debug-tetromino"></div>
+		</div>
+		<div class="debug-section">
+			<div class="debug-section-title">Chess</div>
+			<div id="debug-chess"></div>
+		</div>
+		<div class="debug-section">
+			<div class="debug-section-title">Performance</div>
+			<div id="debug-performance"></div>
+		</div>
+	</div>
+	
+	<!-- Notification System -->
+	<div id="notification-container"></div>
+	
+	<!-- JavaScript Modules -->
+	<script type="module" src="js/main.js"></script>
+</body>
+</html> 

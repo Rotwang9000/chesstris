@@ -1,0 +1,246 @@
+.turn-indicator {
+	display: flex;
+	flex-direction: column;
+	width: 250px;
+	padding: 12px;
+	border-radius: 8px;
+	background-color: #2c2c2c;
+	box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+	border-left: 4px solid var(--player-color, #cccccc);
+	transition: all 0.3s ease;
+}
+
+/* Active/inactive states */
+.turn-indicator.active {
+	transform: scale(1.02);
+	box-shadow: 0 6px 12px rgba(0, 0, 0, 0.4), 0 0 15px rgba(255, 255, 255, 0.1);
+}
+
+.turn-indicator.inactive {
+	opacity: 0.7;
+}
+
+/* Player info section */
+.player-info {
+	display: flex;
+	align-items: center;
+	margin-bottom: 10px;
+}
+
+.player-color-indicator {
+	width: 12px;
+	height: 12px;
+	border-radius: 6px;
+	margin-right: 8px;
+}
+
+.player-name {
+	flex-grow: 1;
+	font-weight: bold;
+	color: #ffffff;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.difficulty-badge {
+	padding: 3px 8px;
+	border-radius: 12px;
+	font-size: 11px;
+	font-weight: bold;
+	text-transform: uppercase;
+}
+
+/* Difficulty-specific styles */
+.turn-indicator.easy .difficulty-badge {
+	background-color: #27AE60;
+	color: #ffffff;
+}
+
+.turn-indicator.medium .difficulty-badge {
+	background-color: #F1C40F;
+	color: #333333;
+}
+
+.turn-indicator.hard .difficulty-badge {
+	background-color: #E74C3C;
+	color: #ffffff;
+}
+
+/* Turn phase section */
+.turn-phase {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	margin-bottom: 10px;
+}
+
+.phase-label {
+	font-size: 14px;
+	color: #eeeeee;
+}
+
+.skip-button {
+	background-color: #555555;
+	color: #ffffff;
+	border: none;
+	border-radius: 4px;
+	padding: 4px 8px;
+	font-size: 12px;
+	cursor: pointer;
+	transition: background-color 0.2s;
+}
+
+.skip-button:hover:not(:disabled) {
+	background-color: #777777;
+}
+
+.skip-button:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+/* Timer section */
+.turn-timer {
+	display: flex;
+	flex-direction: column;
+}
+
+.timer-bar-container {
+	width: 100%;
+	height: 6px;
+	background-color: #444444;
+	border-radius: 3px;
+	overflow: hidden;
+	margin-bottom: 6px;
+}
+
+.timer-bar {
+	height: 100%;
+	border-radius: 3px;
+	transition: width 0.1s linear;
+}
+
+/* Difficulty-specific timer bars */
+.turn-indicator.easy .timer-bar {
+	background-color: #27AE60;
+	/* Slower animation for easy difficulty */
+	transition: width 0.3s linear;
+}
+
+.turn-indicator.medium .timer-bar {
+	background-color: #F1C40F;
+	/* Standard animation for medium difficulty */
+	transition: width 0.2s linear;
+}
+
+.turn-indicator.hard .timer-bar {
+	background-color: #E74C3C;
+	/* Faster animation for hard difficulty */
+	transition: width 0.1s linear;
+}
+
+.timer-value {
+	text-align: center;
+	font-size: 12px;
+	color: #cccccc;
+}
+
+.time {
+	font-weight: bold;
+	color: #ffffff;
+}
+
+.continue-text {
+	font-weight: bold;
+	color: #2ECC71;
+	animation: pulse 1.5s infinite alternate;
+}
+
+/* Turn phase specific styling */
+.turn-indicator.tetromino {
+	border-top: 2px solid #3498DB;
+}
+
+.turn-indicator.chess {
+	border-top: 2px solid #9B59B6;
+}
+
+.turn-indicator.waiting {
+	border-top: 2px solid #95A5A6;
+}
+
+/* Paused state */
+.turn-indicator.paused {
+	opacity: 0.7;
+	filter: grayscale(0.7);
+	pointer-events: none;
+}
+
+.paused-overlay {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background-color: rgba(0, 0, 0, 0.5);
+	border-radius: 8px;
+}
+
+.paused-text {
+	font-weight: bold;
+	color: #ffffff;
+	font-size: 18px;
+	letter-spacing: 2px;
+	transform: rotate(-10deg);
+}
+
+/* Can continue state */
+.turn-indicator.can-continue {
+	box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3), 0 0 10px rgba(46, 204, 113, 0.5);
+}
+
+/* Animations */
+@keyframes pulse {
+	0% {
+		opacity: 0.7;
+	}
+	100% {
+		opacity: 1;
+	}
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+	.turn-indicator {
+		width: 220px;
+		padding: 10px;
+	}
+	
+	.phase-label {
+		font-size: 12px;
+	}
+	
+	.timer-value {
+		font-size: 11px;
+	}
+}
+
+@media (max-width: 480px) {
+	.turn-indicator {
+		width: 180px;
+		padding: 8px;
+	}
+	
+	.player-name {
+		font-size: 12px;
+	}
+	
+	.difficulty-badge {
+		padding: 2px 6px;
+		font-size: 9px;
+	}
+} 

@@ -1,0 +1,631 @@
+/* 
+ * Shaktris Game - Main Styles
+ */
+
+/* Base styles */
+:root {
+	/* Light theme colors */
+	--light-bg-color: #f5f5f5;
+	--light-text-color: #333;
+	--light-primary-color: #4a90e2;
+	--light-secondary-color: #50c878;
+	--light-accent-color: #ff6b6b;
+	--light-border-color: #ddd;
+	--light-shadow-color: rgba(0, 0, 0, 0.1);
+	
+	/* Dark theme colors */
+	--dark-bg-color: #222;
+	--dark-text-color: #eee;
+	--dark-primary-color: #5a9de2;
+	--dark-secondary-color: #60d888;
+	--dark-accent-color: #ff7b7b;
+	--dark-border-color: #444;
+	--dark-shadow-color: rgba(0, 0, 0, 0.3);
+	
+	/* Default to dark theme */
+	--bg-color: var(--dark-bg-color);
+	--text-color: var(--dark-text-color);
+	--primary-color: var(--dark-primary-color);
+	--secondary-color: var(--dark-secondary-color);
+	--accent-color: var(--dark-accent-color);
+	--border-color: var(--dark-border-color);
+	--shadow-color: var(--dark-shadow-color);
+	
+	/* Game board colors */
+	--board-bg-color: #1a1a1a;
+	--grid-color: #333;
+	--cell-border-color: #444;
+	
+	/* Tetromino colors */
+	--tetromino-i-color: #00f0f0;
+	--tetromino-o-color: #f0f000;
+	--tetromino-t-color: #a000f0;
+	--tetromino-s-color: #00f000;
+	--tetromino-z-color: #f00000;
+	--tetromino-j-color: #0000f0;
+	--tetromino-l-color: #f0a000;
+	
+	/* Chess piece colors */
+	--chess-white-color: #fff;
+	--chess-black-color: #000;
+	
+	/* Font settings */
+	--font-family: 'Roboto', 'Segoe UI', Arial, sans-serif;
+	--font-size-small: 14px;
+	--font-size-medium: 16px;
+	--font-size-large: 20px;
+	--font-size-xlarge: 24px;
+	--font-size-xxlarge: 32px;
+	
+	/* Spacing */
+	--spacing-xs: 4px;
+	--spacing-sm: 8px;
+	--spacing-md: 16px;
+	--spacing-lg: 24px;
+	--spacing-xl: 32px;
+	
+	/* Border radius */
+	--border-radius-sm: 4px;
+	--border-radius-md: 8px;
+	--border-radius-lg: 12px;
+	
+	/* Transitions */
+	--transition-fast: 0.15s ease;
+	--transition-medium: 0.3s ease;
+	--transition-slow: 0.5s ease;
+}
+
+/* Light theme class */
+.light-theme {
+	--bg-color: var(--light-bg-color);
+	--text-color: var(--light-text-color);
+	--primary-color: var(--light-primary-color);
+	--secondary-color: var(--light-secondary-color);
+	--accent-color: var(--light-accent-color);
+	--border-color: var(--light-border-color);
+	--shadow-color: var(--light-shadow-color);
+	--board-bg-color: #f0f0f0;
+	--grid-color: #ccc;
+	--cell-border-color: #ddd;
+}
+
+/* Global styles */
+* {
+	box-sizing: border-box;
+	margin: 0;
+	padding: 0;
+}
+
+html, body {
+	width: 100%;
+	height: 100%;
+	font-family: var(--font-family);
+	font-size: var(--font-size-medium);
+	line-height: 1.5;
+	color: var(--text-color);
+	background-color: var(--bg-color);
+	overflow: hidden;
+}
+
+body {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+}
+
+/* Screen styles */
+.screen {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	background-color: var(--bg-color);
+	z-index: 20;
+}
+
+.screen-content {
+	max-width: 800px;
+	width: 100%;
+	padding: var(--spacing-lg);
+	text-align: center;
+}
+
+/* UI Elements */
+#ui-container {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
+	pointer-events: none;
+	z-index: 10;
+}
+
+#ui-container button,
+#ui-container .clickable {
+	pointer-events: auto;
+}
+
+/* Loading screen */
+#loading-screen {
+	z-index: 100;
+}
+
+.loading-spinner {
+	width: 50px;
+	height: 50px;
+	margin: var(--spacing-lg) auto;
+	border: 5px solid var(--border-color);
+	border-top-color: var(--primary-color);
+	border-radius: 50%;
+	animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+	to { transform: rotate(360deg); }
+}
+
+/* Menu screen */
+#menu-screen h1 {
+	font-size: var(--font-size-xxlarge);
+	margin-bottom: var(--spacing-xl);
+	color: var(--primary-color);
+	text-shadow: 2px 2px 4px var(--shadow-color);
+}
+
+.menu-buttons {
+	display: flex;
+	flex-direction: column;
+	gap: var(--spacing-md);
+	margin-top: var(--spacing-lg);
+}
+
+/* Game screen */
+#game-screen {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	padding: var(--spacing-md);
+}
+
+#game-container {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100vh;
+	background-color: var(--board-bg-color);
+	border: none;
+	overflow: hidden;
+	z-index: 1;
+}
+
+#game-ui {
+	display: flex;
+	justify-content: space-between;
+	width: 100%;
+	max-width: 800px;
+	margin-top: var(--spacing-md);
+}
+
+#score-panel {
+	display: flex;
+	flex-direction: column;
+	gap: var(--spacing-xs);
+	padding: var(--spacing-md);
+	background-color: rgba(0, 0, 0, 0.2);
+	border-radius: var(--border-radius-md);
+	min-width: 150px;
+}
+
+#next-piece, #held-piece {
+	width: 100px;
+	height: 100px;
+	padding: var(--spacing-sm);
+	background-color: rgba(0, 0, 0, 0.2);
+	border-radius: var(--border-radius-md);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+/* Button styles */
+button {
+	padding: var(--spacing-sm) var(--spacing-md);
+	background-color: var(--primary-color);
+	color: white;
+	border: none;
+	border-radius: var(--border-radius-md);
+	font-size: var(--font-size-medium);
+	cursor: pointer;
+	transition: background-color var(--transition-fast);
+}
+
+button:hover {
+	background-color: var(--secondary-color);
+}
+
+button:active {
+	transform: translateY(1px);
+}
+
+/* Dialog styles */
+.dialog-overlay {
+	position: fixed;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
+	background-color: rgba(0, 0, 0, 0.5);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	z-index: 1000;
+}
+
+.dialog {
+	background-color: var(--bg-color);
+	border-radius: var(--border-radius-lg);
+	padding: var(--spacing-lg);
+	max-width: 500px;
+	width: 90%;
+	box-shadow: 0 4px 16px var(--shadow-color);
+}
+
+.dialog-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	margin-bottom: var(--spacing-md);
+}
+
+.dialog-title {
+	font-size: var(--font-size-large);
+	font-weight: bold;
+}
+
+.dialog-close {
+	background: none;
+	border: none;
+	font-size: var(--font-size-large);
+	cursor: pointer;
+	color: var(--text-color);
+}
+
+.dialog-content {
+	margin-bottom: var(--spacing-lg);
+}
+
+.dialog-buttons {
+	display: flex;
+	justify-content: flex-end;
+	gap: var(--spacing-sm);
+}
+
+/* Notification styles */
+.notification-container {
+	position: fixed;
+	top: var(--spacing-lg);
+	right: var(--spacing-lg);
+	z-index: 2000;
+	display: flex;
+	flex-direction: column;
+	gap: var(--spacing-sm);
+}
+
+.notification {
+	padding: var(--spacing-md);
+	background-color: var(--primary-color);
+	color: white;
+	border-radius: var(--border-radius-md);
+	box-shadow: 0 2px 8px var(--shadow-color);
+	max-width: 300px;
+	animation: slide-in var(--transition-medium);
+}
+
+.notification.error {
+	background-color: var(--accent-color);
+}
+
+.notification.success {
+	background-color: var(--secondary-color);
+}
+
+@keyframes slide-in {
+	from { transform: translateX(100%); opacity: 0; }
+	to { transform: translateX(0); opacity: 1; }
+}
+
+/* Debug panel */
+.debug-panel {
+	position: fixed;
+	bottom: var(--spacing-md);
+	left: var(--spacing-md);
+	background-color: rgba(0, 0, 0, 0.8);
+	color: white;
+	padding: var(--spacing-md);
+	border-radius: var(--border-radius-md);
+	font-family: monospace;
+	font-size: var(--font-size-small);
+	max-width: 300px;
+	max-height: 300px;
+	overflow: auto;
+	z-index: 1000;
+	display: none;
+}
+
+.debug-toggle {
+	position: fixed;
+	bottom: var(--spacing-md);
+	left: var(--spacing-md);
+	z-index: 1001;
+	background-color: var(--accent-color);
+	color: white;
+	padding: var(--spacing-xs) var(--spacing-sm);
+	border-radius: var(--border-radius-sm);
+	font-size: var(--font-size-small);
+}
+
+/* Responsive styles */
+@media (max-width: 768px) {
+	:root {
+		--font-size-small: 12px;
+		--font-size-medium: 14px;
+		--font-size-large: 18px;
+		--font-size-xlarge: 22px;
+		--font-size-xxlarge: 28px;
+	}
+	
+	#game-container {
+		height: 500px;
+	}
+	
+	#game-ui {
+		flex-direction: column;
+		align-items: center;
+		gap: var(--spacing-md);
+	}
+	
+	#score-panel {
+		flex-direction: row;
+		width: 100%;
+		justify-content: space-around;
+	}
+	
+	.notification-container {
+		top: auto;
+		bottom: var(--spacing-lg);
+		left: var(--spacing-lg);
+		right: var(--spacing-lg);
+	}
+	
+	.notification {
+		max-width: 100%;
+	}
+}
+
+@media (max-width: 480px) {
+	#game-container {
+		height: 400px;
+	}
+	
+	.menu-buttons {
+		width: 100%;
+	}
+}
+
+/* Game board styles */
+.game-board {
+	display: grid;
+	grid-template-columns: repeat(10, 1fr);
+	grid-template-rows: repeat(20, 1fr);
+	width: 100%;
+	height: 100%;
+	background-color: var(--board-bg-color);
+}
+
+.cell {
+	border: 1px solid var(--cell-border-color);
+	position: relative;
+}
+
+/* Tetromino cell styles */
+.cell.tetromino-i { background-color: var(--tetromino-i-color); }
+.cell.tetromino-o { background-color: var(--tetromino-o-color); }
+.cell.tetromino-t { background-color: var(--tetromino-t-color); }
+.cell.tetromino-s { background-color: var(--tetromino-s-color); }
+.cell.tetromino-z { background-color: var(--tetromino-z-color); }
+.cell.tetromino-j { background-color: var(--tetromino-j-color); }
+.cell.tetromino-l { background-color: var(--tetromino-l-color); }
+
+/* Chess piece styles */
+.chess-piece {
+	position: absolute;
+	width: 80%;
+	height: 80%;
+	top: 10%;
+	left: 10%;
+	background-size: contain;
+	background-repeat: no-repeat;
+	background-position: center;
+}
+
+.chess-piece.white { filter: brightness(1.2); }
+.chess-piece.black { filter: brightness(0.8); }
+
+.chess-piece.selected {
+	box-shadow: 0 0 10px 3px var(--primary-color);
+}
+
+/* Animation keyframes */
+@keyframes fade-in {
+	from { opacity: 0; }
+	to { opacity: 1; }
+}
+
+@keyframes fade-out {
+	from { opacity: 1; }
+	to { opacity: 0; }
+}
+
+@keyframes pulse {
+	0% { transform: scale(1); }
+	50% { transform: scale(1.05); }
+	100% { transform: scale(1); }
+}
+
+/* Animation classes */
+.fade-in {
+	animation: fade-in var(--transition-medium);
+}
+
+.fade-out {
+	animation: fade-out var(--transition-medium);
+}
+
+.pulse {
+	animation: pulse 1s infinite;
+}
+
+/* Utility classes */
+.hidden {
+	display: none !important;
+}
+
+.flex-center {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.flex-column {
+	display: flex;
+	flex-direction: column;
+}
+
+.text-center {
+	text-align: center;
+}
+
+.mt-1 { margin-top: var(--spacing-xs); }
+.mt-2 { margin-top: var(--spacing-sm); }
+.mt-3 { margin-top: var(--spacing-md); }
+.mt-4 { margin-top: var(--spacing-lg); }
+.mt-5 { margin-top: var(--spacing-xl); }
+
+.mb-1 { margin-bottom: var(--spacing-xs); }
+.mb-2 { margin-bottom: var(--spacing-sm); }
+.mb-3 { margin-bottom: var(--spacing-md); }
+.mb-4 { margin-bottom: var(--spacing-lg); }
+.mb-5 { margin-bottom: var(--spacing-xl); }
+
+/* Spectator mode UI */
+.spectator-mode-indicator {
+	position: absolute;
+	top: 10px;
+	right: 10px;
+	background-color: rgba(0, 0, 0, 0.7);
+	color: #fff;
+	padding: 5px 10px;
+	border-radius: 5px;
+	font-size: 14px;
+	z-index: 1000;
+	display: none;
+}
+
+.spectator-mode-indicator.active {
+	display: block;
+}
+
+.spectator-mode-indicator .player-name {
+	font-weight: bold;
+	color: #ffcc00;
+}
+
+.player-list-dialog {
+	position: fixed;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	background-color: rgba(0, 0, 0, 0.9);
+	border: 2px solid #444;
+	border-radius: 8px;
+	padding: 20px;
+	z-index: 2000;
+	min-width: 300px;
+	max-width: 500px;
+	color: #fff;
+}
+
+.player-list-dialog h2 {
+	margin-top: 0;
+	color: #ffcc00;
+	border-bottom: 1px solid #444;
+	padding-bottom: 10px;
+}
+
+.player-list {
+	list-style: none;
+	padding: 0;
+	margin: 0;
+	max-height: 300px;
+	overflow-y: auto;
+}
+
+.player-list li {
+	padding: 10px;
+	margin: 5px 0;
+	border-radius: 4px;
+	cursor: pointer;
+	transition: background-color 0.2s;
+}
+
+.player-list li:hover {
+	background-color: #333;
+}
+
+.player-list li.computer-player {
+	color: #aaa;
+}
+
+.player-list li.computer-player::after {
+	content: " (Computer)";
+	color: #888;
+	font-style: italic;
+}
+
+.player-list-dialog .dialog-buttons {
+	margin-top: 15px;
+	text-align: right;
+}
+
+.player-list-dialog button {
+	background-color: #444;
+	color: #fff;
+	border: none;
+	padding: 8px 15px;
+	border-radius: 4px;
+	cursor: pointer;
+	margin-left: 10px;
+	transition: background-color 0.2s;
+}
+
+.player-list-dialog button:hover {
+	background-color: #555;
+}
+
+.player-list-dialog button.primary {
+	background-color: #ffcc00;
+	color: #000;
+}
+
+.player-list-dialog button.primary:hover {
+	background-color: #ffd633;
+} 

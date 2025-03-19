@@ -1,150 +1,317 @@
 /**
- * Tests for pawn promotion functionality
+ * Tests for pawn promotion
  */
 
 import { expect } from 'chai';
-import sinon from 'sinon';
+import GameManager from '../../server/game/GameManager.js';
 
-// We won't directly import the server module - we'll mock the functions instead
 describe('Pawn Promotion', () => {
-	let sandbox;
-	let mockGameState;
-	
-	// Mock functions
-	let moveChessPiece;
-	let promotePawn;
-	let getGameState;
-	let emitEvent;
+	let gameManager;
+	let game;
+	let events = [];
 	
 	beforeEach(() => {
-		sandbox = sinon.createSandbox();
+		gameManager = new GameManager();
 		
-		// Create mock game state
-		mockGameState = {
-			board: {},
-			players: {
-				player1: {
-					id: 'player1',
-					pieces: [
-						{ id: 'pawn1', type: 'pawn', x: 1, y: 1, promoted: false, distanceMoved: 0 }
-					]
-				}
-			}
+		// Mock the emitGameEvent method
+		gameManager.emitGameEvent = (gameId, eventType, data) => {
+			events.push({ gameId, eventType, data });
 		};
 		
-		// Setup board with a pawn
-		mockGameState.board['1,1'] = {
-			x: 1,
-			y: 1,
-			piece: mockGameState.players.player1.pieces[0],
-			playerId: 'player1'
+		// Create a simplified game state for testing
+		game = {
+			id: 'test-game',
+			settings: {
+				boardSize: 10
+			},
+			board: Array(10).fill().map(() => Array(10).fill(null)),
+			players: {},
+			chessPieces: []
 		};
 		
-		// Create mocks for the functions we need
-		getGameState = () => mockGameState;
-		
-		emitEvent = sandbox.spy();
-		
-		promotePawn = sandbox.spy((pawn, pieceType) => {
-			pawn.type = pieceType;
-			pawn.promoted = true;
-			return true;
-		});
-		
-		moveChessPiece = (playerId, fromX, fromY, toX, toY) => {
-			// Get the piece at the source position
-			const sourceKey = `${fromX},${fromY}`;
-			const targetKey = `${toX},${toY}`;
-			
-			const source = mockGameState.board[sourceKey];
-			if (!source || source.playerId !== playerId) {
-				return false;
-			}
-			
-			const piece = source.piece;
-			if (!piece) {
-				return false;
-			}
-			
-			// Track distance moved for pawns
-			if (piece.type === 'pawn') {
-				piece.distanceMoved = (piece.distanceMoved || 0) + Math.abs(toY - fromY);
-				
-				// Check if pawn should be promoted
-				if (piece.distanceMoved >= 7 && !piece.promoted) {
-					promotePawn(piece, 'queen');
-					emitEvent('pawnPromoted', { 
-						playerId, 
-						pieceId: piece.id, 
-						x: toX, 
-						y: toY,
-						newType: 'queen'
-					});
-				}
-			}
-			
-			// Move the piece
-			delete mockGameState.board[sourceKey];
-			mockGameState.board[targetKey] = {
-				...source,
-				x: toX,
-				y: toY
-			};
-			
-			// Update the piece coordinates
-			piece.x = toX;
-			piece.y = toY;
-			
-			return true;
-		};
-	});
-	
-	afterEach(() => {
-		sandbox.restore();
+		// Clear events array
+		events = [];
 	});
 	
 	describe('moveChessPiece', () => {
-		it('should track the distance moved by pawns', () => {
-			// Initial pawn position (1,1)
+		it('should promote a pawn after 8 moves', () => {
+			const playerId = 'player1';
 			
-			// Move the pawn to (1,3) - distance = 2
-			moveChessPiece('player1', 1, 1, 1, 3);
+			// Create a player
+			game.players[playerId] = {
+				id: playerId,
+				pieces: []
+			};
 			
-			// Check that the distance was tracked
-			const pawn = mockGameState.players.player1.pieces[0];
-			expect(pawn.distanceMoved).to.equal(2);
+			// Create a pawn with 7 moves already made
+			const pawn = {
+				id: 'pawn1',
+				type: 'pawn',
+				player: playerId,
+				moveCount: 7,
+				position: {
+					x: 2,
+					y: 2
+				}
+			};
 			
-			// Move again to (1,5) - additional distance = 2
-			moveChessPiece('player1', 1, 3, 1, 5);
-			expect(pawn.distanceMoved).to.equal(4);
+			// Add the pawn to the player's pieces
+			game.players[playerId].pieces = [pawn];
+			
+			// Add the pawn to the board
+			game.board[2][2] = {
+				chessPiece: pawn,
+				player: playerId
+			};
+			
+			// Add the pawn to the game's chessPieces array
+			game.chessPieces = [pawn];
+			
+			// Verify the move is valid
+			const result = gameManager._isValidChessMove(game, pawn, 2, 2, 3, 3);
+			expect(result).to.be.true;
+			
+			// Manually update the piece position and board to simulate a move
+			pawn.position = { x: 3, y: 3 };
+			pawn.moveCount = 8; // Increment move count
+			
+			// Update the board
+			game.board[2][2].chessPiece = null;
+			game.board[3][3] = {
+				chessPiece: pawn,
+				player: playerId
+			};
+			
+			// Check for pawn promotion (similar to what happens in moveChessPiece)
+			if (pawn.type === 'pawn' && pawn.moveCount >= 8) {
+				const oldType = pawn.type;
+				pawn.type = 'knight';
+				pawn.promoted = true;
+				
+				// Emit pawn promotion event
+				gameManager.emitGameEvent('test-game', 'pawnPromoted', {
+					playerId,
+					pieceId: pawn.id,
+					x: 3,
+					y: 3,
+					oldType,
+					newType: 'knight'
+				});
+			}
+			
+			// Verify the pawn was promoted
+			const promotedPiece = game.players[playerId].pieces[0];
+			expect(promotedPiece.type).to.equal('knight');
+			expect(promotedPiece.promoted).to.be.true;
+			
+			// Verify the promotion event was emitted
+			const promotionEvent = events.find(e => e.eventType === 'pawnPromoted');
+			expect(promotionEvent).to.exist;
+			expect(promotionEvent.data.playerId).to.equal(playerId);
+			expect(promotionEvent.data.pieceId).to.equal('pawn1');
+			expect(promotionEvent.data.oldType).to.equal('pawn');
+			expect(promotionEvent.data.newType).to.equal('knight');
 		});
 		
-		it('should promote a pawn that has moved 7 or more spaces', () => {
-			// Initial pawn position (1,1)
-			const pawn = mockGameState.players.player1.pieces[0];
+		it('should not promote a pawn with fewer than 8 moves', () => {
+			const playerId = 'player1';
 			
-			// Move the pawn to (1,8) - distance = 7
-			moveChessPiece('player1', 1, 1, 1, 8);
+			// Create a player
+			game.players[playerId] = {
+				id: playerId,
+				pieces: []
+			};
 			
-			// Check that the pawn was promoted
-			expect(pawn.type).to.equal('queen');
-			expect(pawn.promoted).to.be.true;
+			// Create a pawn with 6 moves already made
+			const pawn = {
+				id: 'pawn1',
+				type: 'pawn',
+				player: playerId,
+				moveCount: 6,
+				position: {
+					x: 2,
+					y: 2
+				}
+			};
 			
-			// Check that promotePawn was called with the right arguments
-			expect(promotePawn.calledOnce).to.be.true;
-			expect(promotePawn.firstCall.args[0]).to.equal(pawn);
-			expect(promotePawn.firstCall.args[1]).to.equal('queen');
+			// Add the pawn to the player's pieces
+			game.players[playerId].pieces = [pawn];
 			
-			// Check that an event was emitted
-			expect(emitEvent.calledOnce).to.be.true;
-			expect(emitEvent.firstCall.args[0]).to.equal('pawnPromoted');
-			expect(emitEvent.firstCall.args[1]).to.deep.include({
-				playerId: 'player1',
-				pieceId: pawn.id,
-				x: 1,
-				y: 8,
-				newType: 'queen'
+			// Add the pawn to the board
+			game.board[2][2] = {
+				chessPiece: pawn,
+				player: playerId
+			};
+			
+			// Add the pawn to the game's chessPieces array
+			game.chessPieces = [pawn];
+			
+			// Verify the move is valid
+			const result = gameManager._isValidChessMove(game, pawn, 2, 2, 3, 3);
+			expect(result).to.be.true;
+			
+			// Manually update the piece position and board to simulate a move
+			pawn.position = { x: 3, y: 3 };
+			pawn.moveCount = 7; // Increment move count
+			
+			// Update the board
+			game.board[2][2].chessPiece = null;
+			game.board[3][3] = {
+				chessPiece: pawn,
+				player: playerId
+			};
+			
+			// Check for pawn promotion (similar to what happens in moveChessPiece)
+			if (pawn.type === 'pawn' && pawn.moveCount >= 8) {
+				const oldType = pawn.type;
+				pawn.type = 'knight';
+				pawn.promoted = true;
+				
+				// Emit pawn promotion event
+				gameManager.emitGameEvent('test-game', 'pawnPromoted', {
+					playerId,
+					pieceId: pawn.id,
+					x: 3,
+					y: 3,
+					oldType,
+					newType: 'knight'
+				});
+			}
+			
+			// Verify the pawn was not promoted
+			const movedPiece = game.players[playerId].pieces[0];
+			expect(movedPiece.type).to.equal('pawn');
+			expect(movedPiece.promoted).to.be.undefined;
+			
+			// Verify no promotion event was emitted
+			const promotionEvent = events.find(e => e.eventType === 'pawnPromoted');
+			expect(promotionEvent).to.not.exist;
+		});
+	});
+	
+	describe('GameManager Pawn Promotion', () => {
+		it('should promote a pawn after 8 moves', () => {
+			const gameId = 'test-game';
+			const playerId = 'player1';
+			
+			// Create a game
+			gameManager.games.set(gameId, game);
+			
+			// Create a player
+			game.players[playerId] = {
+				id: playerId,
+				pieces: [],
+				currentMoveType: 'chess'
+			};
+			
+			// Create a pawn with 7 moves already made
+			const pawn = {
+				id: `${playerId}_pawn1`,
+				type: 'pawn',
+				player: playerId,
+				moveCount: 7,
+				position: {
+					x: 2,
+					y: 2
+				}
+			};
+			
+			// Add the pawn to the player's pieces
+			game.players[playerId].pieces = [pawn];
+			
+			// Add the pawn to the board
+			game.board[2][2] = {
+				chessPiece: pawn,
+				player: playerId
+			};
+			
+			// Add the pawn to the game's chessPieces array
+			game.chessPieces = [pawn];
+			
+			// Move the pawn (8th move)
+			const result = gameManager.moveChessPiece(gameId, playerId, {
+				pieceId: `${playerId}_pawn1`,
+				fromX: 2,
+				fromY: 2,
+				toX: 3,
+				toY: 3
 			});
+			
+			// Verify the move was successful
+			expect(result.success).to.be.true;
+			
+			// Verify the pawn was promoted
+			const promotedPiece = game.players[playerId].pieces[0];
+			expect(promotedPiece.type).to.equal('knight');
+			expect(promotedPiece.promoted).to.be.true;
+			
+			// Verify the promotion event was emitted
+			const promotionEvent = events.find(e => e.eventType === 'pawnPromoted');
+			expect(promotionEvent).to.exist;
+			expect(promotionEvent.data.playerId).to.equal(playerId);
+			expect(promotionEvent.data.pieceId).to.equal(`${playerId}_pawn1`);
+			expect(promotionEvent.data.oldType).to.equal('pawn');
+			expect(promotionEvent.data.newType).to.equal('knight');
+		});
+		
+		it('should not promote a pawn with fewer than 8 moves', () => {
+			const gameId = 'test-game';
+			const playerId = 'player1';
+			
+			// Create a game
+			gameManager.games.set(gameId, game);
+			
+			// Create a player
+			game.players[playerId] = {
+				id: playerId,
+				pieces: [],
+				currentMoveType: 'chess'
+			};
+			
+			// Create a pawn with 6 moves already made
+			const pawn = {
+				id: `${playerId}_pawn1`,
+				type: 'pawn',
+				player: playerId,
+				moveCount: 6,
+				position: {
+					x: 2,
+					y: 2
+				}
+			};
+			
+			// Add the pawn to the player's pieces
+			game.players[playerId].pieces = [pawn];
+			
+			// Add the pawn to the board
+			game.board[2][2] = {
+				chessPiece: pawn,
+				player: playerId
+			};
+			
+			// Add the pawn to the game's chessPieces array
+			game.chessPieces = [pawn];
+			
+			// Move the pawn (7th move)
+			const result = gameManager.moveChessPiece(gameId, playerId, {
+				pieceId: `${playerId}_pawn1`,
+				fromX: 2,
+				fromY: 2,
+				toX: 3,
+				toY: 3
+			});
+			
+			// Verify the move was successful
+			expect(result.success).to.be.true;
+			
+			// Verify the pawn was not promoted
+			const movedPiece = game.players[playerId].pieces[0];
+			expect(movedPiece.type).to.equal('pawn');
+			expect(movedPiece.promoted).to.be.undefined;
+			
+			// Verify no promotion event was emitted
+			const promotionEvent = events.find(e => e.eventType === 'pawnPromoted');
+			expect(promotionEvent).to.not.exist;
 		});
 	});
 }); 

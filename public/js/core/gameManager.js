@@ -431,12 +431,12 @@ function render(customGameState) {
 		};
 		
 		// Log the game state being rendered
-		console.log('Rendering game state:', {
-			boardExists: !!gameStateToRender.board,
-			fallingPiece: !!gameStateToRender.fallingPiece,
-			chessPiecesCount: Object.keys(gameStateToRender.chessPieces || {}).length,
-			renderMode: gameStateToRender.renderMode
-		});
+		// console.log('Rendering game state:', {
+		// 	boardExists: !!gameStateToRender.board,
+		// 	fallingPiece: !!gameStateToRender.fallingPiece,
+		// 	chessPiecesCount: Object.keys(gameStateToRender.chessPieces || {}).length,
+		// 	renderMode: gameStateToRender.renderMode
+		// });
 		
 		// Render the game state
 		Renderer.render(gameStateToRender);
@@ -753,5 +753,87 @@ export async function initGame(options = {}) {
 	} catch (error) {
 		console.error('Error initializing game:', error);
 		return false;
+	}
+}
+
+/**
+ * Check if the king has been captured and handle game over
+ * @param {Object} capturedPiece - The captured piece
+ * @param {Object} capturedBy - The piece that captured
+ */
+export function checkKingCaptured(capturedPiece, capturedBy) {
+	try {
+		// Check if the captured piece is a king
+		if (capturedPiece && capturedPiece.type === 'king') {
+			console.log('King captured! Game over.');
+			
+			// Set game state to game over
+			gameState.state = GAME_CONSTANTS.GAME_STATE.GAME_OVER;
+			
+			// Dispatch game over event
+			const gameOverEvent = new CustomEvent('game-state-change', {
+				detail: {
+					state: GAME_CONSTANTS.GAME_STATE.GAME_OVER,
+					data: {
+						reason: 'king_captured',
+						capturedPiece,
+						capturedBy,
+						capturedPieces: ChessPieceManager.getCapturedPiecesCount(),
+						score: getScore(),
+						level: getLevel()
+					}
+				}
+			});
+			
+			window.dispatchEvent(gameOverEvent);
+		}
+	} catch (error) {
+		console.error('Error checking king captured:', error);
+	}
+}
+
+/**
+ * Check if the board is full and handle game over
+ */
+export function checkBoardFull() {
+	try {
+		// Get the board state
+		const board = ChessPieceManager.getBoard();
+		
+		// Check if the board is full (no empty cells)
+		let isFull = true;
+		for (let y = 0; y < GAME_CONSTANTS.BOARD_HEIGHT; y++) {
+			for (let x = 0; x < GAME_CONSTANTS.BOARD_WIDTH; x++) {
+				if (!board[y][x] || board[y][x].isEmpty) {
+					isFull = false;
+					break;
+				}
+			}
+			if (!isFull) break;
+		}
+		
+		if (isFull) {
+			console.log('Board is full! Game over.');
+			
+			// Set game state to game over
+			gameState.state = GAME_CONSTANTS.GAME_STATE.GAME_OVER;
+			
+			// Dispatch game over event
+			const gameOverEvent = new CustomEvent('game-state-change', {
+				detail: {
+					state: GAME_CONSTANTS.GAME_STATE.GAME_OVER,
+					data: {
+						reason: 'board_full',
+						capturedPieces: ChessPieceManager.getCapturedPiecesCount(),
+						score: getScore(),
+						level: getLevel()
+					}
+				}
+			});
+			
+			window.dispatchEvent(gameOverEvent);
+		}
+	} catch (error) {
+		console.error('Error checking if board is full:', error);
 	}
 }

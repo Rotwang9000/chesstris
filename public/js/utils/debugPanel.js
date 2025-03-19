@@ -1,7 +1,8 @@
 /**
- * Debug Panel
- * 
- * Provides a debug panel for monitoring game state and performance.
+ * Debug Panel Module
+ *
+ * Provides a visual panel for debugging game state and performance.
+ * This panel can be toggled on/off with a keyboard shortcut (F9).
  */
 
 import { GAME_CONSTANTS } from '../core/constants.js';
@@ -12,52 +13,76 @@ import * as PlayerManager from '../core/playerManager.js';
 import * as Network from './network.js';
 import * as SessionManager from './sessionManager.js';
 
+// Debug panel element
+let debugPanelElement = null;
+
 // Debug panel state
 let isInitialized = false;
 let isVisible = false;
-let panelElement = null;
-let statsInstance = null;
-let lastUpdateTime = 0;
-let updateInterval = 500; // Update every 500ms
+
+// Sections for organizing debug info
+let sections = {};
+
+// Performance tracking
+let lastUpdateTime = performance.now();
+let frameCount = 0;
+let fps = 0;
 
 /**
  * Initialize the debug panel
  */
 export function init() {
 	try {
+		// Check if already initialized
 		if (isInitialized) {
+			console.log('Debug panel already initialized');
 			return;
 		}
 		
-		console.log('Initializing debug panel...');
+		// Get existing debug panel element or create a new one
+		debugPanelElement = document.getElementById('debug-panel');
 		
-		// Create panel element if it doesn't exist
-		if (!panelElement) {
-			createPanelElement();
-		}
-		
-		// Initialize Stats.js if available
-		if (typeof Stats !== 'undefined') {
-			statsInstance = new Stats();
-			statsInstance.showPanel(0); // 0: fps, 1: ms, 2: mb, 3+: custom
-			document.body.appendChild(statsInstance.dom);
-			statsInstance.dom.style.position = 'absolute';
-			statsInstance.dom.style.top = '0px';
-			statsInstance.dom.style.right = '0px';
-			statsInstance.dom.style.left = 'auto';
+		if (!debugPanelElement) {
+			console.log('Creating new debug panel element');
+			debugPanelElement = document.createElement('div');
+			debugPanelElement.id = 'debug-panel';
+			debugPanelElement.style.position = 'fixed';
+			debugPanelElement.style.top = '10px';
+			debugPanelElement.style.right = '10px';
+			debugPanelElement.style.width = '300px';
+			debugPanelElement.style.padding = '10px';
+			debugPanelElement.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+			debugPanelElement.style.color = '#fff';
+			debugPanelElement.style.fontFamily = 'monospace';
+			debugPanelElement.style.fontSize = '12px';
+			debugPanelElement.style.zIndex = '9999';
+			debugPanelElement.style.overflowY = 'auto';
+			debugPanelElement.style.maxHeight = '80vh';
+			debugPanelElement.style.border = '1px solid #444';
+			debugPanelElement.style.display = 'none'; // Hidden by default
 			
-			// Hide by default
-			statsInstance.dom.style.display = 'none';
+			// Add a header
+			const header = document.createElement('div');
+			header.style.fontWeight = 'bold';
+			header.style.fontSize = '14px';
+			header.style.marginBottom = '10px';
+			header.style.borderBottom = '1px solid #444';
+			header.textContent = 'DEBUG PANEL (F9)';
+			debugPanelElement.appendChild(header);
+			
+			// Add to document
+			document.body.appendChild(debugPanelElement);
 		}
 		
-		// Set up keyboard shortcut (F9)
-		document.addEventListener('keydown', (event) => {
-			if (event.key === 'F9') {
-				event.preventDefault();
-				toggle();
-			}
-		});
+		// Create default sections
+		createSection('PERFORMANCE');
+		createSection('GAME');
+		createSection('BOARD');
+		createSection('TETROMINO');
+		createSection('CHESS');
+		createSection('ERRORS');
 		
+		// Mark as initialized
 		isInitialized = true;
 		console.log('Debug panel initialized');
 	} catch (error) {
@@ -66,478 +91,275 @@ export function init() {
 }
 
 /**
- * Create the panel element
+ * Toggle debug panel visibility
  */
-function createPanelElement() {
-	try {
-		// Create panel container
-		panelElement = document.createElement('div');
-		panelElement.id = 'debug-panel';
-		panelElement.style.position = 'fixed';
-		panelElement.style.top = '10px';
-		panelElement.style.left = '10px';
-		panelElement.style.width = '300px';
-		panelElement.style.maxHeight = '80vh';
-		panelElement.style.overflowY = 'auto';
-		panelElement.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
-		panelElement.style.color = '#00FF00';
-		panelElement.style.fontFamily = 'monospace';
-		panelElement.style.fontSize = '12px';
-		panelElement.style.padding = '10px';
-		panelElement.style.borderRadius = '5px';
-		panelElement.style.zIndex = '9999';
-		panelElement.style.display = 'none';
-		
-		// Create sections
-		const sections = [
-			'connection',
-			'game',
-			'player',
-			'board',
-			'tetromino',
-			'chess',
-			'performance'
-		];
-		
-		sections.forEach(section => {
-			const sectionElement = document.createElement('div');
-			sectionElement.id = `debug-${section}`;
-			sectionElement.className = 'debug-section';
-			sectionElement.style.marginBottom = '10px';
-			
-			const titleElement = document.createElement('div');
-			titleElement.className = 'debug-section-title';
-			titleElement.textContent = section.toUpperCase();
-			titleElement.style.fontWeight = 'bold';
-			titleElement.style.borderBottom = '1px solid #00FF00';
-			titleElement.style.marginBottom = '5px';
-			
-			const contentElement = document.createElement('div');
-			contentElement.id = `debug-${section}-content`;
-			contentElement.className = 'debug-section-content';
-			
-			sectionElement.appendChild(titleElement);
-			sectionElement.appendChild(contentElement);
-			panelElement.appendChild(sectionElement);
-		});
-		
-		// Add close button
-		const closeButton = document.createElement('button');
-		closeButton.textContent = 'Close';
-		closeButton.style.backgroundColor = '#333';
-		closeButton.style.color = '#FFF';
-		closeButton.style.border = 'none';
-		closeButton.style.padding = '5px 10px';
-		closeButton.style.cursor = 'pointer';
-		closeButton.style.marginTop = '10px';
-		closeButton.addEventListener('click', () => {
-			hide();
-		});
-		
-		panelElement.appendChild(closeButton);
-		
-		// Add to document
-		document.body.appendChild(panelElement);
-	} catch (error) {
-		console.error('Error creating debug panel element:', error);
-	}
-}
-
-/**
- * Update the debug panel
- */
-export function update() {
-	try {
-		if (!isInitialized || !isVisible) {
-			return;
-		}
-		
-		const now = performance.now();
-		if (now - lastUpdateTime < updateInterval) {
-			return;
-		}
-		
-		lastUpdateTime = now;
-		
-		// Update Stats.js
-		if (statsInstance) {
-			statsInstance.update();
-		}
-		
-		// Update connection section
-		updateConnectionSection();
-		
-		// Update game section
-		updateGameSection();
-		
-		// Update player section
-		updatePlayerSection();
-		
-		// Update board section
-		updateBoardSection();
-		
-		// Update tetromino section
-		updateTetrominoSection();
-		
-		// Update chess section
-		updateChessSection();
-		
-		// Update performance section
-		updatePerformanceSection();
-	} catch (error) {
-		console.error('Error updating debug panel:', error);
-	}
-}
-
-/**
- * Update connection section
- */
-function updateConnectionSection() {
-	try {
-		const content = document.getElementById('debug-connection-content');
-		if (!content) return;
-		
-		const isConnected = Network.isSocketConnected();
-		const socketId = Network.getSocketId() || 'N/A';
-		const sessionId = SessionManager.getPlayerId() || 'N/A';
-		
-		content.innerHTML = `
-			<div>Connected: <span style="color: ${isConnected ? '#00FF00' : '#FF0000'}">${isConnected}</span></div>
-			<div>Socket ID: ${socketId}</div>
-			<div>Session ID: ${sessionId}</div>
-		`;
-	} catch (error) {
-		console.error('Error updating connection section:', error);
-	}
-}
-
-/**
- * Update game section
- */
-function updateGameSection() {
-	try {
-		const content = document.getElementById('debug-game-content');
-		if (!content) return;
-		
-		const gameState = GameManager.getGameState() || 'N/A';
-		const isPaused = GameManager.gameIsPaused();
-		const isGameOver = GameManager.getGameOverState();
-		const renderMode = GameManager.getRenderMode() || 'N/A';
-		const score = GameManager.getScore() || 0;
-		const level = GameManager.getLevel() || 1;
-		
-		content.innerHTML = `
-			<div>State: ${gameState}</div>
-			<div>Paused: ${isPaused}</div>
-			<div>Game Over: ${isGameOver}</div>
-			<div>Render Mode: ${renderMode}</div>
-			<div>Score: ${score}</div>
-			<div>Level: ${level}</div>
-		`;
-	} catch (error) {
-		console.error('Error updating game section:', error);
-	}
-}
-
-/**
- * Update player section
- */
-function updatePlayerSection() {
-	try {
-		const content = document.getElementById('debug-player-content');
-		if (!content) return;
-		
-		const playerId = PlayerManager.getPlayerId() || 'N/A';
-		const playerName = PlayerManager.getPlayerName() || 'N/A';
-		const score = PlayerManager.getScore() || 0;
-		const level = PlayerManager.getLevel() || 1;
-		const lines = PlayerManager.getLines() || 0;
-		
-		content.innerHTML = `
-			<div>ID: ${playerId}</div>
-			<div>Name: ${playerName}</div>
-			<div>Score: ${score}</div>
-			<div>Level: ${level}</div>
-			<div>Lines: ${lines}</div>
-		`;
-	} catch (error) {
-		console.error('Error updating player section:', error);
-	}
-}
-
-/**
- * Update board section
- */
-function updateBoardSection() {
-	try {
-		const content = document.getElementById('debug-board-content');
-		if (!content) return;
-		
-		const boardWidth = GAME_CONSTANTS.BOARD_WIDTH;
-		const boardHeight = GAME_CONSTANTS.BOARD_HEIGHT;
-		const board = GameManager.getBoard();
-		const filledCells = board ? countFilledCells(board) : 0;
-		const homeZones = ChessPieceManager.getHomeZones ? ChessPieceManager.getHomeZones() : [];
-		
-		content.innerHTML = `
-			<div>Dimensions: ${boardWidth}x${boardHeight}</div>
-			<div>Filled Cells: ${filledCells}</div>
-			<div>Home Zones: ${homeZones.length}</div>
-		`;
-	} catch (error) {
-		console.error('Error updating board section:', error);
-	}
-}
-
-/**
- * Count filled cells in the board
- * @param {Array} board - Game board
- * @returns {number} - Number of filled cells
- */
-function countFilledCells(board) {
-	try {
-		let count = 0;
-		
-		for (let y = 0; y < board.length; y++) {
-			for (let x = 0; x < board[y].length; x++) {
-				if (board[y][x]) {
-					count++;
-				}
-			}
-		}
-		
-		return count;
-	} catch (error) {
-		console.error('Error counting filled cells:', error);
-		return 0;
-	}
-}
-
-/**
- * Update tetromino section
- */
-function updateTetrominoSection() {
-	try {
-		const content = document.getElementById('debug-tetromino-content');
-		if (!content) return;
-		
-		const currentPiece = TetrominoManager.getCurrentPiece ? TetrominoManager.getCurrentPiece() : null;
-		const nextPieces = TetrominoManager.getNextPieces ? TetrominoManager.getNextPieces() : [];
-		const heldPiece = TetrominoManager.getHeldPiece ? TetrominoManager.getHeldPiece() : null;
-		const canHold = TetrominoManager.canHoldPiece ? TetrominoManager.canHoldPiece() : false;
-		
-		content.innerHTML = `
-			<div>Current: ${currentPiece ? currentPiece.type : 'None'}</div>
-			<div>Position: ${currentPiece ? `(${currentPiece.x}, ${currentPiece.y})` : 'N/A'}</div>
-			<div>Next: ${nextPieces.map(p => p.type).join(', ') || 'None'}</div>
-			<div>Held: ${heldPiece ? heldPiece.type : 'None'}</div>
-			<div>Can Hold: ${canHold}</div>
-		`;
-	} catch (error) {
-		console.error('Error updating tetromino section:', error);
-	}
-}
-
-/**
- * Update chess section
- */
-function updateChessSection() {
-	try {
-		const content = document.getElementById('debug-chess-content');
-		if (!content) return;
-		
-		const pieces = ChessPieceManager.getAllPieces ? ChessPieceManager.getAllPieces() : [];
-		const selectedPiece = ChessPieceManager.getSelectedPiece ? ChessPieceManager.getSelectedPiece() : null;
-		const piecesByType = groupPiecesByType(pieces);
-		
-		let html = '';
-		
-		if (selectedPiece) {
-			html += `
-				<div>Selected: ${selectedPiece.type} at (${selectedPiece.x}, ${selectedPiece.y})</div>
-			`;
-		} else {
-			html += `<div>Selected: None</div>`;
-		}
-		
-		html += `<div>Total Pieces: ${pieces.length}</div>`;
-		
-		for (const [type, count] of Object.entries(piecesByType)) {
-			html += `<div>${type}: ${count}</div>`;
-		}
-		
-		content.innerHTML = html;
-	} catch (error) {
-		console.error('Error updating chess section:', error);
-	}
-}
-
-/**
- * Group pieces by type
- * @param {Array} pieces - Chess pieces
- * @returns {Object} - Pieces grouped by type
- */
-function groupPiecesByType(pieces) {
-	try {
-		const result = {};
-		
-		for (const piece of pieces) {
-			if (!result[piece.type]) {
-				result[piece.type] = 0;
-			}
-			
-			result[piece.type]++;
-		}
-		
-		return result;
-	} catch (error) {
-		console.error('Error grouping pieces by type:', error);
-		return {};
-	}
-}
-
-/**
- * Update performance section
- */
-function updatePerformanceSection() {
-	try {
-		const content = document.getElementById('debug-performance-content');
-		if (!content) return;
-		
-		const fps = statsInstance ? Math.round(1000 / statsInstance.getFPS()) : 'N/A';
-		const memory = window.performance && window.performance.memory ? 
-			Math.round(window.performance.memory.usedJSHeapSize / (1024 * 1024)) : 'N/A';
-		
-		content.innerHTML = `
-			<div>FPS: ${fps}</div>
-			<div>Memory: ${memory !== 'N/A' ? `${memory} MB` : 'N/A'}</div>
-			<div>Update Interval: ${updateInterval}ms</div>
-		`;
-	} catch (error) {
-		console.error('Error updating performance section:', error);
-	}
-}
-
-/**
- * Show the debug panel
- */
-export function show() {
+export function toggle() {
 	try {
 		if (!isInitialized) {
 			init();
 		}
 		
-		if (panelElement) {
-			panelElement.style.display = 'block';
+		isVisible = !isVisible;
+		
+		if (debugPanelElement) {
+			debugPanelElement.style.display = isVisible ? 'block' : 'none';
 		}
 		
-		if (statsInstance) {
-			statsInstance.dom.style.display = 'block';
-		}
-		
-		isVisible = true;
-		
-		// Force an immediate update
-		update();
-	} catch (error) {
-		console.error('Error showing debug panel:', error);
-	}
-}
-
-/**
- * Hide the debug panel
- */
-export function hide() {
-	try {
-		if (panelElement) {
-			panelElement.style.display = 'none';
-		}
-		
-		if (statsInstance) {
-			statsInstance.dom.style.display = 'none';
-		}
-		
-		isVisible = false;
-	} catch (error) {
-		console.error('Error hiding debug panel:', error);
-	}
-}
-
-/**
- * Toggle the debug panel
- */
-export function toggle() {
-	try {
-		if (isVisible) {
-			hide();
-		} else {
-			show();
-		}
+		console.log(`Debug panel ${isVisible ? 'shown' : 'hidden'}`);
 	} catch (error) {
 		console.error('Error toggling debug panel:', error);
 	}
 }
 
 /**
- * Check if the debug panel is visible
- * @returns {boolean} - Whether the debug panel is visible
+ * Check if debug panel is visible
+ * @returns {boolean} True if visible, false otherwise
  */
-export function isDebugPanelVisible() {
+export function debugPanelVisible() {
 	return isVisible;
 }
 
 /**
- * Set the update interval
- * @param {number} interval - Update interval in milliseconds
+ * Check if debug panel is initialized
+ * @returns {boolean} True if initialized, false otherwise
  */
-export function setUpdateInterval(interval) {
+export function debugPanelInitialized() {
+	return isInitialized;
+}
+
+/**
+ * Create a section in the debug panel
+ * @param {string} name - Section name
+ */
+export function createSection(name) {
 	try {
-		if (typeof interval === 'number' && interval > 0) {
-			updateInterval = interval;
+		if (!debugPanelElement) return;
+		
+		// Check if section already exists
+		if (sections[name]) {
+			return;
 		}
+		
+		// Create section container
+		const section = document.createElement('div');
+		section.className = 'debug-section';
+		section.style.marginBottom = '10px';
+		
+		// Create section title
+		const title = document.createElement('div');
+		title.className = 'debug-section-title';
+		title.textContent = name;
+		title.style.fontWeight = 'bold';
+		title.style.color = '#ffff00';
+		title.style.borderBottom = '1px solid #444';
+		title.style.marginBottom = '5px';
+		
+		// Create section content
+		const content = document.createElement('div');
+		content.className = 'debug-section-content';
+		
+		// Add to section
+		section.appendChild(title);
+		section.appendChild(content);
+		
+		// Add to debug panel
+		debugPanelElement.appendChild(section);
+		
+		// Store section reference
+		sections[name] = {
+			element: section,
+			content: content,
+			data: {}
+		};
 	} catch (error) {
-		console.error('Error setting update interval:', error);
+		console.error('Error creating debug section:', error);
 	}
 }
 
 /**
- * Log a message to the debug panel
- * @param {string} message - Message to log
- * @param {string} level - Log level (info, warn, error)
+ * Update a section with new data
+ * @param {string} sectionName - Section name
+ * @param {Object} data - Data to display (key-value pairs)
  */
-export function log(message, level = 'info') {
+export function updateSection(sectionName, data) {
 	try {
-		if (!isInitialized || !isVisible) {
-			return;
+		if (!isInitialized || !isVisible) return;
+		
+		// Get section
+		const section = sections[sectionName];
+		if (!section) {
+			createSection(sectionName);
+			return updateSection(sectionName, data);
 		}
 		
-		const logElement = document.createElement('div');
-		logElement.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+		// Update section data
+		section.data = { ...section.data, ...data };
 		
-		switch (level) {
-			case 'warn':
-				logElement.style.color = '#FFFF00';
-				break;
-			case 'error':
-				logElement.style.color = '#FF0000';
-				break;
-			default:
-				logElement.style.color = '#00FF00';
+		// Clear content
+		section.content.innerHTML = '';
+		
+		// Add data items
+		Object.entries(section.data).forEach(([key, value]) => {
+			const item = document.createElement('div');
+			item.className = 'debug-item';
+			item.style.display = 'flex';
+			item.style.justifyContent = 'space-between';
+			item.style.marginBottom = '2px';
+			
+			const keyElement = document.createElement('span');
+			keyElement.className = 'debug-key';
+			keyElement.textContent = key;
+			keyElement.style.color = '#aaaaaa';
+			
+			const valueElement = document.createElement('span');
+			valueElement.className = 'debug-value';
+			valueElement.textContent = value;
+			valueElement.style.color = '#00ff00';
+			
+			item.appendChild(keyElement);
+			item.appendChild(valueElement);
+			section.content.appendChild(item);
+		});
+	} catch (error) {
+		console.error('Error updating debug section:', error);
+	}
+}
+
+/**
+ * Log an error to the debug panel
+ * @param {string} message - Error message
+ * @param {Error} error - Error object
+ */
+export function logError(message, error) {
+	try {
+		if (!isInitialized) return;
+		
+		// Get error section
+		const section = sections['ERRORS'];
+		if (!section) {
+			createSection('ERRORS');
+			return logError(message, error);
 		}
 		
-		const logContainer = document.getElementById('debug-log-content');
-		if (logContainer) {
-			logContainer.appendChild(logElement);
+		// Create error item
+		const errorItem = document.createElement('div');
+		errorItem.className = 'debug-error';
+		errorItem.style.color = '#ff0000';
+		errorItem.style.marginBottom = '5px';
+		
+		// Add timestamp
+		const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
+		errorItem.textContent = `[${timestamp}] ${message}`;
+		
+		// Add error details if available
+		if (error) {
+			const details = document.createElement('div');
+			details.style.marginLeft = '10px';
+			details.style.fontSize = '10px';
+			details.style.color = '#ff6666';
+			details.textContent = error.message || error.toString();
+			errorItem.appendChild(details);
+		}
+		
+		// Add to section content
+		section.content.appendChild(errorItem);
+		
+		// Auto-scroll to bottom
+		section.content.scrollTop = section.content.scrollHeight;
+	} catch (e) {
+		console.error('Error logging to debug panel:', e);
+	}
+}
+
+/**
+ * Update FPS counter
+ */
+export function updateFPS() {
+	try {
+		if (!isInitialized || !isVisible) return;
+		
+		// Calculate FPS
+		const now = performance.now();
+		frameCount++;
+		
+		if (now - lastUpdateTime >= 1000) {
+			fps = Math.round((frameCount * 1000) / (now - lastUpdateTime));
+			frameCount = 0;
+			lastUpdateTime = now;
 			
-			// Limit the number of log entries
-			while (logContainer.children.length > 50) {
-				logContainer.removeChild(logContainer.firstChild);
-			}
-			
-			// Scroll to bottom
-			logContainer.scrollTop = logContainer.scrollHeight;
+			// Update performance section
+			updateSection('PERFORMANCE', {
+				'FPS': fps
+			});
 		}
 	} catch (error) {
-		console.error('Error logging to debug panel:', error);
+		console.error('Error updating FPS:', error);
 	}
-} 
+}
+
+/**
+ * Clear all debug panel content
+ */
+export function clear() {
+	try {
+		if (!isInitialized) return;
+		
+		// Clear all sections
+		Object.values(sections).forEach(section => {
+			section.content.innerHTML = '';
+			section.data = {};
+		});
+	} catch (error) {
+		console.error('Error clearing debug panel:', error);
+	}
+}
+
+export function update(gameState) {
+	if (!debugPanelElement || debugPanelElement.style.display === 'none') {
+		return;
+	}
+	return;
+	// Update FPS counter
+	const now = performance.now();
+	frameCount++;
+	
+	if (now - lastUpdateTime >= 1000) {
+		fps = Math.round((frameCount * 1000) / (now - lastUpdateTime));
+		frameCount = 0;
+		lastUpdateTime = now;
+	}
+	
+	// Get the content container
+	const content = document.getElementById('debug-content');
+	
+	// Clear the content	
+	content.innerHTML = '';
+	
+	// Add FPS counter
+	addDebugSection(content, 'Performance', [
+		`FPS: ${fps}`,
+		`Delta Time: ${window.deltaTime ? window.deltaTime.toFixed(4) : 'N/A'} s`
+	]);
+	
+	// Add game state information
+	addDebugSection(content, 'Game State', [
+		`Game Mode: ${gameState.isOfflineMode ? 'Offline' : 'Online'}`,
+		`Game Status: ${gameState.isGameOver ? 'Game Over' : gameState.isPaused ? 'Paused' : 'Running'}`,
+		`Game ID: ${gameState.gameId || 'N/A'}`
+	]);
+}
+
+
+// Export the module
+export default {
+	init,
+	toggle,
+	isVisible,
+	isInitialized,
+	createSection,
+	updateSection,
+	logError,
+	updateFPS,
+	clear,
+	update
+}; 

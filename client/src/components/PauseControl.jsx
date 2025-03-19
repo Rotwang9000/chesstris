@@ -1,165 +1,121 @@
 import React, { useState, useEffect } from 'react';
-import { socket } from '../services/socketService';
+import axios from 'axios';
 import './PauseControl.css';
 
 /**
- * Component for controlling game pause functionality
+ * PauseControl component allows players to pause and resume their game
+ * 
+ * @param {Object} props Component props
+ * @param {string} props.gameId The ID of the current game
+ * @param {string} props.playerId The ID of the current player
+ * @param {function} props.onStatusChange Callback when pause status changes
+ * @returns {JSX.Element} The rendered component
  */
-const PauseControl = ({ playerId, gameId }) => {
+const PauseControl = ({ gameId, playerId, onStatusChange }) => {
 	const [isPaused, setIsPaused] = useState(false);
-	const [pauseExpiry, setPauseExpiry] = useState(null);
-	const [cooldownRemaining, setCooldownRemaining] = useState(0);
-	const [onCooldown, setOnCooldown] = useState(false);
+	const [remainingTime, setRemainingTime] = useState(0);
+	const [isLoading, setIsLoading] = useState(false);
 	const [tooltipVisible, setTooltipVisible] = useState(false);
 	
-	// Format time remaining in mm:ss format
-	const formatTimeRemaining = (ms) => {
-		const totalSeconds = Math.ceil(ms / 1000);
+	// Format the remaining time as MM:SS
+	const formatTime = (ms) => {
+		const totalSeconds = Math.floor(ms / 1000);
 		const minutes = Math.floor(totalSeconds / 60);
 		const seconds = totalSeconds % 60;
-		return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+		return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
 	};
 	
-	// Check pause cooldown status
-	const checkPauseCooldown = () => {
-		socket.emit('checkPauseCooldown', { gameId });
-	};
+	// Check the pause status periodically
+	useEffect(() => {
+		const checkPauseStatus = async () => {
+			try {
+				const response = await axios.get(`/api/games/${gameId}/players/${playerId}/pauseStatus`);
+				const { isPaused: newIsPaused, remainingTime: newRemainingTime } = response.data;
+				
+				if (isPaused !== newIsPaused) {
+					setIsPaused(newIsPaused);
+					if (onStatusChange) {
+						onStatusChange(newIsPaused);
+					}
+				}
+				
+				setRemainingTime(newRemainingTime);
+			} catch (error) {
+				console.error('Error checking pause status:', error);
+			}
+		};
+		
+		// Check immediately and then every second
+		checkPauseStatus();
+		const interval = setInterval(checkPauseStatus, 1000);
+		
+		return () => clearInterval(interval);
+	}, [gameId, playerId, isPaused, onStatusChange]);
 	
 	// Handle pause button click
-	const handlePauseClick = () => {
-		if (isPaused) {
-			// Resume game
-			socket.emit('resumeGame', { gameId });
-		} else {
-			// Pause game
-			socket.emit('pauseGame', { gameId });
+	const handlePause = async () => {
+		setIsLoading(true);
+		try {
+			const response = await axios.post(`/api/games/${gameId}/players/${playerId}/pause`);
+			if (response.data.success) {
+				setIsPaused(true);
+				if (onStatusChange) {
+					onStatusChange(true);
+				}
+			} else {
+				console.error('Error pausing game:', response.data.error);
+			}
+		} catch (error) {
+			console.error('Error pausing game:', error);
+		} finally {
+			setIsLoading(false);
 		}
 	};
 	
-	// Setup socket listeners
-	useEffect(() => {
-		// Check initial pause cooldown status
-		checkPauseCooldown();
-		
-		// Set up interval to check cooldown status
-		const intervalId = setInterval(checkPauseCooldown, 5000); // Check every 5 seconds
-		
-		// Pause response handler
-		socket.on('pauseResponse', (data) => {
-			if (data.success) {
-				setIsPaused(true);
-				setPauseExpiry(data.expiryTime);
-			} else if (data.reason === 'on_cooldown') {
-				setCooldownRemaining(data.remainingTime);
-				setOnCooldown(true);
-			}
-		});
-		
-		// Resume response handler
-		socket.on('resumeResponse', (data) => {
-			if (data.success) {
+	// Handle resume button click
+	const handleResume = async () => {
+		setIsLoading(true);
+		try {
+			const response = await axios.post(`/api/games/${gameId}/players/${playerId}/resume`);
+			if (response.data.success) {
 				setIsPaused(false);
-				setPauseExpiry(null);
-				if (data.cooldownRemaining) {
-					setCooldownRemaining(data.cooldownRemaining);
-					setOnCooldown(true);
+				if (onStatusChange) {
+					onStatusChange(false);
 				}
+			} else {
+				console.error('Error resuming game:', response.data.error);
 			}
-		});
-		
-		// Handle player paused event (could be from another player)
-		socket.on('playerPaused', (data) => {
-			if (data.playerId === playerId) {
-				setIsPaused(true);
-				setPauseExpiry(data.expiryTime);
-			}
-		});
-		
-		// Handle player resumed event
-		socket.on('playerResumed', (data) => {
-			if (data.playerId === playerId) {
-				setIsPaused(false);
-				setPauseExpiry(null);
-				if (data.cooldownRemaining) {
-					setCooldownRemaining(data.cooldownRemaining);
-					setOnCooldown(true);
-				}
-			}
-		});
-		
-		// Pause cooldown status handler
-		socket.on('pauseCooldownStatus', (data) => {
-			if (data.success) {
-				setOnCooldown(data.onCooldown);
-				setCooldownRemaining(data.remainingTime);
-			}
-		});
-		
-		// Set up countdown timers
-		let pauseCountdown;
-		let cooldownCountdown;
-		
-		if (isPaused && pauseExpiry) {
-			pauseCountdown = setInterval(() => {
-				const remaining = pauseExpiry - Date.now();
-				if (remaining <= 0) {
-					setIsPaused(false);
-					setPauseExpiry(null);
-					clearInterval(pauseCountdown);
-				}
-			}, 1000);
+		} catch (error) {
+			console.error('Error resuming game:', error);
+		} finally {
+			setIsLoading(false);
 		}
-		
-		if (onCooldown && cooldownRemaining) {
-			cooldownCountdown = setInterval(() => {
-				setCooldownRemaining(prev => {
-					const newRemaining = prev - 1000;
-					if (newRemaining <= 0) {
-						setOnCooldown(false);
-						clearInterval(cooldownCountdown);
-						return 0;
-					}
-					return newRemaining;
-				});
-			}, 1000);
-		}
-		
-		// Clean up
-		return () => {
-			clearInterval(intervalId);
-			clearInterval(pauseCountdown);
-			clearInterval(cooldownCountdown);
-			
-			socket.off('pauseResponse');
-			socket.off('resumeResponse');
-			socket.off('playerPaused');
-			socket.off('playerResumed');
-			socket.off('pauseCooldownStatus');
-		};
-	}, [playerId, gameId, isPaused, pauseExpiry, onCooldown, cooldownRemaining]);
+	};
 	
 	return (
 		<div className="pause-control">
-			<button 
-				className={`pause-button ${isPaused ? 'paused' : ''} ${onCooldown && !isPaused ? 'on-cooldown' : ''}`}
-				onClick={handlePauseClick}
-				disabled={onCooldown && !isPaused}
-				onMouseEnter={() => setTooltipVisible(true)}
-				onMouseLeave={() => setTooltipVisible(false)}
-			>
-				{isPaused ? 'Resume' : 'Pause'}
-			</button>
-			
-			{isPaused && pauseExpiry && (
-				<div className="pause-timer">
-					Pause ends in: {formatTimeRemaining(pauseExpiry - Date.now())}
-				</div>
-			)}
-			
-			{onCooldown && !isPaused && (
-				<div className="cooldown-timer">
-					Next pause in: {formatTimeRemaining(cooldownRemaining)}
-				</div>
+			{isPaused ? (
+				<>
+					<div className="pause-status">
+						<span className="pause-label">PAUSED</span>
+						<span className="pause-timer">{formatTime(remainingTime)}</span>
+					</div>
+					<button 
+						className="resume-button"
+						onClick={handleResume}
+						disabled={isLoading}
+					>
+						Resume Game
+					</button>
+				</>
+			) : (
+				<button 
+					className="pause-button"
+					onClick={handlePause}
+					disabled={isLoading}
+				>
+					Pause Game
+				</button>
 			)}
 			
 			{tooltipVisible && (

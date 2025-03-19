@@ -1,0 +1,159 @@
+.board-cell {
+	width: 100%;
+	height: 100%;
+	position: relative;
+	cursor: pointer;
+}
+
+/* For browsers without WebGL support */
+.fallback-cell {
+	width: 100%;
+	height: 100%;
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	border: 1px solid #333;
+	background-color: #ddd;
+}
+
+.fallback-cell.dark {
+	background-color: #888;
+}
+
+.fallback-cell.home-zone {
+	border: 2px solid gold;
+}
+
+.fallback-cell.valid-move-target {
+	background-color: rgba(0, 255, 0, 0.3);
+}
+
+.fallback-cell.highlighted {
+	background-color: rgba(255, 255, 0, 0.3);
+}
+
+/* Fallback styles for non-WebGL browsers */
+.cell-fallback {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
+	background-color: #ccc;
+	border-radius: 4px;
+	opacity: 0; /* Hidden by default, shown when WebGL fails */
+}
+
+/* WebGL error state */
+.board-cell.webgl-error .cell-fallback {
+	opacity: 1;
+}
+
+/* Home zone indicator */
+.home-zone-indicator {
+	position: absolute;
+	top: 3px;
+	left: 3px;
+	right: 3px;
+	bottom: 3px;
+	border: 2px solid rgba(255, 255, 255, 0.8);
+	border-radius: 3px;
+	pointer-events: none;
+}
+
+/* Valid move indicator */
+.valid-move-indicator {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	width: 20px;
+	height: 20px;
+	border-radius: 50%;
+	background-color: rgba(46, 204, 113, 0.6);
+	transform: translate(-50%, -50%);
+	animation: pulse 1.5s infinite alternate;
+	pointer-events: none;
+}
+
+/* Special cell states */
+.board-cell.highlighted .cell-fallback {
+	box-shadow: inset 0 0 10px rgba(255, 255, 255, 0.7);
+}
+
+.board-cell.valid-move .cell-fallback {
+	background-color: rgba(46, 204, 113, 0.5);
+}
+
+/* Home zone degradation effects */
+.board-cell.home-zone.degrading .cell-fallback {
+	background-image: linear-gradient(45deg, rgba(0, 0, 0, 0.1) 25%, transparent 25%, transparent 50%, rgba(0, 0, 0, 0.1) 50%, rgba(0, 0, 0, 0.1) 75%, transparent 75%, transparent);
+	background-size: 8px 8px;
+}
+
+.board-cell.home-zone.severely-degraded .cell-fallback {
+	background-image: linear-gradient(45deg, rgba(0, 0, 0, 0.3) 25%, transparent 25%, transparent 50%, rgba(0, 0, 0, 0.3) 50%, rgba(0, 0, 0, 0.3) 75%, transparent 75%, transparent);
+	background-size: 8px 8px;
+	opacity: 0.7;
+}
+
+/* Cell types */
+.board-cell.neutral .cell-fallback {
+	background-color: #888;
+}
+
+.board-cell.no-mans-land .cell-fallback {
+	background-color: #555;
+}
+
+/* Animations */
+@keyframes pulse {
+	0% {
+		transform: translate(-50%, -50%) scale(0.8);
+		opacity: 0.7;
+	}
+	100% {
+		transform: translate(-50%, -50%) scale(1.2);
+		opacity: 0.9;
+	}
+}
+
+/* Crack animation for severely degraded zones */
+@keyframes crack {
+	0% {
+		background-position: 0 0;
+	}
+	100% {
+		background-position: 8px 8px;
+	}
+}
+
+.board-cell.home-zone.severely-degraded .cell-fallback {
+	animation: crack 2s linear infinite;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+	.board-cell {
+		width: 50px;
+		height: 50px;
+		margin: 1px;
+	}
+	
+	.valid-move-indicator {
+		width: 15px;
+		height: 15px;
+	}
+}
+
+@media (max-width: 480px) {
+	.board-cell {
+		width: 40px;
+		height: 40px;
+		margin: 1px;
+	}
+	
+	.valid-move-indicator {
+		width: 12px;
+		height: 12px;
+	}
+} 

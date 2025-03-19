@@ -362,25 +362,56 @@ export function movePiece(x, y) {
 }
 
 /**
- * Capture a chess piece
- * @param {Object} piece - Piece to capture
- * @param {string} capturingPlayerId - ID of player capturing the piece
+ * Capture a piece
+ * @param {string} pieceId - ID of the piece to capture
+ * @param {string} capturedById - ID of the piece that captured it
+ * @returns {boolean} Whether the capture was successful
  */
-function capturePiece(piece, capturingPlayerId) {
+export function capturePiece(pieceId, capturedById) {
 	try {
-		// Add score to capturing player
-		const captureScore = piece.value * GAME_CONSTANTS.SCORING.CHESS_CAPTURE;
-		PlayerManager.updatePlayerScore(capturingPlayerId, captureScore);
-		
-		// If piece is a king, eliminate player
-		if (piece.pieceType === CHESS_PIECE_TYPES.KING) {
-			PlayerManager.eliminatePlayer(piece.playerId);
+		// Check if the piece exists
+		if (!chessPieces[pieceId]) {
+			console.warn(`Piece ${pieceId} does not exist`);
+			return false;
 		}
 		
-		// Transfer piece to capturing player
-		piece.playerId = capturingPlayerId;
+		// Get the piece and the capturing piece
+		const piece = chessPieces[pieceId];
+		const capturingPiece = chessPieces[capturedById];
+		
+		// Mark the piece as captured
+		piece.captured = true;
+		
+		// Remove the piece from the board
+		const { x, y } = piece;
+		if (board[y] && board[y][x]) {
+			board[y][x].piece = null;
+		}
+		
+		// Add to captured pieces array
+		if (!capturedPieces) {
+			capturedPieces = [];
+		}
+		capturedPieces.push(piece);
+		
+		// Log the capture
+		console.log(`Piece ${pieceId} (${piece.type}) captured by ${capturedById}`);
+		
+		// Check if the captured piece is a king
+		if (piece.type === 'king') {
+			// Import GameManager dynamically to avoid circular dependency
+			import('../core/gameManager.js').then(GameManager => {
+				// Call the checkKingCaptured function
+				GameManager.checkKingCaptured(piece, capturingPiece);
+			}).catch(error => {
+				console.error('Error importing GameManager:', error);
+			});
+		}
+		
+		return true;
 	} catch (error) {
 		console.error('Error capturing piece:', error);
+		return false;
 	}
 }
 
@@ -528,8 +559,8 @@ export function getBoard() {
 			}
 		}
 		
-		console.log('Board retrieved with dimensions:', boardWithProperties.length, 'x', 
-			(boardWithProperties[0] ? boardWithProperties[0].length : 0));
+		// console.log('Board retrieved with dimensions:', boardWithProperties.length, 'x', 
+		// 	(boardWithProperties[0] ? boardWithProperties[0].length : 0));
 		
 		return boardWithProperties;
 	} catch (error) {
@@ -717,4 +748,30 @@ export function getAllPieces() {
 		chessPieces,
 		homeZones
 	};
+}
+
+/**
+ * Get the count of captured pieces
+ * @returns {number} The number of captured pieces
+ */
+export function getCapturedPiecesCount() {
+	try {
+		// If we have a capturedPieces array, return its length
+		if (capturedPieces && Array.isArray(capturedPieces)) {
+			return capturedPieces.length;
+		}
+		
+		// If we don't have a capturedPieces array, count the pieces that are marked as captured
+		let count = 0;
+		for (const pieceId in chessPieces) {
+			if (chessPieces[pieceId].captured) {
+				count++;
+			}
+		}
+		
+		return count;
+	} catch (error) {
+		console.error('Error getting captured pieces count:', error);
+		return 0;
+	}
 }

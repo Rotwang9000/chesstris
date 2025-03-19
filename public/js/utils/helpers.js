@@ -5,6 +5,23 @@
  */
 
 /**
+ * Generate a UUID v4
+ * @returns {string} - UUID v4
+ */
+export function generateUUID() {
+	try {
+		return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+			const r = Math.random() * 16 | 0;
+			const v = c === 'x' ? r : (r & 0x3 | 0x8);
+			return v.toString(16);
+		});
+	} catch (error) {
+		console.error('Error generating UUID:', error);
+		return `uuid-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+	}
+}
+
+/**
  * Generate a random ID
  * @param {number} length - Length of the ID
  * @returns {string} - Random ID
@@ -150,9 +167,6 @@ export function randomFloat(min, max) {
 export function randomColor() {
 	return `#${Math.floor(Math.random()*16777215).toString(16)}`;
 }
-
-
-
 
 /**
  * Shuffle an array in place

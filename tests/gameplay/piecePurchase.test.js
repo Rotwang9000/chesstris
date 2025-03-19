@@ -5,12 +5,17 @@
 import { expect } from 'chai';
 import * as sinon from 'sinon';
 import { createTestProxy } from '../setup.js';
+const GameManager = require('../../server/game/GameManager');
+const { PIECE_PRICES } = require('../../server/constants');
 
 describe('Piece Purchase System', () => {
 	let mockGameState;
 	let serverProxy;
 	let sandbox;
 	let ioMock;
+	let gameManager;
+	let gameId;
+	let playerId;
 	
 	beforeEach(() => {
 		sandbox = sinon.createSandbox();
@@ -153,6 +158,42 @@ describe('Piece Purchase System', () => {
 				});
 			}
 		});
+		
+		gameManager = new GameManager(true); // Testing mode
+		
+		// Mock the log function if it doesn't exist
+		if (!gameManager.log) {
+			gameManager.log = (message) => {
+				console.log(`[TEST LOG] ${message}`);
+			};
+		}
+		
+		// Mock the emitGameEvent function
+		gameManager.emitGameEvent = (id, event, data) => {
+			console.log(`[TEST EVENT] ${event} for game ${id}`, data);
+		};
+		
+		// Create a game and get the gameId from the result
+		const gameResult = gameManager.createGame({
+			boardSize: 10,
+			homeZoneSize: 3
+		});
+		
+		gameId = gameResult.gameId;
+		
+		// Add a player
+		const playerResult = gameManager.addPlayer(gameId, 'player1', 'Player 1');
+		expect(playerResult.success).to.be.true;
+		playerId = 'player1';
+		
+		// Start the game
+		gameManager.startGame(gameId);
+		
+		// Ensure the game has transactions array
+		const game = gameManager.getGameState(gameId);
+		if (!game.transactions) {
+			game.transactions = [];
+		}
 	});
 	
 	afterEach(() => {
@@ -267,5 +308,101 @@ describe('Piece Purchase System', () => {
 			// Check that notification was sent
 			expect(ioMock.emit.calledWith('ownershipTransferred')).to.be.true;
 		});
+	});
+	
+	it('should successfully purchase a pawn', () => {
+		// Purchase a pawn
+		const result = gameManager.purchasePiece(gameId, playerId, 'pawn', PIECE_PRICES.PAWN);
+		
+		// Verify the purchase was successful
+		expect(result.success).to.be.true;
+		expect(result.piece).to.exist;
+		expect(result.piece.type).to.equal('pawn');
+		expect(result.piece.player).to.equal(playerId);
+		
+		// Verify a transaction was recorded
+		const game = gameManager.getGameState(gameId);
+		const transaction = game.transactions.find(tx => tx.type === 'piece_purchase' && tx.playerId === playerId);
+		expect(transaction).to.exist;
+		expect(transaction.amount).to.equal(PIECE_PRICES.PAWN);
+	});
+	
+	it('should fail if insufficient payment is provided', () => {
+		// Attempt to purchase a queen with insufficient payment
+		const result = gameManager.purchasePiece(gameId, playerId, 'queen', PIECE_PRICES.QUEEN / 2);
+		
+		// Verify the purchase failed
+		expect(result.success).to.be.false;
+		expect(result.error).to.include('Insufficient payment');
+		
+		// Verify no transaction was recorded
+		const game = gameManager.getGameState(gameId);
+		const transaction = game.transactions.find(tx => 
+			tx.type === 'piece_purchase' && 
+			tx.playerId === playerId && 
+			tx.pieceType === 'queen'
+		);
+		expect(transaction).to.not.exist;
+	});
+	
+	it('should fail if invalid piece type is requested', () => {
+		// Attempt to purchase an invalid piece type
+		const result = gameManager.purchasePiece(gameId, playerId, 'invalid', 1.0);
+		
+		// Verify the purchase failed
+		expect(result.success).to.be.false;
+		expect(result.error).to.include('Invalid piece type');
+		
+		// Verify no transaction was recorded
+		const game = gameManager.getGameState(gameId);
+		const transaction = game.transactions.find(tx => 
+			tx.type === 'piece_purchase' && 
+			tx.playerId === playerId && 
+			tx.pieceType === 'invalid'
+		);
+		expect(transaction).to.not.exist;
+	});
+	
+	it('should fail to purchase a king', () => {
+		// Attempt to purchase a king
+		const result = gameManager.purchasePiece(gameId, playerId, 'king', 5.0);
+		
+		// Verify the purchase failed
+		expect(result.success).to.be.false;
+		expect(result.error).to.include('Cannot purchase a king');
+		
+		// Verify no transaction was recorded
+		const game = gameManager.getGameState(gameId);
+		const transaction = game.transactions.find(tx => 
+			tx.type === 'piece_purchase' && 
+			tx.playerId === playerId && 
+			tx.pieceType === 'king'
+		);
+		expect(transaction).to.not.exist;
+	});
+	
+	it('should place the purchased piece in the home zone', () => {
+		// Purchase a rook
+		const result = gameManager.purchasePiece(gameId, playerId, 'rook', PIECE_PRICES.ROOK);
+		
+		// Verify the purchase was successful
+		expect(result.success).to.be.true;
+		expect(result.piece).to.exist;
+		
+		// Verify the piece was placed in the home zone
+		const game = gameManager.getGameState(gameId);
+		const homeZone = game.players[playerId].homeZone;
+		
+		// The piece should be within the bounds of the home zone
+		const piece = game.chessPieces.find(p => p.id === result.piece.id);
+		expect(piece).to.exist;
+		
+		// Get home zone bounds
+		const homeZoneBounds = gameManager._getHomeZoneBounds(game, playerId);
+		const { x, y, width, height } = homeZoneBounds;
+		
+		// Check if the piece is within home zone bounds
+		expect(piece.x >= x && piece.x < x + width).to.be.true;
+		expect(piece.y >= y && piece.y < y + height).to.be.true;
 	});
 }); 

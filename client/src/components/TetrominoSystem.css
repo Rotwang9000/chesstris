@@ -1,0 +1,165 @@
+.tetromino-system {
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	max-width: 1000px;
+	margin: 0 auto;
+	padding: 1rem;
+}
+
+.tetromino-viewport {
+	width: 100%;
+	height: 500px;
+	background-color: #000;
+	position: relative;
+	border-radius: 8px;
+	overflow: hidden;
+	box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.tetromino-controls {
+	display: flex;
+	justify-content: center;
+	gap: 2rem;
+	margin-top: 1rem;
+	flex-wrap: wrap;
+}
+
+.control-group {
+	display: flex;
+	gap: 0.5rem;
+}
+
+.control-button {
+	padding: 0.75rem 1.25rem;
+	background-color: #2C3E50;
+	color: white;
+	border: none;
+	border-radius: 4px;
+	font-family: 'Playfair Display', serif;
+	font-size: 1rem;
+	cursor: pointer;
+	transition: all 0.2s ease;
+	box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.control-button:hover {
+	background-color: #34495E;
+	transform: translateY(-2px);
+	box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+}
+
+.control-button:active {
+	transform: translateY(1px);
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.control-button.valid {
+	background-color: #27AE60;
+}
+
+.control-button.valid:hover {
+	background-color: #2ECC71;
+}
+
+.control-button.invalid {
+	background-color: #C0392B;
+	opacity: 0.7;
+	cursor: not-allowed;
+}
+
+.placement-status {
+	margin-top: 1.5rem;
+	padding: 1rem;
+	background-color: rgba(44, 62, 80, 0.1);
+	border-radius: 8px;
+	text-align: center;
+}
+
+.status-indicator {
+	font-family: 'Playfair Display', serif;
+	font-size: 1.25rem;
+	font-weight: bold;
+	margin-bottom: 0.5rem;
+}
+
+.status-indicator.valid {
+	color: #27AE60;
+}
+
+.status-indicator.invalid {
+	color: #C0392B;
+}
+
+.status-details {
+	font-family: 'Roboto', sans-serif;
+	font-size: 1rem;
+	color: #555;
+}
+
+/* Animation for falling */
+@keyframes fall {
+	from { 
+		transform: translateZ(10px);
+	}
+	to {
+		transform: translateZ(0);
+	}
+}
+
+/* Animation for explosion */
+@keyframes explode {
+	0% {
+		transform: scale(1);
+		opacity: 1;
+	}
+	100% {
+		transform: scale(2);
+		opacity: 0;
+	}
+}
+
+/* Animation for placement */
+@keyframes place {
+	0% {
+		transform: scale(1);
+	}
+	50% {
+		transform: scale(1.2);
+	}
+	100% {
+		transform: scale(1);
+	}
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+	.tetromino-viewport {
+		height: 350px;
+	}
+	
+	.control-button {
+		padding: 0.5rem 1rem;
+		font-size: 0.9rem;
+	}
+	
+	.tetromino-controls {
+		gap: 1rem;
+	}
+}
+
+@media (max-width: 480px) {
+	.tetromino-viewport {
+		height: 250px;
+	}
+	
+	.control-button {
+		padding: 0.4rem 0.8rem;
+		font-size: 0.8rem;
+	}
+	
+	.tetromino-controls {
+		flex-direction: column;
+		align-items: center;
+	}
+} 

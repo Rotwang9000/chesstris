@@ -174,12 +174,17 @@ function resizeCanvas() {
  */
 export function render(gameState) {
 	try {
-		if (!activeRenderer) return;
+		if (!activeRenderer) {
+			console.error('No active renderer found');
+			return;
+		}
 		
 		// Call active renderer
 		if (activeRenderer.render) {
 			activeRenderer.render(gameState);
-		}
+		} else {
+			console.error('Active renderer does not have a render method');
+		}	
 	} catch (error) {
 		console.error('Error rendering game:', error);
 	}
@@ -191,11 +196,16 @@ export function render(gameState) {
  */
 export function update(deltaTime) {
 	try {
-		if (!activeRenderer) return;
+		if (!activeRenderer) {
+			console.error('No active renderer found!');
+			return;
+		}
 		
 		// Call active renderer
 		if (activeRenderer.update) {
 			activeRenderer.update(deltaTime);
+		} else {
+			console.error('Active renderer does not have an update method');
 		}
 	} catch (error) {
 		console.error('Error updating renderer:', error);

@@ -1,0 +1,22 @@
+/**
+ * Check if a cell has another cell underneath it
+ * @param {Object} game - The game state
+ * @param {number} x - X coordinate
+ * @param {number} z - Z coordinate
+ * @returns {boolean} True if there's a cell underneath
+ * @private
+ */
+_hasCellUnderneath(game, x, z) {
+	const boardSize = game.settings.boardSize;
+	
+	// Check bounds
+	if (x < 0 || x >= boardSize || z < 0 || z >= boardSize) {
+		return false;
+	}
+	
+	// Check if there's a cell at this position
+	return game.board[z][x] !== null;
+}
+
+// Export the GameManager class
+module.exports = GameManager; 

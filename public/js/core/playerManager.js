@@ -371,3 +371,124 @@ export function update(deltaTime) {
 		console.error('Error updating players:', error);
 	}
 }
+
+/**
+ * Get player ID
+ * @returns {string} Player ID
+ */
+export function getPlayerId() {
+	try {
+		// Return current player ID if available
+		if (currentPlayerId) {
+			return currentPlayerId;
+		}
+		
+		// Otherwise, get from session
+		return SessionManager.getPlayerId();
+	} catch (error) {
+		console.error('Error getting player ID:', error);
+		return null;
+	}
+}
+
+/**
+ * Get player name
+ * @returns {string} Player name
+ */
+export function getPlayerName() {
+	try {
+		// Get current player
+		const player = getCurrentPlayer();
+		
+		// Return player name if available
+		if (player && player.name) {
+			return player.name;
+		}
+		
+		// Otherwise, get from session
+		return SessionManager.getPlayerName() || 'Player';
+	} catch (error) {
+		console.error('Error getting player name:', error);
+		return 'Player';
+	}
+}
+
+/**
+ * Add score to player
+ * @param {number} points - Points to add
+ * @param {string} [playerId] - Player ID (defaults to current player)
+ * @returns {boolean} Whether the score was added successfully
+ */
+export function addScore(points, playerId = null) {
+	try {
+		// Use provided player ID or current player ID
+		const id = playerId || currentPlayerId || SessionManager.getPlayerId();
+		
+		if (!id) {
+			console.warn('No player ID provided for adding score');
+			return false;
+		}
+		
+		// Update player score
+		return updatePlayerScore(id, points);
+	} catch (error) {
+		console.error('Error adding score:', error);
+		return false;
+	}
+}
+
+/**
+ * Add lines to player
+ * @param {number} lines - Lines to add
+ * @param {string} [playerId] - Player ID (defaults to current player)
+ * @returns {boolean} Whether the lines were added successfully
+ */
+export function addLines(lines, playerId = null) {
+	try {
+		// Use provided player ID or current player ID
+		const id = playerId || currentPlayerId || SessionManager.getPlayerId();
+		
+		if (!id) {
+			console.warn('No player ID provided for adding lines');
+			return false;
+		}
+		
+		// Update player lines
+		return incrementLinesCleared(id, lines);
+	} catch (error) {
+		console.error('Error adding lines:', error);
+		return false;
+	}
+}
+
+/**
+ * Set player level
+ * @param {number} level - New level value
+ * @param {string} [playerId] - Player ID (defaults to current player)
+ * @returns {Object|null} - Updated player object or null if not found
+ */
+export function setLevel(level, playerId = null) {
+	try {
+		// Use provided player ID or current player ID
+		const id = playerId || currentPlayerId || SessionManager.getPlayerId();
+		
+		if (!id) {
+			console.warn('No player ID provided for setting level');
+			return false;
+		}
+		
+		if (!players[id]) {
+			console.error(`Player ${id} not found`);
+			return null;
+		}
+		
+		// Update player level
+		players[id].level = level;
+		
+		console.log(`Set player ${id} level to ${level}`);
+		return players[id];
+	} catch (error) {
+		console.error('Error setting player level:', error);
+		return null;
+	}
+}

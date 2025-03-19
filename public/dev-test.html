@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shaktris - Development Mode Test</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #1e1e1e;
+            color: #e0e0e0;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+        .container {
+            background-color: #2d2d2d;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+            padding: 2rem;
+            max-width: 800px;
+            width: 90%;
+            text-align: center;
+        }
+        h1 {
+            color: #4CAF50;
+            margin-top: 0;
+        }
+        .status {
+            padding: 1rem;
+            background-color: #1a472a;
+            border-radius: 4px;
+            margin: 1rem 0;
+            font-weight: bold;
+            color: #ffffff;
+            font-size: 1.2rem;
+        }
+        .info-box {
+            background-color: #3a3a3a;
+            border-radius: 4px;
+            padding: 1rem;
+            margin: 1rem 0;
+            text-align: left;
+        }
+        .links {
+            margin-top: 2rem;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            justify-content: center;
+        }
+        .link {
+            padding: 0.7rem 1.5rem;
+            background-color: #4CAF50;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            font-weight: bold;
+            transition: background-color 0.2s;
+        }
+        .link:hover {
+            background-color: #3e8e41;
+        }
+        .chess-board {
+            display: grid;
+            grid-template-columns: repeat(8, 30px);
+            grid-template-rows: repeat(8, 30px);
+            border: 2px solid #555;
+            width: fit-content;
+            margin: 1.5rem auto;
+        }
+        .cell {
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+        .light {
+            background-color: #f0d9b5;
+            color: #b58863;
+        }
+        .dark {
+            background-color: #b58863;
+            color: #f0d9b5;
+        }
+        .tetromino {
+            display: inline-block;
+            margin: 0.5rem;
+        }
+        .tetromino-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 15px);
+            grid-template-rows: repeat(4, 15px);
+            gap: 2px;
+        }
+        .tetromino-cell {
+            width: 15px;
+            height: 15px;
+            border-radius: 2px;
+        }
+        .tetromino-I { background-color: #00f0f0; }
+        .tetromino-O { background-color: #f0f000; }
+        .tetromino-T { background-color: #a000f0; }
+        .tetromino-S { background-color: #00f000; }
+        .tetromino-Z { background-color: #f00000; }
+        .tetromino-J { background-color: #0000f0; }
+        .tetromino-L { background-color: #f0a000; }
+        .empty { background-color: transparent; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Shaktris - Development Mode</h1>
+        
+        <div class="status">
+            ✅ Successfully serving from public directory
+        </div>
+        
+        <div class="info-box">
+            <p>This confirms that the server is correctly configured to serve static files from the public directory when running in development mode.</p>
+            <p>Current time: <span id="current-time"></span></p>
+            <p>Server hostname: <span id="hostname"></span></p>
+        </div>
+        
+        <div class="chess-board">
+            <!-- Chess board representation -->
+            <div class="cell light">♜</div>
+            <div class="cell dark">♞</div>
+            <div class="cell light">♝</div>
+            <div class="cell dark">♛</div>
+            <div class="cell light">♚</div>
+            <div class="cell dark">♝</div>
+            <div class="cell light">♞</div>
+            <div class="cell dark">♜</div>
+            <!-- Second row -->
+            <div class="cell dark">♟</div>
+            <div class="cell light">♟</div>
+            <div class="cell dark">♟</div>
+            <div class="cell light">♟</div>
+            <div class="cell dark">♟</div>
+            <div class="cell light">♟</div>
+            <div class="cell dark">♟</div>
+            <div class="cell light">♟</div>
+            <!-- Empty rows -->
+            <div class="cell light"></div>
+            <div class="cell dark"></div>
+            <div class="cell light"></div>
+            <div class="cell dark"></div>
+            <div class="cell light"></div>
+            <div class="cell dark"></div>
+            <div class="cell light"></div>
+            <div class="cell dark"></div>
+            
+            <div class="cell dark"></div>
+            <div class="cell light"></div>
+            <div class="cell dark"></div>
+            <div class="cell light"></div>
+            <div class="cell dark"></div>
+            <div class="cell light"></div>
+            <div class="cell dark"></div>
+            <div class="cell light"></div>
+            
+            <div class="cell light"></div>
+            <div class="cell dark"></div>
+            <div class="cell light"></div>
+            <div class="cell dark"></div>
+            <div class="cell light"></div>
+            <div class="cell dark"></div>
+            <div class="cell light"></div>
+            <div class="cell dark"></div>
+            
+            <div class="cell dark"></div>
+            <div class="cell light"></div>
+            <div class="cell dark"></div>
+            <div class="cell light"></div>
+            <div class="cell dark"></div>
+            <div class="cell light"></div>
+            <div class="cell dark"></div>
+            <div class="cell light"></div>
+            
+            <!-- White pieces -->
+            <div class="cell light">♙</div>
+            <div class="cell dark">♙</div>
+            <div class="cell light">♙</div>
+            <div class="cell dark">♙</div>
+            <div class="cell light">♙</div>
+            <div class="cell dark">♙</div>
+            <div class="cell light">♙</div>
+            <div class="cell dark">♙</div>
+            
+            <div class="cell dark">♖</div>
+            <div class="cell light">♘</div>
+            <div class="cell dark">♗</div>
+            <div class="cell light">♕</div>
+            <div class="cell dark">♔</div>
+            <div class="cell light">♗</div>
+            <div class="cell dark">♘</div>
+            <div class="cell light">♖</div>
+        </div>
+        
+        <div style="display: flex; justify-content: center; gap: 10px;">
+            <div class="tetromino">
+                <div class="tetromino-grid">
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell tetromino-I"></div>
+                    <div class="tetromino-cell tetromino-I"></div>
+                    <div class="tetromino-cell tetromino-I"></div>
+                    <div class="tetromino-cell tetromino-I"></div>
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell empty"></div>
+                </div>
+            </div>
+            <div class="tetromino">
+                <div class="tetromino-grid">
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell tetromino-O"></div>
+                    <div class="tetromino-cell tetromino-O"></div>
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell tetromino-O"></div>
+                    <div class="tetromino-cell tetromino-O"></div>
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell empty"></div>
+                </div>
+            </div>
+            <div class="tetromino">
+                <div class="tetromino-grid">
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell tetromino-T"></div>
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell tetromino-T"></div>
+                    <div class="tetromino-cell tetromino-T"></div>
+                    <div class="tetromino-cell tetromino-T"></div>
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell empty"></div>
+                    <div class="tetromino-cell empty"></div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="links">
+            <a href="/" class="link">Main Game</a>
+            <a href="/2d" class="link">Legacy 2D View</a>
+            <a href="https://github.com/yourusername/shaktris" target="_blank" class="link">GitHub</a>
+        </div>
+    </div>
+
+    <script>
+        // Update current time
+        function updateTime() {
+            document.getElementById('current-time').textContent = new Date().toLocaleString();
+        }
+        updateTime();
+        setInterval(updateTime, 1000);
+        
+        // Update hostname
+        document.getElementById('hostname').textContent = window.location.host;
+    </script>
+</body>
+</html> 

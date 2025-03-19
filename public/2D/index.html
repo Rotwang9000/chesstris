@@ -3,38 +3,66 @@
 <head>
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<title>Shaktris 2D - Chess meets Tetris</title>
-	<link rel="stylesheet" href="../styles.css">
-	<script src="/socket.io/socket.io.js" onerror="window.mockSocketConnected = true; window.socketInitialized = true; window.dispatchEvent(new CustomEvent('socketReady'));"></script>
+	<title>Shaktris 2D - Chess + Tetris</title>
+	<meta name="description" content="Shaktris is a unique game that combines elements of chess and Tetris on a dynamically expanding board.">
+	
+	<!-- Favicon -->
+	<link rel="icon" href="../img/favicon.ico">
+	
+	<!-- CSS -->
+	<link rel="stylesheet" href="../css/styles.css">
+	
+	<!-- Set 2D mode flag -->
 	<script>
 		window.is2DMode = true;
 	</script>
 </head>
 <body>
-	<div id="game-container">
-		<!-- Game canvas will be created here -->
+	<!-- Loading Screen -->
+	<div id="loading-screen" class="screen">
+		<div class="screen-content">
+			<h1>Loading Shaktris 2D...</h1>
+			<div class="loading-spinner"></div>
+		</div>
 	</div>
 	
-	<div id="version-switcher">
-		<a href="/" class="version-button">3D Version</a>
-		<a href="/2D" class="version-button current">2D Version</a>
+	<!-- Menu Screen -->
+	<div id="menu-screen" class="screen" style="display: none;">
+		<div class="screen-content">
+			<h1>Shaktris 2D</h1>
+			<p>A unique game combining chess and Tetris</p>
+			<div class="menu-buttons">
+				<button id="play-button">Play</button>
+				<button id="settings-button">Settings</button>
+				<button id="help-button">How to Play</button>
+			</div>
+		</div>
 	</div>
 	
-	<script type="module" src="../main.js"></script>
+	<!-- Game Screen -->
+	<div id="game-screen" class="screen" style="display: none;">
+		<div id="game-container"></div>
+		<div id="game-ui">
+			<div id="score-panel">
+				<div>Score: <span id="score">0</span></div>
+				<div>Level: <span id="level">1</span></div>
+				<div>Lines: <span id="lines">0</span></div>
+			</div>
+			<div id="next-piece"></div>
+			<div id="held-piece"></div>
+		</div>
+	</div>
 	
-	<script>
-		// Add debug button functionality
-		document.addEventListener('DOMContentLoaded', function() {
-			const debugButton = document.createElement('button');
-			debugButton.id = 'debug-button';
-			debugButton.className = 'debug-button';
-			debugButton.textContent = 'Debug';
-			debugButton.addEventListener('click', function() {
-				const event = new CustomEvent('toggleDebug');
-				window.dispatchEvent(event);
-			});
-			document.body.appendChild(debugButton);
-		});
-	</script>
+	<!-- Debug Panel -->
+	<div id="debug-panel" class="debug-panel">
+		<h3>Debug Info</h3>
+		<pre>Initializing...</pre>
+	</div>
+	
+	<!-- Notification Container -->
+	<div id="notification-container" class="notification-container"></div>
+	
+	<!-- JavaScript Modules -->
+	<script type="module" src="../js/main.js"></script>
 </body>
 </html> 
