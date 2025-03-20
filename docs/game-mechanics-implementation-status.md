@@ -5,60 +5,60 @@ This document outlines the current implementation status of the core game mechan
 ## Implemented Mechanics
 
 ### Core Mechanics
-- [x] **Basic Board Structure**: 2D board rendered in 3D
-- [x] **Home Zone**: Each player has a unique home zone where their chess pieces reside
-- [x] **Tetromino Placement**: Players can place tetromino pieces on the board
-- [x] **Chess Piece Movement**: Players can move chess pieces on the board
-- [x] **Turn System**: Players alternate between placing a tetromino and moving a chess piece
-- [x] **Computer Players**: Built-in computer players and external API for custom computer players
-- [x] **Spectator Mode**: Players can spectate other players' games
+- [ ] **Basic Board Structure**: 2D board rendered in 3D
+- [ ] **Home Zone**: Each player has a unique home zone where their chess pieces reside
+- [ ] **Tetromino Placement**: Players can place tetromino pieces on the board
+- [ ] **Chess Piece Movement**: Players can move chess pieces on the board
+- [ ] **Turn System**: Players alternate between placing a tetromino and moving a chess piece
+- [ ] **Computer Players**: Built-in computer players and external API for custom computer players
+- [ ] **Spectator Mode**: Players can spectate other players' games
 
 ### Tetromino Mechanics
-- [x] **Basic Tetromino Shapes**: Standard tetromino shapes (I, J, L, O, S, T, Z)
-- [x] **Tetromino Rotation**: Players can rotate tetrominos before placement
-- [x] **Basic Connectivity**: Tetrominos must connect to existing pieces
+- [ ] **Basic Tetromino Shapes**: Standard tetromino shapes (I, J, L, O, S, T, Z)
+- [ ] **Tetromino Rotation**: Players can rotate tetrominos before placement
+- [ ] **Basic Connectivity**: Tetrominos must connect to existing pieces
 
 ### Chess Mechanics
-- [x] **Standard Chess Pieces**: King, Queen, Rook, Bishop, Knight, Pawn
-- [x] **Basic Movement**: Chess pieces can move according to standard chess rules
-- [x] **Capture Mechanics**: Chess pieces can capture opponent pieces
-- [x] **King Capture**: Game ends when a player's king is captured
+- [ ] **Standard Chess Pieces**: King, Queen, Rook, Bishop, Knight, Pawn
+- [ ] **Basic Movement**: Chess pieces can move according to standard chess rules
+- [ ] **Capture Mechanics**: Chess pieces can capture opponent pieces
+- [ ] **King Capture**: Game ends when a player's king is captured
 
 ### API Integration
-- [x] **External Computer Player API**: RESTful API for third-party computer players
-- [x] **Player Registration**: Computer players can register with the server
-- [x] **Game Creation/Joining**: Computer players can create and join games
-- [x] **Move Submission**: Computer players can submit tetromino and chess moves
-- [x] **Rate Limiting**: 10-second minimum between computer player moves
+- [ ] **External Computer Player API**: RESTful API for third-party computer players
+- [ ] **Player Registration**: Computer players can register with the server
+- [ ] **Game Creation/Joining**: Computer players can create and join games
+- [ ] **Move Submission**: Computer players can submit tetromino and chess moves
+- [ ] **Rate Limiting**: 10-second minimum between computer player moves
 
 ## Partially Implemented Mechanics
 
 ### Tetromino Connectivity Rules
-- [x] **Basic Connectivity**: Tetrominos must connect to existing pieces
+- [ ] **Basic Connectivity**: Tetrominos must connect to existing pieces
 - [ ] **Path to King**: Continuous path back to the player's king needs more robust implementation
-- [x] **Orphaned Pieces**: When a row is cleared, orphaned pieces will drop back towards the king
+- [ ] **Orphaned Pieces**: When a row is cleared, orphaned pieces will drop back towards the king
 
 ### Chess Movement
-- [x] **Basic Movement**: Chess pieces can move according to simplified rules
+- [ ] **Basic Movement**: Chess pieces can move according to simplified rules
 - [ ] **Valid Move Checking**: More robust validation of chess piece movements
 - [ ] **Special Moves**: Chess special moves (castling, en passant) not implemented
 
 ### Turn Management
-- [x] **Basic Turn System**: Players alternate between tetromino and chess moves in a fixed sequence
-- [x] **Turn Sequence**: Each player must first place a tetromino, then move a chess piece
-- [x] **Minimum Turn Time**: 10-second minimum between computer player moves
+- [ ] **Basic Turn System**: Players alternate between tetromino and chess moves in a fixed sequence
+- [ ] **Turn Sequence**: Each player must first place a tetromino, then move a chess piece
+- [ ] **Minimum Turn Time**: 10-second minimum between computer player moves
 - [ ] **Asynchronous Turns**: Players should be able to take turns independently without waiting for other players
 
 ## Not Yet Implemented Mechanics
 
 ### Board Mechanics
-- [x] **Row Clearing**: Full rows (any 8 in a line) are cleared. Protection for cells in "safe" home zones (home zones with at least one piece) is implemented. Tests have been implemented to verify this functionality.
-- [x] **Home Zone Protection**: Cells in a "safe" home zone with at least one piece are protected from clearing
-- [x] **Orphaned Pieces**: Pieces disconnected from their king after row clearing are dropped back towards the king using a spiral search algorithm. Unit tests have been implemented to verify the path-to-king validation algorithm.
+- [ ] **Row Clearing**: Full rows (any 8 in a line) are cleared. Protection for cells in "safe" home zones (home zones with at least one piece) is implemented. Tests have been implemented to verify this functionality.
+- [ ] **Home Zone Protection**: Cells in a "safe" home zone with at least one piece are protected from clearing
+- [ ] **Orphaned Pieces**: Pieces disconnected from their king after row clearing are dropped back towards the king using a spiral search algorithm. Unit tests have been implemented to verify the path-to-king validation algorithm.
 - [ ] **Home Zone Degradation**: Home zones that contain no chess pieces will gradually shrink and eventually disappear. Basic implementation exists, but requires further testing.
 
 ### Pawn Promotion
-- [x] **Automatic Promotion**: Pawns are automatically promoted to knights after 8 moves. Tests have been implemented to verify this functionality.
+- [ ] **Automatic Promotion**: Pawns are automatically promoted to knights after 8 moves. Tests have been implemented to verify this functionality.
 
 ### Piece Acquisition
 - [ ] **Purchasing Pieces**: Players should be able to purchase additional pieces using Solana
@@ -78,24 +78,24 @@ The implementation includes:
 - Event emission for king capture, piece transfer, fee transfer, and game winner
 
 ### Player Pause System
-- [x] Basic pause/resume functionality
+- [ ] Basic pause/resume functionality
   - Players can pause their game for up to 15 minutes
   - During pause, pieces cannot be captured and cells won't be cleared
   - Home zones are protected while paused
 
-- [x] Pause timeout handling
+- [ ] Pause timeout handling
   - After 15 minutes, player's island is removed
   - Cells owned by other players are reassigned based on proximity to kings
   - Equidistant cells become neutral
   - Orphaned pieces are returned to home zone
   - Home zone is expanded if needed to accommodate returning pieces
 
-- [x] API Integration
+- [ ] API Integration
   - Endpoints for pausing a player
   - Endpoints for resuming a player
   - Endpoint for checking pause status and remaining time
 
-- [x] UI Component
+- [ ] UI Component
   - Created React component for player pause/resume control
   - Displays remaining pause time
   - Handles pause and resume button clicks

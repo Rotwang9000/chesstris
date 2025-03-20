@@ -24,40 +24,83 @@ let gameLoopId = null;
 let isSpectatorMode = false;
 let spectatingPlayerId = null;
 
+// Module configuration
+let _options = {
+	verbose: false,
+	renderMode: '3d',
+	showStats: false,
+	autoStartGame: false
+};
+let _verbose = false;
+let _isInitialized = false;
+
 /**
  * Initialize the game integration
- * @param {HTMLElement} container - Game container element
  * @param {Object} options - Configuration options
  * @returns {Promise<boolean>} Success status
  */
-export async function init(container, options = {}) {
+export async function init(options = {}) {
 	try {
-		if (isInitialized) {
-			console.warn('Game integration already initialized');
-			return true;
+		console.log('Initializing game integration with options:', options);
+		
+		// Store options
+		_options = { ..._options, ...options };
+		_verbose = _options.verbose || false;
+		
+		// Store container element
+		if (options.containerElement) {
+			gameContainer = options.containerElement;
 		}
 		
-		console.log('Initializing game integration...');
+		// Initialize modules in order
+		await initModules();
 		
-		// Store container
-		gameContainer = container;
-		
-		// Apply options
-		debugMode = options.debugMode || false;
-		isSpectatorMode = options.spectatorMode || false;
-		spectatingPlayerId = options.spectatingPlayerId || null;
-		
-		// Initialize all managers
-		await initManagers(options);
-		
-		// Set up event listeners
+		// Create event handlers
 		setupEventListeners();
+
+		// Initialize managers
+		await initManagers(options);
+		// Setup game state change listener
+		if (gameStateManager.onAnyStateChange) {
+			gameStateManager.onAnyStateChange(handleGameStateChange);
+		}
 		
-		// Start game loop
+		// Initialize game renderer
+		if (_options.containerElement && typeof gameRenderer !== 'undefined') {
+			// Initialize renderer
+			const rendererInitialized = await gameRenderer.init(_options.containerElement, {
+				renderMode: _options.renderMode || '3d',
+				verbose: _verbose
+			});
+			
+			if (!rendererInitialized) {
+				console.error('Failed to initialize game renderer');
+				return false;
+			}
+			
+			console.log('Game renderer initialized successfully');
+			
+			// Start render loop
+			if (typeof gameRenderer.startRenderLoop === 'function') {
+				const renderLoopStarted = gameRenderer.startRenderLoop();
+				if (!renderLoopStarted) {
+					console.warn('Failed to start render loop');
+				}
+			}
+			
+			// Create initial game board
+			if (typeof gameRenderer.createGameBoard === 'function') {
+				gameRenderer.createGameBoard();
+			}
+		}
+		
+		// Start game loops
 		startGameLoop();
 		
-		isInitialized = true;
-		console.log('Game integration initialized');
+		// Mark as initialized
+		_isInitialized = true;
+		console.log('Game integration initialized successfully');
+		
 		return true;
 	} catch (error) {
 		console.error('Error initializing game integration:', error);
@@ -66,80 +109,286 @@ export async function init(container, options = {}) {
 }
 
 /**
+ * Initialize required modules 
+ */
+async function initModules() {
+	try {
+		console.log('Initializing game modules...');
+		
+		// Initialize network first
+		if (typeof network !== 'undefined' && network.init) {
+			const networkInitialized = await network.init({
+				autoConnect: true,
+				verbose: _verbose
+			});
+			
+			if (!networkInitialized) {
+				console.warn('Failed to initialize network module, will use local mode');
+			}
+		}
+		
+		// Initialize game state manager
+		if (typeof gameStateManager !== 'undefined' && gameStateManager.init) {
+			const stateManagerInitialized = await gameStateManager.init({
+				verbose: _verbose
+			});
+			
+			if (!stateManagerInitialized) {
+				console.error('Failed to initialize game state manager');
+				throw new Error('Game state manager initialization failed');
+			}
+		}
+		
+		// Initialize tetromino manager
+		if (typeof tetrominoManager !== 'undefined' && tetrominoManager.init) {
+			await tetrominoManager.init();
+		}
+		
+		// Initialize sound manager if available
+		if (typeof soundManager !== 'undefined' && soundManager.init) {
+			await soundManager.init();
+		}
+		
+		// Initialize input controller
+		if (typeof inputController !== 'undefined' && inputController.init) {
+			await inputController.init();
+		}
+		
+		console.log('All modules initialized successfully');
+		return true;
+	} catch (error) {
+		console.error('Error initializing modules:', error);
+		throw error;
+	}
+}
+
+/**
+ * Handle game state change
+ * @param {string|Object} newState - New game state (string or object)
+ * @param {string|Object} oldState - Old game state (string or object)
+ */
+function handleGameStateChange(newState, oldState) {
+	// Handle different state formats (string or object)
+	const newStateName = typeof newState === 'string' ? newState : (newState && newState.state ? newState.state : 'unknown');
+	const oldStateName = typeof oldState === 'string' ? oldState : (oldState && oldState.state ? oldState.state : 'unknown');
+	
+	// Only log if the state name changed
+	if (newStateName !== oldStateName) {
+		console.log(`Game state changed: ${oldStateName} -> ${newStateName}`);
+	} else if (newState && oldState) {
+		// Track major changes without spamming console
+		let changes = [];
+		
+		// Check for board changes (only log significant changes)
+		if (newState.board && oldState.board) {
+			const newCellCount = countCells(newState.board);
+			const oldCellCount = countCells(oldState.board);
+			
+			if (Math.abs(newCellCount - oldCellCount) > 3) {
+				changes.push(`cells: ${oldCellCount} → ${newCellCount}`);
+			}
+		}
+		
+		// Check for turn phase changes
+		if (newState.turnPhase !== oldState.turnPhase) {
+			changes.push(`phase: ${oldState.turnPhase || 'unknown'} → ${newState.turnPhase || 'unknown'}`);
+		}
+		
+		// Check for chess piece count changes
+		if (newState.chessPieces && oldState.chessPieces && 
+			newState.chessPieces.length !== oldState.chessPieces.length) {
+			changes.push(`pieces: ${oldState.chessPieces.length} → ${newState.chessPieces.length}`);
+		}
+		
+		// Log significant changes if any detected
+		if (changes.length > 0) {
+			console.log(`Game state updates: ${changes.join(', ')}`);
+		}
+	}
+
+	// Handle state-specific actions
+	const stateToCheck = typeof newState === 'string' ? newState : (newState && newState.state ? newState.state : null);
+	
+	switch (stateToCheck) {
+		case gameStateManager.GAME_STATES.LOADING:
+			// Show loading screen
+			uiManager.showScreen('loading');
+			break;
+
+		case gameStateManager.GAME_STATES.MENU:
+			// Show menu screen
+			uiManager.showScreen('menu');
+
+			// Play menu music
+			soundManager.playMusic('menu');
+			break;
+
+		case gameStateManager.GAME_STATES.PLAYING:
+		case 'PLAYING':
+			// Show game screen
+			uiManager.showScreen('game');
+
+			// Start the game if coming from menu or paused
+			const oldStateName = typeof oldState === 'string' ? oldState : (oldState && oldState.state ? oldState.state : null);
+			if (oldStateName === gameStateManager.GAME_STATES.MENU ||
+				oldStateName === 'MENU' ||
+				oldStateName === gameStateManager.GAME_STATES.PAUSED ||
+				oldStateName === 'PAUSED') {
+				startGame();
+			}
+
+			// Play game music
+			soundManager.playMusic('game');
+			break;
+
+		case gameStateManager.GAME_STATES.PAUSED:
+		case 'PAUSED':
+			// Show pause screen
+			uiManager.showScreen('pause');
+
+			// Pause game
+			pauseGame();
+
+			// Play pause music
+			soundManager.playMusic('pause');
+			break;
+
+		case gameStateManager.GAME_STATES.GAME_OVER:
+		case 'GAME_OVER':
+			// Show game over screen
+			uiManager.showScreen('game-over');
+
+			// End game
+			endGame();
+
+			// Play game over music
+			soundManager.playMusic('game-over');
+			break;
+	}
+}
+
+/**
+ * Count cells in a board array
+ * @param {Array<Array<number>>} board - Board data
+ * @returns {number} - Number of non-empty cells
+ */
+function countCells(board) {
+	if (!board || !Array.isArray(board)) return 0;
+	
+	let count = 0;
+	for (let row of board) {
+		if (!Array.isArray(row)) continue;
+		for (let cell of row) {
+			if (cell) count++;
+		}
+	}
+	return count;
+}
+
+/**
  * Initialize all game managers
  * @param {Object} options - Configuration options
  * @returns {Promise<boolean>} Success status
  */
-async function initManagers(options) {
+async function initManagers(options = {}) {
 	try {
 		// Initialize session manager first
-		await sessionManager.init(options.session);
+		if (typeof sessionManager !== 'undefined' && sessionManager.init) {
+			await sessionManager.init(options && options.session || {});
+		}
 		
 		// Initialize network
-		await network.init({
-			autoConnect: options.autoConnect || false,
-			onConnect: handleNetworkConnect,
-			onDisconnect: handleNetworkDisconnect,
-			onError: handleNetworkError
-		});
+		if (typeof network !== 'undefined' && network.init) {
+			await network.init({
+				autoConnect: options && options.autoConnect || false,
+				onConnect: handleNetworkConnect,
+				onDisconnect: handleNetworkDisconnect,
+				onError: handleNetworkError
+			});
+		}
 		
 		// Initialize game state manager
-		await gameStateManager.init({
-			onStateChange: handleGameStateChange,
-			initialState: options.initialState || gameStateManager.GAME_STATES.MENU
-		});
+		if (typeof gameStateManager !== 'undefined' && gameStateManager.init) {
+			await gameStateManager.init({
+				onStateChange: handleGameStateChange,
+				initialState: options && options.initialState || 'MENU'
+			});
+		}
 		
 		// Initialize sound manager
-		await soundManager.init({
-			masterVolume: sessionManager.getSettings().masterVolume || 0.7,
-			musicVolume: sessionManager.getSettings().musicVolume || 0.5,
-			sfxVolume: sessionManager.getSettings().sfxVolume || 0.8
-		});
-		
-		// Preload default sounds
-		await soundManager.preloadDefaultSounds();
+		if (typeof soundManager !== 'undefined' && soundManager.init) {
+			const settings = (typeof sessionManager !== 'undefined' && sessionManager.getSettings) ? 
+				sessionManager.getSettings() : {};
+			await soundManager.init({
+				masterVolume: settings.masterVolume || 0.7,
+				musicVolume: settings.musicVolume || 0.5,
+				sfxVolume: settings.sfxVolume || 0.8
+			});
+			
+			// Preload default sounds
+			if (typeof soundManager.preloadDefaultSounds === 'function') {
+				await soundManager.preloadDefaultSounds();
+			}
+		}
 		
 		// Initialize UI manager
-		await uiManager.init({
-			rootElement: options.uiRoot || document.body,
-			theme: sessionManager.getSettings().theme || 'dark',
-			onGameStateChange: handleGameStateChange
-		});
+		if (typeof uiManager !== 'undefined' && uiManager.init) {
+			const settings = (typeof sessionManager !== 'undefined' && sessionManager.getSettings) ? 
+				sessionManager.getSettings() : {};
+			await uiManager.init({
+				rootElement: options && options.uiRoot || document.body,
+				theme: settings.theme || 'dark',
+				onGameStateChange: handleGameStateChange
+			});
+		}
 		
 		// Initialize input controller
-		await inputController.init({
-			keyBindings: sessionManager.getSettings().keyBindings,
-			onInput: handleInput
-		});
+		if (typeof inputController !== 'undefined' && inputController.init) {
+			const settings = (typeof sessionManager !== 'undefined' && sessionManager.getSettings) ? 
+				sessionManager.getSettings() : {};
+			await inputController.init({
+				keyBindings: settings.keyBindings,
+				onInput: handleInput
+			});
+		}
 		
 		// Initialize game renderer
-		await gameRenderer.init(gameContainer, {
-			mode: window.is2DMode ? '2d' : '3d',
-			showGrid: sessionManager.getSettings().showGrid !== false,
-			showShadows: sessionManager.getSettings().showShadows !== false,
-			quality: sessionManager.getSettings().quality || 'medium'
-		});
+		if (typeof gameRenderer !== 'undefined' && gameRenderer.init && gameContainer) {
+			await gameRenderer.init(gameContainer, {
+				mode: window.is2DMode ? '2d' : '3d',
+				showGrid: (typeof sessionManager !== 'undefined' && sessionManager.getSettings) ? 
+					sessionManager.getSettings().showGrid !== false : true,
+				showShadows: (typeof sessionManager !== 'undefined' && sessionManager.getSettings) ? 
+					sessionManager.getSettings().showShadows !== false : true,
+				quality: (typeof sessionManager !== 'undefined' && sessionManager.getSettings) ? 
+					sessionManager.getSettings().quality || 'medium' : 'medium'
+			});
+		}
 		
 		// Initialize tetromino manager
-		await tetrominoManager.init({
-			boardWidth: options.boardWidth || 10,
-			boardHeight: options.boardHeight || 20,
-			gameSpeed: options.gameSpeed || 1000,
-			level: options.level || 1
-		});
+		if (typeof tetrominoManager !== 'undefined' && tetrominoManager.init) {
+			await tetrominoManager.init({
+				boardWidth: options && options.boardWidth || 10,
+				boardHeight: options && options.boardHeight || 20,
+				gameSpeed: options && options.gameSpeed || 1000,
+				level: options && options.level || 1
+			});
+		}
 		
-		// Initialize chess manager
+	// Initialize chess manager
+	if (typeof chessManager !== 'undefined' && chessManager.init) {
 		await chessManager.init({
-			boardWidth: options.chessWidth || 8,
-			boardHeight: options.chessHeight || 8,
-			playerColor: options.playerColor || 'white'
+			boardWidth: options && options.chessWidth || 8,
+			boardHeight: options && options.chessHeight || 8,
+			playerColor: options && options.playerColor || 'white'
 		});
-		
-		return true;
-	} catch (error) {
-		console.error('Error initializing managers:', error);
-		return false;
 	}
+	
+	return true;
+} catch (error) {
+	console.error('Error initializing managers:', error);
+	return false;
+}
 }
 
 /**
@@ -219,28 +468,28 @@ function startGameLoop() {
  */
 function update(deltaTime) {
 	// Get current game state
-	const currentState = gameStateManager.getState();
+	const currentState = gameStateManager.getGameState();
 	
 	// Skip update if game is not in a playable state
-	if (currentState !== gameStateManager.GAME_STATES.PLAYING) {
+	if (currentState.isGameOver || currentState.isPaused) {
 		return;
 	}
 	
 	// Update game data
 	const gameData = {
-		board: tetrominoManager.getBoard(),
-		currentTetromino: tetrominoManager.getCurrentTetromino(),
-		nextTetromino: tetrominoManager.getNextTetromino(),
-		heldTetromino: tetrominoManager.getHeldTetromino(),
-		score: tetrominoManager.getScore(),
-		level: tetrominoManager.getLevel(),
-		lines: tetrominoManager.getLines(),
-		chessPieces: chessManager.getPieces(),
-		capturedPieces: chessManager.getCapturedPieces(),
+		board: currentState.board || [],
+		currentTetromino: currentState.currentTetromino,
+		nextTetromino: currentState.nextTetromino,
+		score: currentState.scores?.[currentState.localPlayerId] || 0,
+		level: currentState.level || 1,
+		chessPieces: currentState.chessPieces || [],
+		players: currentState.players || {},
+		turnPhase: currentState.turnPhase,
+		currentPlayer: currentState.currentPlayer
 	};
 	
 	// Update game state manager
-	gameStateManager.updateState(gameData);
+	gameStateManager.updateGameState(gameData);
 	
 	// Update renderer
 	gameRenderer.setGameState(gameData);
@@ -284,67 +533,6 @@ function updateDebugPanel(gameData) {
 		<h3>Debug Info</h3>
 		<pre>${JSON.stringify(debugInfo, null, 2)}</pre>
 	`;
-}
-
-/**
- * Handle game state change
- * @param {string} newState - New game state
- * @param {string} oldState - Old game state
- */
-function handleGameStateChange(newState, oldState) {
-	console.log(`Game state changed: ${oldState} -> ${newState}`);
-	
-	// Handle state-specific actions
-	switch (newState) {
-		case gameStateManager.GAME_STATES.LOADING:
-			// Show loading screen
-			uiManager.showScreen('loading');
-			break;
-			
-		case gameStateManager.GAME_STATES.MENU:
-			// Show menu screen
-			uiManager.showScreen('menu');
-			
-			// Play menu music
-			soundManager.playMusic('menu');
-			break;
-			
-		case gameStateManager.GAME_STATES.PLAYING:
-			// Show game screen
-			uiManager.showScreen('game');
-			
-			// Start the game if coming from menu or paused
-			if (oldState === gameStateManager.GAME_STATES.MENU || 
-				oldState === gameStateManager.GAME_STATES.PAUSED) {
-				startGame();
-			}
-			
-			// Play game music
-			soundManager.playMusic('game');
-			break;
-			
-		case gameStateManager.GAME_STATES.PAUSED:
-			// Show pause screen
-			uiManager.showScreen('pause');
-			
-			// Pause game
-			pauseGame();
-			
-			// Play pause music
-			soundManager.playMusic('pause');
-			break;
-			
-		case gameStateManager.GAME_STATES.GAME_OVER:
-			// Show game over screen
-			uiManager.showScreen('game-over');
-			
-			// End game
-			endGame();
-			
-			// Play game over music
-			soundManager.playMusic('game-over');
-			break;
-	}
 }
 
 /**

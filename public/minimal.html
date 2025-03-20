@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Shaktris - Minimal Test</title>
+	
+	<!-- THREE.js Libraries (explicit versions) -->
+	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
+	
+	<style>
+		body, html {
+			margin: 0;
+			padding: 0;
+			width: 100%;
+			height: 100%;
+			overflow: hidden;
+			font-family: Arial, sans-serif;
+			background-color: #000;
+		}
+		
+		#loading {
+			position: fixed;
+			top: 0;
+			left: 0;
+			width: 100%;
+			height: 100%;
+			background-color: #000;
+			display: flex;
+			justify-content: center;
+			align-items: center;
+			z-index: 1000;
+			color: white;
+			font-size: 2em;
+		}
+		
+		#game-container {
+			position: fixed;
+			top: 0;
+			left: 0;
+			width: 100%;
+			height: 100vh !important; /* Force full viewport height */
+			min-height: 100vh !important;
+			z-index: 1;
+		}
+		
+		#game-container canvas {
+			display: block;
+			width: 100% !important;
+			height: 100% !important;
+		}
+		
+		#info {
+			position: fixed;
+			top: 10px;
+			left: 10px;
+			background-color: rgba(0, 0, 0, 0.7);
+			color: white;
+			padding: 10px;
+			font-family: monospace;
+			font-size: 14px;
+			border-radius: 5px;
+			z-index: 100;
+		}
+		
+		#controls {
+			position: fixed;
+			bottom: 10px;
+			left: 10px;
+			background-color: rgba(0, 0, 0, 0.7);
+			color: white;
+			padding: 10px;
+			font-family: monospace;
+			font-size: 14px;
+			border-radius: 5px;
+			z-index: 100;
+		}
+		
+		.button {
+			background-color: #3498db;
+			color: white;
+			border: none;
+			padding: 5px 10px;
+			margin: 5px;
+			border-radius: 3px;
+			cursor: pointer;
+		}
+		
+		.button:hover {
+			background-color: #2980b9;
+		}
+	</style>
+</head>
+<body>
+	<!-- Loading Screen -->
+	<div id="loading">Loading Shaktris minimal test...</div>
+	
+	<!-- Game Info -->
+	<div id="info">
+		<h3>Shaktris Minimal Test</h3>
+		<div id="status">Status: Loading...</div>
+	</div>
+	
+	<!-- Controls -->
+	<div id="controls">
+		<h3>Shaktris Controls</h3>
+		<h4>Tetris Phase:</h4>
+		<p>Arrow Keys: Move tetromino</p>
+		<p>Z/X: Rotate tetromino</p>
+		<p>Space: Hard drop</p>
+		
+		<h4>Chess Phase:</h4>
+		<p>Click: Select/move chess pieces</p>
+		
+		<h4>Camera:</h4>
+		<p>Left Mouse: Rotate camera</p>
+		<p>Right Mouse: Pan camera</p>
+		<p>Mouse Wheel: Zoom</p>
+		<button id="reset-camera" class="button">Reset Camera</button>
+		<button id="restart-game" class="button">Restart Game</button>
+	</div>
+	
+	<!-- Game Container -->
+	<div id="game-container"></div>
+	
+	<script type="module">
+		import * as gameCore from './js/minimal-gameCore.js';
+		import * as debugUtils from './js/utils/debugUtils.js';
+		
+		// Wait for DOM to be loaded
+		document.addEventListener('DOMContentLoaded', async () => {
+			try {
+				// Run diagnostics
+				const diagnostics = debugUtils.printSystemDiagnostics();
+				
+				// Update status
+				const statusElement = document.getElementById('status');
+				
+				// Check if THREE is available
+				if (typeof THREE === 'undefined') {
+					statusElement.textContent = 'Error: THREE.js not loaded!';
+					throw new Error('THREE.js is not loaded properly!');
+				}
+				
+				// Ensure game container has proper size
+				const gameContainer = document.getElementById('game-container');
+				if (gameContainer) {
+					gameContainer.style.height = '100vh';
+					gameContainer.style.minHeight = '100vh';
+				}
+				
+				// Hide loading screen
+				document.getElementById('loading').style.display = 'none';
+				
+				// Test rendering
+				const renderTest = debugUtils.testThreeJsRendering(gameContainer);
+				
+				if (!renderTest.success) {
+					statusElement.textContent = `Error: THREE.js test failed - ${renderTest.error}`;
+					throw new Error(`THREE.js rendering test failed: ${renderTest.error}`);
+				}
+				
+				// Initialize game
+				const success = gameCore.initGame(gameContainer);
+				
+				if (success) {
+					statusElement.textContent = 'Status: Game running';
+					
+					// Add reset camera button functionality
+					document.getElementById('reset-camera').addEventListener('click', () => {
+						try {
+							// Use the reset camera function
+							gameCore.resetCameraView(true);
+						} catch (error) {
+							console.error('Error resetting camera:', error);
+							window.location.reload();
+						}
+					});
+
+					// Add restart game button functionality
+					document.getElementById('restart-game').addEventListener('click', () => {
+						try {
+							// Check if the exportedFunctions object has the restartGame function
+							if (gameCore.exportedFunctions && gameCore.exportedFunctions.restartGame) {
+								gameCore.exportedFunctions.restartGame();
+							} else {
+								// Fallback to reloading the page
+								window.location.reload();
+							}
+						} catch (error) {
+							console.error('Error restarting game:', error);
+							window.location.reload();
+						}
+					});
+				} else {
+					statusElement.textContent = 'Status: Failed to initialize game';
+				}
+				
+				// Show diagnostic overlay
+				debugUtils.showDiagnosticOverlay(diagnostics);
+			} catch (error) {
+				console.error('Error initializing minimal test:', error);
+				document.getElementById('loading').textContent = `Error: ${error.message}`;
+			}
+		});
+		
+		// Handle window resize
+		window.addEventListener('resize', () => {
+			gameCore.updateRenderSize();
+		});
+	</script>
+</body>
+</html> 

@@ -942,4 +942,298 @@ export function cleanup() {
 	lastMoveTime = 0;
 	board = [];
 	isInitialized = false;
+}
+
+/**
+ * Calculate landing position for a tetromino (ghost piece preview)
+ * @param {Object} tetromino - Tetromino object
+ * @param {Array} board - Game board
+ * @returns {Object} Ghost position {x, y, z, rotation}
+ */
+export function calculateGhostPosition(tetromino, board) {
+	try {
+		if (!tetromino || !tetromino.position || !board) {
+			return null;
+		}
+		
+		// Clone tetromino data to avoid modifying original
+		const ghost = {
+			type: tetromino.type,
+			shape: tetromino.shape,
+			position: { ...tetromino.position },
+			rotation: tetromino.rotation
+		};
+		
+		// Set initial Y position (starting the fall)
+		ghost.position.y = 10; // Start from above the board
+		
+		// Move the ghost tetromino down along Y axis until it would collide with another cell
+		let hasCollided = false;
+		let magneticAttachment = false;
+		
+		while (!hasCollided && !magneticAttachment && ghost.position.y >= 0) {
+			// Move one step down
+			ghost.position.y--;
+			
+			// Check for collisions with existing cells
+			const collisionResult = checkCollision(ghost, board);
+			
+			// If we've reached Y=0, check for magnetic attachment
+			if (ghost.position.y === 0) {
+				const magneticResult = checkMagneticAttachment(ghost, board);
+				if (magneticResult.canAttach) {
+					magneticAttachment = true;
+					// Move back up one step since we've gone too far down
+					ghost.position.y++;
+					break;
+				}
+			}
+			
+			// If collision, move back up one step
+			if (collisionResult.hasCollision) {
+				hasCollided = true;
+				ghost.position.y++;
+				break;
+			}
+		}
+		
+		// If we didn't find a valid position, return null
+		if (!magneticAttachment && ghost.position.y < 0) {
+			return null;
+		}
+		
+		return ghost.position;
+	} catch (error) {
+		console.error('Error calculating ghost position:', error);
+		return null;
+	}
+}
+
+/**
+ * Check if tetromino can magnetically attach to any adjacent cells
+ * @param {Object} tetromino - Tetromino object
+ * @param {Array} board - Game board
+ * @returns {Object} Result {canAttach, attachmentPoints}
+ */
+export function checkMagneticAttachment(tetromino, board) {
+	try {
+		if (!tetromino || !board) {
+			return { canAttach: false, attachmentPoints: [] };
+		}
+		
+		// Get tetromino shape based on rotation
+		const shape = getRotatedShape(tetromino.type, tetromino.rotation);
+		
+		// Check if any part of the tetromino is adjacent to existing cells
+		const attachmentPoints = [];
+		let hasPathToKing = false;
+		
+		// Check each block of the tetromino
+		for (let z = 0; z < shape.length; z++) {
+			for (let x = 0; x < shape[z].length; x++) {
+				if (!shape[z][x]) continue; // Skip empty blocks
+				
+				// Get absolute board coordinates
+				const boardX = tetromino.position.x + x;
+				const boardZ = tetromino.position.z + z;
+				
+				// Check adjacent cells (left, right, up, down)
+				const adjacentCells = [
+					{ x: boardX - 1, z: boardZ }, // left
+					{ x: boardX + 1, z: boardZ }, // right
+					{ x: boardX, z: boardZ - 1 }, // up
+					{ x: boardX, z: boardZ + 1 }  // down
+				];
+				
+				// Check each adjacent cell
+				for (const adjCell of adjacentCells) {
+					// Skip out of bounds
+					if (adjCell.x < 0 || adjCell.z < 0 || 
+						adjCell.z >= board.length || 
+						adjCell.x >= (board[adjCell.z] ? board[adjCell.z].length : 0)) {
+						continue;
+					}
+					
+					// Check if cell exists and has path to king
+					const cell = board[adjCell.z][adjCell.x];
+					if (cell) {
+						// TODO: Implement actual path-to-king validation
+						// For now, assume any existing cell has a path to king
+						hasPathToKing = true;
+						
+						attachmentPoints.push({
+							tetrominoX: x,
+							tetrominoZ: z,
+							boardX: boardX,
+							boardZ: boardZ,
+							adjacentX: adjCell.x,
+							adjacentZ: adjCell.z
+						});
+					}
+				}
+			}
+		}
+		
+		return {
+			canAttach: attachmentPoints.length > 0 && hasPathToKing,
+			attachmentPoints
+		};
+	} catch (error) {
+		console.error('Error checking magnetic attachment:', error);
+		return { canAttach: false, attachmentPoints: [] };
+	}
+}
+
+/**
+ * Apply gravity to move a tetromino down the Y-axis
+ * @param {Object} tetromino - Tetromino object
+ * @param {Array} board - Game board
+ * @param {number} deltaTime - Time elapsed since last update in ms
+ * @returns {Object} Updated tetromino and result {tetromino, landed, attached, disintegrated}
+ */
+export function applyGravity(tetromino, board, deltaTime) {
+	try {
+		if (!tetromino || !board) {
+			return { tetromino, landed: false, attached: false, disintegrated: false };
+		}
+		
+		// Clone tetromino to avoid modifying original
+		const newTetromino = { ...tetromino };
+		newTetromino.position = { ...tetromino.position };
+		
+		// Accumulate fall timer
+		newTetromino.fallTime = (tetromino.fallTime || 0) + deltaTime;
+		
+		// Calculate fall speed based on current height
+		// Starts slow at height 10, accelerates as it gets closer to the board
+		const maxHeight = 10;
+		const minFallInterval = 50; // ms at fastest
+		const maxFallInterval = 300; // ms at slowest
+		
+		// Linear interpolation between max and min interval based on height
+		const heightRatio = Math.min(1, Math.max(0, newTetromino.position.y / maxHeight));
+		const fallInterval = minFallInterval + heightRatio * (maxFallInterval - minFallInterval);
+		
+		// Check if it's time to fall
+		if (newTetromino.fallTime >= fallInterval) {
+			// Reset fall timer
+			newTetromino.fallTime = 0;
+			
+			// Move down one step
+			newTetromino.position.y -= 1;
+			
+			// Handle different cases based on height
+			if (newTetromino.position.y < 0) {
+				// Gone below board, tetromino is lost
+				return { tetromino: newTetromino, landed: true, attached: false, disintegrated: true };
+			}
+			
+			// Check for collisions with existing cells
+			const collisionResult = checkCollision(newTetromino, board);
+			
+			if (collisionResult.hasCollision) {
+				// Collision detected, move back up
+				newTetromino.position.y += 1;
+				
+				// Tetromino has hit another cell, causes disintegration
+				return { tetromino: newTetromino, landed: true, attached: false, disintegrated: true };
+			}
+			
+			// If at ground level (y=0), check for magnetic attachment
+			if (newTetromino.position.y === 0) {
+				const attachmentResult = checkMagneticAttachment(newTetromino, board);
+				
+				if (attachmentResult.canAttach) {
+					// Tetromino can attach to board
+					return { tetromino: newTetromino, landed: true, attached: true, disintegrated: false, attachmentPoints: attachmentResult.attachmentPoints };
+				}
+			}
+		}
+		
+		// Still falling
+		return { tetromino: newTetromino, landed: false, attached: false, disintegrated: false };
+	} catch (error) {
+		console.error('Error applying gravity:', error);
+		// Return original tetromino in case of error
+		return { tetromino, landed: false, attached: false, disintegrated: false };
+	}
+}
+
+/**
+ * Place tetromino on the board
+ * @param {Object} tetromino - Tetromino object
+ * @param {Array} board - Game board
+ * @param {string} playerId - ID of the player placing the tetromino
+ * @returns {Array} Updated board with tetromino placed
+ */
+export function placeTetromino(tetromino, board, playerId) {
+	try {
+		if (!tetromino || !board || !Array.isArray(board) || !playerId) {
+			return board;
+		}
+		
+		// Get tetromino shape based on rotation
+		const shape = getRotatedShape(tetromino.type, tetromino.rotation);
+		
+		// Create a copy of the board
+		const newBoard = JSON.parse(JSON.stringify(board));
+		
+		// Place each block of the tetromino on the board
+		for (let z = 0; z < shape.length; z++) {
+			for (let x = 0; x < shape[z].length; x++) {
+				if (!shape[z][x]) continue; // Skip empty blocks
+				
+				// Get absolute board coordinates
+				const boardX = tetromino.position.x + x;
+				const boardZ = tetromino.position.z + z;
+				
+				// Skip if out of bounds
+				if (boardZ < 0 || boardZ >= newBoard.length || 
+					boardX < 0 || boardX >= (newBoard[boardZ] ? newBoard[boardZ].length : 0)) {
+					continue;
+				}
+				
+				// Set cell value
+				newBoard[boardZ][boardX] = {
+					type: 'tetromino',
+					playerId,
+					tetrominoType: tetromino.type,
+					color: getTetrominoColor(tetromino.type),
+					timestamp: Date.now()
+				};
+			}
+		}
+		
+		return newBoard;
+	} catch (error) {
+		console.error('Error placing tetromino:', error);
+		return board;
+	}
+}
+
+/**
+ * Get color for tetromino type
+ * @param {string} type - Tetromino type
+ * @returns {string} Tetromino color
+ */
+function getTetrominoColor(type) {
+	// Return color based on tetromino type
+	switch (type) {
+		case 'I':
+			return '#00FFFF'; // Cyan
+		case 'J':
+			return '#0000FF'; // Blue
+		case 'L':
+			return '#FF7F00'; // Orange
+		case 'O':
+			return '#FFFF00'; // Yellow
+		case 'S':
+			return '#00FF00'; // Green
+		case 'T':
+			return '#800080'; // Purple
+		case 'Z':
+			return '#FF0000'; // Red
+		default:
+			return '#FFFFFF'; // White (fallback)
+	}
 } 

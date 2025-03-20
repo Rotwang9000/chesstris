@@ -314,24 +314,45 @@ function shuffleArray(array) {
 }
 
 /**
- * Update the ghost piece position
+ * Update ghost piece position
  */
 function updateGhostPiece() {
 	try {
-		if (!fallingPiece) return;
+		if (!fallingPiece) {
+			ghostPiece = null;
+			return;
+		}
 		
-		// Create ghost piece
+		// Create ghost piece as a copy of falling piece
 		ghostPiece = {
 			...fallingPiece,
-			y: fallingPiece.y
+			isGhost: true
 		};
 		
-		// Move ghost piece down until it collides
-		while (!isCollision(ghostPiece.shape, ghostPiece.x, ghostPiece.y + 1)) {
-			ghostPiece.y++;
+		// Move ghost piece down until collision
+		let ghostY = fallingPiece.y;
+		
+		// Keep moving down until collision
+		while (!isCollision(ghostPiece.shape, ghostPiece.x, ghostY + 1)) {
+			ghostY++;
+		}
+		
+		// Set ghost piece y position
+		ghostPiece.y = ghostY;
+		
+		// If ghost is at same position as falling piece, don't show it
+		if (ghostPiece.y === fallingPiece.y) {
+			ghostPiece = null;
+		}
+		
+		// Tell the renderer to update the ghost piece visualization
+		// This will improve player feedback about where the piece will land
+		if (typeof gameRenderer !== 'undefined' && gameRenderer.updateGhostPiece) {
+			gameRenderer.updateGhostPiece(fallingPiece, ghostPiece);
 		}
 	} catch (error) {
 		console.error('Error updating ghost piece:', error);
+		ghostPiece = null;
 	}
 }
 
@@ -424,6 +445,83 @@ export function getCurrentPiece() {
 }
 
 /**
+ * Check if tetromino is adjacent to existing cells
+ * (This implements the magnetic edge attachment as per game rules)
+ * @param {Array} shape - Tetromino shape
+ * @param {number} x - X position
+ * @param {number} y - Y position
+ * @returns {Object|null} Information about adjacent cells or null if none
+ */
+function checkMagneticAttachment(shape, x, y) {
+	try {
+		// Adjacent directions to check (right, left, down, up)
+		const directions = [
+			{ dx: 1, dy: 0 },  // right
+			{ dx: -1, dy: 0 }, // left
+			{ dx: 0, dy: 1 },  // down
+			{ dx: 0, dy: -1 }  // up
+		];
+		
+		// Check each cell in the tetromino
+		for (let row = 0; row < shape.length; row++) {
+			for (let col = 0; col < shape[row].length; col++) {
+				// If this cell is filled
+				if (shape[row][col]) {
+					const cellX = x + col;
+					const cellY = y + row;
+					
+					// Check each direction
+					for (const dir of directions) {
+						const adjX = cellX + dir.dx;
+						const adjY = cellY + dir.dy;
+						
+						// Check if the adjacent cell is within bounds
+						if (adjX >= 0 && adjX < GAME_CONSTANTS.BOARD_WIDTH && 
+							adjY >= 0 && adjY < GAME_CONSTANTS.BOARD_HEIGHT) {
+							
+							// Check if there's a cell at this position
+							if (gameBoard && gameBoard[adjY] && gameBoard[adjY][adjX]) {
+								// We found an adjacent cell!
+								return { 
+									x: cellX, 
+									y: cellY, 
+									adjacentX: adjX, 
+									adjacentY: adjY,
+									direction: dir
+								};
+							}
+						}
+					}
+				}
+			}
+		}
+		
+		// No adjacent cells found
+		return null;
+	} catch (error) {
+		console.error('Error checking magnetic attachment:', error);
+		return null;
+	}
+}
+
+/**
+ * Visualize magnetic effect
+ * @param {Object} attachment - Attachment information
+ */
+function visualizeMagneticEffect(attachment) {
+	try {
+		if (!attachment) return;
+		
+		// Create magnetic effect
+		if (typeof gameRenderer !== 'undefined' && gameRenderer.createMagneticEffect) {
+			gameRenderer.createMagneticEffect(attachment);
+		}
+	} catch (error) {
+		console.error('Error visualizing magnetic effect:', error);
+	}
+}
+
+/**
  * Move the falling piece down
  * @returns {boolean} Whether the piece was moved
  */
@@ -431,18 +529,49 @@ export function movePieceDown() {
 	try {
 		if (!fallingPiece) return false;
 		
-		// Check if piece can move down
-		if (!isCollision(fallingPiece.shape, fallingPiece.x, fallingPiece.y + 1)) {
-			// Move piece down
-			fallingPiece.y++;
-			
-			// Update last move time
-			lastMoveTime = Date.now();
-			
-			return true;
+		// Check if the piece can move down
+		if (isCollision(fallingPiece.shape, fallingPiece.x, fallingPiece.y + 1)) {
+			// Check for magnetic attachment when at Y=0 as per game rules
+			if (fallingPiece.y === 0) {
+				const attachment = checkMagneticAttachment(fallingPiece.shape, fallingPiece.x, fallingPiece.y);
+				if (attachment) {
+					// Visualize magnetic effect
+					visualizeMagneticEffect(attachment);
+					
+					// The piece is attachable, so lock it
+					lockPiece();
+					
+					// Create attachment animation
+					if (typeof gameRenderer !== 'undefined' && gameRenderer.createTetrominoAttachAnimation) {
+						gameRenderer.createTetrominoAttachAnimation(fallingPiece);
+					}
+					
+					return false;
+				} else {
+					// No attachment found, piece continues falling through and disintegrates
+					if (typeof gameRenderer !== 'undefined' && gameRenderer.createTetrominoDisintegrationAnimation) {
+						gameRenderer.createTetrominoDisintegrationAnimation(fallingPiece);
+					}
+					
+					// Create a new piece
+					createNewPiece();
+					return false;
+				}
+			}
+			return false;
 		}
 		
-		return false;
+		// Move the piece down
+		fallingPiece.y++;
+		
+		// Check for magnetic attachment at any Y position
+		const attachment = checkMagneticAttachment(fallingPiece.shape, fallingPiece.x, fallingPiece.y);
+		if (attachment) {
+			// Visualize the potential attachment
+			visualizeMagneticEffect(attachment);
+		}
+		
+		return true;
 	} catch (error) {
 		console.error('Error moving piece down:', error);
 		return false;

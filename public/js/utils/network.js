@@ -4,50 +4,63 @@
  * Handles communication with the server via Socket.IO
  */
 
-// Socket.IO client
+// Socket.IO connection
 let socket = null;
 let _isConnected = false;
+let isConnecting = false;
 let connectionCallbacks = [];
 let disconnectionCallbacks = [];
 let messageHandlers = {};
-let reconnectAttempts = 0;
-const MAX_RECONNECT_ATTEMPTS = 5;
 let players = []; // Store list of players
+
+// Reconnection settings
+let reconnectAttempts = 0;
+let reconnectTimeout = null;
+const MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_BASE_DELAY = 1000;
+const MAX_RECONNECT_DELAY = 30000;
+
+// Event handlers
+const eventHandlers = {};
+
+// Default callbacks
+let defaultCallbacks = {
+	onConnect: () => console.log('Connected to server'),
+	onDisconnect: (reason) => console.log(`Disconnected from server: ${reason}`),
+	onError: (error) => console.error('Network error:', error),
+	onReconnectAttempt: (attempt) => console.log(`Reconnection attempt ${attempt}/${MAX_RECONNECT_ATTEMPTS}`)
+};
+
+// Network configuration
+let networkConfig = null;
 
 /**
  * Initialize the network module
  * @param {Object} options - Network options
- * @returns {Promise<boolean>} - True if connected successfully
+ * @returns {Promise<boolean>} - True if initialized successfully
  */
 export async function init(options = {}) {
 	try {
+		// Check if Socket.IO is available
+		if (typeof io === 'undefined') {
+			// Try to dynamically load Socket.IO
+			await loadSocketIO();
+		}
+
 		// Default options
 		const defaultOptions = {
-			autoConnect: false,
+			autoConnect: true,
 			reconnect: true,
-			reconnectDelay: 3000,
-			url: window.location.origin
+			reconnectDelay: RECONNECT_BASE_DELAY,
+			maxReconnectAttempts: MAX_RECONNECT_ATTEMPTS,
+			url: getServerSocketUrl()
 		};
 		
 		// Merge options
 		const config = { ...defaultOptions, ...options };
 		
-		// Load Socket.IO client if not already loaded
-		if (typeof io === 'undefined') {
-			console.log('Loading Socket.IO client...');
-			await loadSocketIO();
-		}
-		
-		// Create socket instance
-		socket = io(config.url, {
-			autoConnect: false,
-			reconnection: config.reconnect,
-			reconnectionDelay: config.reconnectDelay,
-			reconnectionAttempts: MAX_RECONNECT_ATTEMPTS
-		});
-		
-		// Set up event listeners
-		setupEventListeners();
+		// Store configuration
+		networkConfig = config;
 		
 		// Register callback handlers
 		if (options.onConnect && typeof options.onConnect === 'function') {
@@ -64,7 +77,7 @@ export async function init(options = {}) {
 		
 		// Auto-connect if specified
 		if (config.autoConnect) {
-			connect();
+			await connect();
 		}
 		
 		return true;
@@ -75,213 +88,419 @@ export async function init(options = {}) {
 }
 
 /**
- * Load Socket.IO client dynamically
+ * Load Socket.IO client dynamically if not already available
  * @returns {Promise<void>}
  */
-function loadSocketIO() {
+async function loadSocketIO() {
 	return new Promise((resolve, reject) => {
 		if (typeof io !== 'undefined') {
 			resolve();
 			return;
 		}
-		
+
+		// Create script element
 		const script = document.createElement('script');
 		script.src = '/socket.io/socket.io.js';
 		script.async = true;
 		script.onload = () => resolve();
-		script.onerror = () => reject(new Error('Failed to load Socket.IO client'));
+		script.onerror = () => reject(new Error('Failed to load Socket.IO'));
+		
+		// Add to document
 		document.head.appendChild(script);
 	});
 }
 
 /**
- * Set up socket event listeners
+ * Get the Socket.IO server URL
+ * @returns {string} Socket URL
  */
-function setupEventListeners() {
-	if (!socket) {
-		return;
+function getServerSocketUrl() {
+	const host = window.location.hostname;
+	// For development, use port 3020, otherwise use the current port
+	const port = (host === 'localhost' || host === '127.0.0.1') ? 3020 : window.location.port;
+	
+	// Allow local testing without a server by using a mock socket
+	if (host === 'localhost' || host === '127.0.0.1') {
+		console.log('Using local mock Socket.IO for development');
+		// If we're in local dev mode without a real server, implement a mock socket
+		if (typeof window.mockSocket === 'undefined') {
+			setupMockSocket();
+		}
+		return null; // Not needed for mock socket
 	}
 	
-	// Connection events
-	socket.on('connect', handleConnect);
-	socket.on('disconnect', handleDisconnect);
-	socket.on('connect_error', handleError);
-	socket.on('error', handleError);
+	return `${window.location.protocol}//${host}:${port}`;
+}
+
+/**
+ * Set up a mock socket for local development without a server
+ */
+function setupMockSocket() {
+	window.mockSocket = true;
 	
-	// Game events
-	socket.on('player_id', (id) => {
-		console.log(`Received player ID: ${id}`);
-	});
-	
-	// Player events
-	socket.on('player_joined', (data) => {
-		// Add player to list
-		if (data.players) {
-			players = data.players;
-		} else if (data.playerId) {
-			// Add single player
-			const playerExists = players.some(p => p.id === data.playerId);
-			if (!playerExists) {
-				players.push({
-					id: data.playerId,
-					name: data.playerName || `Player_${data.playerId.substring(0, 5)}`
-				});
-			}
-		}
-		
-		// Trigger handlers
-		triggerHandlers('player_joined', data);
-	});
-	
-	socket.on('player_left', (data) => {
-		// Remove player from list
-		if (data.playerId) {
-			players = players.filter(p => p.id !== data.playerId);
-		}
-		
-		// Trigger handlers
-		triggerHandlers('player_left', data);
-	});
-	
-	// Register existing message handlers
-	for (const [event, handlers] of Object.entries(messageHandlers)) {
-		for (const handler of handlers) {
-			socket.on(event, handler);
-		}
-	}
+	// Create a mock io function that returns a mock socket
+	window.io = function() {
+		return {
+			// Basic Socket.IO interface
+			on: function(event, callback) {
+				// Store event handlers
+				if (!window.mockSocketHandlers) {
+					window.mockSocketHandlers = {};
+				}
+				
+				if (!window.mockSocketHandlers[event]) {
+					window.mockSocketHandlers[event] = [];
+				}
+				
+				window.mockSocketHandlers[event].push(callback);
+				
+				// Immediately trigger connect event
+				if (event === 'connect') {
+					setTimeout(() => callback(), 100);
+				}
+			},
+			emit: function(event, data, callback) {
+				console.log(`Mock socket: emit ${event}`, data);
+				
+				// Handle specific events
+				if (event === 'startGame') {
+					// Simulate server response
+					setTimeout(() => {
+						if (callback) {
+							callback({
+								success: true,
+								gameId: 'local-game-' + Date.now()
+							});
+						}
+						
+						// Trigger game started event
+						if (window.mockSocketHandlers['gameStarted']) {
+							window.mockSocketHandlers['gameStarted'].forEach(handler => {
+								handler({
+									success: true,
+									gameState: {
+										status: 'playing',
+										board: Array(16).fill().map(() => Array(16).fill(0)),
+										currentPlayer: 1,
+										players: [
+											{ id: 1, name: 'Player 1' },
+											{ id: 2, name: 'Computer' }
+										]
+									}
+								});
+							});
+						}
+					}, 300);
+				}
+			},
+			id: 'mock-socket-id'
+		};
+	};
 }
 
 /**
  * Connect to the server
- * @returns {boolean} - True if connection attempt started
+ * @returns {Promise<boolean>} - True if connected successfully
  */
-export function connect() {
-	if (!socket) {
-		console.error('Socket not initialized. Call init() first.');
-		// Auto-initialize with default settings
-		init().then(() => {
-			if (socket) {
-				console.log('Auto-initialized socket, connecting...');
-				socket.connect();
+export async function connect() {
+	return new Promise((resolve) => {
+		if (!networkConfig) {
+			console.error('Network not initialized. Call init() first.');
+			resolve(false);
+			return;
+		}
+		
+		if (_isConnected) {
+			console.log('Already connected to server.');
+			resolve(true);
+			return;
+		}
+		
+		if (isConnecting) {
+			console.log('Already attempting to connect...');
+			resolve(false);
+			return;
+		}
+		
+		isConnecting = true;
+		
+		try {
+			// Check if we're using a mock socket for local development
+			if (window.mockSocket) {
+				console.log('Using mock socket connection');
+				socket = io(); // This will return our mock socket
+				
+				// Simulate connection
+				setTimeout(() => {
+					_isConnected = true;
+					isConnecting = false;
+					
+					console.log('Mock socket connection established');
+					
+					// Call connect callback
+					if (defaultCallbacks.onConnect) {
+						defaultCallbacks.onConnect();
+					}
+					
+					// Fire connection callbacks
+					for (const callback of connectionCallbacks) {
+						try {
+							callback();
+						} catch (error) {
+							console.error('Error in connection callback:', error);
+						}
+					}
+					
+					// Trigger connected event
+					triggerEvent('connected');
+					
+					resolve(true);
+				}, 100);
+				
+				return;
 			}
-		}).catch(error => {
-			console.error('Failed to auto-initialize socket:', error);
-		});
-		return false;
-	}
-	
-	if (_isConnected) {
-		console.log('Already connected to server.');
-		return true;
-	}
-	
-	console.log('Connecting to server...');
-	socket.connect();
-	return true;
+			
+			console.log(`Connecting to server at ${networkConfig.url}...`);
+			
+			// Create Socket.IO connection
+			socket = io(networkConfig.url, {
+				reconnection: networkConfig.reconnect,
+				reconnectionAttempts: networkConfig.maxReconnectAttempts,
+				reconnectionDelay: networkConfig.reconnectDelay,
+				transports: ['websocket', 'polling']
+			});
+			
+			// Set up connection event
+			socket.on('connect', () => {
+				_isConnected = true;
+				isConnecting = false;
+				reconnectAttempts = 0;
+				
+				console.log('Socket.IO connection established');
+				
+				// Call connect callback
+				if (defaultCallbacks.onConnect) {
+					defaultCallbacks.onConnect();
+				}
+				
+				// Fire connection callbacks
+				for (const callback of connectionCallbacks) {
+					try {
+						callback();
+					} catch (error) {
+						console.error('Error in connection callback:', error);
+					}
+				}
+				
+				// Trigger connected event
+				triggerEvent('connected');
+				
+				resolve(true);
+			});
+			
+			// Set up disconnect event
+			socket.on('disconnect', (reason) => {
+				console.log(`Socket.IO connection closed: ${reason}`);
+				
+				// Only update state if we were previously connected
+				if (_isConnected) {
+					_isConnected = false;
+					isConnecting = false;
+					
+					// Execute disconnection callbacks
+					for (const callback of disconnectionCallbacks) {
+						try {
+							callback(reason);
+						} catch (error) {
+							console.error('Error in disconnection callback:', error);
+						}
+					}
+					
+					// Trigger 'disconnect' event handlers
+					triggerEvent('disconnected', { reason });
+				}
+				
+				resolve(false);
+			});
+			
+			// Set up error event
+			socket.on('error', (error) => {
+				console.error('Socket.IO error:', error);
+				
+				// Call error callback
+				if (defaultCallbacks.onError) {
+					defaultCallbacks.onError(error);
+				}
+				
+				// Trigger 'error' event handlers
+				triggerEvent('error', { error });
+			});
+			
+			// Set up reconnect event
+			socket.on('reconnect_attempt', (attempt) => {
+				console.log(`Reconnection attempt ${attempt}/${networkConfig.maxReconnectAttempts}`);
+				
+				if (defaultCallbacks.onReconnectAttempt) {
+					defaultCallbacks.onReconnectAttempt(attempt);
+				}
+				
+				triggerEvent('reconnect_attempt', { attempt });
+			});
+			
+			// Set up message handlers for all registered events
+			for (const event in messageHandlers) {
+				if (Object.prototype.hasOwnProperty.call(messageHandlers, event)) {
+					const handlers = messageHandlers[event];
+					socket.on(event, (data) => {
+						for (const handler of handlers) {
+							try {
+								handler(data);
+							} catch (error) {
+								console.error(`Error in message handler for event ${event}:`, error);
+							}
+						}
+					});
+				}
+			}
+		} catch (error) {
+			console.error('Error connecting to server:', error);
+			isConnecting = false;
+			resolve(false);
+		}
+	});
 }
 
 /**
- * Disconnect from the server
+ * Register an event handler
+ * @param {string} event - Event name
+ * @param {Function} callback - Event callback
  */
-export function disconnect() {
-	if (!socket || !_isConnected) {
-		return;
+export function on(event, callback) {
+	if (!eventHandlers[event]) {
+		eventHandlers[event] = [];
 	}
 	
-	console.log('Disconnecting from server...');
-	socket.disconnect();
+	eventHandlers[event].push(callback);
+	
+	// If already connected, register with Socket.IO
+	if (socket && _isConnected && !messageHandlers[event]) {
+		messageHandlers[event] = [];
+		socket.on(event, (data) => {
+			for (const handler of messageHandlers[event]) {
+				try {
+					handler(data);
+				} catch (error) {
+					console.error(`Error in message handler for event ${event}:`, error);
+				}
+			}
+		});
+	}
+	
+	// Store in message handlers as well
+	if (!messageHandlers[event]) {
+		messageHandlers[event] = [];
+	}
+	
+	messageHandlers[event].push(callback);
 }
 
 /**
  * Send a message to the server
  * @param {string} event - Event name
- * @param {*} data - Data to send
- * @returns {boolean} - True if message was sent
+ * @param {*} data - Event data
+ * @param {Function} [callback] - Optional callback function for response
+ * @returns {Promise<*>} - Response from server if applicable
  */
-export function send(event, data = null) {
-	if (!socket || !_isConnected) {
-		console.error('Cannot send message: Not connected to server');
-		return false;
-	}
-	
-	socket.emit(event, data);
-	return true;
-}
-
-/**
- * Register a callback for when a connection is established
- * @param {Function} callback - Callback function
- */
-export function onConnect(callback) {
-	if (typeof callback === 'function') {
-		connectionCallbacks.push(callback);
+export function send(event, data = null, callback = null) {
+	// Handle special case for mock socket in local development
+	if (window.mockSocket) {
+		console.log(`Mock socket send: ${event}`, data);
 		
-		// If already connected, call the callback immediately
-		if (_isConnected && socket) {
-			callback();
+		// Simulate response for common events
+		const simulateResponse = (success = true, responseData = {}) => {
+			const response = { success, ...responseData };
+			
+			// Handle callback or promise
+			if (typeof callback === 'function') {
+				setTimeout(() => callback(response), 100);
+				return true;
+			}
+			
+			return Promise.resolve(response);
+		};
+		
+		// Handle specific events
+		switch (event) {
+			case 'startGame':
+				// Simulate successful game start
+				if (typeof callback === 'function') {
+					setTimeout(() => {
+						callback({
+							success: true,
+							gameId: 'mock-game-' + Date.now()
+						});
+						
+						// Trigger game state changes after a delay
+						triggerMockGameEvents();
+					}, 300);
+					return true;
+				}
+				return Promise.resolve({ success: true, gameId: 'mock-game-' + Date.now() });
+				
+			case 'movePiece':
+				return simulateResponse(true, { moved: true, pieceId: data.pieceId });
+				
+			case 'placeTetromino':
+				return simulateResponse(true, { placed: true });
+				
+			default:
+				return simulateResponse(true);
 		}
 	}
-}
 
-/**
- * Register a callback for when a disconnection occurs
- * @param {Function} callback - Callback function
- */
-export function onDisconnect(callback) {
+	// Handle callback-based usage
 	if (typeof callback === 'function') {
-		disconnectionCallbacks.push(callback);
-	}
-}
-
-/**
- * Register a message handler
- * @param {string} event - Event name
- * @param {Function} handler - Handler function
- */
-export function on(event, handler) {
-	if (typeof handler !== 'function') {
+		if (!socket || !_isConnected) {
+			console.error('Cannot send message: Not connected to server');
+			callback({ success: false, error: 'Not connected to server' });
+			return;
+		}
+		
+		// If data is null, send event without data
+		if (data === null) {
+			socket.emit(event, callback);
+			return;
+		}
+		
+		// Send event with data and callback
+		socket.emit(event, data, callback);
 		return;
 	}
 	
-	if (!messageHandlers[event]) {
-		messageHandlers[event] = [];
-	}
-	
-	messageHandlers[event].push(handler);
-	
-	// Register with socket if it exists
-	if (socket) {
-		socket.on(event, handler);
-	}
-}
-
-/**
- * Remove a message handler
- * @param {string} event - Event name
- * @param {Function} handler - Handler function to remove
- */
-export function off(event, handler) {
-	if (!messageHandlers[event]) {
-		return;
-	}
-	
-	// If handler is provided, remove specific handler
-	if (handler) {
-		messageHandlers[event] = messageHandlers[event].filter(h => h !== handler);
-		
-		// Remove from socket if it exists
-		if (socket) {
-			socket.off(event, handler);
+	// Handle Promise-based usage (backward compatibility)
+	return new Promise((resolve, reject) => {
+		if (!socket || !_isConnected) {
+			console.error('Cannot send message: Not connected to server');
+			reject(new Error('Not connected to server'));
+			return;
 		}
-	} else {
-		// Otherwise, remove all handlers for this event
-		messageHandlers[event] = [];
 		
-		// Remove from socket if it exists
-		if (socket) {
-			socket.off(event);
+		// If data is null, send event without data
+		if (data === null) {
+			socket.emit(event);
+			resolve();
+			return;
 		}
-	}
+		
+		// Send event with data
+		socket.emit(event, data, (response) => {
+			if (response && response.error) {
+				reject(new Error(response.error));
+			} else {
+				resolve(response);
+			}
+		});
+	});
 }
 
 /**
@@ -297,12 +516,12 @@ export function isConnected() {
  * @returns {string|null} - Socket ID or null if not connected
  */
 export function getSocketId() {
-	return socket && _isConnected ? socket.id : null;
+	return socket ? socket.id : null;
 }
 
 /**
- * Get the list of players
- * @returns {Array} List of players
+ * Get list of connected players
+ * @returns {Array} - List of players
  */
 export function getPlayers() {
 	return [...players];
@@ -311,189 +530,192 @@ export function getPlayers() {
 /**
  * Request to spectate a player
  * @param {string} playerId - ID of the player to spectate
+ * @returns {boolean} - True if request was sent
  */
 export function requestSpectate(playerId) {
-	if (!isConnected()) {
-		console.error('Cannot request spectate: not connected to server');
-		return;
-	}
-	
-	emit('request_spectate', { playerId });
+	return send('requestSpectate', { playerId });
 }
 
 /**
- * Stop spectating a player
+ * Stop spectating
+ * @returns {boolean} - True if request was sent
  */
 export function stopSpectating() {
-	if (!isConnected()) {
-		console.error('Cannot stop spectating: not connected to server');
-		return;
-	}
-	
-	emit('stop_spectating');
-}
-
-// Event handlers
-
-/**
- * Handle connection event
- */
-function handleConnect() {
-	console.log('Connected to server');
-	_isConnected = true;
-	reconnectAttempts = 0;
-	
-	// Call all connection callbacks
-	connectionCallbacks.forEach(callback => {
-		try {
-			callback();
-		} catch (error) {
-			console.error('Error in connection callback:', error);
-		}
-	});
-}
-
-/**
- * Handle disconnect event
- * @param {string} reason - Reason for disconnection
- */
-function handleDisconnect(reason) {
-	console.log(`Disconnected from server: ${reason}`);
-	_isConnected = false;
-	
-	// Call all disconnection callbacks
-	disconnectionCallbacks.forEach(callback => {
-		try {
-			callback(reason);
-		} catch (error) {
-			console.error('Error in disconnection callback:', error);
-		}
-	});
-}
-
-/**
- * Handle connection error
- * @param {Error} error - Connection error
- */
-function handleError(error) {
-	console.error('Connection error:', error);
-}
-
-/**
- * Handle game update event
- * @param {Object} data - Game update data
- */
-function handleGameUpdate(data) {
-	triggerHandlers('game:update', data);
-}
-
-/**
- * Handle game join event
- * @param {Object} data - Game join data
- */
-function handleGameJoin(data) {
-	triggerHandlers('game:join', data);
-}
-
-/**
- * Handle game leave event
- * @param {Object} data - Game leave data
- */
-function handleGameLeave(data) {
-	triggerHandlers('game:leave', data);
-}
-
-/**
- * Handle game start event
- * @param {Object} data - Game start data
- */
-function handleGameStart(data) {
-	triggerHandlers('game:start', data);
-}
-
-/**
- * Handle game end event
- * @param {Object} data - Game end data
- */
-function handleGameEnd(data) {
-	triggerHandlers('game:end', data);
-}
-
-/**
- * Handle game error event
- * @param {Object} data - Game error data
- */
-function handleGameError(data) {
-	triggerHandlers('game:error', data);
-}
-
-/**
- * Handle player join event
- * @param {Object} data - Player join data
- */
-function handlePlayerJoin(data) {
-	triggerHandlers('player:join', data);
-}
-
-/**
- * Handle player leave event
- * @param {Object} data - Player leave data
- */
-function handlePlayerLeave(data) {
-	triggerHandlers('player:leave', data);
-}
-
-/**
- * Handle player update event
- * @param {Object} data - Player update data
- */
-function handlePlayerUpdate(data) {
-	triggerHandlers('player:update', data);
-}
-
-/**
- * Handle chat message event
- * @param {Object} data - Chat message data
- */
-function handleChatMessage(data) {
-	triggerHandlers('chat:message', data);
-}
-
-/**
- * Trigger all handlers for an event
- * @param {string} event - Event name
- * @param {*} data - Event data
- */
-function triggerHandlers(event, data) {
-	if (!messageHandlers[event]) {
-		return;
-	}
-	
-	messageHandlers[event].forEach(handler => {
-		try {
-			handler(data);
-		} catch (error) {
-			console.error(`Error in ${event} handler:`, error);
-		}
-	});
+	return send('stopSpectating');
 }
 
 /**
  * Clean up resources
  */
 export function cleanup() {
-	// Disconnect from server
-	if (socket && _isConnected) {
-		socket.disconnect();
+	// Disconnect if connected
+	if (_isConnected) {
+		disconnect();
 	}
 	
-	// Clear all callbacks and handlers
+	// Clear callbacks and handlers
 	connectionCallbacks = [];
 	disconnectionCallbacks = [];
 	messageHandlers = {};
 	
+	// Clear reconnect timeout
+	if (reconnectTimeout) {
+		clearTimeout(reconnectTimeout);
+		reconnectTimeout = null;
+	}
+	
 	// Reset state
-	_isConnected = false;
-	reconnectAttempts = 0;
 	socket = null;
+	_isConnected = false;
+	isConnecting = false;
+	reconnectAttempts = 0;
+}
+
+/**
+ * Remove a callback for a network event
+ * @param {string} event - Event name
+ * @param {Function} callback - Callback function to remove
+ */
+export function off(event, callback) {
+	if (!eventHandlers[event]) {
+		return;
+	}
+	
+	if (callback) {
+		// Remove specific callback
+		eventHandlers[event] = eventHandlers[event].filter(cb => cb !== callback);
+		
+		// Also remove from message handlers
+		if (messageHandlers[event]) {
+			messageHandlers[event] = messageHandlers[event].filter(cb => cb !== callback);
+		}
+	} else {
+		// Remove all callbacks for this event
+		delete eventHandlers[event];
+		delete messageHandlers[event];
+	}
+}
+
+/**
+ * Trigger a network event
+ * @param {string} event - Event name
+ * @param {Object} data - Event data
+ */
+function triggerEvent(event, data) {
+	// Call handlers for this event
+	if (eventHandlers[event]) {
+		for (const callback of eventHandlers[event]) {
+			try {
+				callback(data);
+			} catch (error) {
+				console.error(`Error in callback for event '${event}':`, error);
+			}
+		}
+	}
+	
+	// Call wildcard handlers
+	if (eventHandlers['*']) {
+		for (const callback of eventHandlers['*']) {
+			try {
+				callback(event, data);
+			} catch (error) {
+				console.error(`Error in wildcard callback for event '${event}':`, error);
+			}
+		}
+	}
+}
+
+/**
+ * Trigger mock game events for local development
+ */
+function triggerMockGameEvents() {
+	// Create a mock game board
+	const mockBoard = Array(16).fill().map(() => Array(16).fill(0));
+	
+	// Add some blocks to the board
+	for (let i = 14; i < 16; i++) {
+		for (let j = 0; j < 16; j++) {
+			mockBoard[i][j] = Math.random() > 0.7 ? Math.floor(Math.random() * 7) + 1 : 0;
+		}
+	}
+	
+	// Generate mock tetromino
+	const tetrominoTypes = ['I', 'O', 'T', 'S', 'Z', 'J', 'L'];
+	const mockTetromino = {
+		type: tetrominoTypes[Math.floor(Math.random() * tetrominoTypes.length)],
+		position: { x: 8, y: 0, z: 0 },
+		shape: [
+			[1, 1, 1],
+			[0, 1, 0],
+			[0, 0, 0]
+		]
+	};
+	
+	// Generate mock chess pieces
+	const pieceTypes = ['pawn', 'rook', 'knight', 'bishop', 'queen', 'king'];
+	const mockChessPieces = [];
+	
+	// Player 1 pieces (blue)
+	for (let i = 0; i < 6; i++) {
+		mockChessPieces.push({
+			id: `p1-${pieceTypes[i % 6]}-${i}`,
+			type: pieceTypes[i % 6],
+			player: 1,
+			x: i * 2,
+			z: 14
+		});
+	}
+	
+	// Player 2 pieces (red)
+	for (let i = 0; i < 6; i++) {
+		mockChessPieces.push({
+			id: `p2-${pieceTypes[i % 6]}-${i}`,
+			type: pieceTypes[i % 6],
+			player: 2,
+			x: i * 2,
+			z: 0
+		});
+	}
+	
+	// Create a simple game state
+	const mockGameState = {
+		state: 'PLAYING',
+		board: mockBoard,
+		currentTetromino: mockTetromino,
+		ghostPiece: {
+			position: { x: 8, y: 0, z: 10 }
+		},
+		chessPieces: mockChessPieces,
+		players: [
+			{ id: 1, name: 'Player 1', score: 0 },
+			{ id: 2, name: 'Computer', score: 0 }
+		],
+		currentPlayer: 1,
+		turnPhase: 'chess',
+		turnStartTime: Date.now(),
+		isGameStarted: true,
+		isGamePaused: false,
+		isGameOver: false
+	};
+	
+	// Simulate events
+	setTimeout(() => {
+		if (eventHandlers['boardUpdate']) {
+			for (const handler of eventHandlers['boardUpdate']) {
+				handler({ board: mockBoard });
+			}
+		}
+		
+		if (eventHandlers['gameStateUpdate']) {
+			for (const handler of eventHandlers['gameStateUpdate']) {
+				handler(mockGameState);
+			}
+		}
+		
+		if (eventHandlers['turnChanged']) {
+			for (const handler of eventHandlers['turnChanged']) {
+				handler({ player: 1, phase: 'chess' });
+			}
+		}
+	}, 500);
 }

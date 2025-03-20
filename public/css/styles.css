@@ -116,7 +116,7 @@ body {
 
 /* Screen styles */
 .screen {
-	position: absolute;
+	position: fixed;
 	top: 0;
 	left: 0;
 	width: 100%;
@@ -154,24 +154,88 @@ body {
 
 /* Loading screen */
 #loading-screen {
-	z-index: 100;
+	z-index: 1000;
+	background-color: var(--bg-color);
+	position: fixed;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	opacity: 1;
+	transition: opacity var(--transition-slow);
 }
 
-.loading-spinner {
-	width: 50px;
-	height: 50px;
-	margin: var(--spacing-lg) auto;
-	border: 5px solid var(--border-color);
-	border-top-color: var(--primary-color);
-	border-radius: 50%;
-	animation: spin 1s linear infinite;
+.loading-content {
+	text-align: center;
+	max-width: 80%;
 }
 
-@keyframes spin {
-	to { transform: rotate(360deg); }
+.loading-content h2 {
+	font-size: var(--font-size-xlarge);
+	margin-bottom: var(--spacing-md);
+	color: var(--primary-color);
+}
+
+.loading-bar-container {
+	width: 100%;
+	max-width: 300px;
+	height: 20px;
+	background-color: var(--dark-border-color);
+	border-radius: 10px;
+	margin: 20px auto;
+	overflow: hidden;
+	box-shadow: 0 2px 5px var(--shadow-color);
+}
+
+#loading-bar {
+	height: 100%;
+	width: 0%;
+	background-color: var(--primary-color);
+	transition: width 0.3s ease;
+	background-image: linear-gradient(
+		45deg,
+		rgba(255, 255, 255, 0.15) 25%,
+		transparent 25%,
+		transparent 50%,
+		rgba(255, 255, 255, 0.15) 50%,
+		rgba(255, 255, 255, 0.15) 75%,
+		transparent 75%,
+		transparent
+	);
+	background-size: 40px 40px;
+	animation: loading-bar-animation 1.5s linear infinite;
+}
+
+@keyframes loading-bar-animation {
+	0% {
+		background-position: 0 0;
+	}
+	100% {
+		background-position: 40px 0;
+	}
+}
+
+#loading-text {
+	font-size: var(--font-size-medium);
+	margin-top: 10px;
+	min-height: 1.5em;
 }
 
 /* Menu screen */
+#menu-screen {
+	z-index: 900;
+	opacity: 0;
+	transition: opacity var(--transition-medium);
+}
+
+#menu-screen.visible {
+	opacity: 1;
+}
+
 #menu-screen h1 {
 	font-size: var(--font-size-xxlarge);
 	margin-bottom: var(--spacing-xl);

@@ -2,9 +2,11 @@ Shaktris:
 ## Core Gameplay Mechanics
 A massive multiplayer online game that combines elements of chess and Tetris on a dynamically expanding board.
 
-Shaktris is a multiplayer prototype that fuses elements of chess and Tetris on a dynamically expanding 2D board rendered in 3D. In this game, each player is assigned a unique "home zone" (an 8×2 area randomly placed, although within 8 to 12 squares of another home zone) where their chess pieces reside. (X-Y axis)
-Tetromino pieces fall from the sky (along the Z‑axis) and stick to the board only if at least one block lands adjacent to an existing cell which has a route back to the players king. The chess pieces can then use this as part of the board. So they need to build up the board towards their opponent to be able to move pieces into a place where they can attack.
- Full rows (any 8 in a line) are cleared, including any pieces on them, except for cells in a "safe" home zone that still has at least one piece. To encourage movement and clear abandoned zones, empty home zones degrade over time.
+Shaktris is a multiplayer prototype that fuses elements of chess and Tetris on a dynamically expanding 2D board rendered in 3D. In this game, each player is assigned a unique "home zone" (an 8×2 area randomly placed, although within 8 to 12 squares of another home zone) where their chess pieces reside. 
+
+Chess pieces move on the X-Z plane (X is horizontal, Z is vertical), while tetromino pieces fall from above along the Y-axis. The tetrominos stick to the board only if at least one block lands adjacent to an existing cell which has a route back to the player's king. The chess pieces can then use these cells as part of the board. Players need to build up the board towards their opponent to be able to move pieces into a place where they can attack.
+
+Full rows (any 8 in a line) are cleared, including any pieces on them, except for cells in a "safe" home zone that still has at least one piece. To encourage movement and clear abandoned zones, empty home zones degrade over time.
 
 All players play in the same world in a seeming infinite sky (new worlds will come later)
 The default world should have a faux historical Russian Theme.
@@ -14,16 +16,16 @@ A spectator view will allow you to see from that player's, or other players' vie
 
 - **Tetris Piece Connectivity Rules:**  
   Tetris pieces will only stick to the board if:
-  1. They are connected to other existing pieces .. it's like they have magnetic edges so as they go past a cell, they will stick and become cells themselves at the same level as other cells.
-  That is: imagine a playing surface is X/Y axis. Vertically up is Z. Chess plays on X/Y at Z=0. Tetris pieces fall down on Z.
-  When a Tetris piece gets to Z=1, if there is a cell underneath, the tetris piece explodes to nothing.
-  When the Tetris piece gets to Z=0, if there is a cell next to it then it (and a path to king) it stays where it is and becomes 4 cells.
+  1. They are connected to other existing pieces. They have magnetic edges, so as they go past a cell, they will stick and become cells themselves at the same level as other cells.
+  That is: imagine a playing surface is X/Z plane. Vertically up is Y. Chess plays on X/Z at Y=0. Tetris pieces fall down on Y.
+  When a Tetris piece gets to Y=1, if there is a cell underneath, the tetris piece explodes to nothing.
+  When the Tetris piece gets to Y=0, if there is a cell next to it (and a path to king) it stays where it is and becomes 4 cells.
   Otherwise it just keeps falling, burning up in the atmosphere.
     
-  2. There is a continuous path back to the player's king
+  2. There is a continuous path back to the player's king.
   This forces players to build strategically from their king's position, preventing disconnected "islands" of pieces.
   When a row is cleared, orphaned pieces will drop back, towards the player's king.
-  If any part of the tetris piece lands ON another cell, the whole piece will disintegrate to nothing
+  If any part of the tetris piece lands ON another cell, the whole piece will disintegrate to nothing.
   If it is not adjacent to a cell as it reaches board height it will just fall through the sky and fade away.
 
 - **Pawn Promotion:**  

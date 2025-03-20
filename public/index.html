@@ -3,107 +3,161 @@
 <head>
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<title>SHAKTRIS - Chess + Tetris Fusion Game</title>
+	<title>Shaktris - Chess + Tetris</title>
 	<meta name="description" content="Shaktris is a unique game that combines elements of chess and Tetris on a dynamically expanding board.">
 	
-	<!-- Favicon -->
-<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
-<link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
-<link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">
-<link rel="apple-touch-icon" sizes="76x76" href="/apple-icon-76x76.png">
-<link rel="apple-touch-icon" sizes="114x114" href="/apple-icon-114x114.png">
-<link rel="apple-touch-icon" sizes="120x120" href="/apple-icon-120x120.png">
-<link rel="apple-touch-icon" sizes="144x144" href="/apple-icon-144x144.png">
-<link rel="apple-touch-icon" sizes="152x152" href="/apple-icon-152x152.png">
-<link rel="apple-touch-icon" sizes="180x180" href="/apple-icon-180x180.png">
-<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
-<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
-<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
-<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
-<link rel="manifest" href="/manifest.json">
-<meta name="msapplication-TileColor" content="#ffffff">
-<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
-<meta name="theme-color" content="#ffffff">	
-	<!-- CSS -->
-	<link rel="stylesheet" href="css/styles.css">
-	
-	<!-- Three.js (for 3D rendering) -->
+	<!-- Libraries -->
 	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
 	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
 	
-	<!-- Set 3D mode flag -->
-	<script>
-		window.is2DMode = false;
-	</script>
+	<style>
+		body, html {
+			margin: 0;
+			padding: 0;
+			width: 100%;
+			height: 100%;
+			overflow: hidden;
+			font-family: Arial, sans-serif;
+			background-color: #000;
+		}
+		
+		#loading {
+			position: fixed;
+			top: 0;
+			left: 0;
+			width: 100%;
+			height: 100%;
+			background-color: #000;
+			display: flex;
+			justify-content: center;
+			align-items: center;
+			z-index: 1000;
+			color: white;
+			font-size: 2em;
+		}
+		
+		#error-message {
+			position: fixed;
+			top: 0;
+			left: 0;
+			width: 100%;
+			height: 100%;
+			background-color: rgba(0, 0, 0, 0.9);
+			display: none;
+			justify-content: center;
+			align-items: center;
+			z-index: 1001;
+			color: #ff5555;
+			font-size: 1.5em;
+			text-align: center;
+			padding: 20px;
+		}
+		
+		/* Added links to the error message */
+		#error-message a {
+			color: #3498db;
+			text-decoration: underline;
+			margin: 10px;
+			display: inline-block;
+		}
+		
+		#error-message button {
+			background-color: #3498db;
+			color: white;
+			border: none;
+			padding: 8px 16px;
+			margin-top: 20px;
+			border-radius: 4px;
+			cursor: pointer;
+			font-size: 16px;
+		}
+		
+		/* Critical fix: Ensure game container has proper height */
+		#game-container {
+			position: fixed;
+			top: 0;
+			left: 0;
+			width: 100%;
+			height: 100vh !important; /* Force full viewport height */
+			min-height: 100vh !important;
+			z-index: 1;
+		}
+		
+		#game-container canvas {
+			display: block;
+			width: 100% !important;
+			height: 100% !important;
+		}
+		
+		/* Game title */
+		.game-title {
+			position: fixed;
+			top: 10px;
+			left: 10px;
+			z-index: 100;
+			color: white;
+			font-size: 24px;
+			font-weight: bold;
+			text-shadow: 0 0 10px rgba(0, 0, 0, 0.7);
+		}
+		
+		/* Debug indicator */
+		.debug-indicator {
+			position: fixed;
+			left: 10px;
+			bottom: 10px;
+			z-index: 100;
+			color: rgba(255, 255, 255, 0.7);
+			font-size: 12px;
+		}
+	</style>
 </head>
 <body>
-	<div id="game-container">
-		<!-- Game canvas will be inserted here by the renderer -->
+	<!-- Game Title -->
+	<div class="game-title">SHAKTRIS</div>
+	
+	<!-- Add navigation menu after the game title div -->
+	<div style="position: fixed; top: 10px; left: 150px; z-index: 1000; background-color: rgba(0, 0, 0, 0.7); padding: 10px; border-radius: 5px;">
+		<div style="color: white; font-weight: bold; margin-bottom: 8px;">Navigation</div>
+		<a href="index.html" style="color: #3498db; margin-right: 10px; text-decoration: none; font-weight: bold;">Main Game</a>
+		<a href="interaction-test.html" style="color: #3498db; margin-right: 10px; text-decoration: none;">Interaction Test</a>
+		<a href="dev-test.html" style="color: #3498db; text-decoration: none;">Dev Test</a>
 	</div>
 	
-	<!-- UI Elements -->
-	<div id="ui-container">
-		<div id="menu-screen" class="screen">
-			<h1 class="game-title">SHAKTRIS</h1>
-			<div class="menu-options">
-				<button id="play-button" class="btn btn-primary">Play Game</button>
-				<button id="options-button" class="btn">Options</button>
-				<button id="help-button" class="btn">How to Play</button>
-			</div>
-		</div>
-		
-		<div id="game-screen" class="screen hidden">
-			<div id="score-display">Score: <span id="score-value">0</span></div>
-			<div id="level-display">Level: <span id="level-value">1</span></div>
-			<button id="pause-button" class="btn btn-small">Pause</button>
-		</div>
-		
-		<div id="pause-screen" class="screen hidden">
-			<div class="pause-menu">
-				<h2>Game Paused</h2>
-				<button id="resume-button" class="btn">Resume</button>
-				<button id="restart-button" class="btn">Restart</button>
-				<button id="quit-button" class="btn">Quit to Menu</button>
-			</div>
-		</div>
-		
-		<div id="game-over-screen" class="screen hidden">
-			<div class="game-over-menu">
-				<h2>Game Over</h2>
-				<div id="final-score">Score: <span id="final-score-value">0</span></div>
-				<button id="play-again-button" class="btn">Play Again</button>
-				<button id="game-over-quit-button" class="btn">Quit to Menu</button>
-			</div>
-		</div>
-		
-		<!-- Notifications -->
-		<div id="notification-container"></div>
-		
-		<!-- Spectator Mode UI -->
-		<div id="spectator-mode-indicator" class="spectator-mode-indicator">
-			Spectating: <span class="player-name">Player</span>
-			<button id="stop-spectating-button" class="btn btn-small">Stop</button>
-		</div>
+	<!-- Debug Indicator -->
+	<div class="debug-indicator">
+		Running simplified version.
+		<button id="reset-camera-btn" style="margin-left: 10px; padding: 2px 6px; background: #3498db; color: white; border: none; border-radius: 3px; cursor: pointer;">Reset Camera</button>
 	</div>
 	
 	<!-- Loading Screen -->
-	<div id="loading-screen">
-		<div class="loading-content">
-			<h2>Loading SHAKTRIS</h2>
-			<div class="loading-bar-container">
-				<div id="loading-bar"></div>
-			</div>
-			<div id="loading-text">Initializing...</div>
-		</div>
+	<div id="loading">
+		Loading Shaktris...
 	</div>
 	
-	<!-- Debug Panel -->
-	<div id="debug-panel" class="debug-panel">
-		<h3>Debug Info</h3>
-		<pre>Initializing...</pre>
-	</div>
+	<!-- Error Message -->
+	<div id="error-message"></div>
 	
-	<!-- JavaScript Modules -->
-	<script type="module" src="js/main.js"></script>
+	<!-- Game Container -->
+	<div id="game-container" style="display: none;"></div>
+	
+	<script type="module">
+		// Import the simplified main module
+		import * as gameMain from './js/main-simple.js';
+		
+		// Add reset camera button functionality
+		document.getElementById('reset-camera-btn').addEventListener('click', () => {
+			try {
+				// Import the minimal game core to access resetCameraView
+				import('./js/minimal-gameCore.js').then(gameCore => {
+					if (gameCore.resetCameraView) {
+						gameCore.resetCameraView(true);
+					}
+				});
+			} catch (error) {
+				console.error('Error resetting camera:', error);
+			}
+		});
+	</script>
 </body>
 </html>

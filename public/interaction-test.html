@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Shaktris - Interaction Test</title>
+	
+	<!-- Libraries -->
+	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
+	
+	<style>
+		body, html {
+			margin: 0;
+			padding: 0;
+			width: 100%;
+			height: 100%;
+			overflow: hidden;
+			font-family: Arial, sans-serif;
+			background-color: #000;
+		}
+		
+		#game-container {
+			position: fixed;
+			top: 0;
+			left: 0;
+			width: 100%;
+			height: 100vh !important;
+			min-height: 100vh !important;
+			z-index: 1;
+		}
+		
+		#game-container canvas {
+			display: block;
+			width: 100% !important;
+			height: 100% !important;
+		}
+		
+		#debug-panel {
+			position: fixed;
+			top: 10px;
+			right: 10px;
+			width: 300px;
+			background-color: rgba(0, 0, 0, 0.7);
+			color: #fff;
+			padding: 10px;
+			border-radius: 5px;
+			z-index: 100;
+		}
+		
+		#log-container {
+			position: fixed;
+			bottom: 10px;
+			left: 10px;
+			width: 300px;
+			height: 200px;
+			background-color: rgba(0, 0, 0, 0.7);
+			color: #fff;
+			padding: 10px;
+			border-radius: 5px;
+			z-index: 100;
+			overflow-y: auto;
+			font-family: monospace;
+			font-size: 12px;
+		}
+		
+		.control-group {
+			margin-bottom: 10px;
+		}
+		
+		.control-btn {
+			background-color: #3498db;
+			color: white;
+			border: none;
+			padding: 5px 10px;
+			margin: 2px;
+			border-radius: 3px;
+			cursor: pointer;
+		}
+		
+		.log-entry {
+			margin-bottom: 3px;
+			border-bottom: 1px solid #333;
+		}
+		
+		.key-indicator {
+			position: fixed;
+			top: 10px;
+			left: 50%;
+			transform: translateX(-50%);
+			background-color: rgba(0, 0, 0, 0.7);
+			color: #00ff00;
+			padding: 10px;
+			border-radius: 5px;
+			font-size: 16px;
+			z-index: 100;
+		}
+	</style>
+</head>
+<body>
+	<!-- Add this right after the opening body tag -->
+	<div style="position: fixed; top: 10px; left: 10px; z-index: 1000; background-color: rgba(0, 0, 0, 0.7); padding: 10px; border-radius: 5px;">
+		<div style="color: white; font-weight: bold; margin-bottom: 8px;">Navigation</div>
+		<a href="index.html" style="color: #3498db; margin-right: 10px; text-decoration: none;">Main Game</a>
+		<a href="interaction-test.html" style="color: #3498db; margin-right: 10px; text-decoration: none; font-weight: bold;">Interaction Test</a>
+		<a href="dev-test.html" style="color: #3498db; text-decoration: none;">Dev Test</a>
+	</div>
+	
+	<!-- Game Container -->
+	<div id="game-container"></div>
+	
+	<!-- Debug Panel -->
+	<div id="debug-panel">
+		<h3 style="margin-top: 0;">Shaktris Interaction Test</h3>
+		<p style="margin-bottom: 15px; color: #aaa; font-size: 14px;">
+			Test the game mechanics in this simplified version. All players play simultaneously - there are no turns!
+		</p>
+		
+		<div class="control-group">
+			<span>Active Player:</span>
+			<button id="btn-player1" class="control-btn">Player 1</button>
+			<button id="btn-player2" class="control-btn">Player 2</button>
+			<div style="margin-top: 5px; font-size: 12px; color: #aaa;">
+				Each player plays their own game independently
+			</div>
+		</div>
+		
+		<div class="control-group">
+			<span>Player Cycle Phase:</span>
+			<button id="btn-tetris-phase" class="control-btn">Tetris Phase</button>
+			<button id="btn-chess-phase" class="control-btn">Chess Phase</button>
+			<div style="margin-top: 5px; font-size: 12px; color: #aaa;">
+				Each player alternates between placing a tetris piece and moving a chess piece
+			</div>
+		</div>
+		
+		<div class="control-group">
+			<span>Cycle Control:</span>
+			<button id="btn-new-cycle" class="control-btn" style="background-color: #28a745;">Start New Cycle</button>
+			<div style="margin-top: 5px; font-size: 12px; color: #aaa;">
+				Start a fresh tetris+chess cycle for this player
+			</div>
+		</div>
+		
+		<div class="control-group">
+			<span>Tetromino Controls:</span>
+			<button id="btn-move-left" class="control-btn">←</button>
+			<button id="btn-move-right" class="control-btn">→</button>
+			<button id="btn-move-up" class="control-btn">↑</button>
+			<button id="btn-move-down" class="control-btn">↓</button>
+			<button id="btn-rotate-left" class="control-btn">Z</button>
+			<button id="btn-rotate-right" class="control-btn">X</button>
+			<button id="btn-hard-drop" class="control-btn">Space</button>
+			<button id="btn-new-tetromino" class="control-btn">New Tetromino</button>
+		</div>
+		
+		<div class="control-group">
+			<span>Chess Controls:</span>
+			<div style="margin-top: 5px;">
+				<button id="btn-select-pawn" class="control-btn">Select Pawn</button>
+				<button id="btn-select-rook" class="control-btn">Select Rook</button>
+				<button id="btn-select-knight" class="control-btn">Select Knight</button>
+			</div>
+			<div style="margin-top: 5px;">
+				<button id="btn-select-bishop" class="control-btn">Select Bishop</button>
+				<button id="btn-select-queen" class="control-btn">Select Queen</button>
+				<button id="btn-select-king" class="control-btn">Select King</button>
+			</div>
+			<div style="margin-top: 5px;">
+				<button id="btn-move-piece-up" class="control-btn">Move ↑</button>
+				<button id="btn-move-piece-left" class="control-btn">Move ←</button>
+				<button id="btn-move-piece-right" class="control-btn">Move →</button>
+				<button id="btn-move-piece-down" class="control-btn">Move ↓</button>
+			</div>
+		</div>
+		
+		<div class="control-group">
+			<span>Camera:</span>
+			<button id="btn-reset-camera" class="control-btn">Reset Camera</button>
+		</div>
+		
+		<div class="control-group">
+			<span>Reset:</span>
+			<button id="btn-restart-game" class="control-btn">Restart Game</button>
+		</div>
+	</div>
+	
+	<!-- Key Indicator -->
+	<div id="key-indicator" class="key-indicator"></div>
+	
+	<!-- Log Container -->
+	<div id="log-container">
+		<div style="font-weight: bold; margin-bottom: 5px;">Event Log:</div>
+		<div id="log-entries"></div>
+	</div>
+	
+	<script type="module">
+		import * as gameCore from './js/minimal-gameCore.js';
+		
+		// Initialize log function
+		function logEvent(message) {
+			const logEntries = document.getElementById('log-entries');
+			const entry = document.createElement('div');
+			entry.className = 'log-entry';
+			entry.textContent = `${new Date().toLocaleTimeString()}: ${message}`;
+			logEntries.prepend(entry);
+			
+			// Limit log entries
+			if (logEntries.children.length > 50) {
+				logEntries.removeChild(logEntries.lastChild);
+			}
+			
+			console.log(message);
+		}
+		
+		// Initialize game
+		document.addEventListener('DOMContentLoaded', () => {
+			logEvent('Initializing game...');
+			
+			try {
+				const gameContainer = document.getElementById('game-container');
+				const success = gameCore.initGame(gameContainer);
+				
+				if (success) {
+					logEvent('Game initialized successfully');
+					
+					// Set up button handlers
+					document.getElementById('btn-tetris-phase').addEventListener('click', () => {
+						logEvent('Switching to Tetris phase');
+						const gameState = gameCore.getGameState();
+						gameState.turnPhase = 'tetris';
+						if (!gameState.currentTetromino) {
+							createNewTetromino();
+						}
+					});
+					
+					document.getElementById('btn-chess-phase').addEventListener('click', () => {
+						logEvent('Switching to Chess phase');
+						const gameState = gameCore.getGameState();
+						gameState.turnPhase = 'chess';
+					});
+					
+					document.getElementById('btn-player1').addEventListener('click', () => {
+						logEvent('Switching to control Player 1');
+						const gameState = gameCore.getGameState();
+						gameState.currentPlayer = 1;
+						showToastMessage("Now controlling Blue Player (Player 1)");
+					});
+					
+					document.getElementById('btn-player2').addEventListener('click', () => {
+						logEvent('Switching to control Player 2');
+						const gameState = gameCore.getGameState();
+						gameState.currentPlayer = 2;
+						showToastMessage("Now controlling Orange Player (Player 2)");
+					});
+					
+					document.getElementById('btn-move-left').addEventListener('click', () => {
+						logEvent('Move tetromino left');
+						simulateKeyPress('ArrowLeft');
+					});
+					
+					document.getElementById('btn-move-right').addEventListener('click', () => {
+						logEvent('Move tetromino right');
+						simulateKeyPress('ArrowRight');
+					});
+					
+					document.getElementById('btn-move-up').addEventListener('click', () => {
+						logEvent('Move tetromino up');
+						simulateKeyPress('ArrowUp');
+					});
+					
+					document.getElementById('btn-move-down').addEventListener('click', () => {
+						logEvent('Move tetromino down');
+						simulateKeyPress('ArrowDown');
+					});
+					
+					document.getElementById('btn-rotate-left').addEventListener('click', () => {
+						logEvent('Rotate tetromino left');
+						simulateKeyPress('z');
+					});
+					
+					document.getElementById('btn-rotate-right').addEventListener('click', () => {
+						logEvent('Rotate tetromino right');
+						simulateKeyPress('x');
+					});
+					
+					document.getElementById('btn-hard-drop').addEventListener('click', () => {
+						logEvent('Hard drop tetromino');
+						simulateKeyPress(' ');
+					});
+					
+					document.getElementById('btn-new-tetromino').addEventListener('click', () => {
+						logEvent('Creating new tetromino');
+						createNewTetromino();
+					});
+					
+					document.getElementById('btn-reset-camera').addEventListener('click', () => {
+						logEvent('Resetting camera');
+						gameCore.resetCameraView(true);
+					});
+					
+					document.getElementById('btn-restart-game').addEventListener('click', () => {
+						logEvent('Restarting game');
+						gameCore.exportedFunctions.restartGame();
+					});
+					
+					// Chess piece selection buttons
+					document.getElementById('btn-select-pawn').addEventListener('click', () => {
+						logEvent('Selecting pawn');
+						selectPieceByType('pawn');
+					});
+					
+					document.getElementById('btn-select-rook').addEventListener('click', () => {
+						logEvent('Selecting rook');
+						selectPieceByType('rook');
+					});
+					
+					document.getElementById('btn-select-knight').addEventListener('click', () => {
+						logEvent('Selecting knight');
+						selectPieceByType('knight');
+					});
+					
+					document.getElementById('btn-select-bishop').addEventListener('click', () => {
+						logEvent('Selecting bishop');
+						selectPieceByType('bishop');
+					});
+					
+					document.getElementById('btn-select-queen').addEventListener('click', () => {
+						logEvent('Selecting queen');
+						selectPieceByType('queen');
+					});
+					
+					document.getElementById('btn-select-king').addEventListener('click', () => {
+						logEvent('Selecting king');
+						selectPieceByType('king');
+					});
+					
+					// Chess movement buttons
+					document.getElementById('btn-move-piece-up').addEventListener('click', () => {
+						logEvent('Moving chess piece up');
+						moveSelectedPiece(0, -1);
+					});
+					
+					document.getElementById('btn-move-piece-down').addEventListener('click', () => {
+						logEvent('Moving chess piece down');
+						moveSelectedPiece(0, 1);
+					});
+					
+					document.getElementById('btn-move-piece-left').addEventListener('click', () => {
+						logEvent('Moving chess piece left');
+						moveSelectedPiece(-1, 0);
+					});
+					
+					document.getElementById('btn-move-piece-right').addEventListener('click', () => {
+						logEvent('Moving chess piece right');
+						moveSelectedPiece(1, 0);
+					});
+					
+					// Custom function to create a new tetromino
+					function createNewTetromino() {
+						// Access the createNewTetromino function by modifying game state
+						logEvent('Creating new tetromino...');
+						gameCore.nextTurn();
+					}
+					
+					// Function to simulate keypresses
+					function simulateKeyPress(key) {
+						const event = new KeyboardEvent('keydown', {
+							key: key,
+							code: key === ' ' ? 'Space' : `Key${key.toUpperCase()}`,
+							keyCode: key.charCodeAt(0),
+							which: key.charCodeAt(0),
+							bubbles: true,
+							cancelable: true
+						});
+						
+						// Display key pressed indicator
+						const keyIndicator = document.getElementById('key-indicator');
+						keyIndicator.textContent = `Key Pressed: ${key}`;
+						setTimeout(() => {
+							keyIndicator.textContent = '';
+						}, 2000);
+						
+						document.dispatchEvent(event);
+						logEvent(`Simulated keypress: ${key}`);
+					}
+					
+					// Helper function to select a chess piece by type
+					function selectPieceByType(type) {
+						// First make sure we're in chess phase
+						const gameState = gameCore.getGameState();
+						gameState.turnPhase = 'chess';
+						
+						logEvent(`Selecting ${type} for player ${gameState.currentPlayer}`);
+						
+						// Get pieces from game state
+						const pieces = gameState.chessPieces;
+						if (!pieces || pieces.length === 0) {
+							logEvent('No chess pieces found');
+							return;
+						}
+						
+						// Find a piece of the requested type for the current player
+						const targetPiece = pieces.find(p => 
+							p.type === type && p.player === gameState.currentPlayer
+						);
+						
+						if (!targetPiece) {
+							logEvent(`No ${type} found for player ${gameState.currentPlayer}`);
+							return;
+						}
+						
+						// Simulate a click on the piece's position
+						logEvent(`Found ${type} at position ${targetPiece.x}, ${targetPiece.z}`);
+						simulateClickOnBoardPosition(targetPiece.x, targetPiece.z);
+					}
+					
+					// Helper function to move the selected piece
+					function moveSelectedPiece(dx, dz) {
+						// Make sure we're in chess phase
+						const gameState = gameCore.getGameState();
+						gameState.turnPhase = 'chess';
+						
+						// Check if a piece is selected
+						if (!gameState.selectedChessPiece) {
+							logEvent('No chess piece is selected');
+							return;
+						}
+						
+						const piece = gameState.selectedChessPiece;
+						logEvent(`Currently selected: ${piece.type} at ${piece.x}, ${piece.z}`);
+						
+						// Calculate the target position
+						const targetX = piece.x + dx;
+						const targetZ = piece.z + dz;
+						
+						// Simulate a click on the target position
+						logEvent(`Attempting to move to ${targetX}, ${targetZ}`);
+						simulateClickOnBoardPosition(targetX, targetZ);
+					}
+					
+					// Helper function to simulate a click on a board position
+					function simulateClickOnBoardPosition(boardX, boardZ) {
+						logEvent(`Simulating click on board position ${boardX}, ${boardZ}`);
+						
+						// Get the render size and offset
+						const renderer = document.querySelector('#game-container canvas');
+						if (!renderer) {
+							logEvent('Cannot find renderer');
+							return;
+						}
+						
+						const rect = renderer.getBoundingClientRect();
+						
+						// Convert board coordinates to normalized device coordinates
+						const offsetX = gameState.boardSize / 2 - 0.5;
+						const offsetZ = gameState.boardSize / 2 - 0.5;
+						
+						// Get the camera position and orientation
+						const camera = gameCore.getCamera();
+						if (!camera) {
+							logEvent('Cannot access camera');
+							return;
+						}
+						
+						// Convert board position to world position
+						const worldX = boardX - offsetX;
+						const worldZ = boardZ - offsetZ;
+						const worldY = 0.5; // Elevation above board
+						
+						// Project 3D point to 2D screen coordinates
+						const position = new THREE.Vector3(worldX, worldY, worldZ);
+						const screenPos = position.project(camera);
+						
+						// Convert NDC to screen coordinates
+						const screenX = ((screenPos.x + 1) / 2) * rect.width + rect.left;
+						const screenY = (-(screenPos.y - 1) / 2) * rect.height + rect.top;
+						
+						logEvent(`Screen coordinates: ${Math.round(screenX)}, ${Math.round(screenY)}`);
+						
+						// Create and dispatch click event
+						const clickEvent = new MouseEvent('click', {
+							bubbles: true,
+							cancelable: true,
+							view: window,
+							clientX: screenX,
+							clientY: screenY
+						});
+						
+						renderer.dispatchEvent(clickEvent);
+						
+						// Show visual feedback
+						showClickIndicator(screenX, screenY);
+					}
+					
+					// Helper function to show a click indicator
+					function showClickIndicator(x, y) {
+						const indicator = document.createElement('div');
+						indicator.style.position = 'fixed';
+						indicator.style.left = (x - 15) + 'px';
+						indicator.style.top = (y - 15) + 'px';
+						indicator.style.width = '30px';
+						indicator.style.height = '30px';
+						indicator.style.borderRadius = '50%';
+						indicator.style.border = '2px solid #ffff00';
+						indicator.style.zIndex = '9999';
+						indicator.style.pointerEvents = 'none';
+						indicator.style.animation = 'clickRipple 0.6s linear';
+						
+						if (!document.getElementById('click-animation-style')) {
+							const style = document.createElement('style');
+							style.id = 'click-animation-style';
+							style.textContent = `
+								@keyframes clickRipple {
+									0% { transform: scale(0.5); opacity: 1; }
+									100% { transform: scale(1.5); opacity: 0; }
+								}
+							`;
+							document.head.appendChild(style);
+						}
+						
+						document.body.appendChild(indicator);
+						setTimeout(() => {
+							document.body.removeChild(indicator);
+						}, 600);
+					}
+					
+					// Add event listener for new cycle button
+					document.getElementById('btn-new-cycle').addEventListener('click', () => {
+						logEvent('Starting new cycle for current player');
+						
+						// Use the exported startNewCycle function
+						gameCore.exportedFunctions.startNewCycle();
+					});
+					
+				} else {
+					logEvent('Game initialization failed');
+				}
+			} catch (error) {
+				logEvent(`Error: ${error.message}`);
+				console.error('Error initializing game:', error);
+			}
+		});
+	</script>
+</body>
+</html> 

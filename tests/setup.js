@@ -1,186 +1,247 @@
 /**
- * Test Setup
- * 
- * This file configures the test environment:
- * - Sets NODE_ENV to 'test'
- * - Configures test databases
- * - Handles cleanup between tests
+ * Jest test setup file
  */
 
-// Load environment variables directly
-import dotenv from 'dotenv';
-dotenv.config();
+// Add TextEncoder and TextDecoder since they're not available in JSDOM
+global.TextEncoder = require('util').TextEncoder;
+global.TextDecoder = require('util').TextDecoder;
 
-// Set test environment
-process.env.NODE_ENV = 'test';
-process.env.PORT = 3030; // Use a different port for tests
-process.env.MONGODB_URI = 'mongodb://localhost:27017/shaktris_test';
+// Configure JSDOM
+const jsdom = require('jsdom');
+const { JSDOM } = jsdom;
 
-// Define test database URIs if not already set
-process.env.TEST_MONGO_URI = process.env.TEST_MONGO_URI || 'mongodb://localhost:27017/chesstris_test';
-process.env.TEST_REDIS_URI = process.env.TEST_REDIS_URI || 'redis://localhost:6379/1';
+// Create a basic DOM environment
+const dom = new JSDOM('<!DOCTYPE html><html><head></head><body></body></html>', {
+	url: 'http://localhost/'
+});
 
-// Import services and utilities needed for cleanup
-import { closeConnections } from '../services/index.js';
-import mongoose from 'mongoose';
-import * as redis from 'redis';
-import { setupMockFetch, restoreFetch } from './mockFetch.js';
-
-// Import server for proper shutdown
-let mainServer;
-let srcServer;
-import('../server.js');
-
-if (!mainServer && !srcServer) {
-	console.log('No server modules found, will not attempt shutdown');
-}
-
-// Test helpers for ES modules
-export const createTestProxy = (module) => {
-	// Create a mutable object to store overrides
-	const overrides = {};
-	
-	const handler = {
-		get: (target, prop) => {
-			if (prop === '__esModule') return true;
-			if (prop === '_testOverrides') return overrides;
-			if (prop === 'mockImplementation') {
-				return (key, implementation) => {
-					overrides[key] = implementation;
-				};
+// Mock chai since it's giving us issues with ESM
+jest.mock('chai', () => ({
+	expect: jest.fn().mockImplementation(value => ({
+		to: {
+			equal: jest.fn(),
+			deep: {
+				equal: jest.fn()
 			}
-			if (prop in overrides) {
-				return overrides[prop];
-			}
-			return target[prop];
 		},
-		set: (target, prop, value) => {
-			overrides[prop] = value;
-			return true;
+		toBe: jest.fn(),
+		toEqual: jest.fn(),
+		toBeNull: jest.fn(),
+		toContain: jest.fn(),
+		toBeDefined: jest.fn(),
+		toBeUndefined: jest.fn(),
+		toBeTrue: jest.fn(),
+		toBeFalse: jest.fn()
+	}))
+}));
+
+// Mock sinon
+jest.mock('sinon', () => ({
+	stub: jest.fn(() => ({
+		returns: jest.fn(),
+		callsFake: jest.fn(),
+		resolves: jest.fn(),
+		rejects: jest.fn(),
+		reset: jest.fn(),
+		restore: jest.fn(),
+		returnsThis: jest.fn().mockReturnThis()
+	})),
+	spy: jest.fn(),
+	mock: jest.fn(),
+	fake: jest.fn(),
+	restore: jest.fn(),
+	reset: jest.fn(),
+	resetHistory: jest.fn(),
+	createSandbox: jest.fn(() => ({
+		stub: jest.fn(),
+		spy: jest.fn(),
+		mock: jest.fn(),
+		restore: jest.fn()
+	}))
+}));
+
+// Set up global variables to simulate browser environment
+global.window = dom.window;
+global.document = dom.window.document;
+global.navigator = { userAgent: 'node.js' };
+global.HTMLElement = dom.window.HTMLElement;
+global.HTMLCanvasElement = dom.window.HTMLCanvasElement;
+global.Image = dom.window.Image;
+global.Audio = jest.fn().mockImplementation(() => ({
+	play: jest.fn().mockReturnValue(Promise.resolve()),
+	pause: jest.fn(),
+	load: jest.fn(),
+	addEventListener: jest.fn((event, callback) => {
+		if (event === 'canplaythrough') {
+			setTimeout(callback, 0);
+		}
+	}),
+	removeEventListener: jest.fn(),
+	muted: false,
+	volume: 1.0,
+	currentTime: 0,
+	loop: false
+}));
+
+// Create a proper localStorage mock with jest.fn()
+const localStorageMock = (() => {
+	let store = {};
+	
+	return {
+		getItem: jest.fn().mockImplementation(key => {
+			return store[key] || null;
+		}),
+		setItem: jest.fn().mockImplementation((key, value) => {
+			store[key] = value.toString();
+		}),
+		clear: jest.fn().mockImplementation(() => {
+			store = {};
+		}),
+		removeItem: jest.fn().mockImplementation(key => {
+			delete store[key];
+		}),
+		key: jest.fn().mockImplementation(index => {
+			return Object.keys(store)[index] || null;
+		}),
+		get length() {
+			return Object.keys(store).length;
+		},
+		// Helper to reset mocks and store
+		__resetMocks: () => {
+			store = {};
+			localStorageMock.getItem.mockClear();
+			localStorageMock.setItem.mockClear();
+			localStorageMock.removeItem.mockClear();
+			localStorageMock.clear.mockClear();
 		}
 	};
-	return new Proxy(module, handler);
+})();
+
+// Use defineProperty to set the localStorage property on window
+Object.defineProperty(window, 'localStorage', { 
+	value: localStorageMock,
+	writable: true,
+	configurable: true
+});
+
+// Same for sessionStorage
+const sessionStorageMock = (() => {
+	let store = {};
+	
+	return {
+		getItem: jest.fn().mockImplementation(key => {
+			return store[key] || null;
+		}),
+		setItem: jest.fn().mockImplementation((key, value) => {
+			store[key] = value.toString();
+		}),
+		clear: jest.fn().mockImplementation(() => {
+			store = {};
+		}),
+		removeItem: jest.fn().mockImplementation(key => {
+			delete store[key];
+		}),
+		key: jest.fn().mockImplementation(index => {
+			return Object.keys(store)[index] || null;
+		}),
+		get length() {
+			return Object.keys(store).length;
+		},
+		// Helper to reset mocks and store
+		__resetMocks: () => {
+			store = {};
+			sessionStorageMock.getItem.mockClear();
+			sessionStorageMock.setItem.mockClear();
+			sessionStorageMock.removeItem.mockClear();
+			sessionStorageMock.clear.mockClear();
+		}
+	};
+})();
+
+Object.defineProperty(window, 'sessionStorage', { 
+	value: sessionStorageMock,
+	writable: true,
+	configurable: true
+});
+
+// Mock window.matchMedia
+window.matchMedia = jest.fn().mockImplementation(query => ({
+	matches: false,
+	media: query,
+	onchange: null,
+	addListener: jest.fn(),
+	removeListener: jest.fn(),
+	addEventListener: jest.fn(),
+	removeEventListener: jest.fn(),
+	dispatchEvent: jest.fn()
+}));
+
+// Mock requestAnimationFrame
+global.requestAnimationFrame = callback => setTimeout(() => callback(Date.now()), 0);
+global.cancelAnimationFrame = id => clearTimeout(id);
+
+// Create a mock THREE object
+global.THREE = {
+	Vector3: jest.fn(function(x, y, z) {
+		this.x = x || 0;
+		this.y = y || 0;
+		this.z = z || 0;
+		this.clone = jest.fn(() => new global.THREE.Vector3(this.x, this.y, this.z));
+		this.copy = jest.fn(v => {
+			this.x = v.x;
+			this.y = v.y;
+			this.z = v.z;
+			return this;
+		});
+	}),
+	Color: jest.fn(function() {
+		this.r = 1;
+		this.g = 1;
+		this.b = 1;
+	}),
+	Mesh: jest.fn(function() {
+		this.position = new global.THREE.Vector3();
+		this.rotation = new global.THREE.Vector3();
+		this.scale = new global.THREE.Vector3(1, 1, 1);
+	}),
+	Group: jest.fn().mockImplementation(() => ({
+		add: jest.fn(),
+		remove: jest.fn(),
+		children: []
+	}))
 };
 
-// Set up test environment
-export async function mochaGlobalSetup() {
-	console.log('Setting up test environment');
-	console.log(`Using test MongoDB: ${process.env.TEST_MONGO_URI}`);
-	console.log(`Using test Redis: ${process.env.TEST_REDIS_URI}`);
+// Mock canvas 2D context
+HTMLCanvasElement.prototype.getContext = function() {
+	return {
+		fillRect: jest.fn(),
+		clearRect: jest.fn(),
+		getImageData: jest.fn(() => ({ data: new Array(4) })),
+		putImageData: jest.fn(),
+		drawImage: jest.fn(),
+		save: jest.fn(),
+		restore: jest.fn(),
+		beginPath: jest.fn(),
+		moveTo: jest.fn(),
+		lineTo: jest.fn(),
+		stroke: jest.fn(),
+		fill: jest.fn()
+	};
+};
 
-	// Check Redis availability
-	const redisAvailable = await checkRedisConnection();
-	if (!redisAvailable) {
-		throw new Error('Redis server is required for tests but is not available');
+// Reset mocks before each test
+beforeEach(() => {
+	// Reset localStorage mock
+	if (localStorageMock && localStorageMock.__resetMocks) {
+		localStorageMock.__resetMocks();
 	}
-
-	// Setup fetch mocking for API calls
-	setupMockFetch();
-
-	// Add global test helpers
-	global.createTestProxy = createTestProxy;
-}
-
-// Clean up test environment
-export async function mochaGlobalTeardown() {
-	console.log('Cleaning up test environment');
-	try {
-		// Restore original fetch
-		restoreFetch();
-
-		// Disconnect Redis - handle a potentially already closed connection
-		try {
-			await closeConnections();
-		} catch (error) {
-			// If Redis is already closed, log but don't fail the test
-			console.error('Error closing database connections:', error);
-		}
-		
-		// Drop the test database
-		if (mongoose.connection.readyState !== 0) {
-			await mongoose.connection.dropDatabase();
-			await mongoose.connection.close();
-		}
-		
-		// Shutdown server if available
-		if (mainServer && mainServer.shutdownServer) {
-			console.log('Shutting down main server...');
-			await mainServer.shutdownServer();
-		}
-		if (srcServer && srcServer.shutdownServer) {
-			console.log('Shutting down src server...');
-			await srcServer.shutdownServer();
-		}
-		
-		// Clean up any remaining event listeners
-		process.removeAllListeners();
-		
-		// Clear any outstanding timers
-		const clearTimerIds = [];
-		const oldSetTimeout = setTimeout;
-		const oldClearTimeout = clearTimeout;
-		
-		for (let i = 0; i < 10000; i++) {
-			clearTimerIds.push(oldClearTimeout(i));
-		}
-		
-		// Force terminate any open handles or timers
-		const forceExit = oldSetTimeout(() => {
-			console.log('Forcing process exit after cleanup');
-			process.exit(0);
-		}, 1000);
-		
-		// Make sure this timeout gets cleared if we exit naturally
-		forceExit.unref();
-		
-		console.log('Test cleanup completed successfully');
-	} catch (error) {
-		console.error('Error during test cleanup:', error);
-		process.exit(1);
+	
+	// Reset sessionStorage mock
+	if (sessionStorageMock && sessionStorageMock.__resetMocks) {
+		sessionStorageMock.__resetMocks();
 	}
-}
-
-// Check if Redis is available
-async function checkRedisConnection() {
-	const client = redis.createClient({ url: process.env.TEST_REDIS_URI });
-	try {
-		await client.connect();
-		await client.quit();
-		return true;
-	} catch (error) {
-		console.error('Redis is not available. Please ensure Redis server is running.');
-		console.error('You can install Redis on Windows using:');
-		console.error('  1. Enable WSL2 (Windows Subsystem for Linux 2)');
-		console.error('  2. Install Redis in WSL2: sudo apt-get install redis-server');
-		console.error('  3. Start Redis in WSL2: sudo service redis-server start');
-		console.error('Or use Docker:');
-		console.error('  docker run --name redis -p 6379:6379 -d redis');
-		return false;
-	}
-}
-
-// Setup test environment
-const chai = require('chai');
-global.expect = chai.expect;
-
-// Mock Socket.IO
-jest.mock('socket.io', () => {
-  return jest.fn(() => ({
-    on: jest.fn(),
-    emit: jest.fn(),
-  }));
+	
+	// Reset all mocks
+	jest.clearAllMocks();
 });
 
-// Prevent server from starting during tests
-jest.mock('../server', () => {
-  return {
-    // Mock any server exports you need for tests
-    startServer: jest.fn(),
-  };
-});
-
-// Clean up after tests
-afterAll(() => {
-  // Log instead of trying to shut down server
-  console.log('Test completed, no server to shut down in test environment');
-}); 

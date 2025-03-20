@@ -1,0 +1,446 @@
+/**
+ * Game UI Styles
+ * Main styles for the Shaktris game UI components
+ */
+
+/* Common UI Styles */
+:root {
+	--primary-color: #4285f4;
+	--secondary-color: #34a853;
+	--accent-color: #fbbc05;
+	--danger-color: #ea4335;
+	--dark-bg: #121212;
+	--dark-surface: #1f1f1f;
+	--light-bg: #f5f5f5;
+	--light-surface: #ffffff;
+	--text-light: #ffffff;
+	--text-dark: #333333;
+	--shadow-light: 0 2px 10px rgba(0, 0, 0, 0.1);
+	--shadow-dark: 0 4px 20px rgba(0, 0, 0, 0.5);
+	--border-radius: 8px;
+	--spacing-xs: 4px;
+	--spacing-sm: 8px;
+	--spacing-md: 16px;
+	--spacing-lg: 24px;
+	--spacing-xl: 32px;
+	--font-main: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+	--font-display: 'Montserrat', var(--font-main);
+	--animation-fast: 0.2s;
+	--animation-normal: 0.3s;
+	--animation-slow: 0.5s;
+}
+
+/* Dark Theme (Default) */
+body {
+	font-family: var(--font-main);
+	background-color: var(--dark-bg);
+	color: var(--text-light);
+	margin: 0;
+	padding: 0;
+	line-height: 1.5;
+}
+
+/* Panel Styles */
+.ui-panel {
+	background-color: rgba(31, 31, 31, 0.8);
+	border-radius: var(--border-radius);
+	box-shadow: var(--shadow-dark);
+	padding: var(--spacing-md);
+	backdrop-filter: blur(10px);
+	-webkit-backdrop-filter: blur(10px);
+	transition: all var(--animation-normal) ease-in-out;
+	z-index: 100;
+	max-width: 100%;
+	box-sizing: border-box;
+	border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Panel Positioning */
+.ui-panel.top-left {
+	position: absolute;
+	top: var(--spacing-md);
+	left: var(--spacing-md);
+}
+
+.ui-panel.top-right {
+	position: absolute;
+	top: var(--spacing-md);
+	right: var(--spacing-md);
+}
+
+.ui-panel.bottom-left {
+	position: absolute;
+	bottom: var(--spacing-md);
+	left: var(--spacing-md);
+}
+
+.ui-panel.bottom-right {
+	position: absolute;
+	bottom: var(--spacing-md);
+	right: var(--spacing-md);
+}
+
+.ui-panel.top-center {
+	position: absolute;
+	top: var(--spacing-md);
+	left: 50%;
+	transform: translateX(-50%);
+}
+
+.ui-panel.bottom-center {
+	position: absolute;
+	bottom: var(--spacing-md);
+	left: 50%;
+	transform: translateX(-50%);
+}
+
+/* Panel Header */
+.panel-header {
+	margin-bottom: var(--spacing-md);
+	border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+	padding-bottom: var(--spacing-sm);
+}
+
+.panel-header h3 {
+	margin: 0;
+	font-family: var(--font-display);
+	font-weight: 600;
+	font-size: 18px;
+	color: var(--text-light);
+}
+
+/* Panel Content */
+.panel-content {
+	display: flex;
+	flex-direction: column;
+	gap: var(--spacing-md);
+}
+
+/* Player Info Panel */
+.player-info-panel {
+	width: 280px;
+}
+
+.player-list {
+	display: flex;
+	flex-direction: column;
+	gap: var(--spacing-sm);
+}
+
+.player-item {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	padding: var(--spacing-sm);
+	border-radius: var(--spacing-xs);
+	background-color: rgba(255, 255, 255, 0.05);
+	transition: background-color var(--animation-fast) ease;
+}
+
+.player-item.current-player {
+	background-color: rgba(66, 133, 244, 0.2);
+	border-left: 3px solid var(--primary-color);
+}
+
+.player-item.local-player {
+	font-weight: 600;
+}
+
+.player-item.placeholder {
+	opacity: 0.7;
+	justify-content: center;
+	padding: var(--spacing-md);
+	font-style: italic;
+}
+
+.player-info {
+	display: flex;
+	align-items: center;
+	gap: var(--spacing-sm);
+}
+
+.player-color {
+	width: 14px;
+	height: 14px;
+	border-radius: 50%;
+	border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.player-stats {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: 2px;
+	font-size: 12px;
+}
+
+.player-score, .captured-pieces {
+	opacity: 0.8;
+}
+
+.player-status {
+	font-size: 10px;
+	font-weight: 600;
+	padding: 2px 6px;
+	border-radius: 10px;
+	background-color: rgba(251, 188, 5, 0.2);
+	color: var(--accent-color);
+}
+
+.player-status.paused {
+	background-color: rgba(234, 67, 53, 0.2);
+	color: var(--danger-color);
+}
+
+.game-info {
+	display: flex;
+	flex-direction: column;
+	gap: var(--spacing-sm);
+	padding-top: var(--spacing-sm);
+	border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.turn-phase, .time-remaining {
+	display: flex;
+	justify-content: space-between;
+	font-size: 14px;
+}
+
+.label {
+	opacity: 0.7;
+}
+
+/* Turn Phase Styles */
+.phase-chess {
+	color: #4285f4;
+}
+
+.phase-tetromino {
+	color: #34a853;
+}
+
+/* Time Remaining Styles */
+.time-remaining .urgent {
+	color: #ea4335;
+	animation: pulse 1s infinite;
+}
+
+.time-remaining .warning {
+	color: #fbbc05;
+}
+
+/* Game Status Indicator */
+.game-status-indicator {
+	display: flex;
+	align-items: center;
+	gap: var(--spacing-sm);
+	padding: var(--spacing-sm) var(--spacing-md);
+	border-radius: 30px;
+	background-color: rgba(31, 31, 31, 0.9);
+	box-shadow: var(--shadow-dark);
+	backdrop-filter: blur(10px);
+	-webkit-backdrop-filter: blur(10px);
+	border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.status-icon {
+	width: 12px;
+	height: 12px;
+	border-radius: 50%;
+	background-color: #777;
+}
+
+.status-icon.waiting {
+	background-color: #777;
+}
+
+.status-icon.loading {
+	background-color: #fbbc05;
+	animation: pulse 1.5s infinite;
+}
+
+.status-icon.paused {
+	background-color: #fbbc05;
+}
+
+.status-icon.gameover {
+	background-color: #ea4335;
+}
+
+.status-icon.yourturn, 
+.status-icon.yourturn-chess, 
+.status-icon.yourturn-tetromino {
+	background-color: #34a853;
+}
+
+.status-icon.opponentturn {
+	background-color: #4285f4;
+}
+
+.status-icon.pulse {
+	animation: pulse 1.5s infinite;
+}
+
+/* Turn Indicator */
+.turn-indicator {
+	display: flex;
+	align-items: center;
+	gap: var(--spacing-md);
+	padding: var(--spacing-sm) var(--spacing-md);
+	border-radius: 30px;
+	background-color: rgba(31, 31, 31, 0.9);
+	box-shadow: var(--shadow-dark);
+	backdrop-filter: blur(10px);
+	-webkit-backdrop-filter: blur(10px);
+	border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.turn-phase {
+	display: flex;
+	align-items: center;
+	gap: var(--spacing-xs);
+	opacity: 0.5;
+	transition: all var(--animation-normal) ease;
+}
+
+.turn-phase.active {
+	opacity: 1;
+}
+
+.turn-phase.completed {
+	opacity: 0.7;
+}
+
+.phase-icon {
+	display: inline-block;
+	width: 20px;
+	height: 20px;
+	border-radius: 50%;
+	background-color: #555;
+}
+
+.phase-tetromino .phase-icon {
+	background-color: #34a853;
+}
+
+.phase-chess .phase-icon {
+	background-color: #4285f4;
+}
+
+.turn-progress-container {
+	height: 4px;
+	width: 100px;
+	background-color: rgba(255, 255, 255, 0.1);
+	border-radius: 2px;
+	overflow: hidden;
+	margin-left: var(--spacing-md);
+}
+
+.turn-progress-bar {
+	height: 100%;
+	width: 0;
+	background-color: rgba(66, 133, 244, 0.7);
+	transition: width 1s linear;
+}
+
+.turn-progress-bar.warning {
+	background-color: rgba(251, 188, 5, 0.7);
+}
+
+.turn-progress-bar.urgent {
+	background-color: rgba(234, 67, 53, 0.7);
+	animation: pulse 1s infinite;
+}
+
+/* Animations */
+@keyframes pulse {
+	0% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.5;
+	}
+	100% {
+		opacity: 1;
+	}
+}
+
+/* Light Theme */
+body.light-theme {
+	background-color: var(--light-bg);
+	color: var(--text-dark);
+}
+
+body.light-theme .ui-panel {
+	background-color: rgba(255, 255, 255, 0.8);
+	box-shadow: var(--shadow-light);
+	border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+body.light-theme .panel-header {
+	border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+body.light-theme .panel-header h3 {
+	color: var(--text-dark);
+}
+
+body.light-theme .player-item {
+	background-color: rgba(0, 0, 0, 0.05);
+}
+
+body.light-theme .game-info {
+	border-top: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+/* Responsive Styles */
+@media (max-width: 768px) {
+	.ui-panel {
+		padding: var(--spacing-sm);
+	}
+	
+	.player-info-panel {
+		width: 240px;
+	}
+	
+	.turn-indicator {
+		padding: var(--spacing-xs) var(--spacing-sm);
+	}
+	
+	.turn-progress-container {
+		width: 80px;
+	}
+}
+
+@media (max-width: 480px) {
+	.ui-panel.top-right,
+	.ui-panel.top-left {
+		top: 5px;
+	}
+	
+	.ui-panel.bottom-right,
+	.ui-panel.bottom-left {
+		bottom: 5px;
+	}
+	
+	.player-info-panel {
+		width: 200px;
+	}
+	
+	.player-name,
+	.player-stats {
+		font-size: 11px;
+	}
+}
+
+/* Touch Device Optimizations */
+@media (pointer: coarse) {
+	.player-item {
+		padding: var(--spacing-md);
+	}
+	
+	.turn-phase .phase-icon {
+		width: 24px;
+		height: 24px;
+	}
+} 

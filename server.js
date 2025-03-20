@@ -266,6 +266,58 @@ io.on('connection', (socket) => {
 		}
 	});
 	
+	// Handle startGame event
+	socket.on('startGame', (options = {}, callback) => {
+		try {
+			const player = players.get(playerId);
+			if (!player) {
+				if (callback) callback({ success: false, error: 'Player not found' });
+				return;
+			}
+			
+			let gameId = player.gameId;
+			
+			// Create a new game if player is not in one
+			if (!gameId) {
+				gameId = createNewGame();
+				player.gameId = gameId;
+				socket.join(gameId);
+			}
+			
+			const game = games.get(gameId);
+			if (!game) {
+				if (callback) callback({ success: false, error: 'Game not found' });
+				return;
+			}
+			
+			// Start the game
+			game.state.status = 'playing';
+			game.state.startTime = Date.now();
+			
+			// Add a computer player if there's only one human player
+			if (game.players.length === 1 && !options.noComputer) {
+				addComputerPlayer(gameId);
+			}
+			
+			// Send initial game state to all players
+			io.to(gameId).emit('game_started', {
+				gameId: gameId,
+				players: game.players.map(id => ({
+					id: id,
+					name: players.get(id) ? players.get(id).name : `Player_${id.substring(0, 5)}`,
+					isComputer: computerPlayers.has(id)
+				})),
+				state: game.state
+			});
+			
+			if (callback) callback({ success: true, gameId: gameId });
+			console.log(`Game ${gameId} started by player ${playerId}`);
+		} catch (error) {
+			console.error('Error starting game:', error);
+			if (callback) callback({ success: false, error: 'Server error' });
+		}
+	});
+	
 	// Handle stop spectating
 	socket.on('stop_spectating', () => {
 		if (spectators.has(playerId)) {

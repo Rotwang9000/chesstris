@@ -1,123 +1,83 @@
 /**
- * Input Controller Utility
- *
- * Handles keyboard and mouse input for the game
+ * Input Controller Module
+ * 
+ * Handles user input (keyboard, mouse, touch) and manages callbacks.
  */
 
-// Default key bindings
-const DEFAULT_KEY_BINDINGS = {
-	// Movement
-	moveLeft: ['ArrowLeft', 'a', 'A'],
-	moveRight: ['ArrowRight', 'd', 'D'],
-	softDrop: ['ArrowDown', 's', 'S'],
-	hardDrop: ['Space', ' '],
-	
-	// Rotation
-	rotateClockwise: ['ArrowUp', 'w', 'W', 'x', 'X'],
-	rotateCounterClockwise: ['z', 'Z', 'Control'],
-	
-	// Game actions
-	hold: ['Shift', 'c', 'C'],
-	pause: ['Escape', 'p', 'P'],
-	
-	// Chess piece selection and movement
-	select: ['Enter'],
-	cancel: ['Escape', 'Backspace'],
-	
-	// Debug
-	debug: ['F9']
-};
+import * as gameStateManager from './gameStateManager.js';
+import * as gameRenderer from './gameRenderer.js';
 
 // Input state
-let keyState = {};
-let mouseState = {
-	x: 0,
-	y: 0,
-	buttons: 0,
-	wheel: 0
-};
-let isInitialized = false;
-let isPaused = false;
-let keyBindings = { ...DEFAULT_KEY_BINDINGS };
-let callbacks = {};
-let inputCallbacks = [];
-let touchState = {
-	active: false,
-	startX: 0,
-	startY: 0,
-	currentX: 0,
-	currentY: 0,
-	startTime: 0
+let isEnabled = false;
+let mousePosition = { x: 0, y: 0 };
+let isMouseDown = false;
+let keyboardState = {};
+let isDragging = false;
+let dragObject = null;
+let isTouchDevice = false;
+
+// Input settings
+let settings = {
+	mouseSensitivity: 1.0,
+	dragThreshold: 5 // Pixels before a mouse down becomes a drag
 };
 
-// Constants
-const DOUBLE_TAP_TIME = 300; // ms
-const SWIPE_THRESHOLD = 50; // pixels
-let lastTapTime = 0;
+// Input callbacks
+const inputCallbacks = {
+	onMouseDown: [],
+	onMouseUp: [],
+	onMouseMove: [],
+	onMouseWheel: [],
+	onKeyDown: [],
+	onKeyUp: [],
+	onTouchStart: [],
+	onTouchEnd: [],
+	onTouchMove: [],
+	onClick: [],
+	onDragStart: [],
+	onDragEnd: [],
+	onDrag: []
+};
+
+// Key mappings
+const keyMappings = {
+	'ArrowLeft': 'moveLeft',
+	'ArrowRight': 'moveRight',
+	'ArrowDown': 'moveDown',
+	'ArrowUp': 'rotateClockwise',
+	'z': 'rotateCounterClockwise',
+	'x': 'rotateClockwise',
+	'c': 'hold',
+	' ': 'hardDrop',
+	'Escape': 'pause',
+	'p': 'pause'
+};
 
 /**
  * Initialize the input controller
- * @param {Object} options - Configuration options
- * @returns {boolean} Success status
+ * @param {Object} options - Input options
+ * @returns {Promise<boolean>} - Initialization success
  */
-export function init(options = {}) {
+export async function init(options = {}) {
 	try {
-		if (isInitialized) {
-			console.warn('Input controller already initialized');
-			return true;
+		// Apply options
+		if (options.mouseSensitivity !== undefined) {
+			settings.mouseSensitivity = options.mouseSensitivity;
 		}
 		
-		console.log('Initializing input controller...');
-		
-		// Apply custom key bindings if provided
-		if (options.keyBindings) {
-			keyBindings = { ...DEFAULT_KEY_BINDINGS, ...options.keyBindings };
+		if (options.dragThreshold !== undefined) {
+			settings.dragThreshold = options.dragThreshold;
 		}
 		
-		// Store callback if provided
-		if (options.onInput && typeof options.onInput === 'function') {
-			inputCallbacks.push(options.onInput);
-		}
+		// Register event listeners
+		registerEventListeners();
 		
-		// Set up keyboard event listeners
-		window.addEventListener('keydown', handleKeyDown);
-		window.addEventListener('keyup', handleKeyUp);
+		// Check if it's a touch device
+		isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 		
-		// Set up mouse event listeners for the game container if provided
-		const element = options.element || document.getElementById('game-container');
+		// Enable input
+		isEnabled = true;
 		
-		if (element && element.addEventListener) {
-			element.addEventListener('mousedown', handleMouseDown);
-			element.addEventListener('mouseup', handleMouseUp);
-			element.addEventListener('mousemove', handleMouseMove);
-			element.addEventListener('wheel', handleMouseWheel);
-			element.addEventListener('contextmenu', handleContextMenu);
-			
-			// Set up touch event listeners for mobile
-			element.addEventListener('touchstart', handleTouchStart);
-			element.addEventListener('touchmove', handleTouchMove);
-			element.addEventListener('touchend', handleTouchEnd);
-			element.addEventListener('touchcancel', handleTouchCancel);
-		} else {
-			console.warn('No valid element provided for mouse/touch events, using document.body');
-			// Fall back to document.body for mouse events
-			document.body.addEventListener('mousedown', handleMouseDown);
-			document.body.addEventListener('mouseup', handleMouseUp);
-			document.body.addEventListener('mousemove', handleMouseMove);
-			document.body.addEventListener('wheel', handleMouseWheel);
-			document.body.addEventListener('contextmenu', handleContextMenu);
-			
-			// Set up touch event listeners for mobile
-			document.body.addEventListener('touchstart', handleTouchStart);
-			document.body.addEventListener('touchmove', handleTouchMove);
-			document.body.addEventListener('touchend', handleTouchEnd);
-			document.body.addEventListener('touchcancel', handleTouchCancel);
-		}
-		
-		// Set up window blur event to reset keys when window loses focus
-		window.addEventListener('blur', handleWindowBlur);
-		
-		isInitialized = true;
 		console.log('Input controller initialized');
 		return true;
 	} catch (error) {
@@ -127,201 +87,31 @@ export function init(options = {}) {
 }
 
 /**
- * Register a callback for an input action
- * @param {string} action - Action name
- * @param {Function} callback - Callback function
+ * Register event listeners
  */
-export function on(action, callback) {
-	if (!callbacks[action]) {
-		callbacks[action] = [];
-	}
-	callbacks[action].push(callback);
-}
-
-/**
- * Remove a callback for an input action
- * @param {string} action - Action name
- * @param {Function} callback - Callback function to remove
- */
-export function off(action, callback) {
-	if (!callbacks[action]) {
-		return;
-	}
+function registerEventListeners() {
+	// Mouse events
+	document.addEventListener('mousedown', handleMouseDown);
+	document.addEventListener('mouseup', handleMouseUp);
+	document.addEventListener('mousemove', handleMouseMove);
+	document.addEventListener('wheel', handleMouseWheel);
 	
-	if (callback) {
-		// Remove specific callback
-		callbacks[action] = callbacks[action].filter(cb => cb !== callback);
-	} else {
-		// Remove all callbacks for this action
-		delete callbacks[action];
-	}
-}
-
-/**
- * Set custom key bindings
- * @param {Object} bindings - Custom key bindings
- */
-export function setKeyBindings(bindings) {
-	keyBindings = { ...DEFAULT_KEY_BINDINGS, ...bindings };
-}
-
-/**
- * Reset key bindings to default
- */
-export function resetKeyBindings() {
-	keyBindings = { ...DEFAULT_KEY_BINDINGS };
-}
-
-/**
- * Get current key bindings
- * @returns {Object} Current key bindings
- */
-export function getKeyBindings() {
-	return { ...keyBindings };
-}
-
-/**
- * Check if a key is currently pressed
- * @param {string} key - Key to check
- * @returns {boolean} Whether the key is pressed
- */
-export function isKeyPressed(key) {
-	return !!keyState[key];
-}
-
-/**
- * Check if an action's key is currently pressed
- * @param {string} action - Action to check
- * @returns {boolean} Whether any key for the action is pressed
- */
-export function isActionPressed(action) {
-	if (!keyBindings[action]) {
-		return false;
-	}
+	// Keyboard events
+	document.addEventListener('keydown', handleKeyDown);
+	document.addEventListener('keyup', handleKeyUp);
 	
-	return keyBindings[action].some(key => isKeyPressed(key));
-}
-
-/**
- * Get current mouse position
- * @returns {Object} Mouse position {x, y}
- */
-export function getMousePosition() {
-	return { x: mouseState.x, y: mouseState.y };
-}
-
-/**
- * Check if a mouse button is currently pressed
- * @param {number} button - Button to check (0 = left, 1 = middle, 2 = right)
- * @returns {boolean} Whether the button is pressed
- */
-export function isMouseButtonPressed(button) {
-	return !!(mouseState.buttons & (1 << button));
-}
-
-/**
- * Pause input processing
- */
-export function pause() {
-	isPaused = true;
-}
-
-/**
- * Resume input processing
- */
-export function resume() {
-	isPaused = false;
-}
-
-/**
- * Clean up resources
- */
-export function cleanup() {
-	try {
-		console.log('Cleaning up input controller...');
-		
-		// Remove keyboard event listeners
-		window.removeEventListener('keydown', handleKeyDown);
-		window.removeEventListener('keyup', handleKeyUp);
-		
-		// Remove mouse event listeners from all elements
-		document.removeEventListener('mousedown', handleMouseDown);
-		document.removeEventListener('mouseup', handleMouseUp);
-		document.removeEventListener('mousemove', handleMouseMove);
-		document.removeEventListener('wheel', handleMouseWheel);
-		document.removeEventListener('contextmenu', handleContextMenu);
-		
-		// Remove touch event listeners
-		document.removeEventListener('touchstart', handleTouchStart);
-		document.removeEventListener('touchmove', handleTouchMove);
-		document.removeEventListener('touchend', handleTouchEnd);
-		document.removeEventListener('touchcancel', handleTouchCancel);
-		
-		// Remove window blur event
-		window.removeEventListener('blur', handleWindowBlur);
-		
-		// Reset state
-		keyState = {};
-		mouseState = { x: 0, y: 0, buttons: 0, wheel: 0 };
-		touchState = { active: false, startX: 0, startY: 0, currentX: 0, currentY: 0, startTime: 0 };
-		callbacks = {};
-		isInitialized = false;
-		isPaused = false;
-		
-		console.log('Input controller cleaned up');
-	} catch (error) {
-		console.error('Error cleaning up input controller:', error);
-	}
-}
-
-// Event handlers
-
-/**
- * Handle key down event
- * @param {KeyboardEvent} event - Keyboard event
- */
-function handleKeyDown(event) {
-	if (isPaused) return;
+	// Touch events
+	document.addEventListener('touchstart', handleTouchStart);
+	document.addEventListener('touchend', handleTouchEnd);
+	document.addEventListener('touchmove', handleTouchMove);
 	
-	// Update key state
-	keyState[event.key] = true;
-	
-	// Find matching actions
-	for (const [action, keys] of Object.entries(keyBindings)) {
-		if (keys.includes(event.key)) {
-			// Trigger callbacks
-			triggerCallbacks(`${action}:down`, { key: event.key });
-			triggerCallbacks(action, { key: event.key, type: 'down' });
-			
-			// Prevent default for game keys
+	// Prevent context menu on right click
+	document.addEventListener('contextmenu', (event) => {
+		// Only prevent context menu on game canvas
+		if (event.target.tagName === 'CANVAS') {
 			event.preventDefault();
-			break;
 		}
-	}
-}
-
-/**
- * Handle key up event
- * @param {KeyboardEvent} event - Keyboard event
- */
-function handleKeyUp(event) {
-	// Update key state even when paused
-	keyState[event.key] = false;
-	
-	if (isPaused) return;
-	
-	// Find matching actions
-	for (const [action, keys] of Object.entries(keyBindings)) {
-		if (keys.includes(event.key)) {
-			// Trigger callbacks
-			triggerCallbacks(`${action}:up`, { key: event.key });
-			triggerCallbacks(action, { key: event.key, type: 'up' });
-			
-			// Prevent default for game keys
-			event.preventDefault();
-			break;
-		}
-	}
+	});
 }
 
 /**
@@ -329,18 +119,20 @@ function handleKeyUp(event) {
  * @param {MouseEvent} event - Mouse event
  */
 function handleMouseDown(event) {
-	if (isPaused) return;
+	if (!isEnabled) return;
 	
-	// Update mouse state
-	mouseState.buttons |= (1 << event.button);
-	mouseState.x = event.clientX;
-	mouseState.y = event.clientY;
+	isMouseDown = true;
+	mousePosition = { x: event.clientX, y: event.clientY };
+	
+	// Check for chess piece selection or move
+	handleGameClick(event);
 	
 	// Trigger callbacks
-	triggerCallbacks('mousedown', {
-		x: mouseState.x,
-		y: mouseState.y,
-		button: event.button
+	triggerCallback('onMouseDown', {
+		x: event.clientX,
+		y: event.clientY,
+		button: event.button,
+		originalEvent: event
 	});
 }
 
@@ -349,25 +141,39 @@ function handleMouseDown(event) {
  * @param {MouseEvent} event - Mouse event
  */
 function handleMouseUp(event) {
-	if (isPaused) return;
+	if (!isEnabled) return;
 	
-	// Update mouse state
-	mouseState.buttons &= ~(1 << event.button);
-	mouseState.x = event.clientX;
-	mouseState.y = event.clientY;
+	isMouseDown = false;
 	
-	// Trigger callbacks
-	triggerCallbacks('mouseup', {
-		x: mouseState.x,
-		y: mouseState.y,
-		button: event.button
-	});
-	
+	// Check if we were dragging
+	if (isDragging) {
+		isDragging = false;
+		
+		// Trigger drag end callback
+		triggerCallback('onDragEnd', {
+			x: event.clientX,
+			y: event.clientY,
+			dragObject,
+			originalEvent: event
+		});
+		
+		dragObject = null;
+	} else {
 	// Trigger click callback
-	triggerCallbacks('click', {
-		x: mouseState.x,
-		y: mouseState.y,
-		button: event.button
+		triggerCallback('onClick', {
+			x: event.clientX,
+			y: event.clientY,
+			button: event.button,
+			originalEvent: event
+		});
+	}
+	
+	// Trigger mouse up callback
+	triggerCallback('onMouseUp', {
+		x: event.clientX,
+		y: event.clientY,
+		button: event.button,
+		originalEvent: event
 	});
 }
 
@@ -376,23 +182,46 @@ function handleMouseUp(event) {
  * @param {MouseEvent} event - Mouse event
  */
 function handleMouseMove(event) {
-	if (isPaused) return;
+	if (!isEnabled) return;
 	
-	// Calculate delta
-	const deltaX = event.clientX - mouseState.x;
-	const deltaY = event.clientY - mouseState.y;
+	const newPosition = { x: event.clientX, y: event.clientY };
 	
-	// Update mouse state
-	mouseState.x = event.clientX;
-	mouseState.y = event.clientY;
+	// Check if we're dragging
+	if (isMouseDown) {
+		const dx = newPosition.x - mousePosition.x;
+		const dy = newPosition.y - mousePosition.y;
+		const distanceSquared = dx * dx + dy * dy;
+		
+		if (!isDragging && distanceSquared > settings.dragThreshold * settings.dragThreshold) {
+			// Start dragging
+			isDragging = true;
+			
+			// Trigger drag start callback
+			triggerCallback('onDragStart', {
+				x: event.clientX,
+				y: event.clientY,
+				originalEvent: event
+			});
+		} else if (isDragging) {
+			// Trigger drag callback
+			triggerCallback('onDrag', {
+				x: event.clientX,
+				y: event.clientY,
+				dx,
+				dy,
+				dragObject,
+				originalEvent: event
+			});
+		}
+	}
 	
-	// Trigger callbacks
-	triggerCallbacks('mousemove', {
-		x: mouseState.x,
-		y: mouseState.y,
-		deltaX,
-		deltaY,
-		buttons: mouseState.buttons
+	mousePosition = newPosition;
+	
+	// Trigger mouse move callback
+	triggerCallback('onMouseMove', {
+		x: event.clientX,
+		y: event.clientY,
+		originalEvent: event
 	});
 }
 
@@ -401,29 +230,65 @@ function handleMouseMove(event) {
  * @param {WheelEvent} event - Wheel event
  */
 function handleMouseWheel(event) {
-	if (isPaused) return;
+	if (!isEnabled) return;
 	
-	// Update mouse state
-	mouseState.wheel += event.deltaY;
-	
-	// Trigger callbacks
-	triggerCallbacks('wheel', {
-		x: mouseState.x,
-		y: mouseState.y,
-		deltaY: event.deltaY
+	// Trigger mouse wheel callback
+	triggerCallback('onMouseWheel', {
+		x: event.clientX,
+		y: event.clientY,
+		deltaY: event.deltaY,
+		originalEvent: event
 	});
-	
-	// Prevent default scrolling
-	event.preventDefault();
 }
 
 /**
- * Handle context menu event
- * @param {MouseEvent} event - Mouse event
+ * Handle key down event
+ * @param {KeyboardEvent} event - Keyboard event
  */
-function handleContextMenu(event) {
-	// Prevent default context menu
+function handleKeyDown(event) {
+	if (!isEnabled) return;
+	
+	// Update keyboard state
+	keyboardState[event.key] = true;
+	
+	// Check for game actions
+	const action = keyMappings[event.key];
+	if (action) {
+		// Prevent default for game actions
 	event.preventDefault();
+		
+		// Send action to game state manager
+		const currentState = gameStateManager.getGameState();
+		if (currentState && currentState.turnPhase === 'tetromino') {
+			gameStateManager.handleTetrominoAction(action);
+		}
+	}
+	
+	// Trigger key down callback
+	triggerCallback('onKeyDown', {
+		key: event.key,
+		code: event.code,
+		action,
+		originalEvent: event
+	});
+}
+
+/**
+ * Handle key up event
+ * @param {KeyboardEvent} event - Keyboard event
+ */
+function handleKeyUp(event) {
+	if (!isEnabled) return;
+	
+	// Update keyboard state
+	keyboardState[event.key] = false;
+	
+	// Trigger key up callback
+	triggerCallback('onKeyUp', {
+		key: event.key,
+		code: event.code,
+		originalEvent: event
+	});
 }
 
 /**
@@ -431,78 +296,33 @@ function handleContextMenu(event) {
  * @param {TouchEvent} event - Touch event
  */
 function handleTouchStart(event) {
-	if (isPaused) return;
+	if (!isEnabled) return;
 	
-	// Get primary touch
-	const touch = event.touches[0];
-	
-	// Update touch state
-	touchState.active = true;
-	touchState.startX = touch.clientX;
-	touchState.startY = touch.clientY;
-	touchState.currentX = touch.clientX;
-	touchState.currentY = touch.clientY;
-	touchState.startTime = Date.now();
-	
-	// Update mouse state for compatibility
-	mouseState.x = touch.clientX;
-	mouseState.y = touch.clientY;
-	mouseState.buttons = 1; // Simulate left button
-	
-	// Check for double tap
-	const now = Date.now();
-	if (now - lastTapTime < DOUBLE_TAP_TIME) {
-		triggerCallbacks('doubletap', {
-			x: touchState.currentX,
-			y: touchState.currentY
-		});
-	}
-	lastTapTime = now;
-	
-	// Trigger callbacks
-	triggerCallbacks('touchstart', {
-		x: touchState.currentX,
-		y: touchState.currentY,
-		touches: event.touches.length
-	});
-	
-	// Prevent default to avoid scrolling
+	// Prevent default for touch events on game canvas
+	if (event.target.tagName === 'CANVAS') {
 	event.preventDefault();
 }
 
-/**
- * Handle touch move event
- * @param {TouchEvent} event - Touch event
- */
-function handleTouchMove(event) {
-	if (isPaused || !touchState.active) return;
+	isMouseDown = true;
 	
-	// Get primary touch
+	// Get first touch
 	const touch = event.touches[0];
+	mousePosition = { x: touch.clientX, y: touch.clientY };
 	
-	// Calculate delta
-	const deltaX = touch.clientX - touchState.currentX;
-	const deltaY = touch.clientY - touchState.currentY;
-	
-	// Update touch state
-	touchState.currentX = touch.clientX;
-	touchState.currentY = touch.clientY;
-	
-	// Update mouse state for compatibility
-	mouseState.x = touch.clientX;
-	mouseState.y = touch.clientY;
-	
-	// Trigger callbacks
-	triggerCallbacks('touchmove', {
-		x: touchState.currentX,
-		y: touchState.currentY,
-		deltaX,
-		deltaY,
-		touches: event.touches.length
+	// Check for chess piece selection or move
+	handleGameClick({
+		clientX: touch.clientX,
+		clientY: touch.clientY,
+		button: 0
 	});
 	
-	// Prevent default to avoid scrolling
-	event.preventDefault();
+	// Trigger callbacks
+	triggerCallback('onTouchStart', {
+		x: touch.clientX,
+		y: touch.clientY,
+		touches: event.touches,
+		originalEvent: event
+	});
 }
 
 /**
@@ -510,107 +330,299 @@ function handleTouchMove(event) {
  * @param {TouchEvent} event - Touch event
  */
 function handleTouchEnd(event) {
-	if (!touchState.active) return;
+	if (!isEnabled) return;
 	
-	// Calculate swipe
-	const deltaX = touchState.currentX - touchState.startX;
-	const deltaY = touchState.currentY - touchState.startY;
-	const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
-	const duration = Date.now() - touchState.startTime;
+	// Prevent default for touch events on game canvas
+	if (event.target.tagName === 'CANVAS') {
+		event.preventDefault();
+	}
 	
-	// Update mouse state for compatibility
-	mouseState.buttons = 0;
+	isMouseDown = false;
 	
-	// Check for swipe
-	if (distance > SWIPE_THRESHOLD) {
-		// Determine swipe direction
-		const absX = Math.abs(deltaX);
-		const absY = Math.abs(deltaY);
+	// Get touch position
+	let x = mousePosition.x;
+	let y = mousePosition.y;
+	
+	if (event.changedTouches.length > 0) {
+		const touch = event.changedTouches[0];
+		x = touch.clientX;
+		y = touch.clientY;
+	}
+	
+	// Check if we were dragging
+	if (isDragging) {
+		isDragging = false;
 		
-		if (absX > absY) {
-			// Horizontal swipe
-			if (deltaX > 0) {
-				triggerCallbacks('swiperight', { distance, duration });
-			} else {
-				triggerCallbacks('swipeleft', { distance, duration });
-			}
-		} else {
-			// Vertical swipe
-			if (deltaY > 0) {
-				triggerCallbacks('swipedown', { distance, duration });
-			} else {
-				triggerCallbacks('swipeup', { distance, duration });
-			}
-		}
+		// Trigger drag end callback
+		triggerCallback('onDragEnd', {
+			x,
+			y,
+			dragObject,
+			originalEvent: event
+		});
+		
+		dragObject = null;
 	} else {
-		// Tap
-		triggerCallbacks('tap', {
-			x: touchState.currentX,
-			y: touchState.currentY
+		// Trigger click callback
+		triggerCallback('onClick', {
+			x,
+			y,
+			button: 0,
+			originalEvent: event
 		});
 	}
 	
-	// Trigger callbacks
-	triggerCallbacks('touchend', {
-		x: touchState.currentX,
-		y: touchState.currentY,
-		touches: event.touches.length
+	// Trigger touch end callback
+	triggerCallback('onTouchEnd', {
+		x,
+		y,
+		touches: event.touches,
+		originalEvent: event
 	});
-	
-	// Reset touch state
-	touchState.active = false;
-	
-	// Prevent default
-	event.preventDefault();
 }
 
 /**
- * Handle touch cancel event
+ * Handle touch move event
  * @param {TouchEvent} event - Touch event
  */
-function handleTouchCancel(event) {
-	// Reset touch state
-	touchState.active = false;
+function handleTouchMove(event) {
+	if (!isEnabled) return;
 	
-	// Update mouse state for compatibility
-	mouseState.buttons = 0;
+	// Prevent default for touch events on game canvas
+	if (event.target.tagName === 'CANVAS') {
+		event.preventDefault();
+	}
 	
-	// Trigger callbacks
-	triggerCallbacks('touchcancel', {
-		x: touchState.currentX,
-		y: touchState.currentY
+	// Get first touch
+	const touch = event.touches[0];
+	const newPosition = { x: touch.clientX, y: touch.clientY };
+	
+	// Check if we're dragging
+	if (isMouseDown) {
+		const dx = newPosition.x - mousePosition.x;
+		const dy = newPosition.y - mousePosition.y;
+		const distanceSquared = dx * dx + dy * dy;
+		
+		if (!isDragging && distanceSquared > settings.dragThreshold * settings.dragThreshold) {
+			// Start dragging
+			isDragging = true;
+			
+			// Trigger drag start callback
+			triggerCallback('onDragStart', {
+				x: touch.clientX,
+				y: touch.clientY,
+				originalEvent: event
+			});
+		} else if (isDragging) {
+			// Trigger drag callback
+			triggerCallback('onDrag', {
+				x: touch.clientX,
+				y: touch.clientY,
+				dx,
+				dy,
+				dragObject,
+				originalEvent: event
+			});
+		}
+	}
+	
+	mousePosition = newPosition;
+	
+	// Trigger touch move callback
+	triggerCallback('onTouchMove', {
+		x: touch.clientX,
+		y: touch.clientY,
+		touches: event.touches,
+		originalEvent: event
 	});
 }
 
 /**
- * Handle window blur event
+ * Handle game clicks (for chess piece selection and movement)
+ * @param {MouseEvent|Object} event - Mouse event or similar object
  */
-function handleWindowBlur() {
-	// Reset all keys when window loses focus
-	keyState = {};
-	mouseState.buttons = 0;
-	touchState.active = false;
+function handleGameClick(event) {
+	const gameState = gameStateManager.getGameState();
+	if (!gameState) return;
 	
-	// Trigger callbacks
-	triggerCallbacks('blur');
+	// Get board coordinates from screen coordinates
+	const boardCoords = screenToBoardCoordinates(event.clientX, event.clientY);
+	if (!boardCoords) return;
+	
+	// Check if we have a selected piece
+	const selectedPiece = gameStateManager.getSelectedChessPiece();
+	
+	if (selectedPiece) {
+		// Attempt to move the selected piece
+		if (gameStateManager.moveSelectedPiece(boardCoords.x, boardCoords.z)) {
+			console.log(`Moving piece to ${boardCoords.x}, ${boardCoords.z}`);
+		} else {
+			// If move failed, check if clicked on a different chess piece
+			const clickedPiece = findChessPieceAt(boardCoords.x, boardCoords.z);
+			if (clickedPiece && clickedPiece.playerId === gameState.localPlayerId) {
+				// Select the new piece
+				gameStateManager.selectChessPiece(clickedPiece.id);
+			} else {
+				// Clear selection
+				gameStateManager.clearChessPieceSelection();
+			}
+		}
+	} else {
+		// No piece selected, try to select one
+		const clickedPiece = findChessPieceAt(boardCoords.x, boardCoords.z);
+		if (clickedPiece && clickedPiece.playerId === gameState.localPlayerId) {
+			// Select the piece
+			gameStateManager.selectChessPiece(clickedPiece.id);
+		}
+	}
 }
 
 /**
- * Trigger callbacks for an action
- * @param {string} action - Action name
- * @param {Object} data - Event data
+ * Convert screen coordinates to board coordinates
+ * @param {number} screenX - X position in screen space
+ * @param {number} screenY - Y position in screen space
+ * @returns {Object|null} - {x, z} board coordinates or null if not on board
  */
-function triggerCallbacks(action, data = {}) {
-	if (!callbacks[action]) {
-		return;
+function screenToBoardCoordinates(screenX, screenY) {
+	// Use gameRenderer.screenToBoardCoordinates if available
+	if (gameRenderer && typeof gameRenderer.screenToBoardCoordinates === 'function') {
+		return gameRenderer.screenToBoardCoordinates(screenX, screenY);
 	}
 	
-	// Call all callbacks for this action
-	for (const callback of callbacks[action]) {
+	// Fallback implementation for 2D
+	try {
+		// Get game container
+		const gameContainer = document.getElementById('game-container');
+		if (!gameContainer) return null;
+		
+		// Get container dimensions
+		const rect = gameContainer.getBoundingClientRect();
+		
+		// Check if click is outside of container
+		if (screenX < rect.left || screenX > rect.right || 
+			screenY < rect.top || screenY > rect.bottom) {
+			return null;
+		}
+		
+		// Convert to relative position in container
+		const relX = (screenX - rect.left) / rect.width;
+		const relY = (screenY - rect.top) / rect.height;
+		
+		// Get current game state
+		const gameState = gameStateManager.getGameState();
+		
+		// Get board dimensions
+		const boardWidth = gameState.board?.length || 16;
+		const boardHeight = gameState.board?.[0]?.length || 16;
+		
+		// Convert to board coordinates 
+		const x = Math.floor(relX * boardWidth);
+		// In the 3D game Z is the equivalent of Y in 2D space
+		const z = Math.floor(relY * boardHeight);
+		
+		return { x, z };
+	} catch (error) {
+		console.error('Error converting screen to board coordinates:', error);
+		return null;
+	}
+}
+
+/**
+ * Find a chess piece at board coordinates
+ * @param {number} x - Board X coordinate
+ * @param {number} z - Board Z coordinate
+ * @returns {Object|null} - Chess piece object or null if not found
+ */
+function findChessPieceAt(x, z) {
+	const gameState = gameStateManager.getGameState();
+	if (!gameState || !gameState.chessPieces) return null;
+	
+	return gameState.chessPieces.find(piece => 
+		piece && piece.position && 
+		Math.floor(piece.position.x) === x && 
+		Math.floor(piece.position.z) === z
+	);
+}
+
+/**
+ * Trigger a callback
+ * @param {string} type - Callback type
+ * @param {Object} data - Callback data
+ */
+function triggerCallback(type, data) {
+	if (!inputCallbacks[type]) return;
+	
+	for (const callback of inputCallbacks[type]) {
 		try {
 			callback(data);
 		} catch (error) {
-			console.error(`Error in callback for action ${action}:`, error);
+			console.error(`Error in ${type} callback:`, error);
 		}
 	}
-} 
+}
+
+/**
+ * Register a callback
+ * @param {string} type - Callback type
+ * @param {Function} callback - Callback function
+ */
+export function on(type, callback) {
+	if (!inputCallbacks[type]) {
+		inputCallbacks[type] = [];
+	}
+	
+	inputCallbacks[type].push(callback);
+}
+
+/**
+ * Unregister a callback
+ * @param {string} type - Callback type
+ * @param {Function} callback - Callback function
+ */
+export function off(type, callback) {
+	if (!inputCallbacks[type]) return;
+	
+	if (callback) {
+		// Remove specific callback
+		inputCallbacks[type] = inputCallbacks[type].filter(cb => cb !== callback);
+	} else {
+		// Remove all callbacks for this type
+		inputCallbacks[type] = [];
+	}
+}
+
+/**
+ * Enable/disable input
+ * @param {boolean} enabled - Whether input should be enabled
+ */
+export function setEnabled(enabled) {
+	isEnabled = enabled;
+}
+
+/**
+ * Clean up resources
+ */
+export function cleanup() {
+	// Remove event listeners
+	document.removeEventListener('mousedown', handleMouseDown);
+	document.removeEventListener('mouseup', handleMouseUp);
+	document.removeEventListener('mousemove', handleMouseMove);
+	document.removeEventListener('wheel', handleMouseWheel);
+	document.removeEventListener('keydown', handleKeyDown);
+	document.removeEventListener('keyup', handleKeyUp);
+	document.removeEventListener('touchstart', handleTouchStart);
+	document.removeEventListener('touchend', handleTouchEnd);
+	document.removeEventListener('touchmove', handleTouchMove);
+	
+	// Clear callbacks
+	for (const type in inputCallbacks) {
+		inputCallbacks[type] = [];
+	}
+	
+	// Reset state
+	isEnabled = false;
+	isMouseDown = false;
+	isDragging = false;
+	dragObject = null;
+	keyboardState = {};
+}
