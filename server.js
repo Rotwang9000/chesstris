@@ -29,6 +29,9 @@ const players = new Map();
 const spectators = new Map(); // Map of spectator socket IDs to player IDs they're spectating
 const computerPlayers = new Map(); // Map of computer player IDs to their game data
 
+// Default global game ID
+const GLOBAL_GAME_ID = 'global_game';
+
 // Computer player difficulty levels
 const COMPUTER_DIFFICULTY = {
 	EASY: 'easy',
@@ -38,6 +41,9 @@ const COMPUTER_DIFFICULTY = {
 
 // Minimum time between computer player moves (in milliseconds)
 const MIN_COMPUTER_MOVE_TIME = 10000; // 10 seconds minimum as per requirements
+
+// Initialize global game on startup
+initializeGlobalGame();
 
 // Middleware
 app.use(bodyParser.json());
@@ -97,15 +103,21 @@ io.on('connection', (socket) => {
 				player.name = playerName;
 			}
 			
-			// If no game ID provided, create a new game
+			// If no game ID provided or null, use the global game
 			if (!gameId) {
-				gameId = createNewGame();
+				gameId = GLOBAL_GAME_ID;
+				console.log(`Player ${playerId} joining global game`);
 			}
 			
 			// Check if game exists
 			if (!games.has(gameId)) {
-				if (callback) callback({ success: false, error: 'Game not found' });
-				return;
+				console.log(`Game ${gameId} not found, redirecting to global game`);
+				gameId = GLOBAL_GAME_ID;
+				
+				// If global game doesn't exist for some reason, create it
+				if (!games.has(GLOBAL_GAME_ID)) {
+					initializeGlobalGame();
+				}
 			}
 			
 			const game = games.get(gameId);
@@ -236,6 +248,91 @@ io.on('connection', (socket) => {
 		updateSpectators(playerId, game.state);
 	});
 	
+	// Handle get_game_state request
+	socket.on('get_game_state', (data) => {
+		try {
+			console.log(`Player ${playerId} requested game state`, data);
+			
+			const player = players.get(playerId);
+			if (!player) {
+				socket.emit('error', { message: 'Player not found' });
+				return;
+			}
+			
+			// If player is not in a game, try to join the global game first
+			if (!player.gameId) {
+				console.log(`Player ${playerId} not in a game, joining global game first`);
+				
+				// Ensure global game exists
+				if (!games.has(GLOBAL_GAME_ID)) {
+					initializeGlobalGame();
+				}
+				
+				// Add player to global game
+				const globalGame = games.get(GLOBAL_GAME_ID);
+				globalGame.players.push(playerId);
+				player.gameId = GLOBAL_GAME_ID;
+				
+				// Join socket room for global game
+				socket.join(GLOBAL_GAME_ID);
+				
+				console.log(`Player ${playerId} automatically joined global game`);
+			}
+			
+			const gameId = player.gameId;
+			const game = games.get(gameId);
+			
+			if (!game) {
+				console.error(`Game ${gameId} not found for player ${playerId}`);
+				
+				// Try to recover by joining global game
+				if (gameId !== GLOBAL_GAME_ID) {
+					// Ensure global game exists
+					if (!games.has(GLOBAL_GAME_ID)) {
+						initializeGlobalGame();
+					}
+					
+					const globalGame = games.get(GLOBAL_GAME_ID);
+					player.gameId = GLOBAL_GAME_ID;
+					socket.join(GLOBAL_GAME_ID);
+					
+					// Send global game state
+					socket.emit('game_state', {
+						gameId: GLOBAL_GAME_ID,
+						state: globalGame.state,
+						players: globalGame.players.map(id => ({
+							id: id,
+							name: players.get(id) ? players.get(id).name : `Player_${id.substring(0, 5)}`,
+							isComputer: computerPlayers.has(id)
+						}))
+					});
+					
+					console.log(`Redirected player ${playerId} to global game after error`);
+					return;
+				}
+				
+				socket.emit('error', { message: 'Game not found and unable to recover' });
+				return;
+			}
+			
+			// Send full game state to the requesting client
+			socket.emit('game_state', {
+				gameId: gameId,
+				state: game.state,
+				players: game.players.map(id => ({
+					id: id,
+					name: players.get(id) ? players.get(id).name : `Player_${id.substring(0, 5)}`,
+					isComputer: computerPlayers.has(id)
+				}))
+			});
+			
+			console.log(`Sent game state to player ${playerId}`);
+		} catch (error) {
+			console.error('Error handling get_game_state request:', error);
+			socket.emit('error', { message: 'Error getting game state' });
+		}
+	});
+	
 	// Handle spectator requests
 	socket.on('request_spectate', (data) => {
 		if (!data || !data.playerId) return;
@@ -263,6 +360,119 @@ io.on('connection', (socket) => {
 			});
 			
 			console.log(`Player ${playerId} is now spectating ${targetPlayerId}`);
+		}
+	});
+	
+	// Handle restart game request
+	socket.on('restart_game', (data) => {
+		try {
+			console.log(`Player ${playerId} requested game restart`, data);
+			
+			const player = players.get(playerId);
+			if (!player || !player.gameId) {
+				socket.emit('error', { message: 'Not in a game' });
+				return;
+			}
+			
+			const gameId = player.gameId;
+			const game = games.get(gameId);
+			
+			if (!game) {
+				socket.emit('error', { message: 'Game not found' });
+				return;
+			}
+			
+			// Create a fresh game state but keep the same game ID
+			const boardSize = game.state.boardSize || 16;
+			
+			// Create empty board
+			const board = Array(boardSize).fill().map(() => Array(boardSize).fill(0));
+			
+			// Set up home zones
+			// Player 1 (blue) - bottom
+			for (let z = boardSize - 2; z < boardSize; z++) {
+				for (let x = 0; x < 8; x++) {
+					board[z][x] = 6; // Blue home zone
+				}
+			}
+			
+			// Player 2 (orange) - top
+			for (let z = 0; z < 2; z++) {
+				for (let x = 8; x < boardSize; x++) {
+					board[z][x] = 7; // Orange home zone
+				}
+			}
+			
+			// Initialize chess pieces
+			// Define chess piece types and positions for player 1
+			const player1Pieces = [
+				{ type: 'pawn', x: 0, z: 14 },
+				{ type: 'pawn', x: 1, z: 14 },
+				{ type: 'pawn', x: 2, z: 14 },
+				{ type: 'pawn', x: 3, z: 14 },
+				{ type: 'pawn', x: 4, z: 14 },
+				{ type: 'pawn', x: 5, z: 14 },
+				{ type: 'pawn', x: 6, z: 14 },
+				{ type: 'pawn', x: 7, z: 14 },
+				{ type: 'rook', x: 0, z: 15 },
+				{ type: 'knight', x: 1, z: 15 },
+				{ type: 'bishop', x: 2, z: 15 },
+				{ type: 'queen', x: 3, z: 15 },
+				{ type: 'king', x: 4, z: 15 },
+				{ type: 'bishop', x: 5, z: 15 },
+				{ type: 'knight', x: 6, z: 15 },
+				{ type: 'rook', x: 7, z: 15 }
+			].map(piece => ({ ...piece, player: 1 }));
+			
+			// Define chess piece types and positions for player 2
+			const player2Pieces = [
+				{ type: 'pawn', x: 8, z: 1 },
+				{ type: 'pawn', x: 9, z: 1 },
+				{ type: 'pawn', x: 10, z: 1 },
+				{ type: 'pawn', x: 11, z: 1 },
+				{ type: 'pawn', x: 12, z: 1 },
+				{ type: 'pawn', x: 13, z: 1 },
+				{ type: 'pawn', x: 14, z: 1 },
+				{ type: 'pawn', x: 15, z: 1 },
+				{ type: 'rook', x: 8, z: 0 },
+				{ type: 'knight', x: 9, z: 0 },
+				{ type: 'bishop', x: 10, z: 0 },
+				{ type: 'queen', x: 11, z: 0 },
+				{ type: 'king', x: 12, z: 0 },
+				{ type: 'bishop', x: 13, z: 0 },
+				{ type: 'knight', x: 14, z: 0 },
+				{ type: 'rook', x: 15, z: 0 }
+			].map(piece => ({ ...piece, player: 2 }));
+			
+			// Combine all chess pieces
+			const chessPieces = [...player1Pieces, ...player2Pieces];
+			
+			// Update the game state
+			game.state = {
+				...game.state,
+				board: board,
+				chessPieces: chessPieces,
+				currentPlayer: 1,
+				turnPhase: 'tetris',
+				status: 'playing',
+				startTime: Date.now()
+			};
+			
+			// Broadcast the new game state to all players in the game
+			io.to(gameId).emit('game_state', {
+				gameId: gameId,
+				state: game.state,
+				players: game.players.map(id => ({
+					id: id,
+					name: players.get(id) ? players.get(id).name : `Player_${id.substring(0, 5)}`,
+					isComputer: computerPlayers.has(id)
+				}))
+			});
+			
+			console.log(`Game ${gameId} restarted by player ${playerId}`);
+		} catch (error) {
+			console.error('Error handling restart_game request:', error);
+			socket.emit('error', { message: 'Error restarting game' });
 		}
 	});
 	
@@ -391,33 +601,103 @@ io.on('connection', (socket) => {
 });
 
 // Create a new game
-function createNewGame(settings = {}) {
-	const gameId = uuidv4();
+function createNewGame(gameId = null, settings = {}) {
+	// Use provided gameId or generate a new UUID
+	const id = gameId || uuidv4();
 	
-	games.set(gameId, {
-		id: gameId,
+	// Set board size with sensible defaults
+	const boardSize = settings.boardSize || 16;
+	
+	// Create empty board
+	const board = Array(boardSize).fill().map(() => Array(boardSize).fill(0));
+	
+	// Set up home zones
+	// Player 1 (blue) - bottom
+	for (let z = boardSize - 2; z < boardSize; z++) {
+		for (let x = 0; x < 8; x++) {
+			board[z][x] = 6; // Blue home zone
+		}
+	}
+	
+	// Player 2 (orange) - top
+	for (let z = 0; z < 2; z++) {
+		for (let x = 8; x < boardSize; x++) {
+			board[z][x] = 7; // Orange home zone
+		}
+	}
+	
+	// Initialize chess pieces
+	// Define chess piece types and positions for player 1
+	const player1Pieces = [
+		{ type: 'pawn', x: 0, z: 14 },
+		{ type: 'pawn', x: 1, z: 14 },
+		{ type: 'pawn', x: 2, z: 14 },
+		{ type: 'pawn', x: 3, z: 14 },
+		{ type: 'pawn', x: 4, z: 14 },
+		{ type: 'pawn', x: 5, z: 14 },
+		{ type: 'pawn', x: 6, z: 14 },
+		{ type: 'pawn', x: 7, z: 14 },
+		{ type: 'rook', x: 0, z: 15 },
+		{ type: 'knight', x: 1, z: 15 },
+		{ type: 'bishop', x: 2, z: 15 },
+		{ type: 'queen', x: 3, z: 15 },
+		{ type: 'king', x: 4, z: 15 },
+		{ type: 'bishop', x: 5, z: 15 },
+		{ type: 'knight', x: 6, z: 15 },
+		{ type: 'rook', x: 7, z: 15 }
+	].map(piece => ({ ...piece, player: 1 }));
+	
+	// Define chess piece types and positions for player 2
+	const player2Pieces = [
+		{ type: 'pawn', x: 8, z: 1 },
+		{ type: 'pawn', x: 9, z: 1 },
+		{ type: 'pawn', x: 10, z: 1 },
+		{ type: 'pawn', x: 11, z: 1 },
+		{ type: 'pawn', x: 12, z: 1 },
+		{ type: 'pawn', x: 13, z: 1 },
+		{ type: 'pawn', x: 14, z: 1 },
+		{ type: 'pawn', x: 15, z: 1 },
+		{ type: 'rook', x: 8, z: 0 },
+		{ type: 'knight', x: 9, z: 0 },
+		{ type: 'bishop', x: 10, z: 0 },
+		{ type: 'queen', x: 11, z: 0 },
+		{ type: 'king', x: 12, z: 0 },
+		{ type: 'bishop', x: 13, z: 0 },
+		{ type: 'knight', x: 14, z: 0 },
+		{ type: 'rook', x: 15, z: 0 }
+	].map(piece => ({ ...piece, player: 2 }));
+	
+	// Combine all chess pieces
+	const chessPieces = [...player1Pieces, ...player2Pieces];
+	
+	games.set(id, {
+		id: id,
 		players: [],
 		maxPlayers: settings.maxPlayers || 2048,
 		hasComputerPlayer: false,
 		state: {
-			board: [],
-			chessPieces: [],
+			board: board,
+			chessPieces: chessPieces,
 			gameMode: settings.gameMode || 'standard',
 			difficulty: settings.difficulty || 'normal',
 			startLevel: settings.startLevel || 1,
-			boardSize: settings.boardSize || { width: 10, height: 20 },
+			boardSize: boardSize,
 			renderMode: settings.renderMode || '3d',
+			currentPlayer: 1,
+			turnPhase: 'tetris',
 			status: 'waiting'
 		},
 		created: Date.now()
 	});
 	
-	console.log(`New game created: ${gameId}`);
+	console.log(`New game created: ${id}`);
 	
-	// Always add a computer player to each game
-	addComputerPlayer(gameId);
+	// Always add a computer player to each game (except for global game)
+	if (id !== GLOBAL_GAME_ID) {
+		addComputerPlayer(id);
+	}
 	
-	return gameId;
+	return id;
 }
 
 // End a game
@@ -839,31 +1119,31 @@ function simulateChessMove(chessPieces, computerId, strategy) {
 	if (newChessPieces.length === 0) {
 		// Add a few basic pieces
 		newChessPieces.push({
-			id: `${computerId}-king`,
 			type: 'king',
-			player: 2, // Computer is usually black
-			position: { x: 4, y: 0 }
+			player: 2, // Computer is usually player 2
+			x: 4,
+			z: 0
 		});
 		
 		newChessPieces.push({
-			id: `${computerId}-queen`,
 			type: 'queen',
 			player: 2,
-			position: { x: 3, y: 0 }
+			x: 3,
+			z: 0
 		});
 		
 		newChessPieces.push({
-			id: `${computerId}-pawn1`,
 			type: 'pawn',
 			player: 2,
-			position: { x: 0, y: 1 }
+			x: 0,
+			z: 1
 		});
 		
 		newChessPieces.push({
-			id: `${computerId}-pawn2`,
 			type: 'pawn',
 			player: 2,
-			position: { x: 1, y: 1 }
+			x: 1,
+			z: 1
 		});
 		
 		return newChessPieces;
@@ -906,33 +1186,36 @@ function simulateChessMove(chessPieces, computerId, strategy) {
 	}
 	
 	// Find the piece in the original array
-	const originalPieceIndex = newChessPieces.findIndex(p => p.id === piece.id);
+	// Instead of using an ID, we'll find it by matching all properties
+	const originalPieceIndex = newChessPieces.findIndex(p => 
+		p.type === piece.type && p.player === piece.player && 
+		p.x === piece.x && p.z === piece.z);
 	
 	if (originalPieceIndex !== -1) {
 		// Movement based on piece type and strategy
 		let dx = 0;
-		let dy = 0;
+		let dz = 0; // Changed from dy to dz to match our coordinate system
 		
 		switch (piece.type) {
 			case 'king':
 				// Kings move 1 square in any direction
 				dx = Math.floor(Math.random() * 3) - 1;
-				dy = Math.floor(Math.random() * 3) - 1;
+				dz = Math.floor(Math.random() * 3) - 1;
 				break;
 			case 'queen':
 				// Queens can move in any direction, multiple squares
 				if (Math.random() < 0.5) {
 					// Diagonal
 					dx = (Math.random() < 0.5 ? 1 : -1) * (Math.floor(Math.random() * 3) + 1);
-					dy = (Math.random() < 0.5 ? 1 : -1) * (Math.floor(Math.random() * 3) + 1);
+					dz = (Math.random() < 0.5 ? 1 : -1) * (Math.floor(Math.random() * 3) + 1);
 				} else {
 					// Straight
 					if (Math.random() < 0.5) {
 						dx = (Math.random() < 0.5 ? 1 : -1) * (Math.floor(Math.random() * 3) + 1);
-						dy = 0;
+						dz = 0;
 					} else {
 						dx = 0;
-						dy = (Math.random() < 0.5 ? 1 : -1) * (Math.floor(Math.random() * 3) + 1);
+						dz = (Math.random() < 0.5 ? 1 : -1) * (Math.floor(Math.random() * 3) + 1);
 					}
 				}
 				break;
@@ -940,25 +1223,25 @@ function simulateChessMove(chessPieces, computerId, strategy) {
 				// Rooks move in straight lines
 				if (Math.random() < 0.5) {
 					dx = (Math.random() < 0.5 ? 1 : -1) * (Math.floor(Math.random() * 3) + 1);
-					dy = 0;
+					dz = 0;
 				} else {
 					dx = 0;
-					dy = (Math.random() < 0.5 ? 1 : -1) * (Math.floor(Math.random() * 3) + 1);
+					dz = (Math.random() < 0.5 ? 1 : -1) * (Math.floor(Math.random() * 3) + 1);
 				}
 				break;
 			case 'bishop':
 				// Bishops move diagonally
 				dx = (Math.random() < 0.5 ? 1 : -1) * (Math.floor(Math.random() * 3) + 1);
-				dy = (Math.random() < 0.5 ? 1 : -1) * (Math.floor(Math.random() * 3) + 1);
+				dz = (Math.random() < 0.5 ? 1 : -1) * (Math.floor(Math.random() * 3) + 1);
 				break;
 			case 'knight':
 				// Knights move in L-shape
 				if (Math.random() < 0.5) {
 					dx = (Math.random() < 0.5 ? 1 : -1) * 2;
-					dy = (Math.random() < 0.5 ? 1 : -1) * 1;
+					dz = (Math.random() < 0.5 ? 1 : -1) * 1;
 				} else {
 					dx = (Math.random() < 0.5 ? 1 : -1) * 1;
-					dy = (Math.random() < 0.5 ? 1 : -1) * 2;
+					dz = (Math.random() < 0.5 ? 1 : -1) * 2;
 				}
 				break;
 			case 'pawn':
@@ -966,33 +1249,34 @@ function simulateChessMove(chessPieces, computerId, strategy) {
 				if (Math.random() < strategy.aggressiveness) {
 					// Try to capture (diagonal move)
 					dx = (Math.random() < 0.5 ? 1 : -1);
-					dy = 1;
+					dz = 1;
 				} else {
 					// Move forward
 					dx = 0;
-					dy = Math.random() < 0.2 ? 2 : 1; // 20% chance for 2-square move
+					dz = Math.random() < 0.2 ? 2 : 1; // 20% chance for 2-square move
 				}
 				break;
 			default:
 				// Default movement
 				dx = Math.floor(Math.random() * 3) - 1;
-				dy = Math.floor(Math.random() * 3) - 1;
+				dz = Math.floor(Math.random() * 3) - 1;
 		}
 		
 		// Apply movement based on strategy
 		if (Math.random() < strategy.explorationRate) {
 			// More exploratory moves - increase movement distance
 			dx = dx * 1.5;
-			dy = dy * 1.5;
+			dz = dz * 1.5;
 		}
 		
-		// Update position
-		newChessPieces[originalPieceIndex].position.x += Math.round(dx);
-		newChessPieces[originalPieceIndex].position.y += Math.round(dy);
+		// Update position - directly accessing x and z properties
+		newChessPieces[originalPieceIndex].x += Math.round(dx);
+		newChessPieces[originalPieceIndex].z += Math.round(dz);
 		
 		// Ensure position is within bounds
-		newChessPieces[originalPieceIndex].position.x = Math.max(0, Math.min(7, newChessPieces[originalPieceIndex].position.x));
-		newChessPieces[originalPieceIndex].position.y = Math.max(0, Math.min(7, newChessPieces[originalPieceIndex].position.y));
+		const boardSize = 16; // Use a reasonable default if not available
+		newChessPieces[originalPieceIndex].x = Math.max(0, Math.min(boardSize - 1, newChessPieces[originalPieceIndex].x));
+		newChessPieces[originalPieceIndex].z = Math.max(0, Math.min(boardSize - 1, newChessPieces[originalPieceIndex].z));
 	}
 	
 	return newChessPieces;
@@ -1012,6 +1296,29 @@ function updateSpectators(playerId, gameState) {
 			}
 		}
 	}
+}
+
+/**
+ * Initialize the global game that all players join by default
+ */
+function initializeGlobalGame() {
+	console.log('Initializing global game...');
+	
+	// Check if global game already exists
+	if (games.has(GLOBAL_GAME_ID)) {
+		console.log('Global game already exists, using existing game');
+		return;
+	}
+	
+	// Create the global game
+	createNewGame(GLOBAL_GAME_ID, {
+		maxPlayers: 2048, // Allow up to 2048 players as per requirements
+		gameMode: 'standard',
+		difficulty: 'normal',
+		boardSize: 16
+	});
+	
+	console.log(`Global game created with ID: ${GLOBAL_GAME_ID}`);
 }
 
 // Start the server

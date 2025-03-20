@@ -4,12 +4,15 @@
  * A simplified version of the game core to help with debugging and testing.
  */
 
+// Import the network manager (at the top of the file)
+import * as NetworkManager from './utils/networkManager.js';
+
 // Core game state
 let gameState = {
 	board: [],
 	boardSize: 16,
-	currentPlayer: 1,
-	turnPhase: 'tetris', // 'tetris' or 'chess'
+	currentPlayer: null,
+	turnPhase: null, // 'tetris' or 'chess'
 	isGameOver: false,
 	winner: null,
 	currentTetromino: null,
@@ -88,35 +91,110 @@ export function initGame(container) {
 		raycaster = new THREE.Raycaster();
 		mouse = new THREE.Vector2();
 		
-		// Create empty board
+		// Set default board size
+		gameState.boardSize = 16;
+		
+		// Create an empty game state - will be replaced with server data
 		resetGameState();
 		
 		// Set up simple 3D scene
 		setupScene();
 		
-		// Create board visualization
+		// Create empty board visualization - will be populated with server data
 		createBoard();
-		
-		// Add chess pieces
-		addChessPieces();
-		updateChessPieces();
-		
-		// Create initial tetromino for Player 1
-		gameState.currentPlayer = 1;
-		gameState.turnPhase = 'tetris';
-		createNewTetromino();
-		
-		// Set up input handlers
-		setupInputHandlers();
 		
 		// Create game status display
 		createGameStatusDisplay();
 		
-		// Show tutorial message
-		showTutorialMessage();
+		// Add network status display
+		createNetworkStatusDisplay();
+		
+		// Set up network event listeners
+		setupNetworkEvents();
+		
+		// Set up input handlers
+		setupInputHandlers();
 		
 		// Start game loop
 		startGameLoop();
+		
+		// Show tutorial message
+		showTutorialMessage();
+		
+		// Get player name from localStorage or prompt
+		const playerName = localStorage.getItem('playerName') || 
+				prompt('Enter your player name:', 'Player_' + Math.floor(Math.random() * 1000));
+		
+		// Save player name for future use
+		if (playerName) {
+			localStorage.setItem('playerName', playerName);
+		}
+		
+		// Add loading message
+		const loadingMsg = document.createElement('div');
+		loadingMsg.id = 'loading-message';
+		loadingMsg.style.position = 'fixed';
+		loadingMsg.style.top = '50%';
+		loadingMsg.style.left = '50%';
+		loadingMsg.style.transform = 'translate(-50%, -50%)';
+		loadingMsg.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
+		loadingMsg.style.color = 'white';
+		loadingMsg.style.padding = '20px';
+		loadingMsg.style.borderRadius = '10px';
+		loadingMsg.style.zIndex = '9999';
+		loadingMsg.innerHTML = 'Connecting to server...';
+		document.body.appendChild(loadingMsg);
+		
+		// Process URL parameters to see if we need to join a specific game
+		const urlParams = new URLSearchParams(window.location.search);
+		const gameIdFromUrl = urlParams.get('game');
+		
+		// Connect to server and join/create a game
+		NetworkManager.initialize(playerName)
+			.then(() => {
+				console.log('Connected to server with player ID:', NetworkManager.getPlayerId());
+				
+				// Join existing game or create new one, passing the player name
+				return NetworkManager.joinGame(gameIdFromUrl, playerName);
+			})
+			.then(gameData => {
+				console.log('Joined game:', gameData);
+				
+				// Update game ID display
+				updateGameIdDisplay(NetworkManager.getGameId());
+				
+				// Request initial state from server
+				NetworkManager.sendMessage('get_game_state', { 
+					gameId: NetworkManager.getGameId() 
+				});
+				
+				// Show connected message
+				showToastMessage(`Connected as ${playerName}! ${gameIdFromUrl ? 'Joined' : 'Created'} game.`);
+				
+				// Remove loading message
+				if (document.getElementById('loading-message')) {
+					document.body.removeChild(document.getElementById('loading-message'));
+				}
+			})
+			.catch(error => {
+				console.error('Error connecting to server:', error);
+				showToastMessage('Failed to connect to server - playing in offline mode');
+				
+				// Remove loading message
+				if (document.getElementById('loading-message')) {
+					document.body.removeChild(document.getElementById('loading-message'));
+				}
+				
+				// In offline mode, create a local game state
+				console.log('Initializing offline mode with local game state');
+				gameState.board = createLocalBoard();
+				gameState.chessPieces = createLocalChessPieces();
+				gameState.currentPlayer = 1;
+				gameState.turnPhase = 'tetris';
+				createBoard();
+				updateChessPieces();
+				createNewTetromino();
+			});
 		
 		// Show some helpful info
 		console.log('Game controls:');
@@ -139,15 +217,13 @@ export function initGame(container) {
 function resetGameState() {
 	console.log('Resetting game state...');
 	
-	// Create empty board with 16x16 grid
-	gameState.board = Array(gameState.boardSize).fill().map(() => Array(gameState.boardSize).fill(0));
-	
-	// Set up simple home zones
-	setupHomeZones();
+	// Create empty structures that will be filled by server data
+	gameState.board = [];
+	gameState.chessPieces = [];
 	
 	// Reset game info
-	gameState.currentPlayer = 1;
-	gameState.turnPhase = 'tetris';
+	gameState.currentPlayer = null;
+	gameState.turnPhase = null;
 	gameState.isGameOver = false;
 	gameState.winner = null;
 	gameState.currentTetromino = null;
@@ -157,7 +233,9 @@ function resetGameState() {
 
 /**
  * Set up home zones on the board
+ * NOTE: This is no longer used as home zones are now set up on the server
  */
+/*
 function setupHomeZones() {
 	// Player 1 (blue) - bottom
 	for (let z = gameState.boardSize - 2; z < gameState.boardSize; z++) {
@@ -172,18 +250,8 @@ function setupHomeZones() {
 			gameState.board[z][x] = 7; // Orange home zone
 		}
 	}
-	
-	// Add a few example cells
-	gameState.board[12][4] = 1; // Cyan
-	gameState.board[12][5] = 1; // Cyan
-	gameState.board[11][4] = 1; // Cyan
-	gameState.board[11][5] = 1; // Cyan
-	
-	gameState.board[4][10] = 2; // Yellow
-	gameState.board[4][11] = 2; // Yellow
-	gameState.board[3][10] = 2; // Yellow
-	gameState.board[3][11] = 2; // Yellow
 }
+*/
 
 /**
  * Set up the 3D scene
@@ -290,6 +358,15 @@ function onWindowResize() {
 function createBoard() {
 	console.log('Creating game board...');
 	
+	// Clear existing board cells
+	let existingCellsContainer = boardGroup.getObjectByName('cells');
+	if (existingCellsContainer) {
+		while (existingCellsContainer.children.length > 0) {
+			existingCellsContainer.remove(existingCellsContainer.children[0]);
+		}
+		boardGroup.remove(existingCellsContainer);
+	}
+	
 	// Create cell container
 	let cellsContainer = new THREE.Group();
 	cellsContainer.name = 'cells';
@@ -299,10 +376,30 @@ function createBoard() {
 	const offsetX = gameState.boardSize / 2 - 0.5;
 	const offsetZ = gameState.boardSize / 2 - 0.5;
 	
+	// Safety check - if board is not initialized, don't try to render it
+	if (!gameState.board || !Array.isArray(gameState.board) || gameState.board.length === 0) {
+		console.log('Board not initialized yet, waiting for server data');
+		
+		// Add a placeholder to indicate we're waiting for board data
+		const planeGeometry = new THREE.PlaneGeometry(5, 5);
+		const planeMaterial = new THREE.MeshBasicMaterial({
+			color: 0x333333,
+			side: THREE.DoubleSide
+		});
+		const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+		plane.rotation.x = Math.PI / 2; // Make it horizontal
+		cellsContainer.add(plane);
+		
+		return;
+	}
+	
 	// Create cells for each board position
-	for (let z = 0; z < gameState.boardSize; z++) {
-		for (let x = 0; x < gameState.boardSize; x++) {
-			const cellValue = gameState.board[z][x];
+	for (let z = 0; z < gameState.board.length; z++) {
+		const row = gameState.board[z];
+		if (!row || !Array.isArray(row)) continue;
+		
+		for (let x = 0; x < row.length; x++) {
+			const cellValue = row[x];
 			
 			// Skip empty cells
 			if (!cellValue) continue;
@@ -468,10 +565,31 @@ function startAutoFall() {
 				
 				if (gameState.currentTetromino.startHeight <= 0) {
 					gameState.currentTetromino.startHeight = 0;
-					// Check for collision once it reaches the board level
-					if (checkTetrominoCollision(gameState.currentTetromino.shape, 
-						gameState.currentTetromino.position.x, 
-						gameState.currentTetromino.position.z)) {
+					
+					// Check for collision at the current position
+					let collision = false;
+					const shape = gameState.currentTetromino.shape;
+					const posX = gameState.currentTetromino.position.x;
+					const posZ = gameState.currentTetromino.position.z;
+					
+					// Check each cell in the tetromino shape
+					for (let z = 0; z < shape.length; z++) {
+						for (let x = 0; x < shape[z].length; x++) {
+							if (shape[z][x] === 1) {
+								const boardX = posX + x;
+								const boardZ = posZ + z;
+								
+								// Only check for direct overlap with existing blocks
+								if (gameState.board[boardZ][boardX] !== 0) {
+									collision = true;
+									break;
+								}
+							}
+						}
+						if (collision) break;
+					}
+					
+					if (collision) {
 						// If collision detected, place the tetromino
 						placeTetromino();
 						clearInterval(gameState.fallInterval);
@@ -480,20 +598,38 @@ function startAutoFall() {
 				
 				updateTetrominoVisuals();
 			} else {
-				// When at board level, traditional Tetris behavior takes over
-				// But we're checking for Z movement (downward on the board)
-				if (!checkTetrominoCollision(gameState.currentTetromino.shape, 
-					gameState.currentTetromino.position.x, 
-					gameState.currentTetromino.position.z + 1)) {
-					
+				// When at board level, try to move down one step
+				const shape = gameState.currentTetromino.shape;
+				const posX = gameState.currentTetromino.position.x;
+				const posZ = gameState.currentTetromino.position.z + 1; // One step down
+				let collision = false;
+				
+				// Check each cell in the tetromino shape
+				for (let z = 0; z < shape.length; z++) {
+					for (let x = 0; x < shape[z].length; x++) {
+						if (shape[z][x] === 1) {
+							const boardX = posX + x;
+							const boardZ = posZ + z;
+						
+							
+							// Only check for direct overlap with existing blocks
+							if (gameState.board[boardZ][boardX] !== 0) {
+								collision = true;
+								break;
+							}
+						}
+					}
+					if (collision) break;
+				}
+				
+				if (!collision) {
+					// No collision, move down
 					gameState.currentTetromino.position.z += 1;
 					updateGhostPiece();
 					updateTetrominoVisuals();
 				} else {
-					// If collision, place the tetromino
+					// If collision detected, place the tetromino
 					placeTetromino();
-					
-					// Clear the interval
 					clearInterval(gameState.fallInterval);
 				}
 			}
@@ -511,13 +647,9 @@ function updateGhostPiece() {
 	gameState.ghostPiece = JSON.parse(JSON.stringify(gameState.currentTetromino));
 	
 	// Drop it down as far as it can go
-	while (!checkTetrominoCollision(
-		gameState.ghostPiece.shape, 
-		gameState.ghostPiece.position.x, 
-		gameState.ghostPiece.position.z + 1
-	)) {
-		gameState.ghostPiece.position.z += 1;
-	}
+	gameState.ghostPiece.position.y = 0;
+
+
 }
 
 /**
@@ -646,11 +778,6 @@ function updateTetrominoVisuals() {
 		
 		// Set the entire tetromino group to hover
 		tetrominoGroup3D.position.y = hoverHeight;
-		
-		// Add a bounding box to make it clearer where tetromino is
-		const boundingBox = createTetrominoBoundingBox(shape, posX, posZ, offsetX, offsetZ);
-		boundingBox.position.y = hoverHeight;
-		tetrominoGroup.add(boundingBox);
 	}
 }
 
@@ -1096,28 +1223,50 @@ function moveTetromino(dx, dz) {
 	const newX = gameState.currentTetromino.position.x + dx;
 	const newZ = gameState.currentTetromino.position.z + dz;
 	
-	// Check if the move is valid
-	if (!checkTetrominoCollision(gameState.currentTetromino.shape, newX, newZ)) {
-		// Perform the move
-		gameState.currentTetromino.position.x = newX;
-		gameState.currentTetromino.position.z = newZ;
-		
-		// Update ghost piece
-		updateGhostPiece();
-		
-		// Update visuals
-		updateTetrominoVisuals();
-		
-		// Show feedback message
-		const direction = dx < 0 ? 'left' : dx > 0 ? 'right' : dz < 0 ? 'up' : 'down';
-		showToastMessage(`Moved tetromino ${direction}`);
-		return true;
-	} else {
-		// Show feedback for blocked move
-		showToastMessage('Move blocked - collision detected');
-		console.log('Move blocked - collision detected');
-		return false;
-	}
+	// Only check for boundary collisions and direct block overlaps
+	const shape = gameState.currentTetromino.shape;
+	// let collision = false;
+	
+	// for (let z = 0; z < shape.length; z++) {
+	// 	for (let x = 0; x < shape[z].length; x++) {
+	// 		if (shape[z][x] === 1) {
+	// 			const boardX = newX + x;
+	// 			const boardZ = newZ + z;
+				
+	// 			// Check board boundaries
+	// 			if (boardX < 0 || boardX >= gameState.boardSize || 
+	// 				boardZ < 0 || boardZ >= gameState.boardSize) {
+	// 				collision = true;
+	// 				break;
+	// 			}
+				
+	// 			// Check for direct overlap with existing blocks
+	// 			if (gameState.board[boardZ][boardX] !== 0) {
+	// 				collision = true;
+	// 				break;
+	// 			}
+	// 		}
+	// 	}
+	// 	if (collision) break;
+	// }
+	
+	// if (collision) {
+	// 	// Show feedback for blocked move
+	// 	showToastMessage('Cannot move - collision detected');
+	// 	return false;
+	// }
+	
+	// Perform the move - no collision detected
+	gameState.currentTetromino.position.x = newX;
+	gameState.currentTetromino.position.z = newZ;
+	
+	// Update ghost piece
+	updateGhostPiece();
+	
+	// Update visuals
+	updateTetrominoVisuals();
+	
+	return true;
 }
 
 /**
@@ -1228,7 +1377,10 @@ function hardDropTetromino() {
 	
 	// Place the tetromino (with a slight delay for visual effect)
 	setTimeout(() => {
-		placeTetromino();
+		// Make sure the tetromino is still there (hasn't been cleared by something else)
+		if (gameState.currentTetromino) {
+			placeTetromino();
+		}
 	}, 300);
 	
 	return true;
@@ -1314,17 +1466,28 @@ function placeTetromino() {
 		// Show explosion animation
 		showExplosionAnimation(posX, posZ);
 		
-		// Clear the current tetromino without placing it
+		// Switch to chess phase for this player without affecting others
+		gameState.turnPhase = 'chess';
+		console.log('Tetromino exploded - switched to chess phase');
+		updateGameStatusDisplay();
+		
+		// Create the data to send before clearing the currentTetromino
+		const tetrominoData = {
+			type: gameState.currentTetromino.type,
+			position: { x: posX, z: posZ },
+			shape: shape,
+			exploded: true
+		};
+		
+		// Clear the current tetromino
 		gameState.currentTetromino = null;
 		gameState.ghostPiece = null;
 		
 		// Update visuals
 		updateTetrominoVisuals();
 		
-		// Switch to chess phase for this player without affecting others
-		gameState.turnPhase = 'chess';
-		console.log('Tetromino exploded - switched to chess phase');
-		updateGameStatusDisplay();
+		// Send the exploded tetromino event to server
+		sendTetrominoPlacementToServer(tetrominoData);
 		
 		return;
 	}
@@ -1335,15 +1498,28 @@ function placeTetromino() {
 			if (shape[z][x] === 1) {
 				const boardX = posX + x;
 				const boardZ = posZ + z;
-				
-				// Make sure we're within board bounds
-				if (boardX >= 0 && boardX < gameState.boardSize && 
-					boardZ >= 0 && boardZ < gameState.boardSize) {
-					gameState.board[boardZ][boardX] = color;
+				//if this spot doesn't exist on the board, add it
+				if (!gameState.board[boardZ]) {
+					gameState.board[boardZ] = [];
 				}
+				//if this spot doesn't exist on the board, add it
+				if (!gameState.board[boardZ][boardX]) {
+					gameState.board[boardZ][boardX] = 0;
+				}
+
+				gameState.board[boardZ][boardX] = color;
+			
 			}
 		}
 	}
+	
+	// Create tetromino data before clearing the reference
+	const tetrominoPlacementData = {
+		type: gameState.currentTetromino.type,
+		position: { x: posX, z: posZ },
+		shape: shape,
+		exploded: false
+	};
 	
 	// Check for completed rows
 	checkCompletedRows();
@@ -1362,6 +1538,28 @@ function placeTetromino() {
 	// Update visuals
 	updateTetrominoVisuals();
 	updateGameStatusDisplay();
+	
+	// Send the tetromino placement to server
+	sendTetrominoPlacementToServer(tetrominoPlacementData);
+}
+
+/**
+ * Send tetromino placement to server
+ * @param {Object} tetrominoData - Data about the placed tetromino
+ */
+function sendTetrominoPlacementToServer(tetrominoData) {
+	// Add current player and timestamp
+	const placementData = {
+		...tetrominoData,
+		player: gameState.currentPlayer,
+		timestamp: Date.now(),
+		board: gameState.board // Include the updated board state
+	};
+	
+	// Submit to server using NetworkManager
+	NetworkManager.sendMessage('tetromino_placed', placementData);
+	
+	console.log('Sent tetromino placement to server:', placementData);
 }
 
 /**
@@ -1379,11 +1577,11 @@ function checkTetrominoCollision(shape, posX, posZ) {
 				const boardX = posX + x;
 				const boardZ = posZ + z;
 				
-				// Check board boundaries
-				if (boardX < 0 || boardX >= gameState.boardSize || 
-					boardZ < 0 || boardZ >= gameState.boardSize) {
-					return true; // Out of bounds
-				}
+				// Check board boundaries ... there are no boundaries!
+				// if (boardX < 0 || boardX >= gameState.boardSize || 
+				// 	boardZ < 0 || boardZ >= gameState.boardSize) {
+				// 	return true; // Out of bounds
+				// }
 				
 				// If this is for the current tetromino (not ghost), ignore collision checking
 				// when the tetromino is still above the board
@@ -1393,9 +1591,9 @@ function checkTetrominoCollision(shape, posX, posZ) {
 					continue; // Skip collision check while above board
 				}
 				
-				// Check collision with existing blocks
+				// Only check for direct overlap with existing blocks - ignore all other cells
 				if (gameState.board[boardZ][boardX] !== 0) {
-					return true; // Collision with existing block
+					return true; // Direct collision with existing block
 				}
 			}
 		}
@@ -1408,14 +1606,21 @@ function checkTetrominoCollision(shape, posX, posZ) {
  * Check for completed rows and remove them
  */
 function checkCompletedRows() {
+	// Safety check - if board is not initialized, do nothing
+	if (!gameState.board || !Array.isArray(gameState.board) || gameState.board.length === 0) {
+		return;
+	}
+	
 	// Check horizontal rows
-	for (let z = 0; z < gameState.boardSize; z++) {
-		let rowComplete = true;
+	for (let z = 0; z < gameState.board.length; z++) {
+		const row = gameState.board[z];
+		if (!row || !Array.isArray(row)) continue;
+		
 		let cellCount = 0;
 		
 		// Count filled cells in this row
-		for (let x = 0; x < gameState.boardSize; x++) {
-			if (gameState.board[z][x] !== 0) {
+		for (let x = 0; x < row.length; x++) {
+			if (row[x] !== 0) {
 				cellCount++;
 			}
 		}
@@ -1423,22 +1628,29 @@ function checkCompletedRows() {
 		// If row has at least 8 connected cells, consider clearing it
 		if (cellCount >= 8) {
 			// Clear the row (except home zones)
-			for (let x = 0; x < gameState.boardSize; x++) {
+			for (let x = 0; x < row.length; x++) {
 				// Don't clear home zones
-				if (gameState.board[z][x] !== 6 && gameState.board[z][x] !== 7) {
-					gameState.board[z][x] = 0;
+				if (row[x] !== 6 && row[x] !== 7) {
+					row[x] = 0;
 				}
 			}
 		}
 	}
 	
 	// Check vertical columns
-	for (let x = 0; x < gameState.boardSize; x++) {
+	// First determine the board width based on the first row
+	const boardWidth = gameState.board[0] ? gameState.board[0].length : 0;
+	if (boardWidth === 0) return;
+	
+	for (let x = 0; x < boardWidth; x++) {
 		let cellCount = 0;
 		
 		// Count filled cells in this column
-		for (let z = 0; z < gameState.boardSize; z++) {
-			if (gameState.board[z][x] !== 0) {
+		for (let z = 0; z < gameState.board.length; z++) {
+			const row = gameState.board[z];
+			if (!row || !Array.isArray(row) || x >= row.length) continue;
+			
+			if (row[x] !== 0) {
 				cellCount++;
 			}
 		}
@@ -1446,10 +1658,13 @@ function checkCompletedRows() {
 		// If column has at least 8 connected cells, consider clearing it
 		if (cellCount >= 8) {
 			// Clear the column (except home zones)
-			for (let z = 0; z < gameState.boardSize; z++) {
+			for (let z = 0; z < gameState.board.length; z++) {
+				const row = gameState.board[z];
+				if (!row || !Array.isArray(row) || x >= row.length) continue;
+				
 				// Don't clear home zones
-				if (gameState.board[z][x] !== 6 && gameState.board[z][x] !== 7) {
-					gameState.board[z][x] = 0;
+				if (row[x] !== 6 && row[x] !== 7) {
+					row[x] = 0;
 				}
 			}
 		}
@@ -1579,7 +1794,9 @@ function getCellColor(value) {
 
 /**
  * Add chess pieces to the board
+ * NOTE: This is no longer used as chess pieces are now provided by the server
  */
+/*
 function addChessPieces() {
 	// Define chess piece types and positions for player 1
 	const player1Pieces = [
@@ -1624,6 +1841,7 @@ function addChessPieces() {
 	// Add all pieces to game state
 	gameState.chessPieces = [...player1Pieces, ...player2Pieces];
 }
+*/
 
 /**
  * Show or hide valid moves for the selected chess piece
@@ -1661,13 +1879,12 @@ function showValidMoves(show = true) {
 			})
 		);
 		
-		// Check if there's a cell at the move position
-		const hasCellBelow = isValidPosition(move.x, move.z);
-		const baseHeight = hasCellBelow ? 1.1 : 0.1; // Higher if on a cell
+		// Check if the target position has a cell (it should, otherwise it wouldn't be a valid move)
+		const cellHeight = isValidPosition(move.x, move.z) ? 1 : 0;
 		
 		indicator.position.set(
 			move.x - offsetX,
-			baseHeight, // Just above the board or cell
+			cellHeight + 0.1, // Position just above the cell (0.1 units above)
 			move.z - offsetZ
 		);
 		
@@ -1695,6 +1912,19 @@ function getValidMoves(piece) {
 			// Forward movement
 			if (isValidPosition(forwardPos.x, forwardPos.z) && !isOccupied(forwardPos.x, forwardPos.z)) {
 				validMoves.push(forwardPos);
+				
+				// Check for double move on first move
+				const isPawnOnStartingRank = (piece.player === 1 && piece.z === 14) || 
+											 (piece.player === 2 && piece.z === 1);
+											 
+				if (isPawnOnStartingRank) {
+					const doubleMovePos = { x: piece.x, z: piece.z + (direction * 2) };
+					// Make sure both the first and second squares are unoccupied
+					if (isValidPosition(doubleMovePos.x, doubleMovePos.z) && 
+						!isOccupied(doubleMovePos.x, doubleMovePos.z)) {
+						validMoves.push(doubleMovePos);
+					}
+				}
 			}
 			
 			// Diagonal captures
@@ -1816,9 +2046,14 @@ function addLinearMoves(piece, moves, directions) {
  * @returns {boolean} - Whether the position is valid
  */
 function isValidPosition(x, z) {
-	return x >= 0 && x < gameState.boardSize &&
-		z >= 0 && z < gameState.boardSize &&
-		gameState.board[z][x] !== 0; // Must have a cell
+	// First check if within board bounds
+	if (x < 0 || x >= gameState.boardSize || z < 0 || z >= gameState.boardSize) {
+		return false;
+	}
+	
+	// For chess pieces, a position is only valid if it has a cell
+	// Chess pieces should NOT be able to move to empty spaces or positions adjacent to home zones
+	return gameState.board[z][x] !== 0; // Must have a cell
 }
 
 /**
@@ -1855,81 +2090,144 @@ function isEnemyOccupied(x, z, player) {
 
 /**
  * Handle chess piece selection and movement
- * @param {number} x - Board X position
- * @param {number} z - Board Z position
+ * @param {number} x - Target X position
+ * @param {number} z - Target Z position
  */
 function handleChessMove(x, z) {
-	// Only handle input in chess phase
-	if (gameState.turnPhase !== 'chess') {
-		console.log('Not in chess phase');
+	// If no piece is selected, try to select a piece at this position
+	if (!gameState.selectedChessPiece) {
+		// Check if there's a chess piece at this position
+		const piece = gameState.chessPieces.find(p => 
+			p.x === x && p.z === z && p.player === gameState.currentPlayer);
+		
+		if (piece) {
+			// Select the piece
+			gameState.selectedChessPiece = piece;
+			console.log(`Selected piece: ${piece.type} at ${piece.x}, ${piece.z}`);
+			
+			// Highlight the selected piece
+			highlightSelectedPiece(piece);
+			
+			// Show valid moves
+			showValidMoves(true);
+		}
 		return;
 	}
 	
-	// Find a piece at the clicked position
-	const piece = gameState.chessPieces.find(p => p.x === x && p.z === z);
+	// If a piece is already selected, try to move it
+	const selectedPiece = gameState.selectedChessPiece;
 	
-	// If clicked on a valid move position for the selected piece
-	if (gameState.selectedChessPiece) {
-		const validMoves = getValidMoves(gameState.selectedChessPiece);
-		const moveToMake = validMoves.find(move => move.x === x && move.z === z);
+	// Check if trying to select another piece of the same player
+	const samePlayerPiece = gameState.chessPieces.find(p => 
+		p.x === x && p.z === z && p.player === gameState.currentPlayer);
 		
-		if (moveToMake) {
-			// Check if capturing an enemy piece
-			const capturedIndex = gameState.chessPieces.findIndex(p => 
-				p.x === x && p.z === z && p.player !== gameState.currentPlayer
-			);
-			
-			// Remove captured piece
-			if (capturedIndex !== -1) {
-				// Check if king was captured (game over)
-				if (gameState.chessPieces[capturedIndex].type === 'king') {
-					gameState.isGameOver = true;
-					gameState.winner = gameState.currentPlayer;
-					console.log(`Player ${gameState.currentPlayer} wins!`);
-					showToastMessage(`Player ${gameState.currentPlayer} wins by capturing the king!`);
-				}
-				
-				gameState.chessPieces.splice(capturedIndex, 1);
+	if (samePlayerPiece) {
+		// Deselect current piece
+		gameState.selectedChessPiece = null;
+		showValidMoves(false);
+		
+		// Select the new piece instead
+		handleChessMove(x, z);
+		return;
+	}
+	
+	// Check if the move is valid
+	const validMoves = getValidMoves(selectedPiece);
+	const isValidMove = validMoves.some(move => move.x === x && move.z === z);
+	
+	if (!isValidMove) {
+		console.log(`Invalid move from ${selectedPiece.x},${selectedPiece.z} to ${x},${z}`);
+		return;
+	}
+	
+	// Check if there's an enemy piece at the target position
+	const capturedPiece = gameState.chessPieces.find(p => 
+		p.x === x && p.z === z && p.player !== gameState.currentPlayer);
+	
+	// Store move information
+	const moveData = {
+		piece: selectedPiece.type,
+		player: selectedPiece.player,
+		from: { x: selectedPiece.x, z: selectedPiece.z },
+		to: { x, z },
+		chessPieces: gameState.chessPieces // Include the full chess pieces array
+	};
+	
+	// If capturing a piece
+	if (capturedPiece) {
+		console.log(`Capturing ${capturedPiece.type} at ${x},${z}`);
+		
+		// Include captured piece info in move data
+		moveData.captured = {
+			type: capturedPiece.type,
+			player: capturedPiece.player
+		};
+		
+		// Remove the captured piece
+		const capturedPieceIndex = gameState.chessPieces.findIndex(p => p === capturedPiece);
+		if (capturedPieceIndex !== -1) {
+			// Check if king was captured (game over)
+			if (capturedPiece.type === 'king') {
+				gameState.isGameOver = true;
+				gameState.winner = gameState.currentPlayer;
+				console.log(`Player ${gameState.currentPlayer} wins!`);
 			}
 			
-			// Move the selected piece
-			gameState.selectedChessPiece.x = x;
-			gameState.selectedChessPiece.z = z;
-			
-			// Deselect piece
-			gameState.selectedChessPiece = null;
-			showValidMoves(false);
-			
-			// Update chess pieces visualization
-			updateChessPieces();
-			
-			// Show move notification
-			showToastMessage(`Chess piece moved - Player ${gameState.currentPlayer} completes their round`);
-			
-			// This player's round is complete, start a new tetris phase
-			// No need to switch players as they're all playing simultaneously
-			if (!gameState.isGameOver) {
-				setTimeout(() => {
-					// Start a new round for this player
-					gameState.turnPhase = 'tetris';
-					createNewTetromino();
-					updateGameStatusDisplay();
-				}, 1000);
-			}
-			return;
+			gameState.chessPieces.splice(capturedPieceIndex, 1);
 		}
 	}
 	
-	// If clicked on own piece, select it
-	if (piece && piece.player === gameState.currentPlayer) {
-		gameState.selectedChessPiece = piece;
-		showValidMoves(true);
-		showToastMessage(`Selected ${piece.type}`);
+	// Move the selected piece
+	selectedPiece.x = x;
+	selectedPiece.z = z;
+	
+	// Hide valid moves
+	showValidMoves(false);
+	
+	// Update chess pieces visualization
+	updateChessPieces();
+	
+	// Update moveData with the modified chess pieces array
+	moveData.chessPieces = gameState.chessPieces;
+	
+	// Send chess move to server
+	sendChessMoveToServer(moveData);
+	
+	// Deselect the piece
+	gameState.selectedChessPiece = null;
+	
+	// Move to next turn phase if the game is not over
+	if (!gameState.isGameOver) {
+		gameState.turnPhase = 'tetris';
+		
+		// Create new tetromino for next turn
+		createNewTetromino();
+		
+		console.log(`Turn phase changed to: ${gameState.turnPhase}`);
+		updateGameStatusDisplay();
 	} else {
-		// Clicked elsewhere, deselect
-		gameState.selectedChessPiece = null;
-		showValidMoves(false);
+		// Show game over message
+		showToastMessage(`Game over! Player ${gameState.winner} wins!`);
+		updateGameStatusDisplay();
 	}
+}
+
+/**
+ * Send chess move to server
+ * @param {Object} moveData - Data about the chess move
+ */
+function sendChessMoveToServer(moveData) {
+	// Add current player and timestamp
+	const fullMoveData = {
+		...moveData,
+		player: gameState.currentPlayer,
+		timestamp: Date.now()
+	};
+	
+	// Submit to server using NetworkManager
+	NetworkManager.sendMessage('chess_move', fullMoveData);
+	
+	console.log('Sent chess move to server:', fullMoveData);
 }
 
 /**
@@ -1952,11 +2250,18 @@ function updateChessPieces() {
 		// Get piece color
 		const color = getCellColor(piece.player === 1 ? 6 : 7);
 		
-		// Check if the piece position has a cell (valid position)
-		const hasCellBelow = isValidPosition(piece.x, piece.z);
+		// Check the height of the cell at the piece's position
+		// Count how many blocks are stacked at this position
+		let cellHeight = 0;
+		if (isValidPosition(piece.x, piece.z)) {
+			// For simplicity, just check if there's a non-zero value at position
+			if (gameState.board[piece.z][piece.x] !== 0) {
+				cellHeight = 1; // Each cell is 1 unit high
+			}
+		}
 		
 		// Base height of the piece - place on top of cells
-		const baseHeight = hasCellBelow ? 1.0 : 0.5;
+		const baseHeight = cellHeight;
 		
 		// Create piece geometry based on type
 		let geometry;
@@ -2209,79 +2514,58 @@ function createGameStatusDisplay() {
  * Update game status display
  */
 function updateGameStatusDisplay() {
-	const statusContainer = document.getElementById('game-status');
-	if (!statusContainer) return;
+	// Create or get game status display
+	let statusDisplay = document.getElementById('game-status');
 	
-	// Player color indicator
-	const playerColor = gameState.currentPlayer === 1 ? '#3333ff' : '#ff8800';
-	
-	// Controls info based on current phase
-	const controlsInfo = gameState.turnPhase === 'tetris' 
-		? `
-			<div style="margin-top: 10px; text-align: left; border-top: 1px solid #555; padding-top: 8px;">
-				<div style="font-weight: bold;">Tetris Controls:</div>
-				<div>← → ↑ ↓: Move tetromino</div>
-				<div>Z/X: Rotate</div>
-				<div>Space: Hard drop</div>
-			</div>
-		`
-		: `
-			<div style="margin-top: 10px; text-align: left; border-top: 1px solid #555; padding-top: 8px;">
-				<div style="font-weight: bold;">Chess Controls:</div>
-				<div>Click: Select piece</div>
-				<div>Click green circle: Move piece</div>
-			</div>
-		`;
-	
-	// Status text
-	let statusText = `
-		<div style="margin-bottom: 8px; font-weight: bold; font-size: 18px;">
-			Player ${gameState.currentPlayer}
-		</div>
-		<div style="display: flex; align-items: center; justify-content: center; margin-bottom: 10px;">
-			<div style="width: 20px; height: 20px; background-color: ${playerColor}; margin-right: 8px; border-radius: 3px;"></div>
-			<div>
-				${gameState.currentPlayer === 1 ? 'Blue' : 'Orange'}
-			</div>
-		</div>
-		<div style="font-size: 16px; padding: 5px; background-color: rgba(255,255,255,0.2); border-radius: 3px; margin: 5px 0;">
-			Current Phase: ${gameState.turnPhase === 'tetris' ? 'Place Tetris Block' : 'Move Chess Piece'}
-		</div>
-		<div style="font-size: 12px; margin-top: 5px;">
-			Each player plays independently
-		</div>
-		${controlsInfo}
-	`;
-	
-	// Add game over message if applicable
-	if (gameState.isGameOver) {
-		const winnerColor = gameState.winner === 1 ? '#3333ff' : '#ff8800';
-		statusText = `
-			<div style="color: #ffff00; font-weight: bold; margin-bottom: 15px; font-size: 22px;">
-				GAME OVER
-			</div>
-			<div style="margin-bottom: 8px; font-size: 18px;">
-				Player ${gameState.winner} Wins!
-			</div>
-			<div style="display: flex; align-items: center; justify-content: center; margin-bottom: 15px;">
-				<div style="width: 20px; height: 20px; background-color: ${winnerColor}; margin-right: 8px; border-radius: 3px;"></div>
-				<div>
-					${gameState.winner === 1 ? 'Blue' : 'Orange'}
-				</div>
-			</div>
-			<div style="margin-top: 20px;">
-				<button id="restart-game-button" style="padding: 8px 20px; background-color: #3498db; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px;">Restart Game</button>
-			</div>
-		`;
+	// If no status display exists, create one
+	if (!statusDisplay) {
+		statusDisplay = document.createElement('div');
+		statusDisplay.id = 'game-status';
+		
+		// Style the status display
+		Object.assign(statusDisplay.style, {
+			position: 'fixed',
+			bottom: '10px',
+			left: '50%',
+			transform: 'translateX(-50%)',
+			backgroundColor: 'rgba(0, 0, 0, 0.7)',
+			color: 'white',
+			padding: '10px 20px',
+			borderRadius: '5px',
+			fontFamily: 'Arial, sans-serif',
+			zIndex: '1000',
+			textAlign: 'center',
+			fontSize: '16px'
+		});
+		
+		document.body.appendChild(statusDisplay);
 	}
 	
-	statusContainer.innerHTML = statusText;
-	
-	// Add event listener to restart button if game is over
+	// Update status based on game state
 	if (gameState.isGameOver) {
-		const restartButton = document.getElementById('restart-game-button');
-		if (restartButton) {
-			restartButton.addEventListener('click', restartGame);
+		statusDisplay.innerHTML = `
+			<div style="color: #FFD700;">Game Over</div>
+			<div>Player ${gameState.winner} wins!</div>
+		`;
+		statusDisplay.style.backgroundColor = 'rgba(128, 0, 0, 0.8)';
+	} else if (!gameState.currentPlayer) {
+		statusDisplay.textContent = 'Waiting for game to start...';
+	} else {
+		let phase = gameState.turnPhase === 'tetris' ? 'Place Tetromino' : 'Move Chess Piece';
+		let playerColor = gameState.currentPlayer === 1 ? '#4477FF' : '#FF7744';
+		
+		statusDisplay.innerHTML = `
+			<div>
+				Player ${gameState.currentPlayer} - 
+				<span style="color: ${playerColor};">${phase}</span>
+			</div>
+		`;
+		
+		// Highlight if it's the current turn
+		if (NetworkManager.getPlayerId() === `player${gameState.currentPlayer}`) {
+			statusDisplay.style.backgroundColor = 'rgba(0, 128, 0, 0.8)';
+		} else {
+			statusDisplay.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
 		}
 	}
 }
@@ -2292,14 +2576,25 @@ function updateGameStatusDisplay() {
 function restartGame() {
 	console.log('Restarting game...');
 	
-	// Clear all groups
-	while (boardGroup.children.length > 0) {
-		boardGroup.remove(boardGroup.children[0]);
+	// Clear existing tetromino
+	if (gameState.currentTetromino) {
+		const tetrominoGroup = scene.getObjectByName('activeTetromino');
+		if (tetrominoGroup) {
+			scene.remove(tetrominoGroup);
+		}
+		
+		const ghostGroup = scene.getObjectByName('ghostPiece');
+		if (ghostGroup) {
+			scene.remove(ghostGroup);
+		}
+		
+		gameState.currentTetromino = null;
+		gameState.ghostPiece = null;
 	}
 	
-	while (tetrominoGroup.children.length > 0) {
-		tetrominoGroup.remove(tetrominoGroup.children[0]);
-	}
+	// Clear chess pieces
+	const chessPiecesGroup = scene.getObjectByName('chessPieces');
+	if (!chessPiecesGroup) return;
 	
 	while (chessPiecesGroup.children.length > 0) {
 		chessPiecesGroup.remove(chessPiecesGroup.children[0]);
@@ -2317,12 +2612,31 @@ function restartGame() {
 	// Recreate board
 	createBoard();
 	
-	// Add chess pieces
-	addChessPieces();
-	updateChessPieces();
-	
-	// Create new tetromino
-	createNewTetromino();
+	// Request new game state from server
+	if (NetworkManager && NetworkManager.isConnected()) {
+		// Request new game from server
+		NetworkManager.sendMessage('restart_game', {
+			gameId: NetworkManager.getGameId()
+		});
+		
+		// Request fresh game state
+		NetworkManager.sendMessage('get_game_state', { 
+			gameId: NetworkManager.getGameId() 
+		});
+		
+		showToastMessage('Game restarted - requesting new game state from server');
+	} else {
+		// Offline mode fallback
+		gameState.board = createLocalBoard();
+		gameState.chessPieces = createLocalChessPieces();
+		gameState.currentPlayer = 1;
+		gameState.turnPhase = 'tetris';
+		createBoard();
+		updateChessPieces();
+		createNewTetromino();
+		
+		showToastMessage('Game restarted in offline mode');
+	}
 	
 	// Reset camera
 	resetCamera(true);
@@ -2496,13 +2810,16 @@ function highlightSelectedPiece(piece) {
 	const offsetX = gameState.boardSize / 2 - 0.5;
 	const offsetZ = gameState.boardSize / 2 - 0.5;
 	
-	// Check if there's a cell at the piece's position to determine height
-	const hasCellBelow = isValidPosition(piece.x, piece.z);
-	const baseHeight = hasCellBelow ? 1.1 : 0.1; // Higher if on a cell
+	// Check if the piece is on a cell (get the height)
+	let cellHeight = 0;
+	if (isValidPosition(piece.x, piece.z)) {
+		// For simplicity, each cell is 1 unit high
+		cellHeight = 1;
+	}
 	
 	highlight.position.set(
 		piece.x - offsetX,
-		baseHeight, // Just above the board or cell
+		cellHeight + 0.1, // Position just above the cell
 		piece.z - offsetZ
 	);
 	
@@ -2709,4 +3026,592 @@ function showExplosionAnimation(posX, posZ) {
 	
 	// Add a visual toast message
 	showToastMessage("BOOM! Tetromino exploded!");
+}
+
+/**
+ * Create network status display
+ */
+function createNetworkStatusDisplay() {
+	// Create network status indicator
+	const statusElement = document.createElement('div');
+	statusElement.id = 'network-status';
+	
+	// Style the element
+	Object.assign(statusElement.style, {
+		position: 'fixed',
+		bottom: '10px',
+		right: '10px',
+		backgroundColor: 'rgba(0, 0, 0, 0.7)',
+		color: '#ffffff',
+		padding: '8px 12px',
+		borderRadius: '5px',
+		fontFamily: 'Arial',
+		fontSize: '12px',
+		zIndex: '1001',
+		display: 'flex',
+		alignItems: 'center',
+		gap: '8px'
+	});
+	
+	statusElement.innerHTML = `
+		<div id="connection-indicator" style="width: 10px; height: 10px; border-radius: 50%; background-color: #777;"></div>
+		<span id="connection-text">Connecting...</span>
+	`;
+	
+	document.body.appendChild(statusElement);
+	
+	// Update initial status
+	updateNetworkStatus(NetworkManager.getStatus());
+}
+
+/**
+ * Update network status display
+ * @param {string} status - Connection status
+ */
+function updateNetworkStatus(status) {
+	const indicator = document.getElementById('connection-indicator');
+	const text = document.getElementById('connection-text');
+	
+	if (!indicator || !text) return;
+	
+	switch (status) {
+		case 'connected':
+			indicator.style.backgroundColor = '#00cc00'; // Green
+			text.textContent = 'Connected';
+			break;
+		case 'connecting':
+			indicator.style.backgroundColor = '#ffaa00'; // Orange
+			text.textContent = 'Connecting...';
+			break;
+		case 'disconnected':
+			indicator.style.backgroundColor = '#cc0000'; // Red
+			text.textContent = 'Disconnected';
+			break;
+		case 'failed':
+			indicator.style.backgroundColor = '#cc0000'; // Red
+			text.textContent = 'Connection Failed';
+			break;
+		default:
+			indicator.style.backgroundColor = '#777777'; // Gray
+			text.textContent = 'Unknown Status';
+	}
+}
+
+/**
+ * Set up network event listeners
+ */
+function setupNetworkEvents() {
+	// Listen for connection status changes
+	NetworkManager.addEventListener('connect', () => {
+		updateNetworkStatus('connected');
+		
+		// When connected, request current game state
+		const gameId = NetworkManager.getGameId();
+		if (gameId) {
+			console.log('Requesting game state for game:', gameId);
+			NetworkManager.sendMessage('get_game_state', { gameId });
+		} else {
+			console.warn('No game ID available, cannot request game state');
+		}
+	});
+	
+	NetworkManager.addEventListener('disconnect', () => {
+		updateNetworkStatus('disconnected');
+		showToastMessage('Disconnected from server. Attempting to reconnect...');
+	});
+	
+	NetworkManager.addEventListener('error', (error) => {
+		updateNetworkStatus('failed');
+		console.error('Network error:', error);
+		showToastMessage('Connection error. Check your network connection.');
+	});
+	
+	// Listen for game updates
+	NetworkManager.onMessage('game_update', (message) => {
+		console.log('Game state update received:', message);
+		
+		// Update game ID display
+		updateGameIdDisplay(NetworkManager.getGameId());
+		
+		// Update game state from server data if available
+		if (message.gameState) {
+			updateGameStateFromServer(message.gameState);
+		}
+	});
+	
+	// Listen for complete game state
+	NetworkManager.onMessage('game_state', (message) => {
+		console.log('Complete game state received:', message);
+		
+		if (message.state) {
+			// Replace entire game state with server data
+			updateCompleteGameState(message.state);
+		}
+	});
+	
+	// Listen for tetromino placements from other players
+	NetworkManager.onMessage('tetromino_placed', (message) => {
+		// Only process if it's not from the current player
+		if (message.playerId !== NetworkManager.getPlayerId()) {
+			console.log('Received tetromino placement from other player:', message);
+			
+			// Add the tetromino to the board
+			applyTetrominoPlacement(message.tetromino || message);
+		}
+	});
+	
+	// Listen for chess moves from other players
+	NetworkManager.onMessage('chess_move', (message) => {
+		// Only process if it's not from the current player
+		if (message.playerId !== NetworkManager.getPlayerId()) {
+			console.log('Received chess move from other player:', message);
+			
+			// Apply the chess move
+			applyChessMove(message.move || message);
+		}
+	});
+	
+	// Listen for player joined events
+	NetworkManager.onMessage('player_joined', (message) => {
+		console.log('Player joined:', message);
+		showToastMessage(`${message.playerName} joined the game`);
+		
+		// Update player list if available
+		if (message.players) {
+			updatePlayerList(message.players);
+		}
+	});
+	
+	// Listen for player left events
+	NetworkManager.onMessage('player_left', (message) => {
+		console.log('Player left:', message);
+		showToastMessage(`${message.playerName} left the game`);
+	});
+	
+	// Listen for game over events
+	NetworkManager.onMessage('game_over', (message) => {
+		console.log('Game over:', message);
+		gameState.isGameOver = true;
+		gameState.winner = message.winner;
+		updateGameStatusDisplay();
+		showToastMessage(`Game over! Player ${message.winner} wins!`);
+	});
+	
+	// Listen for error events
+	NetworkManager.onMessage('error', (message) => {
+		console.error('Server error:', message);
+		showToastMessage(`Server error: ${message.message || 'Unknown error'}`);
+	});
+	
+	// Update game ID display with current game ID
+	updateGameIdDisplay(NetworkManager.getGameId());
+	
+	// Check for status changes periodically
+	setInterval(() => {
+		updateNetworkStatus(NetworkManager.getStatus());
+	}, 2000);
+}
+
+/**
+ * Apply a tetromino placement from another player
+ * @param {Object} tetromino - Tetromino data
+ */
+function applyTetrominoPlacement(tetromino) {
+	if (tetromino.exploded) {
+		// Just show an explosion animation at the position
+		showExplosionAnimation(tetromino.position.x, tetromino.position.z);
+		return;
+	}
+	
+	// Add tetromino blocks to the board
+	const shape = tetromino.shape;
+	const posX = tetromino.position.x;
+	const posZ = tetromino.position.z;
+	const color = tetromino.player === 1 ? 1 : 2; // Use player color
+	
+	for (let z = 0; z < shape.length; z++) {
+		for (let x = 0; x < shape[z].length; x++) {
+			if (shape[z][x] === 1) {
+				const boardX = posX + x;
+				const boardZ = posZ + z;
+				
+				// Make sure we're within board bounds
+				if (boardX >= 0 && boardX < gameState.boardSize && 
+					boardZ >= 0 && boardZ < gameState.boardSize) {
+					gameState.board[boardZ][boardX] = color;
+				}
+			}
+		}
+	}
+	
+	// Check for completed rows
+	checkCompletedRows();
+	
+	// Recreate the board visualization
+	createBoard();
+	
+	// Show a notification
+	showToastMessage(`Player ${tetromino.player} placed a tetromino`);
+}
+
+/**
+ * Apply a chess move from another player
+ * @param {Object} move - Chess move data
+ */
+function applyChessMove(move) {
+	// Find the piece at the source position
+	const pieceIndex = gameState.chessPieces.findIndex(p => 
+		p.x === move.from.x && p.z === move.from.z && p.type === move.piece && p.player === move.player
+	);
+	
+	if (pieceIndex !== -1) {
+		// Check if this move involves a capture
+		if (move.captured) {
+			// Find and remove the captured piece
+			const capturedIndex = gameState.chessPieces.findIndex(p => 
+				p.x === move.to.x && p.z === move.to.z && 
+				p.type === move.captured.type && 
+				p.player === move.captured.player
+			);
+			
+			if (capturedIndex !== -1) {
+				// Check if king was captured (game over)
+				if (gameState.chessPieces[capturedIndex].type === 'king') {
+					gameState.isGameOver = true;
+					gameState.winner = move.player;
+					console.log(`Player ${move.player} wins!`);
+					showToastMessage(`Player ${move.player} wins by capturing the king!`);
+				}
+				
+				gameState.chessPieces.splice(capturedIndex, 1);
+			}
+		}
+		
+		// Move the piece to the destination
+		gameState.chessPieces[pieceIndex].x = move.to.x;
+		gameState.chessPieces[pieceIndex].z = move.to.z;
+		
+		// Update the chess pieces visualization
+		updateChessPieces();
+		
+		// Show a notification
+		if (move.captured) {
+			showToastMessage(`Player ${move.player} moved ${move.piece} and captured ${move.captured.type}`);
+		} else {
+			showToastMessage(`Player ${move.player} moved ${move.piece}`);
+		}
+	}
+}
+
+/**
+ * Update game ID display in the UI
+ * @param {string} gameId - Game ID to display
+ * @param {boolean} updateUrl - Whether to update the URL (optional)
+ */
+function updateGameIdDisplay(gameId, updateUrl = false) {
+	// Create or get game ID display element
+	let gameIdDisplay = document.getElementById('game-id-display');
+	
+	if (!gameIdDisplay) {
+		// Create a game ID display element
+		const container = document.createElement('div');
+		container.style.position = 'fixed';
+		container.style.bottom = '50px';
+		container.style.right = '10px';
+		container.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+		container.style.color = 'white';
+		container.style.padding = '8px';
+		container.style.borderRadius = '5px';
+		container.style.fontFamily = 'monospace';
+		container.style.fontSize = '12px';
+		container.style.zIndex = '1000';
+		container.style.display = 'flex';
+		container.style.flexDirection = 'column';
+		container.style.gap = '5px';
+		
+		const label = document.createElement('div');
+		label.textContent = 'Game ID:';
+		container.appendChild(label);
+		
+		const idElement = document.createElement('div');
+		idElement.id = 'game-id-display';
+		idElement.style.fontWeight = 'bold';
+		idElement.style.wordBreak = 'break-all';
+		idElement.style.maxWidth = '200px';
+		container.appendChild(idElement);
+		
+		// Add copy button
+		const copyButton = document.createElement('button');
+		copyButton.textContent = 'Copy Game ID';
+		copyButton.style.marginTop = '5px';
+		copyButton.style.padding = '3px';
+		copyButton.style.cursor = 'pointer';
+		copyButton.onclick = () => {
+			navigator.clipboard.writeText(gameId)
+				.then(() => {
+					copyButton.textContent = 'Copied!';
+					setTimeout(() => {
+						copyButton.textContent = 'Copy Game ID';
+					}, 2000);
+				})
+				.catch(err => {
+					console.error('Failed to copy:', err);
+					copyButton.textContent = 'Failed to copy';
+				});
+		};
+		container.appendChild(copyButton);
+		
+		document.body.appendChild(container);
+		
+		gameIdDisplay = idElement;
+	}
+	
+	// Update game ID text
+	if (gameIdDisplay && gameId) {
+		gameIdDisplay.textContent = gameId;
+	}
+	
+	// Only update URL if explicitly requested
+	if (updateUrl && gameId) {
+		// Update URL if needed
+		const currentUrl = new URL(window.location.href);
+		if (!currentUrl.searchParams.has('game')) {
+			currentUrl.searchParams.set('game', gameId);
+			window.history.replaceState({}, '', currentUrl);
+		}
+	}
+}
+
+/**
+ * Update the complete game state from server data
+ * @param {Object} serverState - The complete game state from server
+ */
+function updateCompleteGameState(serverState) {
+	console.log('Updating complete game state from server:', serverState);
+	
+	// Update board if available
+	if (serverState.board) {
+		gameState.board = serverState.board;
+		createBoard(); // Recreate board visualization
+	}
+	
+	// Update chess pieces if available
+	if (serverState.chessPieces) {
+		gameState.chessPieces = serverState.chessPieces;
+		updateChessPieces(); // Update chess pieces visualization
+	}
+	
+	// Update turn info if available
+	if (serverState.currentPlayer) {
+		gameState.currentPlayer = serverState.currentPlayer;
+		console.log(`Current player set to ${gameState.currentPlayer}`);
+	}
+	
+	if (serverState.turnPhase) {
+		gameState.turnPhase = serverState.turnPhase;
+		console.log(`Turn phase set to ${gameState.turnPhase}`);
+	} else if (!gameState.turnPhase && gameState.currentPlayer) {
+		// Set a default phase if none provided but we have a current player
+		gameState.turnPhase = 'tetris';
+		console.log(`Default turn phase set to tetris`);
+	}
+	
+	// Set board size
+	if (serverState.boardSize) {
+		gameState.boardSize = serverState.boardSize;
+	}
+	
+	// Check if game is over
+	if (serverState.isGameOver) {
+		gameState.isGameOver = serverState.isGameOver;
+		gameState.winner = serverState.winner;
+	}
+	
+	// Update current tetromino if needed
+	if (serverState.currentTetromino && serverState.currentPlayer === gameState.currentPlayer) {
+		gameState.currentTetromino = serverState.currentTetromino;
+		updateGhostPiece();
+		updateTetrominoVisuals();
+	} else if (!gameState.currentTetromino && gameState.turnPhase === 'tetris') {
+		// Create a new tetromino if we need one
+		createNewTetromino();
+	}
+	
+	// Update game status display
+	updateGameStatusDisplay();
+}
+
+/**
+ * Update partial game state from server updates
+ * @param {Object} serverState - Partial game state from server
+ */
+function updateGameStateFromServer(serverState) {
+	console.log('Updating partial game state from server:', serverState);
+	
+	// Update any fields that are present in the update
+	for (const key in serverState) {
+		if (key === 'board' && serverState.board) {
+			gameState.board = serverState.board;
+			createBoard(); // Recreate board visualization
+		} else if (key === 'chessPieces' && serverState.chessPieces) {
+			gameState.chessPieces = serverState.chessPieces;
+			updateChessPieces(); // Update chess pieces visualization
+		} else if (key in gameState) {
+			gameState[key] = serverState[key];
+		}
+	}
+	
+	// Update game status display
+	updateGameStatusDisplay();
+}
+
+/**
+ * Create a local board for offline play
+ * This is only used if server connection fails
+ */
+function createLocalBoard() {
+	const size = 16;
+	const board = Array(size).fill().map(() => Array(size).fill(0));
+	
+	// Set up player 1 home zone (bottom)
+	for (let z = size - 2; z < size; z++) {
+		for (let x = 0; x < 8; x++) {
+			board[z][x] = 6; // Blue home zone
+		}
+	}
+	
+	// Set up player 2 home zone (top)
+	for (let z = 0; z < 2; z++) {
+		for (let x = 8; x < size; x++) {
+			board[z][x] = 7; // Orange home zone
+		}
+	}
+	
+	return board;
+}
+
+/**
+ * Create local chess pieces for offline play
+ * This is only used if server connection fails
+ */
+function createLocalChessPieces() {
+	// Create chess pieces
+	const player1Pieces = [
+		{ type: 'pawn', x: 0, z: 14 },
+		{ type: 'pawn', x: 1, z: 14 },
+		{ type: 'pawn', x: 2, z: 14 },
+		{ type: 'pawn', x: 3, z: 14 },
+		{ type: 'pawn', x: 4, z: 14 },
+		{ type: 'pawn', x: 5, z: 14 },
+		{ type: 'pawn', x: 6, z: 14 },
+		{ type: 'pawn', x: 7, z: 14 },
+		{ type: 'rook', x: 0, z: 15 },
+		{ type: 'knight', x: 1, z: 15 },
+		{ type: 'bishop', x: 2, z: 15 },
+		{ type: 'queen', x: 3, z: 15 },
+		{ type: 'king', x: 4, z: 15 },
+		{ type: 'bishop', x: 5, z: 15 },
+		{ type: 'knight', x: 6, z: 15 },
+		{ type: 'rook', x: 7, z: 15 }
+	].map(piece => ({ ...piece, player: 1 }));
+	
+	// Define chess piece types and positions for player 2
+	const player2Pieces = [
+		{ type: 'pawn', x: 8, z: 1 },
+		{ type: 'pawn', x: 9, z: 1 },
+		{ type: 'pawn', x: 10, z: 1 },
+		{ type: 'pawn', x: 11, z: 1 },
+		{ type: 'pawn', x: 12, z: 1 },
+		{ type: 'pawn', x: 13, z: 1 },
+		{ type: 'pawn', x: 14, z: 1 },
+		{ type: 'pawn', x: 15, z: 1 },
+		{ type: 'rook', x: 8, z: 0 },
+		{ type: 'knight', x: 9, z: 0 },
+		{ type: 'bishop', x: 10, z: 0 },
+		{ type: 'queen', x: 11, z: 0 },
+		{ type: 'king', x: 12, z: 0 },
+		{ type: 'bishop', x: 13, z: 0 },
+		{ type: 'knight', x: 14, z: 0 },
+		{ type: 'rook', x: 15, z: 0 }
+	].map(piece => ({ ...piece, player: 2 }));
+	
+	return [...player1Pieces, ...player2Pieces];
+}
+
+/**
+ * Update player list
+ * @param {Array} players - List of players
+ */
+function updatePlayerList(players) {
+	// Create or get player list container
+	let playerList = document.getElementById('player-list');
+	
+	// If no player list exists, create one
+	if (!playerList) {
+		const sidebarContainer = document.createElement('div');
+		sidebarContainer.id = 'player-sidebar';
+		
+		// Style the sidebar
+		Object.assign(sidebarContainer.style, {
+			position: 'fixed',
+			top: '10px',
+			right: '10px',
+			width: '180px',
+			backgroundColor: 'rgba(0, 0, 0, 0.7)',
+			padding: '10px',
+			borderRadius: '5px',
+			zIndex: '1000',
+			color: 'white',
+			fontFamily: 'Arial, sans-serif'
+		});
+		
+		// Add header
+		const header = document.createElement('h3');
+		header.textContent = 'Players';
+		header.style.marginTop = '0';
+		header.style.marginBottom = '10px';
+		sidebarContainer.appendChild(header);
+		
+		// Create player list
+		playerList = document.createElement('div');
+		playerList.id = 'player-list';
+		sidebarContainer.appendChild(playerList);
+		
+		// Add to document
+		document.body.appendChild(sidebarContainer);
+	}
+	
+	// Clear current list
+	playerList.innerHTML = '';
+	
+	// Add players to list
+	players.forEach(player => {
+		const playerItem = document.createElement('div');
+		
+		// Style the player item
+		Object.assign(playerItem.style, {
+			padding: '5px',
+			marginBottom: '5px',
+			borderRadius: '3px',
+			backgroundColor: player.id === NetworkManager.getPlayerId() ? 
+				'rgba(0, 128, 255, 0.3)' : 'transparent'
+		});
+		
+		// Player name
+		playerItem.innerHTML = `
+			<div style="display: flex; align-items: center;">
+				<div style="width: 10px; height: 10px; border-radius: 50%; 
+					background-color: ${player.id === NetworkManager.getPlayerId() ? '#00AAFF' : '#AAAAAA'}; 
+					margin-right: 5px;"></div>
+				<span>${player.name || player.id} ${player.id === NetworkManager.getPlayerId() ? '(You)' : ''}</span>
+			</div>
+		`;
+		
+		// Add computer player indicator if applicable
+		if (player.isComputer) {
+			playerItem.innerHTML += `<div style="font-size: 11px; color: #999;">(Computer)</div>`;
+		}
+		
+		playerList.appendChild(playerItem);
+	});
 } 
