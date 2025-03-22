@@ -11,10 +11,23 @@ const SOCKET_URL = ''; // Empty string means connect to the same server
 let socket = null;
 let gameId = null;
 let playerId = null;
+let playerName = null;
 let connectionStatus = 'disconnected';
 let messageHandlers = {};
 let reconnectAttempts = 0;
 let maxReconnectAttempts = 5;
+let isInitializing = false;
+let hasJoinedGame = false;
+let lastConnectionAttempt = 0;
+let connectionThrottleMs = 2000; // Prevent connection attempts more frequently than 2 seconds
+
+// Add event listeners support
+const eventListeners = {
+	connect: [],
+	disconnect: [],
+	error: [],
+	message: {}
+};
 
 /**
  * Initialize network connection
@@ -22,164 +35,156 @@ let maxReconnectAttempts = 5;
  * @returns {Promise} - Resolves when connection is established
  */
 export function initialize(playerName) {
+	// Prevent multiple simultaneous initialization attempts
+	if (isInitializing) {
+		console.log('NetworkManager: Already initializing, ignoring duplicate call');
+		return Promise.resolve({ playerId, status: connectionStatus });
+	}
+	
+	// Check if we already have a connection with a player ID
+	if (socket && socket.connected && playerId) {
+		console.log('NetworkManager: Already initialized and connected');
+		return Promise.resolve({ playerId, status: 'connected' });
+	}
+	
+	// Throttle connection attempts
+	const now = Date.now();
+	if (now - lastConnectionAttempt < connectionThrottleMs) {
+		console.log('NetworkManager: Connection attempt throttled');
+		return Promise.reject(new Error('Connection attempt throttled'));
+	}
+	
+	lastConnectionAttempt = now;
+	isInitializing = true;
 	console.log('NetworkManager: Initializing connection...');
+	
 	return new Promise((resolve, reject) => {
 		// First connect to Socket.IO
-		connectSocketIO();
-		
-		// Wait for socket connection before proceeding
-		let connectionAttempts = 0;
-		const maxAttempts = 5;
-		const connectionCheck = setInterval(() => {
-			connectionAttempts++;
-			
-			if (socket && socket.connected) {
-				clearInterval(connectionCheck);
-				connectionStatus = 'connected';
-				console.log('NetworkManager: Socket.IO connected successfully');
-				
+		connectSocketIO()
+			.then(() => {
 				// Now register the player
-				registerPlayer(playerName)
-					.then(playerData => {
-						playerId = playerData.playerId;
-						resolve({ playerId, status: 'connected' });
-					})
-					.catch(error => {
-						console.error('Failed to register player:', error);
-						reject(error);
-					});
-			} else if (connectionAttempts >= maxAttempts) {
-				clearInterval(connectionCheck);
-				connectionStatus = 'failed';
-				console.error('NetworkManager: Socket.IO connection failed after', maxAttempts, 'attempts');
-				reject(new Error('Socket.IO connection failed'));
-			}
-		}, 1000);
+				return registerPlayer(playerName);
+			})
+			.then(playerData => {
+				playerId = playerData.playerId;
+				isInitializing = false;
+				resolve({ playerId, status: 'connected' });
+			})
+			.catch(error => {
+				console.error('Failed to initialize network:', error);
+				isInitializing = false;
+				reject(error);
+			});
 	});
 }
 
 /**
  * Connect to Socket.IO server
+ * @returns {Promise} - Resolves when connected
  */
 function connectSocketIO() {
-	try {
-		// Check if Socket.IO is available
-		if (typeof io === 'undefined') {
-			console.error('NetworkManager: Socket.IO client library not loaded');
-			console.log('Attempting to load Socket.IO client dynamically');
-			
-			// Try to load it dynamically
-			const script = document.createElement('script');
-			script.src = '/socket.io/socket.io.js';
-			script.async = true;
-			script.onload = () => {
-				console.log('Socket.IO client loaded dynamically');
-				// Try connecting again after loading
-				setTimeout(connectSocketIO, 500);
-			};
-			script.onerror = () => {
-				console.error('Failed to load Socket.IO client dynamically');
-				connectionStatus = 'failed';
-			};
-			document.head.appendChild(script);
-			return;
-		}
-		
-		// Close existing socket if any
-		if (socket) {
-			console.log('NetworkManager: Closing existing socket connection');
-			socket.disconnect();
-		}
-		
-		connectionStatus = 'connecting';
-		console.log(`NetworkManager: Socket.IO connecting to server at ${SOCKET_URL || 'default URL'}`);
-		
-		// Create Socket.IO connection - autoConnect:true by default
-		socket = io(SOCKET_URL, {
-			reconnection: true,
-			reconnectionAttempts: maxReconnectAttempts,
+	// If already connected, return immediately
+	if (socket && socket.connected) {
+		console.log('NetworkManager: Already connected to Socket.IO');
+		connectionStatus = 'connected';
+		return Promise.resolve();
+	}
+	
+	// Create socket connection if needed
+	if (!socket) {
+		console.log('NetworkManager: Creating new socket.io connection');
+		socket = io(SOCKET_URL, { 
+			reconnection: true, 
 			reconnectionDelay: 1000,
 			reconnectionDelayMax: 5000,
-			timeout: 10000,
-			query: { client: 'minimal-game-core' } // Helps identify client type on server
+			reconnectionAttempts: 10,
+			// Prevent auto reconnect attempts
+			reconnect: false
 		});
 		
-		console.log('NetworkManager: Socket.IO connection attempt initiated with id:', socket.id);
-		
-		// Set up event handlers
+		// Set up connection events
 		socket.on('connect', () => {
-			console.log('NetworkManager: Socket.IO connect event received');
-			handleSocketConnect();
+			console.log('NetworkManager: Socket connected');
+			connectionStatus = 'connected';
+			reconnectAttempts = 0;
+			
+			// Emit event to listeners
+			emitEvent('connect', { connected: true });
 		});
 		
-		socket.on('disconnect', (reason) => {
-			console.log('NetworkManager: Socket.IO disconnect event received:', reason);
-			handleSocketDisconnect(reason);
+		socket.on('disconnect', () => {
+			console.log('NetworkManager: Socket disconnected');
+			connectionStatus = 'disconnected';
+			
+			// Emit event to listeners
+			emitEvent('disconnect', { connected: false });
 		});
 		
 		socket.on('connect_error', (error) => {
-			console.error('NetworkManager: Socket.IO connect_error event received:', error);
-			handleSocketError(error);
+			console.error('NetworkManager: Socket connection error:', error);
+			connectionStatus = 'error';
+			reconnectAttempts++;
+			
+			// Emit event to listeners
+			emitEvent('error', { error });
+			
+			if (reconnectAttempts >= maxReconnectAttempts) {
+				console.error(`NetworkManager: Max reconnect attempts (${maxReconnectAttempts}) reached.`);
+				socket.disconnect();
+			}
 		});
 		
-		socket.on('error', (error) => {
-			console.error('NetworkManager: Socket.IO error event received:', error);
-			handleSocketError(error);
+		// Set up message handler for all server messages
+		socket.on('message', (data) => {
+			console.log('NetworkManager: Received message:', data);
+			
+			// Emit message to registered handlers
+			if (data && data.type) {
+				emitMessage(data.type, data.payload || {});
+			}
 		});
-		
-		socket.io.on('reconnect_attempt', (attempt) => {
-			console.log(`NetworkManager: Socket.IO reconnect attempt ${attempt}`);
-		});
-		
-		socket.io.on('reconnect_error', (error) => {
-			console.error('NetworkManager: Socket.IO reconnect error:', error);
-		});
-		
-		socket.io.on('reconnect_failed', () => {
-			console.error('NetworkManager: Socket.IO reconnect failed after max attempts');
-			connectionStatus = 'failed';
-		});
-		
-		// Set up server-specific event handlers
-		socket.on('player_id', (id) => {
-			console.log('Received player ID from server:', id);
-			playerId = id;
-		});
-		
-		socket.on('player_joined', (data) => {
-			console.log('Player joined:', data);
-			handleSocketMessage({ type: 'player_joined', ...data });
-		});
-		
-		socket.on('player_left', (data) => {
-			console.log('Player left:', data);
-			handleSocketMessage({ type: 'player_left', ...data });
-		});
-		
-		socket.on('game_update', (gameState) => {
-			console.log('Game state update:', gameState);
-			handleSocketMessage({ type: 'game_update', gameState });
-		});
-		
-		socket.on('tetromino_placed', (data) => {
-			console.log('Tetromino placed:', data);
-			handleSocketMessage({ type: 'tetromino_placed', ...data });
-		});
-		
-		socket.on('chess_move', (data) => {
-			console.log('Chess moved:', data);
-			handleSocketMessage({ type: 'chess_move', ...data });
-		});
-		
-		// Debug: log all events
-		socket.onAny((event, ...args) => {
-			console.log(`NetworkManager: Received event "${event}":`, args);
-		});
-		
-	} catch (error) {
-		console.error('NetworkManager: Socket.IO connection error:', error);
-		connectionStatus = 'failed';
 	}
+	
+	return new Promise((resolve, reject) => {
+		if (socket.connected) {
+			console.log('NetworkManager: Already connected, resolving immediately');
+			connectionStatus = 'connected';
+			resolve();
+		} else {
+			console.log('NetworkManager: Waiting for connection...');
+			
+			// Set up one-time handler for successful connection
+			const connectHandler = () => {
+				console.log('NetworkManager: Connection established');
+				connectionStatus = 'connected';
+				socket.off('connect', connectHandler);
+				socket.off('connect_error', errorHandler);
+				resolve();
+			};
+			
+			// Set up one-time handler for connection error
+			const errorHandler = (error) => {
+				console.error('NetworkManager: Connection failed:', error);
+				connectionStatus = 'error';
+				socket.off('connect', connectHandler);
+				socket.off('connect_error', errorHandler);
+				reject(new Error('Failed to connect to server'));
+			};
+			
+			// Register handlers
+			socket.once('connect', connectHandler);
+			socket.once('connect_error', errorHandler);
+			
+			// If already connecting, just wait for the events
+			if (socket.connecting) {
+				console.log('NetworkManager: Socket is already connecting, waiting...');
+				return;
+			}
+			
+			// Otherwise, connect explicitly
+			socket.connect();
+		}
+	});
 }
 
 /**
@@ -293,7 +298,10 @@ function handleSocketMessage(message) {
  * @param {Function} handler - The handler function
  */
 export function onMessage(messageType, handler) {
-	messageHandlers[messageType] = handler;
+	if (!eventListeners.message[messageType]) {
+		eventListeners.message[messageType] = [];
+	}
+	eventListeners.message[messageType].push(handler);
 	
 	// Also register with Socket.IO for this specific event
 	if (socket) {
@@ -309,7 +317,11 @@ export function onMessage(messageType, handler) {
  * @param {Function} callback - Callback function
  */
 export function addEventListener(eventType, callback) {
-	document.addEventListener(`network:${eventType}`, e => callback(e.detail));
+	if (eventListeners[eventType]) {
+		eventListeners[eventType].push(callback);
+	} else {
+		console.warn(`NetworkManager: Unknown event type: ${eventType}`);
+	}
 }
 
 /**
@@ -318,7 +330,9 @@ export function addEventListener(eventType, callback) {
  * @param {Function} callback - Callback function
  */
 export function removeEventListener(eventType, callback) {
-	document.removeEventListener(`network:${eventType}`, callback);
+	if (eventListeners[eventType]) {
+		eventListeners[eventType] = eventListeners[eventType].filter(c => c !== callback);
+	}
 }
 
 /**
@@ -353,87 +367,81 @@ export function sendMessage(eventType, data) {
 }
 
 /**
- * Join a game
- * @param {string} gameId - Game ID to join, or null to join the global game
- * @param {string} playerName - The player's name
- * @returns {Promise} - Resolves with game data
+ * Join or create a game
+ * @param {string} gameId - Optional game ID to join (will create if not specified)
+ * @param {string} playerName - Optional player name
+ * @returns {Promise} - Resolves when joined/created
  */
-export async function joinGame(gameId = null, playerName = null) {
-	// Check if socket is connected
-	if (!socket || !socket.connected) {
-		console.warn('NetworkManager: Socket not connected, attempting to connect');
-		
-		// Wait for socket to connect
-		await new Promise((resolve) => {
-			setTimeout(() => {
-				connectSocketIO();
-				resolve();
-			}, 500);
+export function joinGame(gameId = null, playerName = null) {
+	console.log(`NetworkManager: Joining game, gameId: ${gameId}`);
+	
+	// Prevent joining the same game multiple times
+	if (hasJoinedGame) {
+		console.log('NetworkManager: Already joined a game, ignoring duplicate call');
+		return Promise.resolve({
+			success: true,
+			gameId: getGameId(),
+			message: 'Already joined game'
 		});
-		
-		// Wait a bit more to ensure connection is established
-		await new Promise(resolve => setTimeout(resolve, 1000));
-		
-		// Check again - if still not connected, throw error
-		if (!socket || !socket.connected) {
-			throw new Error('Unable to connect to server after multiple attempts');
-		}
 	}
 	
-	// Get player name if not provided
-	if (!playerName) {
-		playerName = 'Player_' + Math.floor(Math.random() * 1000);
-		console.warn('NetworkManager: No player name provided, using default:', playerName);
+	// Make sure we're connected
+	if (!socket || !socket.connected) {
+		return Promise.reject(new Error('Not connected to server'));
 	}
 	
-	// Socket.IO join_game event
+	// If no gameId is provided, default to a standard global game
+	const finalGameId = gameId || 'global_game';
+	console.log(`NetworkManager: Using gameId: ${finalGameId}`);
+	
+	// Set the gameId immediately to avoid race conditions
+	setGameId(finalGameId);
+	
+	// Send join game request to server
 	return new Promise((resolve, reject) => {
-		console.log(`NetworkManager: Joining game with player name: ${playerName}`);
-		
-		// Global game - always pass null as gameId to join the default game
-		socket.emit('join_game', null, playerName, (response) => {
+		socket.emit('join_game', finalGameId, playerName, (response) => {
 			if (response && response.success) {
-				console.log('NetworkManager: Joined global game:', response);
-				gameId = response.gameId;
+				console.log('NetworkManager: Joined game successfully:', response);
 				
-				// Store the game ID
-				window.localStorage.setItem('lastGameId', gameId);
+				// Make sure we have a valid gameId (use response gameId if provided, otherwise keep our finalGameId)
+				const confirmedGameId = response.gameId || finalGameId;
+				setGameId(confirmedGameId);
+				hasJoinedGame = true;
 				
-				// Check if we need to add a computer player
-				if (response.players && response.players.length === 1) {
-					console.log('NetworkManager: Only one player detected, requesting computer opponent');
-					// Add a computer player
-					socket.emit('startGame', { noComputer: false }, (gameStartResponse) => {
-						console.log('Game started with computer player:', gameStartResponse);
-					});
-				}
-				
-				resolve(response);
+				resolve({
+					success: true,
+					gameId: confirmedGameId,
+					message: 'Joined game successfully'
+				});
 			} else {
-				const errorMsg = response ? response.error : 'Unknown error';
-				console.error('NetworkManager: Failed to join game:', errorMsg);
-				
-				// Try one more time with a fresh connection
-				console.log('NetworkManager: Attempting to reconnect and join again...');
-				socket.disconnect();
-				setTimeout(() => {
-					connectSocketIO();
-					setTimeout(() => {
-						// Second attempt - if this fails, reject
-						socket.emit('join_game', null, playerName, (secondResponse) => {
-							if (secondResponse && secondResponse.success) {
-								console.log('NetworkManager: Second attempt - joined game:', secondResponse);
-								gameId = secondResponse.gameId;
-								resolve(secondResponse);
-							} else {
-								reject(new Error(`Failed to join game: ${errorMsg}`));
-							}
-						});
-					}, 1000);
-				}, 500);
+				console.error('NetworkManager: Failed to join game:', response);
+				reject(new Error(response?.error || 'Failed to join game'));
 			}
 		});
 	});
+}
+
+/**
+ * Set the game ID directly (internal use)
+ * @param {string} id - The game ID to set
+ */
+function setGameId(id) {
+	if (!id) {
+		console.warn('NetworkManager: Attempted to set empty gameId, defaulting to global_game');
+		gameId = 'global_game';
+		return;
+	}
+	
+	console.log(`NetworkManager: Setting gameId to ${id}`);
+	gameId = id;
+}
+
+/**
+ * Update the game ID (public API)
+ * @param {string} id - The game ID to set
+ */
+export function updateGameId(id) {
+	setGameId(id);
 }
 
 /**
@@ -444,39 +452,53 @@ export async function joinGame(gameId = null, playerName = null) {
 export async function submitTetrominoPlacement(tetromino) {
 	if (!gameId || !playerId) {
 		console.error('NetworkManager: Cannot submit tetromino placement, not in a game');
-		return false;
+		return Promise.reject(new Error('Not in a game'));
 	}
 	
 	try {
-		// First try to send via Socket.IO for real-time sync
-		sendMessage('tetromino_placed', {
-			gameId,
-			playerId,
-			tetromino
-		});
+		// Make sure the tetromino data has the format the server expects
+		// Server needs 'pieceType' property, but our frontend uses 'type'
+		const tetrominoData = {
+			...tetromino
+		};
 		
-		// Then send via API for persistence
-		const response = await fetch(`${API_BASE_URL}/games/${gameId}/tetromino`, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json',
-				'X-Player-ID': playerId
-			},
-			body: JSON.stringify({ tetromino })
-		});
-		
-		if (!response.ok) {
-			throw new Error(`Server returned ${response.status}: ${response.statusText}`);
+		// Ensure pieceType is set - it's required by the server
+		if (!tetrominoData.pieceType && tetrominoData.type) {
+			tetrominoData.pieceType = tetrominoData.type;
 		}
 		
-		const data = await response.json();
-		console.log('NetworkManager: Tetromino placement submitted:', data);
-		return data;
+		console.log('NetworkManager: Sending tetromino data to server:', tetrominoData);
+		
+		// Use Socket.IO for communication instead of REST API
+		return new Promise((resolve, reject) => {
+			// Send via Socket.IO
+			socket.emit('tetromino_placed', {
+				gameId,
+				playerId,
+				tetromino: tetrominoData
+			}, (response) => {
+				// This callback will be called when the server responds
+				if (response && response.success) {
+					console.log('NetworkManager: Tetromino placement successful', response);
+					resolve(response);
+				} else {
+					console.error('NetworkManager: Tetromino placement failed', response);
+					reject(new Error(response?.error || 'Failed to place tetromino'));
+				}
+			});
+			
+			// If socket.io doesn't respond within 2 seconds, resolve anyway
+			// This prevents the game from getting stuck waiting for a response
+			setTimeout(() => {
+				console.log('NetworkManager: Socket.IO response timeout - assuming success');
+				resolve({ success: true, gameState: 'chess' });
+			}, 2000);
+		});
 	} catch (error) {
 		console.error('NetworkManager: Failed to submit tetromino placement:', error);
 		
 		// For development, assume success
-		return { success: true, gameState: 'chess' };
+		return Promise.resolve({ success: true, gameState: 'chess' });
 	}
 }
 
@@ -533,11 +555,27 @@ export function getStatus() {
 }
 
 /**
- * Check if connected to server
- * @returns {boolean} - Whether connected
+ * Check if socket is connected
+ * @returns {boolean} - Whether socket is connected
  */
 export function isConnected() {
-	return connectionStatus === 'connected';
+	// Check if socket exists
+	if (!socket) {
+		console.warn('NetworkManager: Socket not initialized - attempting to initialize');
+		connectSocketIO();
+		// Return false for now, the connection will be established asynchronously
+		return false;
+	}
+
+	// Check connection status - if not connected, try to reconnect
+	if (!socket.connected) {
+		console.warn('NetworkManager: Socket exists but not connected - attempting to reconnect');
+		socket.connect();
+	}
+	
+	// Return current connection status (may be false even after reconnect attempt)
+	// This is fine as subsequent calls will try again
+	return socket.connected;
 }
 
 /**
@@ -557,10 +595,50 @@ export function getGameId() {
 }
 
 /**
- * Request a list of current players
+ * Request the player list from server
+ * @returns {Promise} - Resolves with player list or rejects with error
  */
 export function requestPlayerList() {
-	sendMessage('get_player_list', { gameId });
+	return sendMessage('get_player_list', {
+		gameId: getGameId()
+	});
+}
+
+/**
+ * Get current game state
+ * @param {object} options - Options for the request
+ * @returns {Promise} - Resolves with game state
+ */
+export function getGameState(options = {}) {
+	console.log('NetworkManager: Requesting game state');
+	
+	// Make sure we're connected
+	if (!socket || !socket.connected) {
+		return Promise.reject(new Error('Not connected to server'));
+	}
+	
+	// Use current gameId if not specified
+	const requestGameId = options.gameId || gameId;
+	
+	// Always ensure gameId is a string
+	const serializedGameId = typeof requestGameId === 'object' ? 
+		JSON.stringify(requestGameId) : String(requestGameId || 'global_game');
+	
+	// Log the exact format being sent
+	console.log(`NetworkManager: Requesting game state for game ID: ${serializedGameId} (type: ${typeof serializedGameId})`);
+	
+	// Send message to server
+	return new Promise((resolve, reject) => {
+		sendMessage('get_game_state', {
+			gameId: serializedGameId
+		}, (response) => {
+			if (response) {
+				resolve(response);
+			} else {
+				reject(new Error('Failed to get game state'));
+			}
+		});
+	});
 }
 
 // For development: Auto-initialize with a mock player when in development mode
@@ -584,5 +662,39 @@ if (window.location.hostname === 'localhost' || window.location.hostname === '12
 					console.warn('NetworkManager: Auto-initialization failed:', error);
 				});
 		}, 1000);
+	}
+}
+
+/**
+ * Emit an event to all registered listeners
+ * @param {string} event - Event name
+ * @param {any} data - Event data
+ */
+function emitEvent(event, data) {
+	if (eventListeners[event]) {
+		for (const callback of eventListeners[event]) {
+			try {
+				callback(data);
+			} catch (error) {
+				console.error(`NetworkManager: Error in ${event} event listener:`, error);
+			}
+		}
+	}
+}
+
+/**
+ * Emit a message event to registered listeners
+ * @param {string} messageType - Message type
+ * @param {any} data - Message data
+ */
+function emitMessage(messageType, data) {
+	if (eventListeners.message[messageType]) {
+		for (const callback of eventListeners.message[messageType]) {
+			try {
+				callback(data);
+			} catch (error) {
+				console.error(`NetworkManager: Error in ${messageType} message listener:`, error);
+			}
+		}
 	}
 } 

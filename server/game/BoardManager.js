@@ -105,13 +105,26 @@ class BoardManager {
 	 * @returns {boolean} True if the cell is in a safe home zone
 	 */
 	isCellInSafeHomeZone(game, x, z) {
+		if (!game || !game.players) {
+			log(`isCellInSafeHomeZone: Game or players object is undefined`);
+			return false;
+		}
+		
+		// Debug output for cell checking
+		let isInHomeZone = false;
+		let homeZoneOwner = null;
+		
 		for (const playerId in game.players) {
 			const player = game.players[playerId];
 			
 			// Skip if player has no home zone
-			if (!player.homeZone) continue;
+			if (!player.homeZone) {
+				continue;
+			}
 			
 			const { x: homeX, z: homeZ } = player.homeZone;
+			
+			// If home zone dimensions are not defined in game state, use constants
 			const homeWidth = BOARD_SETTINGS.HOME_ZONE_WIDTH;
 			const homeHeight = BOARD_SETTINGS.HOME_ZONE_HEIGHT;
 			
@@ -119,21 +132,39 @@ class BoardManager {
 			if (x >= homeX && x < homeX + homeWidth && 
 				z >= homeZ && z < homeZ + homeHeight) {
 				
+				isInHomeZone = true;
+				homeZoneOwner = playerId;
+				
 				// Check if this home zone has at least one piece
 				let hasPiece = false;
 				for (let hz = homeZ; hz < homeZ + homeHeight; hz++) {
 					for (let hx = homeX; hx < homeX + homeWidth; hx++) {
-						const cell = game.board[hz][hx];
-						if (cell && cell.chessPiece && cell.chessPiece.player === playerId) {
-							hasPiece = true;
-							break;
+						// Make sure coordinates are valid before accessing
+						if (hz >= 0 && hz < game.board.length && 
+							hx >= 0 && hx < game.board[hz].length) {
+							
+							const cell = game.board[hz][hx];
+							if (cell && cell.chessPiece && cell.chessPiece.player === playerId) {
+								hasPiece = true;
+								log(`Found piece in home zone for player ${playerId} at (${hx}, ${hz})`);
+								break;
+							}
 						}
 					}
 					if (hasPiece) break;
 				}
 				
-				return hasPiece;
+				if (hasPiece) {
+					log(`Cell (${x}, ${z}) is in player ${playerId}'s safe home zone`);
+					return true;
+				} else {
+					log(`Cell (${x}, ${z}) is in player ${playerId}'s home zone but no pieces found - NOT safe`);
+				}
 			}
+		}
+		
+		if (isInHomeZone) {
+			log(`Cell (${x}, ${z}) is in player ${homeZoneOwner}'s home zone but not safe`);
 		}
 		
 		return false;
@@ -171,24 +202,119 @@ class BoardManager {
 		for (let z = 0; z < boardSize; z++) {
 			// Count filled cells in the row
 			let filledCellCount = 0;
+			let skippedHomeCells = 0;
+			
 			for (let x = 0; x < game.board[z].length; x++) {
-				// Skip cells in safe home zones (home zones with at least one piece)
-				if (game.board[z][x] && !this.isCellInSafeHomeZone(game, x, z)) {
-					filledCellCount++;
+				// Check if this cell is in a home zone
+				const isHomeCellSafe = this.isCellInSafeHomeZone(game, x, z);
+				
+				// Count only non-home cells that are filled
+				if (game.board[z][x]) {
+					if (isHomeCellSafe) {
+						skippedHomeCells++;
+					} else {
+						filledCellCount++;
+					}
 				}
+			}
+			
+			// Log the cell counts for debugging
+			if (filledCellCount > 0 || skippedHomeCells > 0) {
+				log(`Row ${z}: ${filledCellCount} filled cells + ${skippedHomeCells} skipped home cells (need ${requiredCellsForClearing} to clear)`);
 			}
 			
 			// If the row has at least the required number of filled cells, clear it
 			if (filledCellCount >= requiredCellsForClearing) {
+				// First, find all cells above this row that will need to fall
 				this.clearRow(game, z);
 				clearedRows.push(z);
 				
 				// Log the row clearing
-				log(`Cleared row ${z} with ${filledCellCount} filled cells`);
+				log(`Cleared row ${z} with ${filledCellCount} filled cells (skipped ${skippedHomeCells} home cells)`);
 			}
 		}
 		
+		// After clearing rows, make pieces fall towards their respective kings
+		if (clearedRows.length > 0) {
+			this._makePiecesFallTowardsKing(game, clearedRows);
+		}
+		
 		return clearedRows;
+	}
+	
+	/**
+	 * Make pieces fall towards their respective kings after row clearing
+	 * @param {Object} game - The game object
+	 * @param {Array} clearedRows - The indices of cleared rows
+	 * @private
+	 */
+	_makePiecesFallTowardsKing(game, clearedRows) {
+		// First, identify all king positions by player
+		const kingPositions = {};
+		
+		for (const piece of game.chessPieces) {
+			if (piece && piece.type === 'king') {
+				kingPositions[piece.player] = {
+					x: piece.position.x,
+					z: piece.position.z
+				};
+			}
+		}
+		
+		// Sort cleared rows in descending order to prevent multiple falls
+		clearedRows.sort((a, b) => b - a);
+		
+		// For each cleared row, move cells above it down
+		for (const clearedRowZ of clearedRows) {
+			for (let z = clearedRowZ - 1; z >= 0; z--) { // Starting from row above the cleared row
+				for (let x = 0; x < game.board[z].length; x++) {
+					const cell = game.board[z][x];
+					if (!cell) continue;
+					
+					// Skip home cells
+					if (this.isCellInSafeHomeZone(game, x, z)) {
+						continue;
+					}
+					
+					// Calculate fall direction towards king
+					let fallZ = z + 1; // Default falls straight down
+					let fallX = x;
+					
+					// If the cell belongs to a player with a king, adjust to fall towards king
+					if (cell.player && kingPositions[cell.player]) {
+						const kingPos = kingPositions[cell.player];
+						
+						// Determine if we should move horizontally towards the king
+						if (Math.abs(x - kingPos.x) > 1) {
+							if (x < kingPos.x) fallX = x + 1;
+							else if (x > kingPos.x) fallX = x - 1;
+						}
+					}
+					
+					// Check if target position is valid and empty
+					if (fallZ < game.board.length && fallX >= 0 && fallX < game.board[0].length) {
+						if (game.board[fallZ][fallX] === null) {
+							// Move the cell
+							game.board[fallZ][fallX] = cell;
+							game.board[z][x] = null;
+							
+							// Update chess piece position if present
+							if (cell.chessPiece) {
+								cell.chessPiece.position = { x: fallX, z: fallZ };
+								
+								// Update in chessPieces array
+								const pieceIndex = game.chessPieces.findIndex(p => p && p.id === cell.chessPiece.id);
+								if (pieceIndex !== -1) {
+									game.chessPieces[pieceIndex].position = { x: fallX, z: fallZ };
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		
+		log(`Made pieces fall towards kings after clearing rows: ${clearedRows.join(', ')}`);
 	}
 	
 	/**
@@ -201,7 +327,6 @@ class BoardManager {
 		
 		// First, check for chess pieces in this row
 		const piecesToRemove = [];
-		const piecesToTrack = [];
 		
 		// Track cells we're going to delete for island split checking
 		const cellsToCheck = [];

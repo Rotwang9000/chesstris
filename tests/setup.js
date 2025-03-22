@@ -1,247 +1,200 @@
 /**
- * Jest test setup file
+ * Jest Setup File
+ * 
+ * This file runs before each test file and sets up global mocks and configuration.
+ * It's a good place to add mocks for browser APIs and external dependencies.
  */
 
-// Add TextEncoder and TextDecoder since they're not available in JSDOM
-global.TextEncoder = require('util').TextEncoder;
-global.TextDecoder = require('util').TextDecoder;
+// Mock browser globals that might not be available in the test environment
+global.requestAnimationFrame = function(callback) {
+	return setTimeout(callback, 0);
+};
 
-// Configure JSDOM
-const jsdom = require('jsdom');
-const { JSDOM } = jsdom;
+global.cancelAnimationFrame = function(id) {
+	clearTimeout(id);
+};
 
-// Create a basic DOM environment
-const dom = new JSDOM('<!DOCTYPE html><html><head></head><body></body></html>', {
-	url: 'http://localhost/'
-});
+// Mock canvas methods if needed
+if (!global.HTMLCanvasElement.prototype.getContext) {
+	global.HTMLCanvasElement.prototype.getContext = function() {
+		return {
+			fillRect: function() {},
+			clearRect: function() {},
+			getImageData: function(x, y, w, h) {
+				return {
+					data: new Array(w * h * 4)
+				};
+			},
+			putImageData: function() {},
+			createImageData: function() { return []; },
+			setTransform: function() {},
+			drawImage: function() {},
+			save: function() {},
+			restore: function() {},
+			beginPath: function() {},
+			moveTo: function() {},
+			lineTo: function() {},
+			closePath: function() {},
+			stroke: function() {},
+			translate: function() {},
+			scale: function() {},
+			rotate: function() {},
+			arc: function() {},
+			fill: function() {},
+			measureText: function() {
+				return { width: 0 };
+			},
+			transform: function() {},
+			rect: function() {},
+			clip: function() {}
+		};
+	};
+}
 
-// Mock chai since it's giving us issues with ESM
-jest.mock('chai', () => ({
-	expect: jest.fn().mockImplementation(value => ({
-		to: {
-			equal: jest.fn(),
-			deep: {
-				equal: jest.fn()
+// Mock WebSocket if needed
+global.WebSocket = class MockWebSocket {
+	constructor(url) {
+		this.url = url;
+		this.readyState = 1; // OPEN
+		this.onopen = null;
+		this.onclose = null;
+		this.onmessage = null;
+		this.onerror = null;
+		
+		// Automatically call onopen in the next tick
+		setTimeout(() => {
+			if (this.onopen) {
+				this.onopen({ target: this });
 			}
-		},
-		toBe: jest.fn(),
-		toEqual: jest.fn(),
-		toBeNull: jest.fn(),
-		toContain: jest.fn(),
-		toBeDefined: jest.fn(),
-		toBeUndefined: jest.fn(),
-		toBeTrue: jest.fn(),
-		toBeFalse: jest.fn()
-	}))
-}));
-
-// Mock sinon
-jest.mock('sinon', () => ({
-	stub: jest.fn(() => ({
-		returns: jest.fn(),
-		callsFake: jest.fn(),
-		resolves: jest.fn(),
-		rejects: jest.fn(),
-		reset: jest.fn(),
-		restore: jest.fn(),
-		returnsThis: jest.fn().mockReturnThis()
-	})),
-	spy: jest.fn(),
-	mock: jest.fn(),
-	fake: jest.fn(),
-	restore: jest.fn(),
-	reset: jest.fn(),
-	resetHistory: jest.fn(),
-	createSandbox: jest.fn(() => ({
-		stub: jest.fn(),
-		spy: jest.fn(),
-		mock: jest.fn(),
-		restore: jest.fn()
-	}))
-}));
-
-// Set up global variables to simulate browser environment
-global.window = dom.window;
-global.document = dom.window.document;
-global.navigator = { userAgent: 'node.js' };
-global.HTMLElement = dom.window.HTMLElement;
-global.HTMLCanvasElement = dom.window.HTMLCanvasElement;
-global.Image = dom.window.Image;
-global.Audio = jest.fn().mockImplementation(() => ({
-	play: jest.fn().mockReturnValue(Promise.resolve()),
-	pause: jest.fn(),
-	load: jest.fn(),
-	addEventListener: jest.fn((event, callback) => {
-		if (event === 'canplaythrough') {
-			setTimeout(callback, 0);
-		}
-	}),
-	removeEventListener: jest.fn(),
-	muted: false,
-	volume: 1.0,
-	currentTime: 0,
-	loop: false
-}));
-
-// Create a proper localStorage mock with jest.fn()
-const localStorageMock = (() => {
-	let store = {};
+		}, 0);
+	}
 	
+	send(data) {
+		// You can implement mock behavior here if needed
+		return true;
+	}
+	
+	close() {
+		this.readyState = 3; // CLOSED
+		if (this.onclose) {
+			this.onclose({ target: this });
+		}
+	}
+	
+	// Helper to simulate receiving a message
+	mockReceiveMessage(data) {
+		if (this.onmessage) {
+			this.onmessage({ data: data, target: this });
+		}
+	}
+	
+	// Helper to simulate an error
+	mockError() {
+		if (this.onerror) {
+			this.onerror({ target: this });
+		}
+	}
+};
+
+// Mock localStorage if needed
+const localStorageMock = (function() {
+	let store = {};
 	return {
-		getItem: jest.fn().mockImplementation(key => {
+		getItem: function(key) {
 			return store[key] || null;
-		}),
-		setItem: jest.fn().mockImplementation((key, value) => {
+		},
+		setItem: function(key, value) {
 			store[key] = value.toString();
-		}),
-		clear: jest.fn().mockImplementation(() => {
-			store = {};
-		}),
-		removeItem: jest.fn().mockImplementation(key => {
+		},
+		removeItem: function(key) {
 			delete store[key];
-		}),
-		key: jest.fn().mockImplementation(index => {
+		},
+		clear: function() {
+			store = {};
+		},
+		key: function(index) {
 			return Object.keys(store)[index] || null;
-		}),
+		},
 		get length() {
 			return Object.keys(store).length;
-		},
-		// Helper to reset mocks and store
-		__resetMocks: () => {
-			store = {};
-			localStorageMock.getItem.mockClear();
-			localStorageMock.setItem.mockClear();
-			localStorageMock.removeItem.mockClear();
-			localStorageMock.clear.mockClear();
 		}
 	};
 })();
 
-// Use defineProperty to set the localStorage property on window
-Object.defineProperty(window, 'localStorage', { 
-	value: localStorageMock,
-	writable: true,
-	configurable: true
-});
+Object.defineProperty(window, 'localStorage', { value: localStorageMock });
 
-// Same for sessionStorage
-const sessionStorageMock = (() => {
-	let store = {};
-	
-	return {
-		getItem: jest.fn().mockImplementation(key => {
-			return store[key] || null;
-		}),
-		setItem: jest.fn().mockImplementation((key, value) => {
-			store[key] = value.toString();
-		}),
-		clear: jest.fn().mockImplementation(() => {
-			store = {};
-		}),
-		removeItem: jest.fn().mockImplementation(key => {
-			delete store[key];
-		}),
-		key: jest.fn().mockImplementation(index => {
-			return Object.keys(store)[index] || null;
-		}),
-		get length() {
-			return Object.keys(store).length;
-		},
-		// Helper to reset mocks and store
-		__resetMocks: () => {
-			store = {};
-			sessionStorageMock.getItem.mockClear();
-			sessionStorageMock.setItem.mockClear();
-			sessionStorageMock.removeItem.mockClear();
-			sessionStorageMock.clear.mockClear();
-		}
-	};
-})();
-
-Object.defineProperty(window, 'sessionStorage', { 
-	value: sessionStorageMock,
-	writable: true,
-	configurable: true
-});
-
-// Mock window.matchMedia
-window.matchMedia = jest.fn().mockImplementation(query => ({
-	matches: false,
-	media: query,
-	onchange: null,
-	addListener: jest.fn(),
-	removeListener: jest.fn(),
-	addEventListener: jest.fn(),
-	removeEventListener: jest.fn(),
-	dispatchEvent: jest.fn()
-}));
-
-// Mock requestAnimationFrame
-global.requestAnimationFrame = callback => setTimeout(() => callback(Date.now()), 0);
-global.cancelAnimationFrame = id => clearTimeout(id);
-
-// Create a mock THREE object
-global.THREE = {
-	Vector3: jest.fn(function(x, y, z) {
-		this.x = x || 0;
-		this.y = y || 0;
-		this.z = z || 0;
-		this.clone = jest.fn(() => new global.THREE.Vector3(this.x, this.y, this.z));
-		this.copy = jest.fn(v => {
-			this.x = v.x;
-			this.y = v.y;
-			this.z = v.z;
-			return this;
-		});
-	}),
-	Color: jest.fn(function() {
-		this.r = 1;
-		this.g = 1;
-		this.b = 1;
-	}),
-	Mesh: jest.fn(function() {
-		this.position = new global.THREE.Vector3();
-		this.rotation = new global.THREE.Vector3();
-		this.scale = new global.THREE.Vector3(1, 1, 1);
-	}),
-	Group: jest.fn().mockImplementation(() => ({
-		add: jest.fn(),
-		remove: jest.fn(),
-		children: []
-	}))
-};
-
-// Mock canvas 2D context
-HTMLCanvasElement.prototype.getContext = function() {
-	return {
-		fillRect: jest.fn(),
-		clearRect: jest.fn(),
-		getImageData: jest.fn(() => ({ data: new Array(4) })),
-		putImageData: jest.fn(),
-		drawImage: jest.fn(),
-		save: jest.fn(),
-		restore: jest.fn(),
-		beginPath: jest.fn(),
-		moveTo: jest.fn(),
-		lineTo: jest.fn(),
-		stroke: jest.fn(),
-		fill: jest.fn()
-	};
-};
-
-// Reset mocks before each test
-beforeEach(() => {
-	// Reset localStorage mock
-	if (localStorageMock && localStorageMock.__resetMocks) {
-		localStorageMock.__resetMocks();
+// Mock Audio API if used in the application
+global.Audio = class MockAudio {
+	constructor(src) {
+		this.src = src;
+		this.duration = 0;
+		this.currentTime = 0;
+		this.paused = true;
+		this.volume = 1;
+		this.oncanplaythrough = null;
+		this.onended = null;
+		
+		// Simulate the audio being ready
+		setTimeout(() => {
+			this.duration = 100; // Mock duration in seconds
+			if (this.oncanplaythrough) {
+				this.oncanplaythrough();
+			}
+		}, 0);
 	}
 	
-	// Reset sessionStorage mock
-	if (sessionStorageMock && sessionStorageMock.__resetMocks) {
-		sessionStorageMock.__resetMocks();
+	play() {
+		this.paused = false;
+		// Simulate audio ending after its duration
+		setTimeout(() => {
+			this.currentTime = this.duration;
+			this.paused = true;
+			if (this.onended) {
+				this.onended();
+			}
+		}, 10);
+		return Promise.resolve();
 	}
 	
-	// Reset all mocks
-	jest.clearAllMocks();
-});
+	pause() {
+		this.paused = true;
+	}
+};
 
+// Console error/warn mocks to detect unintentional console calls
+// Only enable these if you want to make console errors fail tests
+// const originalConsoleError = console.error;
+// const originalConsoleWarn = console.warn;
+
+// console.error = function(message) {
+//   originalConsoleError.apply(console, arguments);
+//   throw new Error(`Console error detected: ${message}`);
+// };
+
+// console.warn = function(message) {
+//   originalConsoleWarn.apply(console, arguments);
+//   throw new Error(`Console warning detected: ${message}`);
+// };
+
+// Set up any global variables that should be available in all tests
+global.TESTING = true;
+
+// Create a common event for testing
+global.mockEvent = (eventType, properties = {}) => {
+	const event = new Event(eventType, { bubbles: true, cancelable: true });
+	
+	// Add properties to the event
+	Object.keys(properties).forEach(key => {
+		event[key] = properties[key];
+	});
+	
+	// Add stopPropagation and preventDefault methods
+	event.stopPropagation = jest.fn();
+	event.preventDefault = jest.fn();
+	
+	return event;
+};
+
+// Custom matchers added to expect through setupFilesAfterEnv in jest.config.js
+// rather than directly here
+// DO NOT add expect extensions here as `expect` is not available in setup files 

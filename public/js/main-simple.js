@@ -326,7 +326,25 @@ async function joinGame() {
 	const gameId = urlParams.get('game');
 	
 	try {
-		// Join existing game or create new one
+		// Check connection status first
+		if (!NetworkManager.isConnected()) {
+			console.warn('Not connected to server, trying to initialize connection first');
+			
+			// Try to initialize with a random player name
+			try {
+				const randomName = 'Player_' + Math.floor(Math.random() * 1000);
+				await NetworkManager.initialize(randomName);
+				console.log('Connection initialized with temporary name:', randomName);
+			} catch (initError) {
+				console.error('Failed to initialize connection:', initError);
+				showToastNotification('Connection to server failed - playing offline');
+				
+				// Return empty game data to continue in offline mode
+				return { success: false, gameId: 'offline_mode' };
+			}
+		}
+		
+		// Now try to join with the connection established
 		const gameData = await NetworkManager.joinGame(gameId);
 		console.log('Joined game:', gameData);
 		
@@ -338,6 +356,12 @@ async function joinGame() {
 			window.history.pushState({}, '', newUrl);
 		}
 		
+		// Update game ID display
+		const gameIdDisplay = document.getElementById('game-id-display');
+		if (gameIdDisplay && gameData.gameId) {
+			gameIdDisplay.value = gameData.gameId;
+		}
+		
 		// Show notification
 		showToastNotification(`Joined game ${gameData.gameId}`);
 		
@@ -345,9 +369,14 @@ async function joinGame() {
 		if (gameData.players) {
 			updatePlayerList(gameData.players);
 		}
+		
+		return gameData;
 	} catch (error) {
 		console.error('Error joining game:', error);
 		showToastNotification('Failed to join game - playing offline');
+		
+		// Return empty game data to continue in offline mode
+		return { success: false, gameId: 'offline_mode' };
 	}
 }
 

@@ -6,6 +6,12 @@ import BoardCell from './BoardCell';
 import ChessPiece from './ChessPiece';
 import './GameBoard.css';
 
+// Define constants for board settings
+const BOARD_SETTINGS = {
+	HOME_ZONE_WIDTH: 8,
+	HOME_ZONE_HEIGHT: 2
+};
+
 /**
  * GameBoard Component
  * 
@@ -23,8 +29,10 @@ const GameBoard = ({
 	onCellClick,
 	onPieceClick,
 	onPieceMove,
-	spectatingPlayerId = null
-}) => {
+	spectatingPlayerId = null,
+	playerId = null,
+	onCameraAnimationComplete
+}, ref) => {
 	const containerRef = useRef(null);
 	const sceneRef = useRef(null);
 	const cameraRef = useRef(null);
@@ -38,6 +46,10 @@ const GameBoard = ({
 	const [isSpectating, setIsSpectating] = useState(false);
 	const [hoveredCell, setHoveredCell] = useState(null);
 	const [isDragging, setIsDragging] = useState(false);
+	
+	// Calculate board dimensions based on the board object
+	const boardWidth = board && board[0] ? board[0].length : 16;
+	const boardHeight = board ? board.length : 16;
 	
 	// Initialize the 3D scene
 	useEffect(() => {
@@ -55,36 +67,75 @@ const GameBoard = ({
 		
 		// Create camera
 		const camera = new THREE.PerspectiveCamera(
-			45,
+			50, // Field of view
 			width / height,
-			0.1,
-			1000
+			0.1, // Near clipping plane
+			1000 // Far clipping plane
 		);
-		camera.position.set(10, 15, 10);
-		camera.lookAt(0, 0, 0);
+		
+		// Position camera based on playerId to focus on their pieces
+		if (playerId) {
+			// Get player number from playerId if possible
+			const playerNumber = parseInt(playerId.toString().slice(-1)) || 1;
+			
+			if (playerNumber % 2 === 0) {
+				// For even player numbers (like player 2, 4, etc)
+				camera.position.set(8, 15, -12); // Focus on top area
+			} else {
+				// For odd player numbers (like player 1, 3, etc)
+				camera.position.set(8, 15, 24); // Focus on bottom area
+			}
+		} else {
+			// Default camera position (center view)
+			camera.position.set(8, 15, 6);
+		}
+		
+		camera.lookAt(8, 0, 8); // Look at center of board
 		cameraRef.current = camera;
 		
 		// Create renderer
-		const renderer = new THREE.WebGLRenderer({ antialias: true });
+		const renderer = new THREE.WebGLRenderer({ 
+			antialias: true,
+			alpha: true
+		});
 		renderer.setSize(width, height);
 		renderer.setPixelRatio(window.devicePixelRatio);
 		renderer.shadowMap.enabled = true;
 		renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+		
+		// Clear old renderer if it exists
+		if (containerRef.current.firstChild) {
+			containerRef.current.removeChild(containerRef.current.firstChild);
+		}
+		
 		containerRef.current.appendChild(renderer.domElement);
 		rendererRef.current = renderer;
 		
-		// Create camera controls
+		// Add lights
+		const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+		scene.add(ambientLight);
+		
+		const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+		directionalLight.position.set(50, 50, 50);
+		directionalLight.castShadow = true;
+		scene.add(directionalLight);
+		
+		// Setup shadow properties
+		directionalLight.shadow.mapSize.width = 2048;
+		directionalLight.shadow.mapSize.height = 2048;
+		directionalLight.shadow.camera.near = 0.5;
+		directionalLight.shadow.camera.far = 150;
+		directionalLight.shadow.bias = -0.0005;
+		
+		// Add orbit controls
 		const controls = new OrbitControls(camera, renderer.domElement);
 		controls.enableDamping = true;
 		controls.dampingFactor = 0.25;
 		controls.screenSpacePanning = false;
+		controls.minDistance = 10;
+		controls.maxDistance = 40;
 		controls.maxPolarAngle = Math.PI / 2;
-		controls.minDistance = 5;
-		controls.maxDistance = 50;
 		controlsRef.current = controls;
-		
-		// Add lights
-		addLights(scene);
 		
 		// Create board group
 		const boardGroup = new THREE.Group();
@@ -142,7 +193,7 @@ const GameBoard = ({
 				});
 			}
 		};
-	}, []);
+	}, [playerId]);
 	
 	// Update spectating status when spectatingPlayerId changes
 	useEffect(() => {
@@ -175,30 +226,6 @@ const GameBoard = ({
 			}
 		}
 	}, [spectatingPlayerId, homeZones]);
-	
-	// Add lights to the scene
-	const addLights = (scene) => {
-		// Ambient light
-		const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
-		scene.add(ambientLight);
-		
-		// Directional light (sun)
-		const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-		dirLight.position.set(10, 20, 10);
-		dirLight.castShadow = true;
-		
-		// Shadow settings
-		dirLight.shadow.camera.near = 0.5;
-		dirLight.shadow.camera.far = 50;
-		dirLight.shadow.camera.left = -20;
-		dirLight.shadow.camera.right = 20;
-		dirLight.shadow.camera.top = 20;
-		dirLight.shadow.camera.bottom = -20;
-		dirLight.shadow.mapSize.width = 2048;
-		dirLight.shadow.mapSize.height = 2048;
-		
-		scene.add(dirLight);
-	};
 	
 	// Add environment objects (sky, clouds, etc.)
 	const addEnvironment = (scene) => {
@@ -387,6 +414,75 @@ const GameBoard = ({
 		});
 	};
 	
+	/**
+	 * Animate camera to focus on player's home cells
+	 * @param {string} playerIdToFocus - The player ID to focus on
+	 */
+	const focusCameraOnHomeCells = (playerIdToFocus) => {
+		if (!cameraRef.current || !controlsRef.current) return;
+		
+		// Find home zone for this player
+		const playerHomeZone = homeZones[playerIdToFocus];
+		
+		if (playerHomeZone) {
+			// Calculate target position based on home zone
+			const targetX = playerHomeZone.x + (BOARD_SETTINGS?.HOME_ZONE_WIDTH || 4) / 2;
+			const targetZ = playerHomeZone.z + (BOARD_SETTINGS?.HOME_ZONE_HEIGHT || 2) / 2;
+			
+			// Start position (current camera position)
+			const startPos = cameraRef.current.position.clone();
+			const startTarget = controlsRef.current.target.clone();
+			
+			// End position (focused on home cells)
+			const endPos = new THREE.Vector3();
+			const endTarget = new THREE.Vector3(targetX, 0, targetZ);
+			
+			// Determine if player is at top or bottom based on Z position
+			if (playerHomeZone.z < boardHeight / 2) {
+				// Player at top - position camera below and looking up
+				endPos.set(targetX, 15, targetZ + 15);
+			} else {
+				// Player at bottom - position camera above and looking down
+				endPos.set(targetX, 15, targetZ - 15);
+			}
+			 
+			// Animation duration
+			const duration = 1500; // milliseconds
+			const startTime = Date.now();
+			
+			// Animation function
+			const animateCamera = () => {
+				const elapsed = Date.now() - startTime;
+				const progress = Math.min(elapsed / duration, 1);
+				
+				// Ease in-out function for smooth animation
+				const easeInOut = t => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+				const easedProgress = easeInOut(progress);
+				
+				// Interpolate position and target
+				cameraRef.current.position.lerpVectors(startPos, endPos, easedProgress);
+				controlsRef.current.target.lerpVectors(startTarget, endTarget, easedProgress);
+				controlsRef.current.update();
+				
+				// Continue animation if not complete
+				if (progress < 1) {
+					requestAnimationFrame(animateCamera);
+				} else if (onCameraAnimationComplete) {
+					// Callback when animation completes
+					onCameraAnimationComplete();
+				}
+			};
+			
+			// Start animation
+			animateCamera();
+		}
+	};
+	
+	// Expose the focusCameraOnHomeCells method on the component instance
+	React.useImperativeHandle(ref, () => ({
+		focusCameraOnHomeCells
+	}), [homeZones]);
+	
 	return (
 		<div 
 			className={`game-board ${isSpectating ? 'spectating' : ''}`}
@@ -414,9 +510,9 @@ const GameBoard = ({
 			<div className="board-controls">
 				<button className="reset-camera-btn" onClick={() => {
 					if (cameraRef.current && controlsRef.current) {
-						cameraRef.current.position.set(10, 15, 10);
-						cameraRef.current.lookAt(0, 0, 0);
-						controlsRef.current.target.set(0, 0, 0);
+						cameraRef.current.position.set(8, 15, 6);
+						cameraRef.current.lookAt(8, 0, 8);
+						controlsRef.current.target.set(8, 0, 8);
 						controlsRef.current.update();
 					}
 				}}>
@@ -480,7 +576,12 @@ GameBoard.propTypes = {
 	onCellClick: PropTypes.func,
 	onPieceClick: PropTypes.func,
 	onPieceMove: PropTypes.func,
-	spectatingPlayerId: PropTypes.string
+	spectatingPlayerId: PropTypes.string,
+	playerId: PropTypes.string,
+	onCameraAnimationComplete: PropTypes.func
 };
 
-export default GameBoard; 
+// Create a ref-forwarded component
+const GameBoardWithRef = React.forwardRef(GameBoard);
+
+export default GameBoardWithRef; 

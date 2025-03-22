@@ -21,22 +21,28 @@ export const GAME_STATES = {
 
 // Game state
 let gameState = {
+	gameId: null,
+	playerId: null,
+	players: {},
 	board: [],
 	chessPieces: [],
+	turn: {
+		phase: 'waiting', // waiting, tetromino, chess
+		playerId: null,
+		startTime: 0
+	},
 	currentTetromino: null,
-	nextTetromino: null,
-	ghostPosition: null,
-	players: {},
-	currentPlayer: null,
-	turnPhase: null, // 'tetromino' or 'chess'
-	turnTimeRemaining: 0,
-	scores: {},
-	homeZones: {},
-	islands: [],
+	selectedPieceId: null,
+	validMoves: [],
+	gameStarted: false,
 	isSpectating: false,
-	spectatingPlayer: null,
-	isPaused: false,
-	pauseTimeRemaining: 0
+	spectatingPlayerId: null,
+	gameOver: false,
+	winner: null,
+	homeZones: {},
+	gameReady: false,
+	cameraAnimationComplete: false, // New flag to track camera animation
+	firstTetrominoRequested: false  // Track if first tetromino has been requested
 };
 
 let _verbose = false;
@@ -1110,7 +1116,43 @@ export function movePiece(pieceId, position) {
  * @returns {boolean} - True if request sent successfully
  */
 export function placeTetromino(tetromino, position) {
-	return network.send('placeTetromino', { tetromino, position });
+	if (!tetromino || !position) return false;
+	
+	// Send tetromino placement to server
+	if (network) {
+		network.submitTetrominoPlacement({
+			...tetromino,
+			position
+		}).then(response => {
+			// If placement was successful, update game state
+			if (response && response.success) {
+				if (response.gameState === 'chess') {
+					// Advance to chess phase
+					gameState.turn.phase = 'chess';
+					notifyStateChangeListeners(gameState, null);
+				}
+			} else if (response && !response.success) {
+				// If placement failed, handle it
+				handleTetrominoPlacementFailed({
+					tetromino,
+					position,
+					error: response.error || 'Invalid placement'
+				});
+			}
+		}).catch(error => {
+			console.error('Error placing tetromino:', error);
+			// Handle placement failure
+			handleTetrominoPlacementFailed({
+				tetromino,
+				position,
+				error: error.message || 'Network error'
+			});
+		});
+		
+		return true;
+	}
+	
+	return false;
 }
 
 /**
@@ -1187,22 +1229,28 @@ export function stopSpectating() {
 export function cleanup() {
 	// Clear game state
 	gameState = {
+		gameId: null,
+		playerId: null,
+		players: {},
 		board: [],
 		chessPieces: [],
+		turn: {
+			phase: 'waiting',
+			playerId: null,
+			startTime: 0
+		},
 		currentTetromino: null,
-		nextTetromino: null,
-		ghostPosition: null,
-		players: {},
-		currentPlayer: null,
-		turnPhase: null,
-		turnTimeRemaining: 0,
-		scores: {},
-		homeZones: {},
-		islands: [],
+		selectedPieceId: null,
+		validMoves: [],
+		gameStarted: false,
 		isSpectating: false,
-		spectatingPlayer: null,
-		isPaused: false,
-		pauseTimeRemaining: 0
+		spectatingPlayerId: null,
+		gameOver: false,
+		winner: null,
+		homeZones: {},
+		gameReady: false,
+		cameraAnimationComplete: false,
+		firstTetrominoRequested: false
 	};
 	
 	// Clear event callbacks
@@ -1286,34 +1334,68 @@ export function setState(newState, data = {}) {
 export function startGame(options = {}) {
 	console.log('Starting game with options:', options);
 	
-	// First ensure we're in the correct state
-	if (gameState.state !== GAME_STATES.PLAYING) {
-		// Set state to playing immediately to give user feedback
-		setState(GAME_STATES.PLAYING);
+	// Set game options
+	const gameOptions = {
+		...options
+	};
+	
+	// Reset game state
+	gameState = {
+		gameId: gameState.gameId,
+		playerId: gameState.playerId,
+		players: gameState.players || {},
+		board: gameState.board || [],
+		chessPieces: gameState.chessPieces || [],
+		turn: {
+			phase: 'waiting',
+			playerId: null,
+			startTime: 0
+		},
+		currentTetromino: null,
+		selectedPieceId: null,
+		validMoves: [],
+		gameStarted: true,
+		isSpectating: false,
+		spectatingPlayerId: null,
+		gameOver: false,
+		winner: null,
+		homeZones: gameState.homeZones || {},
+		gameReady: false,
+		cameraAnimationComplete: false,
+		firstTetrominoRequested: false
+	};
+	
+	// Notify listeners of state change
+	notifyStateChangeListeners(gameState, null);
+	
+	// Request current game state from server
+	requestGameState();
+	
+	// Set game as started
+	gameState.gameStarted = true;
+	
+	// Focus camera on player's home zone
+	if (gameRenderer && gameState.playerId) {
+		console.log('Focusing camera on player home zone');
+		// Import the function if it hasn't been already
+		if (typeof gameRenderer.focusOnPlayerHomeArea === 'function') {
+			gameRenderer.focusOnPlayerHomeArea(gameState.playerId, true);
+			
+			// Wait for camera animation to complete
+			setTimeout(() => {
+				gameState.cameraAnimationComplete = true;
+				console.log('Camera animation complete');
+				
+				// Request first tetromino if ready
+				checkAndRequestFirstTetromino();
+			}, 1600); // Slightly longer than the animation duration
+		}
 	}
 	
-	// Send startGame event to server
-	network.send('startGame', options, (response) => {
-		if (response && response.success) {
-			console.log('Game started successfully:', response);
-			// Server confirmed game start
-			gameState.isGameStarted = true;
-			
-			// If we have a board, update it
-			if (gameRenderer && typeof gameRenderer.updateBoardVisualization === 'function' && gameState.board) {
-				gameRenderer.updateBoardVisualization(gameState.board);
-			}
-			
-			// Notify listeners that game has started
-			triggerEvent('gameStarted', gameState);
-		} else {
-			console.error('Failed to start game:', response ? response.error : 'Unknown error');
-			// Show error message to user
-			if (typeof uiManager !== 'undefined' && uiManager.showNotification) {
-				uiManager.showNotification('Failed to start game. Please try again.', 'error');
-			}
-		}
-	});
+	// Trigger game started event
+	triggerEvent('gameStarted', { options: gameOptions });
+	
+	return true;
 }
 
 /**
@@ -1334,13 +1416,13 @@ export function selectChessPiece(pieceId) {
 		}
 		
 		// Check if it's the player's turn and the right phase
-		if (gameState.turnPhase !== 'chess' || gameState.currentPlayer !== gameState.localPlayerId) {
+		if (gameState.turn.phase !== 'chess' || gameState.turn.playerId !== gameState.playerId) {
 			console.warn("It's not your turn to move a chess piece");
 			return false;
 		}
 		
 		// Check if it's the player's piece
-		if (piece.playerId !== gameState.localPlayerId) {
+		if (piece.playerId !== gameState.playerId) {
 			console.warn("You can only select your own pieces");
 			return false;
 		}
@@ -1449,24 +1531,23 @@ export function moveSelectedPiece(x, z) {
 	return result;
 }
 
-image.png
 /**
  * Add derived state properties based on the current game state
  */
 function addDerivedStateProperties() {
 	// Check if it's the local player's turn
-	if (gameState.currentPlayerId && gameState.localPlayerId) {
-		gameState.isLocalPlayerTurn = gameState.currentPlayerId === gameState.localPlayerId;
+	if (gameState.turn.playerId && gameState.playerId) {
+		gameState.isLocalPlayerTurn = gameState.turn.playerId === gameState.playerId;
 	}
 	
 	// Get current player data if available
-	if (gameState.currentPlayerId && gameState.players && gameState.players[gameState.currentPlayerId]) {
-		gameState.currentPlayer = gameState.players[gameState.currentPlayerId];
+	if (gameState.turn.playerId && gameState.players && gameState.players[gameState.turn.playerId]) {
+		gameState.currentPlayer = gameState.players[gameState.turn.playerId];
 	}
 	
 	// If we have a local player ID, mark the local player
-	if (gameState.localPlayerId && gameState.players && gameState.players[gameState.localPlayerId]) {
-		gameState.localPlayer = gameState.players[gameState.localPlayerId];
+	if (gameState.playerId && gameState.players && gameState.players[gameState.playerId]) {
+		gameState.localPlayer = gameState.players[gameState.playerId];
 	}
 }
 
@@ -1475,8 +1556,8 @@ function addDerivedStateProperties() {
  * @returns {number} Turn duration in milliseconds
  */
 export function getCurrentTurnDuration() {
-	if (currentTurnStartTime === 0) return 0;
-	return Date.now() - currentTurnStartTime;
+	if (gameState.turn.startTime === 0) return 0;
+	return Date.now() - gameState.turn.startTime;
 }
 
 /**
@@ -1500,8 +1581,8 @@ export function getRemainingMinimumTurnTime() {
  * Start a new turn
  */
 export function startNewTurn() {
-	currentTurnStartTime = Date.now();
-	gameState.turnPhase = TURN_PHASES.TETROMINO;
+	gameState.turn.startTime = Date.now();
+	gameState.turn.phase = TURN_PHASES.TETROMINO;
 	
 	// Update UI
 	if (typeof uiManager !== 'undefined' && uiManager.updateTurnIndicator) {
@@ -1513,19 +1594,19 @@ export function startNewTurn() {
  * Advance to the next turn phase
  */
 export function advanceTurnPhase() {
-	switch (gameState.turnPhase) {
+	switch (gameState.turn.phase) {
 		case TURN_PHASES.TETROMINO:
-			gameState.turnPhase = TURN_PHASES.CHESS;
+			gameState.turn.phase = TURN_PHASES.CHESS;
 			break;
 			
 		case TURN_PHASES.CHESS:
 			// If minimum turn duration hasn't elapsed, enter waiting phase
 			if (!hasMinimumTurnElapsed()) {
-				gameState.turnPhase = TURN_PHASES.WAITING;
+				gameState.turn.phase = TURN_PHASES.WAITING;
 				
 				// Set a timeout to end the waiting phase
 				setTimeout(() => {
-					if (gameState.turnPhase === TURN_PHASES.WAITING) {
+					if (gameState.turn.phase === TURN_PHASES.WAITING) {
 						startNewTurn();
 					}
 				}, getRemainingMinimumTurnTime());
@@ -1543,7 +1624,7 @@ export function advanceTurnPhase() {
 			break;
 			
 		default:
-			gameState.turnPhase = TURN_PHASES.TETROMINO;
+			gameState.turn.phase = TURN_PHASES.TETROMINO;
 	}
 	
 	// Update UI
@@ -1687,4 +1768,81 @@ export function loadTestState() {
 		console.error('Error loading test state:', error);
 		return false;
 	}
+}
+
+/**
+ * Handle tetromino placement failed event
+ * @param {Object} data - Failure data
+ */
+function handleTetrominoPlacementFailed(data) {
+	console.log('Tetromino placement failed:', data);
+	
+	// Play error sound
+	soundManager.play('error');
+	
+	// Show feedback to the user
+	if (typeof uiManager !== 'undefined' && uiManager.showToast) {
+		uiManager.showToast('Invalid tetromino placement. Trying another piece...', 'error');
+	}
+	
+	// Request a new tetromino if this one couldn't be placed
+	setTimeout(() => {
+		// Reset current tetromino state
+		gameState.currentTetromino = null;
+		
+		// Notify state change
+		notifyStateChangeListeners(gameState, null);
+		
+		// Request a new tetromino from the server
+		if (network && typeof network.sendMessage === 'function') {
+			network.sendMessage('request_tetromino', {
+				gameId: gameState.gameId,
+				playerId: gameState.playerId
+			});
+		}
+	}, 500);
+	
+	// Trigger tetromino placement failed event
+	triggerEvent('tetrominoPlacementFailed', data);
+}
+
+/**
+ * Check game readiness and request first tetromino if appropriate
+ */
+function checkAndRequestFirstTetromino() {
+	// Only proceed if game is started, camera animation is complete, and first tetromino hasn't been requested yet
+	if (gameState.gameStarted && gameState.cameraAnimationComplete && !gameState.firstTetrominoRequested) {
+		console.log('Requesting first tetromino - game ready to play');
+		gameState.firstTetrominoRequested = true;
+		
+		// Request a tetromino from the server
+		if (network && typeof network.sendMessage === 'function') {
+			network.sendMessage('request_tetromino', {
+				gameId: gameState.gameId,
+				playerId: gameState.playerId
+			});
+			
+			// Log that the request was sent
+			console.log('First tetromino request sent to server');
+		} else {
+			console.warn('Network module not available or sendMessage function missing');
+		}
+	} else {
+		// Log reason why we didn't request a tetromino
+		if (!gameState.gameStarted) {
+			console.log('Not requesting tetromino yet - game not started');
+		} else if (!gameState.cameraAnimationComplete) {
+			console.log('Not requesting tetromino yet - camera animation in progress');
+		} else if (gameState.firstTetrominoRequested) {
+			console.log('Not requesting tetromino again - already requested');
+		}
+	}
+}
+
+/**
+ * Handle the camera animation completion
+ */
+export function onCameraAnimationComplete() {
+	gameState.cameraAnimationComplete = true;
+	checkAndRequestFirstTetromino();
 }

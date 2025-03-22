@@ -15,6 +15,9 @@ const bodyParser = require('body-parser');
 // Import API routes
 const apiRoutes = require('./routes/api');
 
+// Import game managers
+const { GameManager } = require('./server/game');
+
 // Create Express app and HTTP server
 const app = express();
 const server = http.createServer(app);
@@ -22,6 +25,9 @@ const io = socketIO(server);
 
 // Set port from environment variable or default to 3020
 const PORT = process.env.PORT || 3020;
+
+// Create a single GameManager instance to use for all connections
+const gameManager = new GameManager();
 
 // Game state storage
 const games = new Map();
@@ -171,62 +177,391 @@ io.on('connection', (socket) => {
 	});
 	
 	// Handle tetromino placement
-	socket.on('tetromino_placed', (data) => {
-		const player = players.get(playerId);
-		if (!player || !player.gameId) return;
-		
-		const game = games.get(player.gameId);
-		if (!game) return;
-		
-		// Update game state
-		game.state.board = data.board;
-		game.state.lastAction = {
-			type: 'tetromino_placed',
-			playerId: playerId,
-			data: data
-		};
-		
-		// Broadcast to all players in the game except sender
-		socket.to(player.gameId).emit('tetromino_placed', {
-			playerId: playerId,
-			...data
-		});
-		
-		// Send update to spectators
-		updateSpectators(playerId, game.state);
+	socket.on('tetromino_placed', (data, callback) => {
+		try {
+			const player = players.get(playerId);
+			if (!player || !player.gameId) {
+				if (callback) callback({ success: false, error: 'Not in a game' });
+				return;
+			}
+			
+			const gameId = player.gameId;
+			const game = games.get(gameId);
+			if (!game) {
+				if (callback) callback({ success: false, error: 'Game not found' });
+				return;
+			}
+			
+			console.log(`Processing tetromino placement from player ${playerId} in game ${gameId}:`, JSON.stringify(data));
+			
+			// Validate the required data format - allow either type or pieceType
+			if (!data || (!data.tetromino && !data.type && !data.pieceType)) {
+				console.error(`Invalid tetromino data format: missing tetromino data`);
+				socket.emit('tetrominoFailed', { message: 'Invalid tetromino data format: missing tetromino data' });
+				if (callback) callback({ success: false, error: 'Invalid tetromino data format' });
+				return;
+			}
+			
+			// Extract the tetromino data - handle different possible formats
+			let tetromino = data.tetromino || data;
+			
+			// Support both type and pieceType properties
+			const pieceType = tetromino.pieceType || tetromino.type;
+			if (!pieceType) {
+				console.error(`Invalid tetromino data format: missing type/pieceType`);
+				socket.emit('tetrominoFailed', { message: 'Invalid tetromino data format: missing type/pieceType' });
+				if (callback) callback({ success: false, error: 'Invalid tetromino data format' });
+				return;
+			}
+			
+			// Create a proper game object format that our managers can work with
+			// This is needed because the Map-based games storage is different from the
+			// object format the game managers expect
+			const gameObject = {
+				id: gameId,
+				board: game.state.board || [],
+				chessPieces: game.state.chessPieces || [],
+				players: game.players.reduce((obj, id) => {
+					const playerObj = players.get(id) || computerPlayers.get(id) || {};
+					obj[id] = {
+						id,
+						name: playerObj.name || `Player_${id.substring(0, 5)}`,
+						homeZone: playerObj.homeZone || null,
+						// Add any other player properties needed
+					};
+					return obj;
+				}, {})
+			};
+			
+			// Validate the tetromino placement
+			if (!gameManager.tetrominoManager.isValidTetrisPiece(pieceType)) {
+				console.log(`Invalid tetromino type: ${pieceType}`);
+				socket.emit('tetrominoFailed', { message: `Invalid tetromino type: ${pieceType}` });
+				if (callback) callback({ success: false, error: 'Invalid tetromino type' });
+				return;
+			}
+			
+			// Get the tetromino shape
+			const tetrominoShape = gameManager.tetrominoManager.getTetrisPieceShape(pieceType, tetromino.rotation);
+			
+			console.log(`Tetromino shape:`, JSON.stringify(tetrominoShape));
+			
+			// Check if placement is valid
+			console.log(`Checking placement at x=${tetromino.position.x}, z=${tetromino.position.z}, y=0, playerId=${playerId}`);
+			const canPlace = gameManager.tetrominoManager.canPlaceTetromino(
+				gameObject,
+				tetromino,
+				tetromino.position.x,
+				tetromino.position.z,
+				0, // Y level
+				playerId
+			);
+			
+			if (!canPlace) {
+				console.log(`Invalid placement position for player ${playerId}`);
+				socket.emit('tetrominoFailed', { message: 'Invalid placement position' });
+				if (callback) callback({ success: false, error: 'Invalid placement position' });
+				return;
+			}
+			
+			console.log(`Placement is valid, placing tetromino`);
+			
+			// Place the tetromino
+			gameManager.tetrominoManager.placeTetromino(
+				gameObject,
+				tetromino,
+				tetromino.position.x,
+				tetromino.position.z,
+				playerId
+			);
+			
+			// Update the game state with our modified gameObject
+			game.state.board = gameObject.board;
+			game.state.chessPieces = gameObject.chessPieces;
+			
+			// Check for completed rows and clear them
+			const clearedRows = gameManager.boardManager.checkAndClearRows(gameObject);
+			
+			// Update game state again after row clearing
+			game.state.board = gameObject.board;
+			game.state.chessPieces = gameObject.chessPieces;
+			
+			// Update game state
+			game.state.lastAction = {
+				type: 'tetromino_placed',
+				playerId: playerId,
+				data: {
+					...data,
+					clearedRows
+				}
+			};
+			
+			console.log(`Tetromino placed successfully, cleared rows: ${clearedRows.length > 0 ? clearedRows.join(', ') : 'none'}`);
+			
+			// Check if player has any valid chess moves
+			const hasValidMoves = gameManager.chessManager.hasValidChessMoves(gameObject, playerId);
+			
+			// Send success response to the client with hasValidMoves flag
+			if (callback) callback({ 
+				success: true, 
+				boardState: game.state.board, 
+				clearedRows,
+				hasValidMoves // Include whether player has valid chess moves
+			});
+			
+			// Broadcast updated state to all players in the game
+			io.to(gameId).emit('game_update', game.state);
+			
+			// If rows were cleared, send a separate notification
+			if (clearedRows.length > 0) {
+				console.log(`Broadcasting row_cleared event for rows: ${clearedRows.join(', ')}`);
+				io.to(gameId).emit('row_cleared', {
+					rows: clearedRows,
+					playerId: playerId
+				});
+			}
+			
+			// If player has no valid chess moves, send a notification to skip chess phase
+			if (!hasValidMoves) {
+				console.log(`Player ${playerId} has no valid chess moves, skipping chess phase`);
+				io.to(gameId).emit('no_valid_chess_moves', {
+					playerId: playerId,
+					message: 'No valid chess moves available'
+				});
+				
+				// Generate a new tetromino for the player
+				const newTetromino = gameManager.tetrominoManager.generateTetrominos(gameObject, playerId)[0];
+				
+				// Send the new tetromino to the player
+				socket.emit('new_tetromino', {
+					tetromino: newTetromino,
+					message: 'Skipping chess phase - no valid moves'
+				});
+			}
+			
+			// Update spectators
+			updateSpectators(gameId, game.state);
+		} catch (error) {
+			console.error('Error processing tetromino placement:', error);
+			if (callback) callback({ success: false, error: 'Server error' });
+		}
+	});
+	
+	// Handle request for a new tetromino
+	socket.on('request_tetromino', (callback) => {
+		try {
+			console.log(`Player ${playerId} requested a new tetromino`);
+			
+			const player = players.get(playerId);
+			if (!player || !player.gameId) {
+				if (callback) callback({ success: false, error: 'Not in a game' });
+				return;
+			}
+			
+			const gameId = player.gameId;
+			const game = games.get(gameId);
+			if (!game) {
+				if (callback) callback({ success: false, error: 'Game not found' });
+				return;
+			}
+			
+			// Generate a new tetromino for the player
+			const tetrominos = gameManager.tetrominoManager.generateTetrominos(game, playerId);
+			
+			if (!tetrominos || tetrominos.length === 0) {
+				console.error(`Failed to generate tetrominos for player ${playerId}`);
+				if (callback) callback({ success: false, error: 'Failed to generate tetrominos' });
+				return;
+			}
+			
+			// Get the first tetromino from the generated set
+			const newTetromino = tetrominos[0];
+			
+			// Update player's active tetromino in the game state
+			if (!game.state.currentTurns) {
+				game.state.currentTurns = {};
+			}
+			
+			if (!game.state.currentTurns[playerId]) {
+				game.state.currentTurns[playerId] = {
+					playerId: playerId,
+					phase: 'tetris',
+					startTime: Date.now(),
+					minTime: 10000 // 10 seconds minimum turn time
+				};
+			}
+			
+			game.state.currentTurns[playerId].activeTetromino = newTetromino;
+			
+			console.log(`Generated new tetromino for player ${playerId}:`, newTetromino);
+			
+			// Send the tetromino to the requesting player
+			socket.emit('turn_update', game.state.currentTurns[playerId]);
+			
+			// Send success response
+			if (callback) callback({ 
+				success: true, 
+				tetromino: newTetromino
+			});
+			
+		} catch (error) {
+			console.error(`Error generating tetromino for player ${playerId}:`, error);
+			if (callback) callback({ success: false, error: 'Server error: ' + error.message });
+		}
 	});
 	
 	// Handle chess piece movement
-	socket.on('chess_move', (data) => {
-		const player = players.get(playerId);
-		if (!player || !player.gameId) return;
-		
-		const game = games.get(player.gameId);
-		if (!game) return;
-		
-		// Update game state
-		game.state.chessPieces = data.chessPieces;
-		game.state.lastAction = {
-			type: 'chess_move',
-			playerId: playerId,
-			data: data
-		};
-		
-		// Broadcast to all players in the game except sender
-		socket.to(player.gameId).emit('chess_move', {
-			playerId: playerId,
-			...data
-		});
-		
-		// Send update to spectators
-		updateSpectators(playerId, game.state);
-		
-		// Check for game over (king captured)
-		if (data.captured && data.captured.type === 'king') {
-			endGame(player.gameId, {
-				winner: playerId,
-				reason: 'king_captured'
+	socket.on('chess_move', (data, callback) => {
+		try {
+			const player = players.get(playerId);
+			if (!player || !player.gameId) {
+				if (callback) callback({ success: false, error: 'Not in a game' });
+				return;
+			}
+			
+			const gameId = player.gameId;
+			const game = games.get(gameId);
+			if (!game) {
+				if (callback) callback({ success: false, error: 'Game not found' });
+				return;
+			}
+			
+			console.log(`Processing chess move from player ${playerId} in game ${gameId}:`, JSON.stringify(data));
+			
+			// Validate data format
+			if (!data || !data.pieceId || !data.targetPosition) {
+				console.error(`Invalid chess move data format from player ${playerId}`);
+				socket.emit('chessFailed', { message: 'Invalid chess move data format' });
+				if (callback) callback({ success: false, error: 'Invalid chess move data format' });
+				return;
+			}
+			
+			// Create a proper game object format for our managers
+			const gameObject = {
+				id: gameId,
+				board: game.state.board || [],
+				chessPieces: game.state.chessPieces || [],
+				players: game.players.reduce((obj, id) => {
+					const playerObj = players.get(id) || computerPlayers.get(id) || {};
+					obj[id] = {
+						id,
+						name: playerObj.name || `Player_${id.substring(0, 5)}`,
+						homeZone: playerObj.homeZone || null,
+						// Add any other player properties needed
+					};
+					return obj;
+				}, {})
+			};
+			
+			// Extract the move data
+			const { pieceId, targetPosition } = data;
+			
+			// Find the piece in the game state
+			const pieceIndex = gameObject.chessPieces.findIndex(piece => 
+				piece && piece.id === pieceId
+			);
+			
+			if (pieceIndex === -1) {
+				console.log(`Chess piece not found: ${pieceId}`);
+				socket.emit('chessFailed', { message: 'Chess piece not found' });
+				if (callback) callback({ success: false, error: 'Chess piece not found' });
+				return;
+			}
+			
+			const piece = gameObject.chessPieces[pieceIndex];
+			console.log(`Found chess piece: ${piece.type} at (${piece.position.x}, ${piece.position.z})`);
+			
+			// Check if it's the player's piece
+			if (piece.player !== playerId) {
+				console.log(`Not player's chess piece. Piece belongs to ${piece.player}, not ${playerId}`);
+				socket.emit('chessFailed', { message: 'Not your chess piece' });
+				if (callback) callback({ success: false, error: 'Not your chess piece' });
+				return;
+			}
+			
+			// Check if the move is valid
+			console.log(`Checking if move to (${targetPosition.x}, ${targetPosition.z}) is valid`);
+			const isValidMove = gameManager.chessManager.isValidChessMove(
+				gameObject,
+				piece,
+				targetPosition.x,
+				targetPosition.z
+			);
+			
+			if (!isValidMove) {
+				console.log(`Invalid chess move for ${piece.type} to (${targetPosition.x}, ${targetPosition.z})`);
+				socket.emit('chessFailed', { message: 'Invalid chess move' });
+				if (callback) callback({ success: false, error: 'Invalid chess move' });
+				return;
+			}
+			
+			console.log(`Move is valid, executing chess move`);
+			
+			// Get any captured piece at the target position
+			let capturedPiece = null;
+			const capturedPieceIndex = gameObject.chessPieces.findIndex(p => 
+				p && p.position.x === targetPosition.x && p.position.z === targetPosition.z && p.id !== pieceId
+			);
+			
+			if (capturedPieceIndex !== -1) {
+				capturedPiece = gameObject.chessPieces[capturedPieceIndex];
+				console.log(`Capturing piece: ${capturedPiece.type} belonging to ${capturedPiece.player}`);
+				// Remove the captured piece
+				gameObject.chessPieces.splice(capturedPieceIndex, 1);
+			}
+			
+			// Move the piece
+			piece.position = targetPosition;
+			gameObject.chessPieces[pieceIndex] = piece;
+			
+			// Update the game state with our modified gameObject
+			game.state.chessPieces = gameObject.chessPieces;
+			
+			// Update game state
+			game.state.lastAction = {
+				type: 'chess_move',
+				playerId: playerId,
+				data: {
+					...data,
+					captured: capturedPiece
+				}
+			};
+			
+			console.log(`Chess move completed successfully`);
+			
+			// Send success response to the client
+			if (callback) callback({ 
+				success: true, 
+				updatedPiece: piece,
+				capturedPiece
 			});
+			
+			// Broadcast updated state to all players in the game
+			io.to(gameId).emit('game_update', game.state);
+			
+			// Send specific chess move event
+			io.to(gameId).emit('chess_move', {
+				playerId: playerId,
+				movedPiece: piece,
+				capturedPiece
+			});
+			
+			// Check for game over (king captured)
+			if (capturedPiece && capturedPiece.type === 'king') {
+				console.log(`Game over: ${playerId} captured a king!`);
+				endGame(gameId, {
+					winner: playerId,
+					reason: 'king_captured'
+				});
+			}
+			
+			// Update spectators
+			updateSpectators(gameId, game.state);
+			
+		} catch (error) {
+			console.error('Error processing chess move:', error);
+			socket.emit('chessFailed', { message: error.message || 'Server error processing chess move' });
+			if (callback) callback({ success: false, error: 'Server error: ' + error.message });
 		}
 	});
 	
@@ -251,7 +586,22 @@ io.on('connection', (socket) => {
 	// Handle get_game_state request
 	socket.on('get_game_state', (data) => {
 		try {
-			console.log(`Player ${playerId} requested game state`, data);
+			// Ensure data is an object and convert gameId to string if necessary
+			let requestedGameId = GLOBAL_GAME_ID;
+			
+			if (data) {
+				// Handle different possible formats of the gameId
+				if (typeof data === 'string') {
+					requestedGameId = data;
+				} else if (typeof data === 'object') {
+					if (data.gameId) {
+						// Convert to string if it's an object or other non-string value
+						requestedGameId = String(data.gameId) === 'null' ? GLOBAL_GAME_ID : String(data.gameId);
+					}
+				}
+			}
+			
+			console.log(`Player ${playerId} requested game state for game: ${requestedGameId}`);
 			
 			const player = players.get(playerId);
 			if (!player) {
@@ -279,7 +629,8 @@ io.on('connection', (socket) => {
 				console.log(`Player ${playerId} automatically joined global game`);
 			}
 			
-			const gameId = player.gameId;
+			// Use player's current gameId or the requested one
+			const gameId = player.gameId || requestedGameId;
 			const game = games.get(gameId);
 			
 			if (!game) {
@@ -670,7 +1021,8 @@ function createNewGame(gameId = null, settings = {}) {
 	// Combine all chess pieces
 	const chessPieces = [...player1Pieces, ...player2Pieces];
 	
-	games.set(id, {
+	// Create the game object
+	const game = {
 		id: id,
 		players: [],
 		maxPlayers: settings.maxPlayers || 2048,
@@ -688,12 +1040,38 @@ function createNewGame(gameId = null, settings = {}) {
 			status: 'waiting'
 		},
 		created: Date.now()
-	});
+	};
+	
+	// Store the game
+	games.set(id, game);
 	
 	console.log(`New game created: ${id}`);
 	
-	// Always add a computer player to each game (except for global game)
-	if (id !== GLOBAL_GAME_ID) {
+	// For global game, add a clearly identified AI opponent
+	if (id === GLOBAL_GAME_ID) {
+		const computerId = `ai-opponent-${uuidv4().substring(0, 8)}`;
+		
+		// Add AI player to the game
+		computerPlayers.set(computerId, {
+			id: computerId,
+			name: `AI Opponent (Orange)`,
+			gameId: id,
+			isComputer: true,
+			difficulty: COMPUTER_DIFFICULTY.MEDIUM,
+			lastMoveTime: 0,
+			consecutiveMoves: 0,
+			minMoveInterval: 10000,
+			strategy: generateComputerStrategy(COMPUTER_DIFFICULTY.MEDIUM)
+		});
+		
+		// Add to game's player list
+		game.players.push(computerId);
+		game.hasComputerPlayer = true;
+		
+		console.log(`AI opponent (${computerId}) added to global game`);
+	} 
+	// For other games, add a computer player if specified
+	else if (settings.addComputerPlayer !== false) {
 		addComputerPlayer(id);
 	}
 	

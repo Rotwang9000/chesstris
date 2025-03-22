@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import PropTypes from 'prop-types';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+import gameService from '../services/GameService';
 import './TetrominoSystem.css';
 
 /**
@@ -14,7 +15,8 @@ const TetrominoSystem = ({
 	activeTetromino,
 	boardCells,
 	playerKingPosition,
-	onPlaceTetromino
+	onPlaceTetromino,
+	gameStarted = false
 }) => {
 	const containerRef = useRef(null);
 	const sceneRef = useRef(null);
@@ -25,6 +27,7 @@ const TetrominoSystem = ({
 	const ghostRef = useRef(null);
 	const boardRef = useRef(null);
 	const animationFrameRef = useRef(null);
+	const placementStartTimeRef = useRef(null);
 	
 	// Animation state
 	const [zPosition, setZPosition] = useState(10); // Start position on Z axis
@@ -465,48 +468,121 @@ const TetrominoSystem = ({
 		}
 	};
 	
-	// Animate placement effect
+	/**
+	 * Animate the tetromino placement
+	 */
 	const animatePlacement = () => {
-		if (!tetrominoRef.current) return;
+		if (!tetrominoRef.current || !sceneRef.current) return;
 		
-		// Create placement effect
-		if (!tetrominoRef.current.userData.placementStarted) {
-			tetrominoRef.current.userData.placementStarted = true;
-			tetrominoRef.current.userData.placementProgress = 0;
+		// Animate the tetromino locking into place
+		const scale = 1 + Math.sin(Date.now() * 0.01) * 0.05;
+		tetrominoRef.current.scale.set(scale, scale, scale);
+		
+		// Light up the tetromino
+		tetrominoRef.current.children.forEach(child => {
+			if (child.material) {
+				child.material.emissive = new THREE.Color(0x333333);
+				child.material.emissiveIntensity = Math.sin(Date.now() * 0.01) * 0.5 + 0.5;
+			}
+		});
+		
+		// Complete placement after animation
+		if (Date.now() - placementStartTimeRef.current > 500) {
+			// Finalize the placement
+			const finalPosition = {
+				x: Math.round(position.x),
+				y: 0, // Y-axis in the game is the height/depth
+				z: Math.round(position.y)
+			};
 			
-			// Glow effect
-			tetrominoRef.current.children.forEach(block => {
-				block.material.emissive = new THREE.Color(0x00ff00);
-				block.material.emissiveIntensity = 1;
-			});
-		}
-		
-		// Update placement animation
-		tetrominoRef.current.userData.placementProgress += 0.05;
-		const progress = tetrominoRef.current.userData.placementProgress;
-		
-		if (progress < 1) {
-			// Pulse effect
-			const scale = 1 + 0.2 * Math.sin(progress * Math.PI);
-			tetrominoRef.current.scale.set(scale, scale, scale);
-		} else {
-			// Convert tetromino to board cells
-			onPlaceTetromino({
-				tetromino: activeTetromino,
+			// Check that activeTetromino exists and has required properties
+			if (!activeTetromino) {
+				console.error('Cannot place tetromino: activeTetromino is null or undefined');
+				setIsPlacing(false);
+				return;
+			}
+			
+			if (!activeTetromino.type) {
+				console.error('Cannot place tetromino: missing type property', activeTetromino);
+				setIsPlacing(false);
+				return;
+			}
+			
+			console.log('Preparing tetromino placement at position:', finalPosition);
+			console.log('Tetromino data:', activeTetromino);
+			
+			// Prepare data for the server - ensure pieceType is included
+			const placementData = {
+				pieceType: activeTetromino.type, // This must be sent as "pieceType", not "type"
 				position: {
-					x: position.x,
-					y: position.y,
-					rotation: position.rotation
-				}
-			});
+					x: finalPosition.x,
+					y: finalPosition.y,
+					z: finalPosition.z
+				},
+				rotation: position.rotation
+			};
 			
-			// Remove tetromino after placement
-			sceneRef.current.remove(tetrominoRef.current);
-			tetrominoRef.current = null;
-			setIsPlacing(false);
+			console.log('Sending placement data to server:', placementData);
 			
-			// Reset for next tetromino
-			setZPosition(10);
+			// Send to server for validation and processing
+			gameService.placeTetromino(placementData)
+				.then(response => {
+					// Handle successful placement
+					console.log('SERVER CONFIRMED placement success:', response);
+					
+					// Keep the animation going until we get server confirmation
+					// Now remove the tetromino from the scene as server accepted it
+					if (tetrominoRef.current) {
+						sceneRef.current.remove(tetrominoRef.current);
+						tetrominoRef.current = null;
+					}
+					
+					// Remove ghost tetromino
+					if (ghostRef.current) {
+						sceneRef.current.remove(ghostRef.current);
+						ghostRef.current = null;
+					}
+					
+					// Reset states for next tetromino
+					setIsPlacing(false);
+					setZPosition(10);
+					
+					// Notify parent component about the placement AFTER server confirms
+					if (onPlaceTetromino) {
+						onPlaceTetromino(finalPosition, activeTetromino);
+					}
+				})
+				.catch(error => {
+					console.error('SERVER REJECTED placement:', error);
+					
+					// Flash the tetromino red to indicate rejection
+					if (tetrominoRef.current) {
+						tetrominoRef.current.children.forEach(child => {
+							if (child.material) {
+								// Save original color to restore later
+								const originalColor = child.material.color.clone();
+								child.material.color.set(0xff0000); // Red flash
+								
+								// Restore original color after a moment
+								setTimeout(() => {
+									if (child.material) {
+										child.material.color.copy(originalColor);
+									}
+								}, 300);
+							}
+						});
+					}
+					
+					// Handle server rejection - stop placing and make it fall instead
+					setIsPlacing(false);
+					setIsFalling(true);
+					
+					// Display error message if provided
+					if (error.message) {
+						// You could show this to the user in a UI element
+						console.error(`Placement rejected by server: ${error.message}`);
+					}
+				});
 		}
 	};
 	
@@ -539,33 +615,127 @@ const TetrominoSystem = ({
 		return colors[playerId] || colors.default;
 	};
 	
+	/**
+	 * Validate if the tetromino position is valid
+	 * @param {Object} newPosition - The new position to validate
+	 * @returns {boolean} True if the position is valid
+	 */
+	const validatePosition = (newPosition) => {
+		if (!activeTetromino || !boardCells) return false;
+		
+		// Get tetromino shape with rotation applied
+		const rotatedShape = getRotatedShape(activeTetromino.shape, newPosition.rotation);
+		
+		// Check board boundaries
+		for (let y = 0; y < rotatedShape.length; y++) {
+			for (let x = 0; x < rotatedShape[y].length; x++) {
+				if (rotatedShape[y][x]) {
+					const worldX = newPosition.x + x - Math.floor(rotatedShape[y].length / 2);
+					const worldY = newPosition.y - y + Math.floor(rotatedShape.length / 2);
+					
+					// Check board boundaries (simplified - would need actual board dimensions)
+					if (worldX < -15 || worldX > 15 || worldY < -15 || worldY > 15) {
+						return false;
+					}
+				}
+			}
+		}
+		
+		return true;
+	};
+	
+	/**
+	 * Get a rotated shape based on rotation index
+	 * @param {Array} shape - Original shape
+	 * @param {number} rotation - Rotation index (0-3)
+	 * @returns {Array} Rotated shape
+	 */
+	const getRotatedShape = (shape, rotation) => {
+		if (!shape || rotation === 0) return shape;
+		
+		let rotatedShape = [...shape];
+		
+		// Apply rotation 1-3 times based on rotation index
+		for (let r = 0; r < rotation; r++) {
+			const rows = rotatedShape.length;
+			const cols = rotatedShape[0].length;
+			const newShape = Array(cols).fill().map(() => Array(rows).fill(0));
+			
+			// Rotate 90 degrees clockwise
+			for (let y = 0; y < rows; y++) {
+				for (let x = 0; x < cols; x++) {
+					newShape[x][rows - 1 - y] = rotatedShape[y][x];
+				}
+			}
+			
+			rotatedShape = newShape;
+		}
+		
+		return rotatedShape;
+	};
+	
+	// Update component to respect gameStarted state
+	useEffect(() => {
+		// Only initialize animation if game has started
+		if (!gameStarted || !tetrominoRef.current) return;
+		
+		// If game has started and we have a tetromino, initialize its fall
+		if (tetrominoRef.current && !isPlacing && !isExploding && !isFalling) {
+			// Start tetromino falling from the top
+			setZPosition(10);
+		}
+	}, [gameStarted, tetrominoRef.current, isPlacing, isExploding, isFalling]);
+	
 	// Handle keyboard input for tetromino movement
 	useEffect(() => {
+		// Don't process keyboard input if game hasn't started or no active tetromino
+		if (!activeTetromino || !gameStarted) return;
+		
 		const handleKeyDown = (event) => {
+			// Skip if currently placing or exploding
+			if (isPlacing || isExploding) return;
+			
+			let newPosition = { ...position };
+			
 			switch (event.key) {
 				case 'ArrowLeft':
-					setPosition(prev => ({ ...prev, x: prev.x - 1 }));
+					newPosition.x -= 1;
 					break;
 				case 'ArrowRight':
-					setPosition(prev => ({ ...prev, x: prev.x + 1 }));
+					newPosition.x += 1;
 					break;
 				case 'ArrowUp':
-					setPosition(prev => ({ ...prev, y: prev.y + 1 }));
+					newPosition.y -= 1;
 					break;
 				case 'ArrowDown':
-					setPosition(prev => ({ ...prev, y: prev.y - 1 }));
+					newPosition.y += 1;
 					break;
-				case ' ': // Space
-					setPosition(prev => ({ ...prev, rotation: (prev.rotation + 1) % 4 }));
+				case 'r':
+				case 'R':
+					// Rotate the tetromino
+					newPosition.rotation = (newPosition.rotation + 1) % 4;
 					break;
-				case 'Enter':
+				case ' ':
+					// Space bar to place the tetromino immediately
 					if (validPlacement) {
-						setZPosition(0);
 						setIsPlacing(true);
+						setZPosition(0);
+						placementStartTimeRef.current = Date.now();
+						return;
 					}
 					break;
 				default:
-					break;
+					return;
+			}
+			
+			// Client-side validation - for immediate feedback only
+			// The server will make the final decision
+			const isValid = validatePosition(newPosition);
+			
+			if (isValid) {
+				setPosition(newPosition);
+				updateGhostTetromino(newPosition);
+				updateValidPlacement();
 			}
 		};
 		
@@ -574,72 +744,90 @@ const TetrominoSystem = ({
 		return () => {
 			window.removeEventListener('keydown', handleKeyDown);
 		};
-	}, [validPlacement]);
+	}, [activeTetromino, position, isPlacing, isExploding, validPlacement, gameStarted]);
 	
 	return (
 		<div className="tetromino-system">
 			<div className="tetromino-viewport" ref={containerRef} />
-			<div className="tetromino-controls">
-				<div className="control-group">
-					<button
-						onClick={() => setPosition(prev => ({ ...prev, x: prev.x - 1 }))}
-						className="control-button"
-					>
-						Left
-					</button>
-					<button
-						onClick={() => setPosition(prev => ({ ...prev, x: prev.x + 1 }))}
-						className="control-button"
-					>
-						Right
-					</button>
+			
+			{!gameStarted && (
+				<div className="tetromino-waiting-message">
+					Click "Start Playing" to begin the game
 				</div>
-				<div className="control-group">
-					<button
-						onClick={() => setPosition(prev => ({ ...prev, y: prev.y + 1 }))}
-						className="control-button"
-					>
-						Up
-					</button>
-					<button
-						onClick={() => setPosition(prev => ({ ...prev, y: prev.y - 1 }))}
-						className="control-button"
-					>
-						Down
-					</button>
+			)}
+			
+			{gameStarted && (
+				<div className="tetromino-controls">
+					<div className="control-group">
+						<button
+							onClick={() => setPosition(prev => ({ ...prev, x: prev.x - 1 }))}
+							className="control-button"
+							disabled={!gameStarted || isPlacing || isExploding}
+						>
+							Left
+						</button>
+						<button
+							onClick={() => setPosition(prev => ({ ...prev, x: prev.x + 1 }))}
+							className="control-button"
+							disabled={!gameStarted || isPlacing || isExploding}
+						>
+							Right
+						</button>
+					</div>
+					<div className="control-group">
+						<button
+							onClick={() => setPosition(prev => ({ ...prev, y: prev.y + 1 }))}
+							className="control-button"
+							disabled={!gameStarted || isPlacing || isExploding}
+						>
+							Up
+						</button>
+						<button
+							onClick={() => setPosition(prev => ({ ...prev, y: prev.y - 1 }))}
+							className="control-button"
+							disabled={!gameStarted || isPlacing || isExploding}
+						>
+							Down
+						</button>
+					</div>
+					<div className="control-group">
+						<button
+							onClick={() => setPosition(prev => ({ ...prev, rotation: (prev.rotation + 1) % 4 }))}
+							className="control-button"
+							disabled={!gameStarted || isPlacing || isExploding}
+						>
+							Rotate
+						</button>
+						<button
+							onClick={() => {
+								if (validPlacement && gameStarted) {
+									setZPosition(0);
+									setIsPlacing(true);
+									placementStartTimeRef.current = Date.now();
+								}
+							}}
+							className={`control-button ${validPlacement ? 'valid' : 'invalid'}`}
+							disabled={!validPlacement || !gameStarted || isPlacing || isExploding}
+						>
+							Place
+						</button>
+					</div>
 				</div>
-				<div className="control-group">
-					<button
-						onClick={() => setPosition(prev => ({ ...prev, rotation: (prev.rotation + 1) % 4 }))}
-						className="control-button"
-					>
-						Rotate
-					</button>
-					<button
-						onClick={() => {
-							if (validPlacement) {
-								setZPosition(0);
-								setIsPlacing(true);
-							}
-						}}
-						className={`control-button ${validPlacement ? 'valid' : 'invalid'}`}
-						disabled={!validPlacement}
-					>
-						Place
-					</button>
+			)}
+			
+			{gameStarted && (
+				<div className="placement-status">
+					<div className={`status-indicator ${validPlacement ? 'valid' : 'invalid'}`}>
+						{validPlacement ? 'Valid Placement' : 'Invalid Placement'}
+					</div>
+					<div className="status-details">
+						{zPosition > 1 && 'Tetromino falling...'}
+						{zPosition <= 1 && zPosition > 0 && hasCellUnderneath() && 'Warning: Cell underneath - will explode!'}
+						{zPosition === 0 && hasAdjacentCell() && !hasPathToKing() && 'No path to king!'}
+						{zPosition === 0 && !hasAdjacentCell() && 'No adjacent cells!'}
+					</div>
 				</div>
-			</div>
-			<div className="placement-status">
-				<div className={`status-indicator ${validPlacement ? 'valid' : 'invalid'}`}>
-					{validPlacement ? 'Valid Placement' : 'Invalid Placement'}
-				</div>
-				<div className="status-details">
-					{zPosition > 1 && 'Tetromino falling...'}
-					{zPosition <= 1 && zPosition > 0 && hasCellUnderneath() && 'Warning: Cell underneath - will explode!'}
-					{zPosition === 0 && hasAdjacentCell() && !hasPathToKing() && 'No path to king!'}
-					{zPosition === 0 && !hasAdjacentCell() && 'No adjacent cells!'}
-				</div>
-			</div>
+			)}
 		</div>
 	);
 };
@@ -663,7 +851,8 @@ TetrominoSystem.propTypes = {
 		x: PropTypes.number.isRequired,
 		y: PropTypes.number.isRequired
 	}),
-	onPlaceTetromino: PropTypes.func.isRequired
+	onPlaceTetromino: PropTypes.func.isRequired,
+	gameStarted: PropTypes.bool
 };
 
 TetrominoSystem.defaultProps = {

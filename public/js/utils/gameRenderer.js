@@ -191,16 +191,16 @@ function initScene() {
 function initCamera() {
 	// Create camera
 	_camera = new THREE.PerspectiveCamera(
-		50, // Field of view - reduced for better focus
+		45, // Field of view - wider for better board visibility
 		_container.clientWidth / _container.clientHeight, // Aspect ratio
 		0.1, // Near clipping plane
 		1000 // Far clipping plane
 	);
 	camera = _camera; // For backwards compatibility
 	
-	// Position camera for a better angled view of the board
-	_camera.position.set(20, 25, 20);
-	_camera.lookAt(5, 0, 5); // Look at player 1 area initially
+	// Position camera for a better overview of the board
+	_camera.position.set(8, 20, 30); // Moved further left to see more of the board
+	_camera.lookAt(8, 0, 8); // Look at center of board
 	
 	console.log('Camera initialized at position:', _camera.position);
 }
@@ -222,7 +222,7 @@ function initControls() {
 		
 		// Limit zoom to prevent getting too close or too far
 		_controls.minDistance = 10;
-		_controls.maxDistance = 60;
+		_controls.maxDistance = 80; // Increased max distance for better overview
 		
 		// Set target to center of board
 		_controls.target.set(8, 0, 8);
@@ -2160,5 +2160,81 @@ function handleCameraKeys(event) {
 		}
 		
 		event.preventDefault(); // Prevent default browser scrolling
+	}
+}
+
+/**
+ * Focus camera on player's home area
+ * @param {string} playerId - Player ID to focus on
+ * @param {boolean} animate - Whether to animate the transition
+ */
+export function focusOnPlayerHomeArea(playerId, animate = true) {
+	if (!_camera || !_controls) return;
+	
+	// Get player's home zone position
+	const gameState = getGameState();
+	if (!gameState || !gameState.homeZones || !gameState.homeZones[playerId]) {
+		console.warn('Cannot focus on player, home zone not found');
+		return;
+	}
+	
+	const homeZone = gameState.homeZones[playerId];
+	const centerX = homeZone.centerX || 8;
+	const centerZ = homeZone.centerZ || 8;
+	
+	// Define target position and camera position
+	const targetPosition = new THREE.Vector3(centerX, 0, centerZ);
+	
+	// Calculate camera position based on target
+	// Position camera to view from angle that shows more of the board
+	// Move camera further left to see more of the board ahead
+	const cameraOffset = new THREE.Vector3(0, 20, 20); // Decreased X offset to move camera left
+	const cameraPosition = targetPosition.clone().add(cameraOffset);
+	
+	if (animate) {
+		// Animate camera movement
+		const startPosition = _camera.position.clone();
+		const startTarget = _controls.target.clone();
+		const duration = 1500; // ms
+		const startTime = Date.now();
+		
+		const animateCamera = () => {
+			const elapsed = Date.now() - startTime;
+			const progress = Math.min(elapsed / duration, 1);
+			// Use easing function for smoother animation
+			const easeProgress = 1 - Math.cos(progress * Math.PI / 2);
+			
+			// Interpolate camera position
+			_camera.position.lerpVectors(startPosition, cameraPosition, easeProgress);
+			
+			// Interpolate target
+			_controls.target.lerpVectors(startTarget, targetPosition, easeProgress);
+			
+			// Update controls
+			_controls.update();
+			
+			if (progress < 1) {
+				requestAnimationFrame(animateCamera);
+			} else {
+				// Notify that camera animation is complete
+				if (typeof gameStateManager !== 'undefined' && 
+					typeof gameStateManager.onCameraAnimationComplete === 'function') {
+					gameStateManager.onCameraAnimationComplete();
+				}
+			}
+		};
+		
+		animateCamera();
+	} else {
+		// Instant camera movement
+		_camera.position.copy(cameraPosition);
+		_controls.target.copy(targetPosition);
+		_controls.update();
+		
+		// Notify that camera animation is complete
+		if (typeof gameStateManager !== 'undefined' && 
+			typeof gameStateManager.onCameraAnimationComplete === 'function') {
+			gameStateManager.onCameraAnimationComplete();
+		}
 	}
 }

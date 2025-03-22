@@ -578,6 +578,60 @@ class ChessManager {
 		// Execute the move
 		return this.executeChessMove(game, playerId, moveData);
 	}
+	
+	/**
+	 * Check if a player has any valid chess moves available
+	 * @param {Object} game - The game object
+	 * @param {string} playerId - The player's ID
+	 * @returns {boolean} True if the player has at least one valid move
+	 */
+	hasValidChessMoves(game, playerId) {
+		try {
+			// Get all chess pieces for the player
+			const playerPieces = game.chessPieces.filter(piece => piece.player === playerId);
+			
+			// If the player has no pieces, they have no valid moves
+			if (!playerPieces.length) {
+				log(`Player ${playerId} has no chess pieces`);
+				return false;
+			}
+			
+			// Check each piece for valid moves
+			for (const piece of playerPieces) {
+				// Check all possible destination positions within range
+				const boardWidth = game.board[0].length;
+				const boardHeight = game.board.length;
+				
+				// Loop through all positions on the board
+				for (let z = 0; z < boardHeight; z++) {
+					for (let x = 0; x < boardWidth; x++) {
+						// Skip the piece's current position
+						if (piece.x === x && piece.z === z) continue;
+						
+						// Check if the move would be valid for this piece type
+						const moveIsValid = this._validateMoveByPieceType(game, piece, x, z);
+						if (!moveIsValid) continue;
+						
+						// Check for path obstruction if needed
+						const pathClear = this._checkPathObstruction(game, piece, x, z);
+						if (!pathClear) continue;
+						
+						// This position is a valid move
+						log(`Player ${playerId} has valid move: ${piece.type} at (${piece.x}, ${piece.z}) to (${x}, ${z})`);
+						return true;
+					}
+				}
+			}
+			
+			// If we got here, no valid moves were found
+			log(`Player ${playerId} has no valid chess moves available`);
+			return false;
+		} catch (error) {
+			log(`Error checking for valid chess moves: ${error.message}`);
+			// Default to true to be safe (don't automatically skip turns on error)
+			return true;
+		}
+	}
 }
 
 module.exports = ChessManager; 

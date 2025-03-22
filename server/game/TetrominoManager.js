@@ -154,6 +154,9 @@ class TetrominoManager {
 			}
 		}
 		
+		// Check if this is the player's first tetromino placement
+		const isFirstPlacement = !game.players[playerId].lastTetrominoPlacement;
+		
 		// Check if the tetromino has at least one cell adjacent to an existing cell
 		// or has a path to the player's king
 		let hasAdjacent = false;
@@ -168,9 +171,44 @@ class TetrominoManager {
 					if (adjacentResult.hasAdjacent) {
 						hasAdjacent = true;
 						
-						// Check if there's a path to the king
-						if (this.islandManager.hasPathToKing(game, adjacentResult.x, adjacentResult.z, playerId)) {
+						// If it's the first placement or there's a path to the king, it's valid
+						if (isFirstPlacement || this.islandManager.hasPathToKing(game, adjacentResult.x, adjacentResult.z, playerId)) {
 							return true;
+						}
+					}
+				}
+			}
+		}
+		
+		// For the first placement, check if it's adjacent to the player's home zone
+		if (isFirstPlacement) {
+			// Find the player's home zone
+			const homeZone = game.homeZones[playerId];
+			if (homeZone) {
+				for (let i = 0; i < depth; i++) {
+					for (let j = 0; j < width; j++) {
+						if (shape[i][j]) {
+							const posX = x + j;
+							const posZ = z + i;
+							
+							// Check adjacent to home zone cells
+							const adjacentPositions = [
+								{ x: posX - 1, z: posZ },
+								{ x: posX + 1, z: posZ },
+								{ x: posX, z: posZ - 1 },
+								{ x: posX, z: posZ + 1 }
+							];
+							
+							for (const pos of adjacentPositions) {
+								// Check if this position is within bounds
+								if (pos.x >= 0 && pos.x < boardWidth && pos.z >= 0 && pos.z < boardHeight) {
+									// Check if there's a home cell here
+									const cell = game.board[pos.z][pos.x];
+									if (cell && cell.type === 'home' && cell.player === playerId) {
+										return true;
+									}
+								}
+							}
 						}
 					}
 				}

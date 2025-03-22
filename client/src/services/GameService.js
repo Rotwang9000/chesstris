@@ -235,33 +235,9 @@ class GameService {
 	}
 	
 	/**
-	 * Move a chess piece
-	 * @param {Object} params - Move parameters
-	 * @returns {Promise} Resolves when successful or rejects with error
-	 */
-	moveChessPiece(params) {
-		return new Promise((resolve, reject) => {
-			if (!this.socket || !this.connected) {
-				reject(new Error('Not connected to server'));
-				return;
-			}
-			
-			this.socket.emit('chess_move', params, (response) => {
-				if (response && response.success) {
-					resolve(response);
-				} else if (response && response.error) {
-					reject(new Error(response.error));
-				} else {
-					resolve(); // No response means success in current implementation
-				}
-			});
-		});
-	}
-	
-	/**
 	 * Place a tetromino on the board
-	 * @param {Object} params - Placement parameters
-	 * @returns {Promise} Resolves when successful or rejects with error
+	 * @param {Object} params - Parameters for tetromino placement
+	 * @returns {Promise} Resolves with placement result or rejects with error
 	 */
 	placeTetromino(params) {
 		return new Promise((resolve, reject) => {
@@ -270,13 +246,56 @@ class GameService {
 				return;
 			}
 			
-			this.socket.emit('tetromino_placed', params, (response) => {
+			console.log('Sending tetromino placement to server:', params);
+			
+			// Format the data for the server
+			const placementData = {
+				pieceType: params.pieceType,
+				position: params.position,
+				rotation: params.rotation
+			};
+			
+			// Send the placement request to the server
+			this.socket.emit('tetromino_placed', placementData, (response) => {
 				if (response && response.success) {
+					console.log('Tetromino placement successful:', response);
 					resolve(response);
-				} else if (response && response.error) {
-					reject(new Error(response.error));
 				} else {
-					resolve(); // No response means success in current implementation
+					console.error('Tetromino placement failed:', response?.error || 'Unknown error');
+					reject(new Error(response?.error || 'Failed to place tetromino'));
+				}
+			});
+		});
+	}
+	
+	/**
+	 * Move a chess piece
+	 * @param {Object} params - Parameters for chess piece movement
+	 * @returns {Promise} Resolves with move result or rejects with error
+	 */
+	moveChessPiece(params) {
+		return new Promise((resolve, reject) => {
+			if (!this.socket || !this.connected) {
+				reject(new Error('Not connected to server'));
+				return;
+			}
+			
+			console.log('Sending chess piece move to server:', params);
+			
+			// Format the data for the server
+			const moveData = {
+				pieceId: params.pieceId,
+				targetPosition: params.targetPosition
+			};
+			
+			// Send the move request to the server
+			this.socket.emit('chess_move', moveData, (response) => {
+				if (response && response.success) {
+					console.log('Chess move successful:', response);
+					resolve(response);
+				} else {
+					console.error('Chess move failed:', response?.error || 'Unknown error');
+					reject(new Error(response?.error || 'Invalid chess move'));
 				}
 			});
 		});
@@ -324,6 +343,57 @@ class GameService {
 					reject(new Error(response.error));
 				} else {
 					resolve(); // No response means success in current implementation
+				}
+			});
+		});
+	}
+	
+	/**
+	 * Request first tetromino to start the game
+	 * @returns {Promise} Resolves with tetromino data or rejects with error
+	 */
+	requestTetromino() {
+		return new Promise((resolve, reject) => {
+			if (!this.socket || !this.connected) {
+				reject(new Error('Not connected to server'));
+				return;
+			}
+			
+			console.log('Requesting first tetromino from server');
+			
+			this.socket.emit('request_tetromino', (response) => {
+				if (response && response.success) {
+					console.log('First tetromino received:', response);
+					resolve(response);
+				} else {
+					console.error('Failed to request tetromino:', response?.error || 'Unknown error');
+					reject(new Error(response?.error || 'Failed to request tetromino'));
+				}
+			});
+		});
+	}
+	
+	/**
+	 * Start a new game or begin an existing game
+	 * @param {Object} options - Optional game settings
+	 * @returns {Promise} Resolves when game starts successfully
+	 */
+	startGame(options = {}) {
+		return new Promise((resolve, reject) => {
+			if (!this.socket || !this.connected) {
+				reject(new Error('Not connected to server'));
+				return;
+			}
+			
+			console.log('Sending startGame request to server');
+			
+			this.socket.emit('startGame', options, (response) => {
+				if (response && response.success) {
+					console.log('Game started successfully:', response);
+					resolve(response);
+				} else {
+					console.error('Failed to start game:', response?.error || 'Unknown error');
+					reject(new Error(response?.error || 'Failed to start game'));
 				}
 			});
 		});
