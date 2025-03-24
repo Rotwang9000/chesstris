@@ -6,7 +6,7 @@
  */
 
 // Import required modules
-import * as THREE from 'three';
+import * as THREE from './three.module.js';
 import { createCanvas } from 'canvas';
 import fs from 'fs';
 import path from 'path';

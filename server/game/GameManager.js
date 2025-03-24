@@ -47,8 +47,8 @@ class GameManager {
 	 * @returns {Object} Created game information
 	 */
 	createGame(options = {}) {
-		// Generate a unique game ID
-		const gameId = generateGameId();
+		// Use provided gameId or generate a new one
+		const gameId = options.gameId || generateGameId();
 		
 		// Clean up old games if we're exceeding our limit
 		if (Object.keys(this.games).length >= this.MAX_GAMES) {
@@ -327,8 +327,8 @@ class GameManager {
 		
 		return {
 			success: true,
-			newWidth: game.board[0].length,
-			newHeight: game.board.length
+			newWidth: game.board.width,
+			newHeight: game.board.height
 		};
 	}
 	
@@ -382,11 +382,35 @@ class GameManager {
 			};
 		}
 		
+		// Convert sparse board to 2D array for compatibility with client
+		const visibleRegion = {
+			minX: game.board.minX,
+			maxX: game.board.maxX,
+			minZ: game.board.minZ,
+			maxZ: game.board.maxZ
+		};
+		
+		const boardRegion = this.boardManager.getBoardRegion(
+			game.board,
+			visibleRegion.minX,
+			visibleRegion.maxX, 
+			visibleRegion.minZ,
+			visibleRegion.maxZ
+		);
+		
 		// Create a tailored game state for the player
 		const gameState = {
 			id: game.id,
 			status: game.status,
-			board: game.board,
+			board: boardRegion,
+			boardBounds: {
+				minX: game.board.minX,
+				maxX: game.board.maxX,
+				minZ: game.board.minZ,
+				maxZ: game.board.maxZ,
+				width: game.board.width,
+				height: game.board.height
+			},
 			chessPieces: game.chessPieces,
 			players: game.players,
 			homeZones: game.homeZones,

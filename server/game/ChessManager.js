@@ -23,37 +23,125 @@ class ChessManager {
 		const pieces = [];
 		const playerColor = game.players[playerId].color;
 		
-		// Initialize chess pieces based on predefined positions
-		for (const [pieceType, positions] of Object.entries(CHESS_PIECE_POSITIONS)) {
-			for (const position of positions) {
-				// Calculate piece position relative to home zone
-				const x = homeZone.x + position.xOffset;
-				const z = homeZone.z + position.zOffset;
+		// Determine if this is a horizontal or vertical home zone
+		const isHorizontal = homeZone.width === 8 && homeZone.height === 2;
+		
+		// Initialize pieces based on home zone orientation
+		if (isHorizontal) {
+			// Horizontal home zone (8x2)
+			// Place pieces in traditional chess order: Rook, Knight, Bishop, Queen, King, Bishop, Knight, Rook
+			const pieceOrder = ['ROOK', 'KNIGHT', 'BISHOP', 'QUEEN', 'KING', 'BISHOP', 'KNIGHT', 'ROOK'];
+			
+			// Place back row pieces (row 0)
+			for (let i = 0; i < pieceOrder.length; i++) {
+				const x = homeZone.x + i;
+				const z = homeZone.z;
+				const pieceType = pieceOrder[i];
 				
-				// Make sure the position is within bounds
-				if (x >= 0 && x < game.board[0].length && z >= 0 && z < game.board.length) {
-					// Create the chess piece
-					const piece = {
-						id: `${playerId}-${pieceType}-${Date.now()}-${pieces.length}`,
-						type: pieceType,
-						player: playerId,
-						x,
-						z,
-						color: playerColor,
-						hasMoved: false
-					};
-					
-					pieces.push(piece);
-					
-					// Mark the cell as occupied
-					game.board[z][x] = {
-						type: 'chess',
-						player: playerId,
-						color: playerColor,
-						pieceType,
-						placedAt: Date.now()
-					};
-				}
+				// Create the chess piece
+				const piece = {
+					id: `${playerId}-${pieceType}-${Date.now()}-${pieces.length}`,
+					type: pieceType,
+					player: playerId,
+					position: { x, z },
+					color: playerColor,
+					hasMoved: false
+				};
+				
+				pieces.push(piece);
+				
+				// Mark the cell as occupied using the new sparse board structure
+				this.boardManager.setCell(game.board, x, z, {
+					type: 'chess',
+					player: playerId,
+					chessPiece: piece,
+					color: playerColor
+				});
+			}
+			
+			// Place pawns in the second row (row 1)
+			for (let i = 0; i < 8; i++) {
+				const x = homeZone.x + i;
+				const z = homeZone.z + 1;
+				const pieceType = 'PAWN';
+				
+				// Create the pawn
+				const piece = {
+					id: `${playerId}-${pieceType}-${Date.now()}-${pieces.length}`,
+					type: pieceType,
+					player: playerId,
+					position: { x, z },
+					color: playerColor,
+					hasMoved: false
+				};
+				
+				pieces.push(piece);
+				
+				// Mark the cell as occupied using the new sparse board structure
+				this.boardManager.setCell(game.board, x, z, {
+					type: 'chess',
+					player: playerId,
+					chessPiece: piece,
+					color: playerColor
+				});
+			}
+		} else {
+			// Vertical home zone (2x8)
+			// Place pieces in a vertical arrangement
+			const pieceOrder = ['ROOK', 'KNIGHT', 'BISHOP', 'QUEEN', 'KING', 'BISHOP', 'KNIGHT', 'ROOK'];
+			
+			// Place main column pieces (column 0)
+			for (let i = 0; i < pieceOrder.length; i++) {
+				const x = homeZone.x;
+				const z = homeZone.z + i;
+				const pieceType = pieceOrder[i];
+				
+				// Create the chess piece
+				const piece = {
+					id: `${playerId}-${pieceType}-${Date.now()}-${pieces.length}`,
+					type: pieceType,
+					player: playerId,
+					position: { x, z },
+					color: playerColor,
+					hasMoved: false
+				};
+				
+				pieces.push(piece);
+				
+				// Mark the cell as occupied using the new sparse board structure
+				this.boardManager.setCell(game.board, x, z, {
+					type: 'chess',
+					player: playerId,
+					chessPiece: piece,
+					color: playerColor
+				});
+			}
+			
+			// Place pawns in the second column (column 1)
+			for (let i = 0; i < 8; i++) {
+				const x = homeZone.x + 1;
+				const z = homeZone.z + i;
+				const pieceType = 'PAWN';
+				
+				// Create the pawn
+				const piece = {
+					id: `${playerId}-${pieceType}-${Date.now()}-${pieces.length}`,
+					type: pieceType,
+					player: playerId,
+					position: { x, z },
+					color: playerColor,
+					hasMoved: false
+				};
+				
+				pieces.push(piece);
+				
+				// Mark the cell as occupied using the new sparse board structure
+				this.boardManager.setCell(game.board, x, z, {
+					type: 'chess',
+					player: playerId,
+					chessPiece: piece,
+					color: playerColor
+				});
 			}
 		}
 		
@@ -89,16 +177,8 @@ class ChessManager {
 				};
 			}
 			
-			// Check if the position is valid (within bounds)
-			if (x < 0 || x >= game.board[0].length || z < 0 || z >= game.board.length) {
-				return {
-					success: false,
-					error: `Position (${x}, ${z}) is out of bounds`
-				};
-			}
-			
-			// Check if the position is occupied
-			if (game.board[z][x] !== null) {
+			// Check if the position is occupied using our sparse board structure
+			if (this.boardManager.getCell(game.board, x, z) !== null) {
 				return {
 					success: false,
 					error: `Position (${x}, ${z}) is already occupied`
@@ -136,8 +216,7 @@ class ChessManager {
 				id: `${playerId}-${pieceType}-${Date.now()}`,
 				type: pieceType,
 				player: playerId,
-				x,
-				z,
+				position: { x, z },
 				color: player.color,
 				hasMoved: false
 			};
@@ -145,14 +224,15 @@ class ChessManager {
 			// Add the piece to the game
 			game.chessPieces.push(piece);
 			
-			// Mark the cell as occupied
-			game.board[z][x] = {
+			// Mark the cell as occupied using our sparse board structure
+			this.boardManager.setCell(game.board, x, z, {
 				type: 'chess',
 				player: playerId,
-				color: player.color,
-				pieceType,
-				placedAt: Date.now()
-			};
+				chessPiece: piece,
+				color: player.color
+			});
+			
+			log(`Player ${playerId} purchased ${pieceType} at (${x}, ${z})`);
 			
 			return {
 				success: true,
@@ -169,44 +249,41 @@ class ChessManager {
 	}
 	
 	/**
-	 * Check if a cell has an adjacent cell with a player's ID
+	 * Check if a cell has an adjacent cell that belongs to the player
 	 * @param {Object} game - The game object
 	 * @param {number} x - X coordinate
 	 * @param {number} z - Z coordinate
 	 * @param {string} playerId - The player's ID
-	 * @returns {Object} Result with hasAdjacent flag and coordinates
+	 * @returns {Object} Result of the check
 	 * @private
 	 */
 	_hasAdjacentCell(game, x, z, playerId) {
-		// Check adjacent positions in XZ plane
-		const adjacentPositions = [
-			{ x: x - 1, z },  // left
-			{ x: x + 1, z },  // right
-			{ x, z: z - 1 },  // forward
-			{ x, z: z + 1 }   // backward
+		// Check all adjacent cells (including diagonals)
+		const directions = [
+			{ x: 0, z: -1 },  // North
+			{ x: 1, z: -1 },  // Northeast
+			{ x: 1, z: 0 },   // East
+			{ x: 1, z: 1 },   // Southeast
+			{ x: 0, z: 1 },   // South
+			{ x: -1, z: 1 },  // Southwest
+			{ x: -1, z: 0 },  // West
+			{ x: -1, z: -1 }  // Northwest
 		];
 		
-		const boardWidth = game.board[0].length;
-		const boardHeight = game.board.length;
-		
-		for (const pos of adjacentPositions) {
-			// Check bounds
-			if (pos.x < 0 || pos.x >= boardWidth || pos.z < 0 || pos.z >= boardHeight) {
-				continue;
-			}
+		for (const dir of directions) {
+			const pos = {
+				x: x + dir.x,
+				z: z + dir.z
+			};
 			
-			// Check if there's a cell at this position
-			if (game.board[pos.z][pos.x] !== null) {
-				const cell = game.board[pos.z][pos.x];
-				
-				// Cell must belong to the player
-				if (cell.player === playerId) {
-					return {
-						hasAdjacent: true,
-						x: pos.x,
-						z: pos.z
-					};
-				}
+			// Check if there's a cell at this position using the sparse board structure
+			const cell = this.boardManager.getCell(game.board, pos.x, pos.z);
+			if (cell !== null && cell.player === playerId) {
+				return {
+					hasAdjacent: true,
+					x: pos.x,
+					z: pos.z
+				};
 			}
 		}
 		
@@ -241,52 +318,50 @@ class ChessManager {
 				};
 			}
 			
-			// Check if the destination is within bounds
-			if (toX < 0 || toX >= game.board[0].length || toZ < 0 || toZ >= game.board.length) {
+			// Get piece's current position
+			const fromX = piece.position.x;
+			const fromZ = piece.position.z;
+			
+			// Check if trying to move to the same position
+			if (fromX === toX && fromZ === toZ) {
 				return {
 					valid: false,
-					error: `Destination (${toX}, ${toZ}) is out of bounds`
+					error: 'Cannot move to the same position'
 				};
 			}
 			
-			// Check if the piece is moving to its current position (no move)
-			if (piece.x === toX && piece.z === toZ) {
+			// Check if the destination has a piece of the same player
+			const targetCell = this.boardManager.getCell(game.board, toX, toZ);
+			if (targetCell && targetCell.player === playerId) {
 				return {
 					valid: false,
-					error: 'Piece is already at the destination'
-				};
-			}
-			
-			// Get the destination cell
-			const destCell = game.board[toZ][toX];
-			
-			// Check if the destination is occupied by a friendly piece
-			if (destCell !== null && destCell.player === playerId) {
-				return {
-					valid: false,
-					error: 'Destination is occupied by your own piece'
+					error: 'Cannot capture your own piece'
 				};
 			}
 			
 			// Validate move based on piece type
-			const moveValidation = this._validateMoveByPieceType(game, piece, toX, toZ);
-			if (!moveValidation.valid) {
-				return moveValidation;
+			const typeValidation = this._validateMoveByPieceType(game, piece, toX, toZ);
+			if (!typeValidation.valid) {
+				return typeValidation;
 			}
 			
-			// Check for path obstruction for pieces that move in straight lines
-			if (['rook', 'bishop', 'queen'].includes(piece.type)) {
-				const pathCheck = this._checkPathObstruction(game, piece, toX, toZ);
-				if (!pathCheck.valid) {
-					return pathCheck;
+			// Check for path obstructions (except knights which can jump)
+			if (piece.type !== 'KNIGHT') {
+				const pathValidation = this._checkPathObstruction(game, piece, toX, toZ);
+				if (!pathValidation.valid) {
+					return pathValidation;
 				}
 			}
 			
-			// If all checks pass, the move is valid
+			// Move is valid
 			return {
 				valid: true,
 				piece,
-				capture: destCell !== null
+				fromX,
+				fromZ,
+				toX,
+				toZ,
+				targetCell
 			};
 		} catch (error) {
 			log(`Error validating chess move: ${error.message}`);
@@ -298,7 +373,7 @@ class ChessManager {
 	}
 	
 	/**
-	 * Validate a chess piece move based on its type
+	 * Validate a move based on the chess piece type
 	 * @param {Object} game - The game object
 	 * @param {Object} piece - The chess piece
 	 * @param {number} toX - Destination X coordinate
@@ -307,41 +382,47 @@ class ChessManager {
 	 * @private
 	 */
 	_validateMoveByPieceType(game, piece, toX, toZ) {
-		const { x: fromX, z: fromZ, type, hasMoved } = piece;
+		const fromX = piece.position.x;
+		const fromZ = piece.position.z;
+		const type = piece.type.toLowerCase();
+		
+		// Calculate the absolute differences in coordinates
 		const deltaX = Math.abs(toX - fromX);
 		const deltaZ = Math.abs(toZ - fromZ);
 		
 		switch (type) {
 			case 'pawn': {
-				// Pawns move forward one step, capture diagonally
-				// Direction depends on the player's orientation
-				// For simplicity, assume forward is +z for all players
-				const direction = 1; // Forward direction (can be different for different players)
-				const expectedZ = fromZ + direction;
+				// Pawns move forward one step, or two on first move
+				const direction = 1; // Assumes pawns always move in positive Z direction
 				
-				// Check for capture (diagonal move)
-				if (deltaX === 1 && deltaZ === 1 && toZ === expectedZ) {
-					// Diagonal move is only valid for capture
-					return game.board[toZ][toX] !== null 
-						? { valid: true } 
-						: { valid: false, error: 'Pawns can only move diagonally when capturing' };
-				}
-				
-				// Check for forward move (no capture)
-				if (deltaX === 0) {
-					// Single step forward
-					if (toZ === expectedZ && game.board[toZ][toX] === null) {
+				// Normal forward move (one step)
+				if (fromX === toX && toZ - fromZ === direction) {
+					// Check if destination is empty
+					if (this.boardManager.getCell(game.board, toX, toZ) === null) {
 						return { valid: true };
 					}
-					
-					// Double step from starting position
-					if (!hasMoved && toZ === fromZ + 2 * direction) {
-						// Check if path is clear
-						if (game.board[fromZ + direction][fromX] === null && 
-							game.board[toZ][toX] === null) {
-							return { valid: true };
-						}
+					return { valid: false, error: 'Pawn cannot move forward into an occupied cell' };
+				}
+				
+				// First move (can be two steps)
+				if (!piece.hasMoved && fromX === toX && toZ - fromZ === 2 * direction) {
+					// Check if both the destination and the cell in between are empty
+					const middleZ = fromZ + direction;
+					if (this.boardManager.getCell(game.board, toX, middleZ) === null && 
+						this.boardManager.getCell(game.board, toX, toZ) === null) {
+						return { valid: true };
 					}
+					return { valid: false, error: 'Pawn cannot jump over pieces' };
+				}
+				
+				// Diagonal capture
+				if (deltaX === 1 && toZ - fromZ === direction) {
+					// Check if there is an opponent's piece to capture
+					const targetCell = this.boardManager.getCell(game.board, toX, toZ);
+					if (targetCell !== null && targetCell.player !== piece.player) {
+						return { valid: true };
+					}
+					return { valid: false, error: 'Pawn can only move diagonally when capturing' };
 				}
 				
 				return { valid: false, error: 'Invalid pawn move' };
@@ -356,11 +437,11 @@ class ChessManager {
 			}
 			
 			case 'knight': {
-				// Knights move in an L-shape: 2 in one direction, 1 in the other
+				// Knights move in an L-shape (2 in one direction, 1 in perpendicular direction)
 				if ((deltaX === 2 && deltaZ === 1) || (deltaX === 1 && deltaZ === 2)) {
 					return { valid: true };
 				}
-				return { valid: false, error: 'Knights must move in an L-shape' };
+				return { valid: false, error: 'Knights can only move in an L-shape' };
 			}
 			
 			case 'bishop': {
@@ -402,7 +483,8 @@ class ChessManager {
 	 * @private
 	 */
 	_checkPathObstruction(game, piece, toX, toZ) {
-		const { x: fromX, z: fromZ } = piece;
+		const fromX = piece.position.x;
+		const fromZ = piece.position.z;
 		
 		// Determine the direction of movement
 		const dx = Math.sign(toX - fromX);
@@ -414,7 +496,7 @@ class ChessManager {
 		
 		// Check all cells along the path excluding the destination
 		while (x !== toX || z !== toZ) {
-			if (game.board[z][x] !== null) {
+			if (this.boardManager.getCell(game.board, x, z) !== null) {
 				return {
 					valid: false,
 					error: `Path is obstructed at position (${x}, ${z})`
@@ -429,11 +511,11 @@ class ChessManager {
 	}
 	
 	/**
-	 * Execute a chess piece move
+	 * Execute a validated chess move
 	 * @param {Object} game - The game object
 	 * @param {string} playerId - The player's ID
 	 * @param {Object} moveData - Data about the move
-	 * @returns {Object} Result of the move execution
+	 * @returns {Object} Result of executing the move
 	 */
 	executeChessMove(game, playerId, moveData) {
 		try {
@@ -446,19 +528,21 @@ class ChessManager {
 				};
 			}
 			
-			const { piece, capture } = validation;
-			const { pieceId, toX, toZ } = moveData;
-			const { x: fromX, z: fromZ } = piece;
+			const { piece, fromX, fromZ, toX, toZ, targetCell } = validation;
 			
-			// Handle captured pieces
-			if (capture) {
-				// Get the cell at the destination
-				const capturedCell = game.board[toZ][toX];
+			// Check for capture
+			let capture = false;
+			let capturedPiece = null;
+			
+			if (targetCell) {
+				capture = true;
 				
-				// Remove any chess piece at the destination
+				// Find and remove the captured piece from the chessPieces array
 				for (let i = game.chessPieces.length - 1; i >= 0; i--) {
 					const p = game.chessPieces[i];
-					if (p.x === toX && p.z === toZ) {
+					if (p.position.x === toX && p.position.z === toZ) {
+						capturedPiece = p;
+						
 						// Record capture
 						log(`${piece.type} captures ${p.type} at (${toX}, ${toZ})`);
 						
@@ -466,7 +550,7 @@ class ChessManager {
 						game.chessPieces.splice(i, 1);
 						
 						// Check if the captured piece is a king
-						if (p.type === 'king') {
+						if (p.type === 'KING') {
 							// Handle king capture (may trigger game over)
 							this._handleKingCapture(game, p.player);
 						}
@@ -477,26 +561,23 @@ class ChessManager {
 			}
 			
 			// Clear the original cell
-			game.board[fromZ][fromX] = null;
+			delete game.board.cells[`${fromX},${fromZ}`];
 			
 			// Update the piece position
-			piece.x = toX;
-			piece.z = toZ;
+			piece.position.x = toX;
+			piece.position.z = toZ;
 			piece.hasMoved = true;
 			
 			// Mark the new cell as occupied
-			game.board[toZ][toX] = {
+			this.boardManager.setCell(game.board, toX, toZ, {
 				type: 'chess',
 				player: playerId,
-				color: game.players[playerId].color,
-				pieceType: piece.type,
-				placedAt: Date.now()
-			};
+				chessPiece: piece,
+				color: game.players[playerId].color
+			});
 			
 			// Check for pawn promotion
-			if (piece.type === 'pawn') {
-				this._checkPawnPromotion(game, piece);
-			}
+			this._checkPawnPromotion(game, piece);
 			
 			// Update island connectivity after the move
 			this.islandManager.checkForIslandsAfterRowClear(game);
@@ -504,7 +585,8 @@ class ChessManager {
 			return {
 				success: true,
 				piece,
-				capture
+				capture,
+				capturedPiece
 			};
 		} catch (error) {
 			log(`Error executing chess move: ${error.message}`);
@@ -549,21 +631,23 @@ class ChessManager {
 	 */
 	_checkPawnPromotion(game, piece) {
 		// Check if the pawn has reached the promotion rank
-		// This depends on the player's orientation and the board setup
-		// For simplicity, assume promotion rank is the last row of the board
-		const promotionRank = game.board.length - 1;
+		// Use the board's max Z coordinate for promotion rank
+		const promotionRank = game.board.maxZ;
 		
-		if (piece.type === 'pawn' && piece.z === promotionRank) {
+		if (piece.type === 'PAWN' && piece.position.z === promotionRank) {
 			// Promote the pawn to a queen (or other piece based on game rules)
-			const promotionPiece = GAME_RULES.PAWN_PROMOTION_PIECE || 'queen';
+			const promotionPiece = GAME_RULES.PAWN_PROMOTION_PIECE || 'QUEEN';
 			
 			// Update the piece type
 			piece.type = promotionPiece;
 			
-			// Update the cell type
-			game.board[piece.z][piece.x].pieceType = promotionPiece;
+			// Update the cell to reflect the new piece type
+			const cell = this.boardManager.getCell(game.board, piece.position.x, piece.position.z);
+			if (cell) {
+				cell.chessPiece.type = promotionPiece;
+			}
 			
-			log(`Pawn promoted to ${promotionPiece} at (${piece.x}, ${piece.z})`);
+			log(`Pawn promoted to ${promotionPiece} at (${piece.position.x}, ${piece.position.z})`);
 		}
 	}
 	
@@ -598,26 +682,34 @@ class ChessManager {
 			
 			// Check each piece for valid moves
 			for (const piece of playerPieces) {
-				// Check all possible destination positions within range
-				const boardWidth = game.board[0].length;
-				const boardHeight = game.board.length;
+				// Get the board boundaries from our sparse structure
+				const minX = game.board.minX;
+				const maxX = game.board.maxX;
+				const minZ = game.board.minZ;
+				const maxZ = game.board.maxZ;
 				
-				// Loop through all positions on the board
-				for (let z = 0; z < boardHeight; z++) {
-					for (let x = 0; x < boardWidth; x++) {
+				// Loop through all positions within the board boundaries
+				for (let z = minZ; z <= maxZ; z++) {
+					for (let x = minX; x <= maxX; x++) {
 						// Skip the piece's current position
-						if (piece.x === x && piece.z === z) continue;
+						if (piece.position.x === x && piece.position.z === z) continue;
 						
 						// Check if the move would be valid for this piece type
-						const moveIsValid = this._validateMoveByPieceType(game, piece, x, z);
-						if (!moveIsValid) continue;
+						const moveValidation = this._validateMoveByPieceType(game, piece, x, z);
+						if (!moveValidation.valid) continue;
 						
-						// Check for path obstruction if needed
-						const pathClear = this._checkPathObstruction(game, piece, x, z);
-						if (!pathClear) continue;
+						// Check for path obstruction if needed (except for knights which can jump)
+						if (piece.type !== 'KNIGHT') {
+							const pathValidation = this._checkPathObstruction(game, piece, x, z);
+							if (!pathValidation.valid) continue;
+						}
+						
+						// Check if the destination contains a friendly piece
+						const targetCell = this.boardManager.getCell(game.board, x, z);
+						if (targetCell && targetCell.player === playerId) continue;
 						
 						// This position is a valid move
-						log(`Player ${playerId} has valid move: ${piece.type} at (${piece.x}, ${piece.z}) to (${x}, ${z})`);
+						log(`Player ${playerId} has valid move: ${piece.type} at (${piece.position.x}, ${piece.position.z}) to (${x}, ${z})`);
 						return true;
 					}
 				}

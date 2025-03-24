@@ -25,12 +25,20 @@ const testDirectories = [
 // Test files to run - add new tests here as they are created
 const testFiles = [
 	// Gameplay tests
-	'gameplay/tetrominoPlacement.test.js', // Tests for placing tetrominos on the board
-	'gameplay/chessMovement.test.js',      // Tests for chess piece movement rules
-	'gameplay/rowClearing.test.js',        // Tests for row clearing mechanics
-	'gameplay/homeZoneSpiral.test.js',     // Tests for home zone spiral placement
-	'gameplay/kingCapture.test.js',         // Add king capture test
-	'gameplay/islandConnectivity.test.js', // Tests for island connectivity validation
+	'gameplay/rowClearing.test.js',         // Tests for row clearing mechanics
+	'gameplay/homeZoneSpiral.test.js',      // Tests for home zone placement
+	'gameplay/kingCapture.test.js',         // Tests for capturing kings and gaining their territory
+	'gameplay/islandConnectivity.test.js',  // Tests for connectivity path finding
+	'gameplay/tetrominoPlacement.test.js',  // Tests for tetromino placement
+	'gameplay/chessMovement.test.js',       // Tests for chess piece movement
+	'gameplay/pawnPromotion.test.js',       // Tests for pawn promotion
+	'gameplay/homeZoneDegradation.test.js', // Tests for home zone degradation when empty
+	'gameplay/orphanedPieces.test.js',      // Tests for handling of pieces disconnected from king
+	
+	// Backend API tests
+	'backend/gameStateManager.test.js',     // Tests for the game state manager and state integrity
+	'backend/apiEndpoints.test.js',         // Tests for the API endpoints and game interactions
+	'backend/computerPlayer.test.js',       // Tests for computer player functionality and interactions
 	
 	// Add other test files here as they are created
 ];

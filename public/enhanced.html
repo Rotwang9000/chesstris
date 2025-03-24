@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shaktris - Enhanced Russian Theme</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Arial', sans-serif;
+        }
+        
+        #game-container {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+        }
+        
+        #loading-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #000;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            color: white;
+            transition: opacity 1s ease-in-out;
+        }
+        
+        #loading-text {
+            font-size: 24px;
+            margin-bottom: 20px;
+            color: #ffcc00;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+        
+        #loading-bar-container {
+            width: 300px;
+            height: 20px;
+            background-color: #333;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        
+        #loading-bar {
+            width: 0%;
+            height: 100%;
+            background-color: #ffcc00;
+            transition: width 0.5s ease-in-out;
+        }
+        
+        .russian-header {
+            font-family: 'Times New Roman', serif;
+            font-weight: bold;
+            color: #ffcc00;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+            margin-bottom: 30px;
+            font-size: 48px;
+            letter-spacing: 1px;
+        }
+        
+        .onion-dome {
+            position: absolute;
+            bottom: 30px;
+            width: 100%;
+            text-align: center;
+            font-size: 72px;
+            color: #ffcc00;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+        }
+    </style>
+</head>
+
+<body>
+    <div id="loading-screen">
+        <h1 class="russian-header">SHAKTRIS</h1>
+        <div id="loading-text">Loading Game Assets</div>
+        <div id="loading-bar-container">
+            <div id="loading-bar"></div>
+        </div>
+        <div class="onion-dome">☦</div>
+    </div>
+    
+    <div id="game-container"></div>
+
+    <!-- Core libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.min.js"></script>
+    
+    <!-- Socket.IO -->
+    <script src="https://cdn.socket.io/4.2.0/socket.io.min.js"></script>
+    
+    <!-- Game core module -->
+    <script type="module">
+        import { initGame } from './js/enhanced-gameCore.js';
+        
+        // Update loading progress
+        function updateLoadingProgress(progress) {
+            const loadingBar = document.getElementById('loading-bar');
+            const loadingText = document.getElementById('loading-text');
+            
+            if (loadingBar) {
+                loadingBar.style.width = `${progress}%`;
+            }
+            
+            if (loadingText) {
+                if (progress < 30) {
+                    loadingText.textContent = 'Loading Resources...';
+                } else if (progress < 60) {
+                    loadingText.textContent = 'Creating Russian Chess Pieces...';
+                } else if (progress < 90) {
+                    loadingText.textContent = 'Painting Tetrominos...';
+                } else {
+                    loadingText.textContent = 'Preparing Game...';
+                }
+            }
+        }
+        
+        // Simulate loading progress
+        let progress = 0;
+        const loadingInterval = setInterval(() => {
+            progress += 5;
+            updateLoadingProgress(progress);
+            
+            if (progress >= 100) {
+                clearInterval(loadingInterval);
+                
+                // Hide loading screen with fade effect
+                setTimeout(() => {
+                    const loadingScreen = document.getElementById('loading-screen');
+                    if (loadingScreen) {
+                        loadingScreen.style.opacity = '0';
+                        
+                        // Remove from DOM after fade out
+                        setTimeout(() => {
+                            loadingScreen.style.display = 'none';
+                        }, 1000);
+                    }
+                }, 500);
+                
+                // Initialize the game
+                const gameContainer = document.getElementById('game-container');
+                if (gameContainer) {
+                    initGame(gameContainer);
+                }
+            }
+        }, 100);
+    </script>
+</body>
+</html> 

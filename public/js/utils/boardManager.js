@@ -11,10 +11,10 @@
  * @param {number} height - Board height
  * @returns {Array} Empty game board
  */
-export function createEmptyBoard(width = 16, height = 16) {
+export function createEmptyBoard(width = 30, height = 30) {
 	if (width <= 0 || height <= 0) {
 		console.error('Invalid board dimensions:', width, height);
-		return createEmptyBoard(16, 16); // Default to 16x16 if invalid
+		return createEmptyBoard(30, 30); // Default to 30x30 if invalid
 	}
 	
 	// Create a 2D array filled with null values

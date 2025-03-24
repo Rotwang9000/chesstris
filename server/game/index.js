@@ -3,7 +3,6 @@
  */
 
 const GameManager = require('./GameManager');
-const GameManagerWrapper = require('./GameManagerWrapper');
 const BoardManager = require('./BoardManager');
 const TetrominoManager = require('./TetrominoManager');
 const ChessManager = require('./ChessManager');
@@ -12,6 +11,10 @@ const PlayerManager = require('./PlayerManager');
 const ComputerPlayerManager = require('./ComputerPlayerManager');
 const GameUtilities = require('./GameUtilities');
 const Constants = require('./Constants');
+const BoardUpdater = require('./BoardUpdater');
+
+// Import GameManagerWrapper after other modules to avoid circular reference
+const GameManagerWrapper = require('./GameManagerWrapper');
 
 module.exports = {
 	GameManager,
@@ -23,5 +26,6 @@ module.exports = {
 	PlayerManager,
 	ComputerPlayerManager,
 	GameUtilities,
-	Constants
+	Constants,
+	BoardUpdater
 }; 

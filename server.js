@@ -11,6 +11,7 @@ const path = require('path');
 const socketIO = require('socket.io');
 const { v4: uuidv4 } = require('uuid');
 const bodyParser = require('body-parser');
+const { BOARD_SETTINGS, GAME_RULES } = require('./server/game/Constants');
 
 // Import API routes
 const apiRoutes = require('./routes/api');
@@ -23,8 +24,8 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIO(server);
 
-// Set port from environment variable or default to 3020
-const PORT = process.env.PORT || 3020;
+// Define constants
+const PORT = process.env.PORT || 3021; // Changed from 3020 to 3021
 
 // Create a single GameManager instance to use for all connections
 const gameManager = new GameManager();
@@ -134,12 +135,42 @@ io.on('connection', (socket) => {
 				return;
 			}
 			
+			// Register player using GameManager
+			const registrationResult = gameManager.registerPlayer(
+				gameId,
+				playerId,
+				player.name,
+				false // Not an observer
+			);
+			
+			if (!registrationResult.success) {
+				console.error(`Failed to register player ${playerId} with GameManager:`, registrationResult.error);
+				if (callback) callback({ success: false, error: registrationResult.error });
+				return;
+			}
+			
 			// Add player to game
 			game.players.push(playerId);
 			player.gameId = gameId;
 			
 			// Join socket room for this game
 			socket.join(gameId);
+			
+			// If home zone data was returned, add it to the game state
+			if (registrationResult.homeZone) {
+				if (!game.state.homeZones) {
+					game.state.homeZones = {};
+				}
+				game.state.homeZones[playerId] = registrationResult.homeZone;
+			}
+			
+			// If chess pieces were returned, add them to the game
+			if (registrationResult.chessPieces && Array.isArray(registrationResult.chessPieces)) {
+				if (!game.state.chessPieces) {
+					game.state.chessPieces = [];
+				}
+				game.state.chessPieces.push(...registrationResult.chessPieces);
+			}
 			
 			// Notify all players in the game
 			io.to(gameId).emit('player_joined', {
@@ -601,7 +632,7 @@ io.on('connection', (socket) => {
 				}
 			}
 			
-			console.log(`Player ${playerId} requested game state for game: ${requestedGameId}`);
+			// console.log(`Player ${playerId} requested game state for game: ${requestedGameId}`);
 			
 			const player = players.get(playerId);
 			if (!player) {
@@ -677,7 +708,7 @@ io.on('connection', (socket) => {
 				}))
 			});
 			
-			console.log(`Sent game state to player ${playerId}`);
+			// console.log(`Sent game state to player ${playerId}`);
 		} catch (error) {
 			console.error('Error handling get_game_state request:', error);
 			socket.emit('error', { message: 'Error getting game state' });
@@ -733,75 +764,41 @@ io.on('connection', (socket) => {
 				return;
 			}
 			
-			// Create a fresh game state but keep the same game ID
-			const boardSize = game.state.boardSize || 16;
+			// Create a new game using the GameManager
+			const newGame = gameManager.createGame({
+				width: game.state.boardSize || BOARD_SETTINGS.DEFAULT_WIDTH,
+				height: game.state.boardSize || BOARD_SETTINGS.DEFAULT_HEIGHT,
+				maxPlayers: game.players.length,
+				homeZoneDistance: BOARD_SETTINGS.HOME_ZONE_DISTANCE
+			});
 			
-			// Create empty board
-			const board = Array(boardSize).fill().map(() => Array(boardSize).fill(0));
-			
-			// Set up home zones
-			// Player 1 (blue) - bottom
-			for (let z = boardSize - 2; z < boardSize; z++) {
-				for (let x = 0; x < 8; x++) {
-					board[z][x] = 6; // Blue home zone
+			// Register all the existing players in the new game
+			const chessPieces = [];
+			game.players.forEach((playerId, index) => {
+				const playerObject = players.get(playerId);
+				const registrationResult = gameManager.registerPlayer(
+					newGame.gameId, 
+					playerId, 
+					playerObject ? playerObject.name : `Player_${playerId.substring(0, 5)}`,
+					false // Not an observer
+				);
+				
+				if (registrationResult.success) {
+					// Add player's chess pieces to the combined array
+					if (registrationResult.chessPieces) {
+						chessPieces.push(...registrationResult.chessPieces);
+					}
 				}
-			}
+			});
 			
-			// Player 2 (orange) - top
-			for (let z = 0; z < 2; z++) {
-				for (let x = 8; x < boardSize; x++) {
-					board[z][x] = 7; // Orange home zone
-				}
-			}
+			// Get the actual game object with all data
+			const freshGame = gameManager.getGame(newGame.gameId);
 			
-			// Initialize chess pieces
-			// Define chess piece types and positions for player 1
-			const player1Pieces = [
-				{ type: 'pawn', x: 0, z: 14 },
-				{ type: 'pawn', x: 1, z: 14 },
-				{ type: 'pawn', x: 2, z: 14 },
-				{ type: 'pawn', x: 3, z: 14 },
-				{ type: 'pawn', x: 4, z: 14 },
-				{ type: 'pawn', x: 5, z: 14 },
-				{ type: 'pawn', x: 6, z: 14 },
-				{ type: 'pawn', x: 7, z: 14 },
-				{ type: 'rook', x: 0, z: 15 },
-				{ type: 'knight', x: 1, z: 15 },
-				{ type: 'bishop', x: 2, z: 15 },
-				{ type: 'queen', x: 3, z: 15 },
-				{ type: 'king', x: 4, z: 15 },
-				{ type: 'bishop', x: 5, z: 15 },
-				{ type: 'knight', x: 6, z: 15 },
-				{ type: 'rook', x: 7, z: 15 }
-			].map(piece => ({ ...piece, player: 1 }));
-			
-			// Define chess piece types and positions for player 2
-			const player2Pieces = [
-				{ type: 'pawn', x: 8, z: 1 },
-				{ type: 'pawn', x: 9, z: 1 },
-				{ type: 'pawn', x: 10, z: 1 },
-				{ type: 'pawn', x: 11, z: 1 },
-				{ type: 'pawn', x: 12, z: 1 },
-				{ type: 'pawn', x: 13, z: 1 },
-				{ type: 'pawn', x: 14, z: 1 },
-				{ type: 'pawn', x: 15, z: 1 },
-				{ type: 'rook', x: 8, z: 0 },
-				{ type: 'knight', x: 9, z: 0 },
-				{ type: 'bishop', x: 10, z: 0 },
-				{ type: 'queen', x: 11, z: 0 },
-				{ type: 'king', x: 12, z: 0 },
-				{ type: 'bishop', x: 13, z: 0 },
-				{ type: 'knight', x: 14, z: 0 },
-				{ type: 'rook', x: 15, z: 0 }
-			].map(piece => ({ ...piece, player: 2 }));
-			
-			// Combine all chess pieces
-			const chessPieces = [...player1Pieces, ...player2Pieces];
-			
-			// Update the game state
+			// Update the current game with the new board and home zones
 			game.state = {
 				...game.state,
-				board: board,
+				board: freshGame.board,
+				homeZones: freshGame.homeZones,
 				chessPieces: chessPieces,
 				currentPlayer: 1,
 				turnPhase: 'tetris',
@@ -820,7 +817,7 @@ io.on('connection', (socket) => {
 				}))
 			});
 			
-			console.log(`Game ${gameId} restarted by player ${playerId}`);
+			console.log(`Game ${gameId} restarted by player ${playerId} with proper home zones`);
 		} catch (error) {
 			console.error('Error handling restart_game request:', error);
 			socket.emit('error', { message: 'Error restarting game' });
@@ -956,84 +953,43 @@ function createNewGame(gameId = null, settings = {}) {
 	// Use provided gameId or generate a new UUID
 	const id = gameId || uuidv4();
 	
-	// Set board size with sensible defaults
-	const boardSize = settings.boardSize || 16;
+	// Use the GameManager to create the game with proper board and home zones
+	const newGameResult = gameManager.createGame({
+		width: settings.boardSize || BOARD_SETTINGS.DEFAULT_WIDTH,
+		height: settings.boardSize || BOARD_SETTINGS.DEFAULT_HEIGHT,
+		maxPlayers: settings.maxPlayers || 2048,
+		homeZoneDistance: BOARD_SETTINGS.HOME_ZONE_DISTANCE,
+		gameId: id  // Ensure we pass the exact gameId to the GameManager
+	});
 	
-	// Create empty board
-	const board = Array(boardSize).fill().map(() => Array(boardSize).fill(0));
-	
-	// Set up home zones
-	// Player 1 (blue) - bottom
-	for (let z = boardSize - 2; z < boardSize; z++) {
-		for (let x = 0; x < 8; x++) {
-			board[z][x] = 6; // Blue home zone
-		}
+	// Check if the game was created successfully
+	if (!newGameResult || !newGameResult.gameId) {
+		console.error('Failed to create game using GameManager');
+		return null;
 	}
 	
-	// Player 2 (orange) - top
-	for (let z = 0; z < 2; z++) {
-		for (let x = 8; x < boardSize; x++) {
-			board[z][x] = 7; // Orange home zone
-		}
+	// Get the game object - using the exact same ID we provided
+	const gameObj = gameManager.getGame(id);
+	
+	if (!gameObj) {
+		console.error(`Game with ID ${id} not found in GameManager after creation`);
+		return null;
 	}
 	
-	// Initialize chess pieces
-	// Define chess piece types and positions for player 1
-	const player1Pieces = [
-		{ type: 'pawn', x: 0, z: 14 },
-		{ type: 'pawn', x: 1, z: 14 },
-		{ type: 'pawn', x: 2, z: 14 },
-		{ type: 'pawn', x: 3, z: 14 },
-		{ type: 'pawn', x: 4, z: 14 },
-		{ type: 'pawn', x: 5, z: 14 },
-		{ type: 'pawn', x: 6, z: 14 },
-		{ type: 'pawn', x: 7, z: 14 },
-		{ type: 'rook', x: 0, z: 15 },
-		{ type: 'knight', x: 1, z: 15 },
-		{ type: 'bishop', x: 2, z: 15 },
-		{ type: 'queen', x: 3, z: 15 },
-		{ type: 'king', x: 4, z: 15 },
-		{ type: 'bishop', x: 5, z: 15 },
-		{ type: 'knight', x: 6, z: 15 },
-		{ type: 'rook', x: 7, z: 15 }
-	].map(piece => ({ ...piece, player: 1 }));
-	
-	// Define chess piece types and positions for player 2
-	const player2Pieces = [
-		{ type: 'pawn', x: 8, z: 1 },
-		{ type: 'pawn', x: 9, z: 1 },
-		{ type: 'pawn', x: 10, z: 1 },
-		{ type: 'pawn', x: 11, z: 1 },
-		{ type: 'pawn', x: 12, z: 1 },
-		{ type: 'pawn', x: 13, z: 1 },
-		{ type: 'pawn', x: 14, z: 1 },
-		{ type: 'pawn', x: 15, z: 1 },
-		{ type: 'rook', x: 8, z: 0 },
-		{ type: 'knight', x: 9, z: 0 },
-		{ type: 'bishop', x: 10, z: 0 },
-		{ type: 'queen', x: 11, z: 0 },
-		{ type: 'king', x: 12, z: 0 },
-		{ type: 'bishop', x: 13, z: 0 },
-		{ type: 'knight', x: 14, z: 0 },
-		{ type: 'rook', x: 15, z: 0 }
-	].map(piece => ({ ...piece, player: 2 }));
-	
-	// Combine all chess pieces
-	const chessPieces = [...player1Pieces, ...player2Pieces];
-	
-	// Create the game object
+	// Create a lightweight game object for the socket server
 	const game = {
 		id: id,
 		players: [],
 		maxPlayers: settings.maxPlayers || 2048,
 		hasComputerPlayer: false,
 		state: {
-			board: board,
-			chessPieces: chessPieces,
+			board: gameObj.board,
+			homeZones: gameObj.homeZones,
+			chessPieces: [],  // Will be populated as players join
 			gameMode: settings.gameMode || 'standard',
 			difficulty: settings.difficulty || 'normal',
 			startLevel: settings.startLevel || 1,
-			boardSize: boardSize,
+			boardSize: Math.max(gameObj.board.width, gameObj.board.height), // Use the new sparse board properties
 			renderMode: settings.renderMode || '3d',
 			currentPlayer: 1,
 			turnPhase: 'tetris',
@@ -1063,6 +1019,14 @@ function createNewGame(gameId = null, settings = {}) {
 			minMoveInterval: 10000,
 			strategy: generateComputerStrategy(COMPUTER_DIFFICULTY.MEDIUM)
 		});
+		
+		// Register the computer player with the GameManager
+		gameManager.registerPlayer(
+			id,
+			computerId,
+			`AI Opponent (Orange)`,
+			false
+		);
 		
 		// Add to game's player list
 		game.players.push(computerId);
@@ -1322,7 +1286,7 @@ function performStrategicTetrominoPlacement(gameState, computerId, strategy) {
 	if (!game) return;
 	
 	// Get the current board state
-	const board = gameState.board || [];
+	const board = gameState.board || { cells: {}, minX: 0, maxX: 20, minZ: 0, maxZ: 20, width: 21, height: 21 };
 	
 	// Find the best placement for a tetromino based on current situation
 	// This would involve analyzing the board to find optimal placement
@@ -1392,19 +1356,27 @@ function performStrategicChessMove(gameState, computerId, strategy) {
 	updateSpectators(computerId, game.state);
 }
 
-// Simulate tetromino placement with enhanced strategy
+/**
+ * Simulate tetromino placement for AI planning
+ * Note: This is a simplified simulation for the computer player and does not
+ * use the actual TetrominoManager. Real placement should use the manager.
+ */
 function simulateTetrominoPlacement(board, computerId, strategy) {
 	// Create a copy of the board
-	const newBoard = Array.isArray(board) ? JSON.parse(JSON.stringify(board)) : [];
+	// With the new sparse structure, we'll need a different approach
+	let newBoard = {
+		cells: {},
+		minX: board.minX || 0,
+		maxX: board.maxX || 20,
+		minZ: board.minZ || 0,
+		maxZ: board.maxZ || 20,
+		width: board.width || 21,
+		height: board.height || 21
+	};
 	
-	// Ensure board has at least some rows and columns
-	if (newBoard.length === 0) {
-		for (let y = 0; y < 20; y++) {
-			newBoard[y] = [];
-			for (let x = 0; x < 10; x++) {
-				newBoard[y][x] = 0;
-			}
-		}
+	// Copy existing cells
+	if (board.cells) {
+		newBoard.cells = JSON.parse(JSON.stringify(board.cells));
 	}
 	
 	// Get tetromino type based on strategy
@@ -1422,17 +1394,41 @@ function simulateTetrominoPlacement(board, computerId, strategy) {
 	// Calculate placement based on strategy
 	// Higher exploration rates place pieces further from current structures
 	// Higher build speeds prioritize building upward
-	let x, y;
+	let x, z;
+	
+	// Use the board boundaries for placement calculation
+	const boardWidth = newBoard.maxX - newBoard.minX + 1;
+	const boardHeight = newBoard.maxZ - newBoard.minZ + 1;
 	
 	if (Math.random() < strategy.explorationRate) {
 		// Place further out
-		x = Math.floor(Math.random() * (newBoard[0].length - 3));
-		y = Math.floor(Math.random() * (newBoard.length - 3));
+		x = newBoard.minX + Math.floor(Math.random() * (boardWidth - 3));
+		z = newBoard.minZ + Math.floor(Math.random() * (boardHeight - 3));
 	} else {
 		// Place near existing structures (simplified)
 		// In a real implementation, would analyze the board to find existing structures
-		x = Math.floor(Math.random() * (newBoard[0].length / 2)) + Math.floor(newBoard[0].length / 4);
-		y = Math.floor(Math.random() * (newBoard.length / 2)) + Math.floor(newBoard.length / 4);
+		x = newBoard.minX + Math.floor(Math.random() * (boardWidth / 2)) + Math.floor(boardWidth / 4);
+		z = newBoard.minZ + Math.floor(Math.random() * (boardHeight / 2)) + Math.floor(boardHeight / 4);
+	}
+	
+	// Helper function to set a cell
+	function setCell(x, z, type) {
+		const key = `${x},${z}`;
+		newBoard.cells[key] = {
+			type: 'tetromino',
+			player: computerId,
+			tetrominoType: type
+		};
+		
+		// Update board boundaries if necessary
+		if (x < newBoard.minX) newBoard.minX = x;
+		if (x > newBoard.maxX) newBoard.maxX = x;
+		if (z < newBoard.minZ) newBoard.minZ = z;
+		if (z > newBoard.maxZ) newBoard.maxZ = z;
+		
+		// Update width and height
+		newBoard.width = newBoard.maxX - newBoard.minX + 1;
+		newBoard.height = newBoard.maxZ - newBoard.minZ + 1;
 	}
 	
 	// Place the tetromino
@@ -1441,45 +1437,33 @@ function simulateTetrominoPlacement(board, computerId, strategy) {
 	switch (tetrominoType) {
 		case 1: // I shape
 			for (let i = 0; i < 4; i++) {
-				if (y + i < newBoard.length) {
-					newBoard[y + i][x] = tetrominoType;
-				}
+				setCell(x, z + i, tetrominoType);
 			}
 			break;
 		case 2: // J shape
 			for (let i = 0; i < 3; i++) {
-				if (y + i < newBoard.length) {
-					newBoard[y + i][x] = tetrominoType;
-				}
+				setCell(x, z + i, tetrominoType);
 			}
-			if (x + 1 < newBoard[0].length && y + 2 < newBoard.length) {
-				newBoard[y + 2][x + 1] = tetrominoType;
-			}
+			setCell(x + 1, z + 2, tetrominoType);
 			break;
 		case 3: // L shape
 			for (let i = 0; i < 3; i++) {
-				if (y + i < newBoard.length) {
-					newBoard[y + i][x] = tetrominoType;
-				}
+				setCell(x, z + i, tetrominoType);
 			}
-			if (x + 1 < newBoard[0].length && y < newBoard.length) {
-				newBoard[y][x + 1] = tetrominoType;
-			}
+			setCell(x + 1, z, tetrominoType);
 			break;
 		case 4: // O shape
 			for (let i = 0; i < 2; i++) {
 				for (let j = 0; j < 2; j++) {
-					if (y + i < newBoard.length && x + j < newBoard[0].length) {
-						newBoard[y + i][x + j] = tetrominoType;
-					}
+					setCell(x + j, z + i, tetrominoType);
 				}
 			}
 			break;
 		default: // Other shapes (simplified)
 			for (let i = 0; i < 3; i++) {
 				for (let j = 0; j < 2; j++) {
-					if (y + i < newBoard.length && x + j < newBoard[0].length && Math.random() < 0.7) {
-						newBoard[y + i][x + j] = tetrominoType;
+					if (Math.random() < 0.7) {
+						setCell(x + j, z + i, tetrominoType);
 					}
 				}
 			}
@@ -1651,10 +1635,8 @@ function simulateChessMove(chessPieces, computerId, strategy) {
 		newChessPieces[originalPieceIndex].x += Math.round(dx);
 		newChessPieces[originalPieceIndex].z += Math.round(dz);
 		
-		// Ensure position is within bounds
-		const boardSize = 16; // Use a reasonable default if not available
-		newChessPieces[originalPieceIndex].x = Math.max(0, Math.min(boardSize - 1, newChessPieces[originalPieceIndex].x));
-		newChessPieces[originalPieceIndex].z = Math.max(0, Math.min(boardSize - 1, newChessPieces[originalPieceIndex].z));
+		// No need for boundary checking as we now support boundless coordinates
+		// The pieces can move freely in any direction
 	}
 	
 	return newChessPieces;
@@ -1693,7 +1675,7 @@ function initializeGlobalGame() {
 		maxPlayers: 2048, // Allow up to 2048 players as per requirements
 		gameMode: 'standard',
 		difficulty: 'normal',
-		boardSize: 16
+		boardSize: 30
 	});
 	
 	console.log(`Global game created with ID: ${GLOBAL_GAME_ID}`);

@@ -3,22 +3,25 @@
 <head>
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<title>Shaktris - Chess + Tetris</title>
-	<meta name="description" content="Shaktris is a unique game that combines elements of chess and Tetris on a dynamically expanding board.">
+	<title>Shaktris - Russian Theme</title>
+	<meta name="description" content="Shaktris is a unique game that combines elements of chess and Tetris with Russian-inspired visuals.">
 	
 	<!-- Libraries -->
 	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
 	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
 	<script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.2/dist/socket.io.min.js"></script>
 	
 	<style>
+		@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&display=swap');
+		
 		body, html {
 			margin: 0;
 			padding: 0;
 			width: 100%;
 			height: 100%;
 			overflow: hidden;
-			font-family: Arial, sans-serif;
+			font-family: 'Playfair Display', 'Times New Roman', serif;
 			background-color: #000;
 		}
 		
@@ -30,11 +33,41 @@
 			height: 100%;
 			background-color: #000;
 			display: flex;
+			flex-direction: column;
 			justify-content: center;
 			align-items: center;
 			z-index: 1000;
-			color: white;
+			color: #ffcc00;
 			font-size: 2em;
+			text-align: center;
+		}
+		
+		#loading .loader {
+			width: 150px;
+			height: 8px;
+			background-color: #222;
+			border-radius: 4px;
+			margin: 20px 0;
+			overflow: hidden;
+			position: relative;
+			box-shadow: 0 0 10px rgba(255, 204, 0, 0.3);
+		}
+		
+		#loading .loader::after {
+			content: '';
+			position: absolute;
+			left: 0;
+			top: 0;
+			height: 100%;
+			width: 0;
+			background-color: #ffcc00;
+			animation: loading 2s infinite ease-in-out;
+		}
+		
+		@keyframes loading {
+			0% { width: 0; }
+			50% { width: 100%; }
+			100% { width: 0; }
 		}
 		
 		#error-message {
@@ -48,7 +81,7 @@
 			justify-content: center;
 			align-items: center;
 			z-index: 1001;
-			color: #ff5555;
+			color: #ffcc00;
 			font-size: 1.5em;
 			text-align: center;
 			padding: 20px;
@@ -56,21 +89,22 @@
 		
 		/* Added links to the error message */
 		#error-message a {
-			color: #3498db;
+			color: #ffcc00;
 			text-decoration: underline;
 			margin: 10px;
 			display: inline-block;
 		}
 		
 		#error-message button {
-			background-color: #3498db;
-			color: white;
-			border: none;
+			background-color: #333;
+			color: #ffcc00;
+			border: 1px solid #ffcc00;
 			padding: 8px 16px;
 			margin-top: 20px;
 			border-radius: 4px;
 			cursor: pointer;
 			font-size: 16px;
+			font-family: 'Playfair Display', serif;
 		}
 		
 		/* Critical fix: Ensure game container has proper height */
@@ -96,10 +130,10 @@
 			top: 10px;
 			left: 10px;
 			z-index: 100;
-			color: white;
+			color: #ffcc00;
 			font-size: 24px;
 			font-weight: bold;
-			text-shadow: 0 0 10px rgba(0, 0, 0, 0.7);
+			text-shadow: 0 0 10px rgba(255, 204, 0, 0.5);
 		}
 		
 		/* Debug indicator */
@@ -116,38 +150,41 @@
 <body>
 	<!-- Game Title -->
 	<div class="game-title">SHAKTRIS</div>
+	<div style="position: fixed; top: 15px; left: 120px; color: #ffcc00; font-size: 18px; z-index: 100; background-color: rgba(0, 0, 0, 0.7); padding: 4px 10px; border-radius: 10px; border: 1px solid #ffcc00;">Russian Theme</div>
 	
 	<!-- Add navigation menu after the game title div -->
 	<div style="position: fixed; top: 10px; left: 150px; z-index: 1000; background-color: rgba(0, 0, 0, 0.7); padding: 10px; border-radius: 5px;">
 		<div style="color: white; font-weight: bold; margin-bottom: 8px;">Navigation</div>
-		<a href="index.html" style="color: #3498db; margin-right: 10px; text-decoration: none; font-weight: bold;">Main Game</a>
+		<a href="index.html" style="color: #ffcc00; margin-right: 10px; text-decoration: none; font-weight: bold;">Russian Theme</a>
 		<a href="interaction-test.html" style="color: #3498db; margin-right: 10px; text-decoration: none;">Interaction Test</a>
-		<a href="dev-test.html" style="color: #3498db; text-decoration: none;">Dev Test</a>
+		<a href="minimal.html" style="color: #3498db; text-decoration: none;">Minimal Version</a>
 	</div>
 	
 	<!-- Debug Indicator -->
 	<div class="debug-indicator">
-		Running simplified version.
-		<button id="reset-camera-btn" style="margin-left: 10px; padding: 2px 6px; background: #3498db; color: white; border: none; border-radius: 3px; cursor: pointer;">Reset Camera</button>
+		Running enhanced version with Russian theme.
+		<button id="reset-camera-btn" style="margin-left: 10px; padding: 2px 6px; background: #333; color: #ffcc00; border: 1px solid #ffcc00; border-radius: 3px; cursor: pointer; font-family: 'Playfair Display', serif;">Reset Camera</button>
 	</div>
 	
 	<!-- Add this right after the Debug Indicator div -->
-	<div id="game-info" style="position: fixed; top: 10px; right: 10px; z-index: 100; background-color: rgba(0, 0, 0, 0.7); padding: 10px; border-radius: 5px; color: white; text-align: center; max-width: 250px;">
-		<div style="font-weight: bold; margin-bottom: 5px;">Game ID</div>
+	<div id="game-info" style="position: fixed; top: 10px; right: 10px; z-index: 100; background-color: rgba(0, 0, 0, 0.7); padding: 10px; border-radius: 5px; color: #ffcc00; text-align: center; max-width: 250px; border: 1px solid #ffcc00; box-shadow: 0 0 10px rgba(255, 204, 0, 0.3);">
+		<div style="font-weight: bold; margin-bottom: 5px; font-family: 'Playfair Display', serif;">Game ID</div>
 		<div style="display: flex; align-items: center; margin-bottom: 10px;">
-			<input id="game-id-display" type="text" value="Loading..." style="flex-grow: 1; padding: 5px; background: rgba(255,255,255,0.1); color: white; border: none; border-radius: 3px; font-family: monospace; margin-right: 5px;" readonly>
-			<button id="copy-game-id" style="background: #3498db; color: white; border: none; border-radius: 3px; padding: 5px; cursor: pointer;">
+			<input id="game-id-display" type="text" value="Loading..." style="flex-grow: 1; padding: 5px; background: rgba(34,34,34,0.8); color: #ffcc00; border: 1px solid #ffcc00; border-radius: 3px; font-family: monospace; margin-right: 5px;" readonly>
+			<button id="copy-game-id" style="background: #333; color: #ffcc00; border: 1px solid #ffcc00; border-radius: 3px; padding: 5px; cursor: pointer; font-family: 'Playfair Display', serif;">
 				Copy
 			</button>
 		</div>
-		<button id="share-game" style="width: 100%; padding: 8px; background: #27ae60; color: white; border: none; border-radius: 5px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;">
+		<button id="share-game" style="width: 100%; padding: 8px; background: #333; color: #ffcc00; border: 1px solid #ffcc00; border-radius: 5px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; font-family: 'Playfair Display', serif;">
 			<span style="font-size: 16px;">↗</span> Invite Friends
 		</button>
 	</div>
 	
 	<!-- Loading Screen -->
 	<div id="loading">
-		Loading Shaktris...
+		<div class="symbol">☦</div>
+		Loading Shaktris Russian Theme...
+		<div class="loader"></div>
 	</div>
 	
 	<!-- Error Message -->
@@ -156,15 +193,19 @@
 	<!-- Game Container -->
 	<div id="game-container" style="display: none;"></div>
 	
+	<!-- Core game scripts -->
+	<script src="js/utils/debugUtils.js" type="module"></script>
+	<script src="js/networkStatus.js"></script>
+	
 	<script type="module">
-		// Import the simplified main module
-		import * as gameMain from './js/main-simple.js';
+		// Import the enhanced main module instead of simplified
+		import * as gameMain from './js/main-enhanced.js';
 		
 		// Add reset camera button functionality
 		document.getElementById('reset-camera-btn').addEventListener('click', () => {
 			try {
-				// Import the minimal game core to access resetCameraView
-				import('./js/minimal-gameCore.js').then(gameCore => {
+				// Import the enhanced game core to access resetCameraView
+				import('./js/enhanced-gameCore.js').then(gameCore => {
 					if (gameCore.resetCameraView) {
 						gameCore.resetCameraView(true);
 					}
@@ -233,5 +274,8 @@
 			}
 		});
 	</script>
+	
+	<script type="module" src="js/boardFunctions.js"></script>
+	<script type="module" src="js/enhanced-gameCore.js"></script>
 </body>
 </html>

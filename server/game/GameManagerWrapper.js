@@ -5,7 +5,9 @@
  * the new modular system without disrupting existing functionality.
  */
 
+// Directly require GameManager to avoid circular dependency
 const GameManager = require('./GameManager');
+const BoardUpdater = require('./BoardUpdater');
 
 class GameManagerWrapper {
 	constructor(io) {
@@ -74,7 +76,15 @@ class GameManagerWrapper {
 			// Send game state to the new player
 			const gameState = this.gameManager.getGameStateForPlayer(gameId, playerId);
 			if (gameState.success) {
-				socket.emit('game_update', this._transformGameState(gameState.gameState));
+				// Process the game state with BoardUpdater to get full state with IDs
+				const transformedState = this._transformGameState(gameState.gameState);
+				
+				// Get board with IDs but don't send incremental changes for the first load
+				const { board } = BoardUpdater.getIncrementalChanges(gameId, transformedState.board);
+				transformedState.board = board;
+				
+				// Send to the player
+				socket.emit('game_update', transformedState);
 			}
 		}
 		
@@ -293,7 +303,21 @@ class GameManagerWrapper {
 		if (result.success) {
 			const socket = this.playerSockets[playerId];
 			if (socket) {
-				socket.emit('game_update', this._transformGameState(result.gameState));
+				// Process the game state with BoardUpdater to get incremental updates
+				const gameState = this._transformGameState(result.gameState);
+				
+				// Get incremental changes for the board
+				const { board, changes, fullUpdate } = BoardUpdater.getIncrementalChanges(gameId, gameState.board);
+				
+				// Update the game state with the processed board
+				gameState.board = board;
+				
+				// Add changes if this is not a full update
+				if (!fullUpdate && changes.length > 0) {
+					gameState.boardChanges = changes;
+				}
+				
+				socket.emit('game_update', gameState);
 			}
 		}
 		
@@ -324,9 +348,17 @@ class GameManagerWrapper {
 	_transformGameState(gameState) {
 		// This method transforms the new GameManager state format
 		// to match the format expected by the existing client
+		
+		// Ensure we have a valid board
+		const board = gameState.board || [];
+		
+		// Calculate the actual board dimensions
+		const boardHeight = board.length;
+		const boardWidth = boardHeight > 0 ? Math.max(...board.map(row => row ? row.length : 0)) : 0;
+		
 		const transformed = {
 			gameId: gameState.id,
-			board: gameState.board,
+			board: board, // Send the full board without size limitations
 			chessPieces: gameState.chessPieces,
 			players: Object.entries(gameState.players).map(([id, player]) => ({
 				id,
@@ -346,8 +378,13 @@ class GameManagerWrapper {
 			})),
 			status: gameState.status,
 			currentPlayer: gameState.currentPlayer,
-			updatedAt: gameState.updatedAt
+			updatedAt: gameState.updatedAt,
+			boardSize: Math.max(boardHeight, boardWidth), // Add the actual board size for the client
+			boardDimensions: { width: boardWidth, height: boardHeight }, // Add actual dimensions
 		};
+		
+		// Log the size of the board being sent to the client
+		console.log(`Sending board to client: ${boardHeight}x${boardWidth}`);
 		
 		return transformed;
 	}

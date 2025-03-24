@@ -4,8 +4,8 @@
  */
 
 // Import Three.js using ES modules
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.module.js';
+import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.132.2/examples/jsm/controls/OrbitControls.js';
 
 // Log the version
 console.log('Three.js Version:', THREE.REVISION);
@@ -46,7 +46,7 @@ export const BufferAttribute = THREE.BufferAttribute;
 export const Clock = THREE.Clock;
 export const Raycaster = THREE.Raycaster;
 export const Matrix4 = THREE.Matrix4;
-
+export const TorusGeometry = THREE.TorusGeometry;
 // Sides and blending modes
 export const DoubleSide = THREE.DoubleSide;
 export const FrontSide = THREE.FrontSide;

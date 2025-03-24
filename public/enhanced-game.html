@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Shaktris - Enhanced Russian Theme</title>
+	<meta name="description" content="Shaktris is a unique game that combines elements of chess and Tetris with Russian-inspired visuals.">
+	
+	<!-- Libraries -->
+	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.2/dist/socket.io.min.js"></script>
+	
+	<style>
+		@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&display=swap');
+		
+		body, html {
+			margin: 0;
+			padding: 0;
+			width: 100%;
+			height: 100%;
+			overflow: hidden;
+			font-family: 'Playfair Display', 'Times New Roman', serif;
+			background-color: #000;
+		}
+		
+		#loading {
+			position: fixed;
+			top: 0;
+			left: 0;
+			width: 100%;
+			height: 100%;
+			background-color: #000;
+			display: flex;
+			flex-direction: column;
+			justify-content: center;
+			align-items: center;
+			z-index: 1000;
+			color: #ffcc00;
+			font-size: 2em;
+			text-align: center;
+		}
+		
+		#loading .loader {
+			width: 150px;
+			height: 8px;
+			background-color: #222;
+			border-radius: 4px;
+			margin: 20px 0;
+			overflow: hidden;
+			position: relative;
+			box-shadow: 0 0 10px rgba(255, 204, 0, 0.3);
+		}
+		
+		#loading .loader::after {
+			content: '';
+			position: absolute;
+			left: 0;
+			top: 0;
+			height: 100%;
+			width: 0;
+			background-color: #ffcc00;
+			animation: loading 2s infinite ease-in-out;
+		}
+		
+		@keyframes loading {
+			0% { width: 0; }
+			50% { width: 100%; }
+			100% { width: 0; }
+		}
+		
+		#loading .symbol {
+			font-size: 72px;
+			margin: 20px 0;
+		}
+		
+		#error-message {
+			position: fixed;
+			top: 0;
+			left: 0;
+			width: 100%;
+			height: 100%;
+			background-color: rgba(0, 0, 0, 0.9);
+			display: none;
+			justify-content: center;
+			align-items: center;
+			z-index: 1001;
+			color: #ffcc00;
+			font-size: 1.5em;
+			text-align: center;
+			padding: 20px;
+		}
+		
+		#error-message a {
+			color: #ffcc00;
+			text-decoration: underline;
+			margin: 10px;
+			display: inline-block;
+		}
+		
+		#error-message button {
+			background-color: #333;
+			color: #ffcc00;
+			border: 1px solid #ffcc00;
+			padding: 8px 16px;
+			margin-top: 20px;
+			border-radius: 4px;
+			cursor: pointer;
+			font-size: 16px;
+			font-family: 'Playfair Display', serif;
+		}
+		
+		#game-container {
+			position: fixed;
+			top: 0;
+			left: 0;
+			width: 100%;
+			height: 100vh !important;
+			min-height: 100vh !important;
+			z-index: 1;
+		}
+		
+		#game-container canvas {
+			display: block;
+			width: 100% !important;
+			height: 100% !important;
+		}
+		
+		.game-title {
+			position: fixed;
+			top: 10px;
+			left: 10px;
+			z-index: 100;
+			color: #ffcc00;
+			font-size: 24px;
+			font-weight: bold;
+			text-shadow: 0 0 10px rgba(255, 204, 0, 0.5);
+			font-family: 'Playfair Display', serif;
+		}
+		
+		.russian-badge {
+			position: fixed;
+			top: 15px;
+			left: 120px;
+			color: #ffcc00;
+			font-size: 18px;
+			z-index: 100;
+			background-color: rgba(0, 0, 0, 0.7);
+			padding: 4px 10px;
+			border-radius: 10px;
+			border: 1px solid #ffcc00;
+			font-family: 'Playfair Display', serif;
+		}
+		
+		.navigation {
+			position: fixed;
+			top: 10px;
+			left: 230px;
+			z-index: 1000;
+			background-color: rgba(0, 0, 0, 0.7);
+			padding: 10px;
+			border-radius: 5px;
+			border: 1px solid #ffcc00;
+		}
+		
+		.navigation .title {
+			color: #ffcc00;
+			font-weight: bold;
+			margin-bottom: 8px;
+		}
+		
+		.navigation a {
+			color: #ffcc00;
+			margin-right: 10px;
+			text-decoration: none;
+		}
+		
+		.navigation a.active {
+			font-weight: bold;
+			text-decoration: underline;
+		}
+		
+		#game-info {
+			position: fixed;
+			top: 10px;
+			right: 10px;
+			z-index: 100;
+			background-color: rgba(0, 0, 0, 0.7);
+			padding: 10px;
+			border-radius: 5px;
+			color: #ffcc00;
+			text-align: center;
+			max-width: 250px;
+			border: 1px solid #ffcc00;
+			box-shadow: 0 0 10px rgba(255, 204, 0, 0.3);
+		}
+		
+		#game-info input {
+			background: rgba(34, 34, 34, 0.8);
+			color: #ffcc00;
+			border: 1px solid #ffcc00;
+			border-radius: 3px;
+			font-family: monospace;
+			padding: 5px;
+		}
+		
+		#game-info button {
+			background: #333;
+			color: #ffcc00;
+			border: 1px solid #ffcc00;
+			border-radius: 3px;
+			padding: 5px 8px;
+			cursor: pointer;
+			font-family: 'Playfair Display', serif;
+		}
+		
+		#reset-camera-btn {
+			position: fixed;
+			bottom: 10px;
+			left: 10px;
+			padding: 5px 10px;
+			background: #333;
+			color: #ffcc00;
+			border: 1px solid #ffcc00;
+			border-radius: 3px;
+			cursor: pointer;
+			z-index: 100;
+			font-family: 'Playfair Display', serif;
+		}
+	</style>
+</head>
+<body>
+	<!-- Game Title -->
+	<div class="game-title">SHAKTRIS</div>
+	<div class="russian-badge">Russian Theme</div>
+	
+	<!-- Navigation Menu -->
+	<div class="navigation">
+		<div class="title">Navigation</div>
+		<a href="index.html">Standard Game</a>
+		<a href="enhanced-game.html" class="active">Russian Theme</a>
+		<a href="minimal.html">Minimal Version</a>
+	</div>
+	
+	<!-- Reset Camera Button -->
+	<button id="reset-camera-btn">Reset Camera</button>
+	
+	<!-- Game Info -->
+	<div id="game-info">
+		<div style="font-weight: bold; margin-bottom: 5px; font-family: 'Playfair Display', serif;">Game ID</div>
+		<div style="display: flex; align-items: center; margin-bottom: 10px;">
+			<input id="game-id-display" type="text" value="Loading..." style="flex-grow: 1; margin-right: 5px;" readonly>
+			<button id="copy-game-id">Copy</button>
+		</div>
+		<button id="share-game" style="width: 100%; padding: 8px; display: flex; align-items: center; justify-content: center; gap: 8px;">
+			<span style="font-size: 16px;">↗</span> Invite Friends
+		</button>
+	</div>
+	
+	<!-- Loading Screen -->
+	<div id="loading">
+		<div style="font-family: 'Playfair Display', serif;">Loading Russian-Themed Shaktris</div>
+		<div class="symbol">☦</div>
+		<div class="loader"></div>
+		<div style="font-size: 16px; margin-top: 20px; color: #aaa; font-style: italic;">Preparing Byzantine Chess Pieces...</div>
+	</div>
+	
+	<!-- Error Message -->
+	<div id="error-message"></div>
+	
+	<!-- Game Container -->
+	<div id="game-container" style="display: none;"></div>
+	
+	<!-- Player settings form -->
+	<div id="player-settings-modal" class="modal"></div>
+	
+	<!-- Game scripts -->
+	<script src="js/utils/debugUtils.js" type="module"></script>
+	<script src="js/networkStatus.js"></script>
+	<script src="js/main-enhanced.js" type="module"></script>
+	
+	<script type="module">
+		// Import the enhanced main module
+		import * as gameMain from './js/main-enhanced.js';
+		
+		// Add reset camera button functionality
+		document.getElementById('reset-camera-btn').addEventListener('click', () => {
+			try {
+				// Import the enhanced game core to access camera reset
+				import('./js/enhanced-gameCore.js').then(gameCore => {
+					if (gameCore.enhancedFunctions && gameCore.enhancedFunctions.resetCamera) {
+						gameCore.enhancedFunctions.resetCamera(true);
+					}
+				});
+			} catch (error) {
+				console.error('Error resetting camera:', error);
+			}
+		});
+		
+		// Game ID and sharing functionality
+		const gameIdDisplay = document.getElementById('game-id-display');
+		const copyButton = document.getElementById('copy-game-id');
+		const shareButton = document.getElementById('share-game');
+		
+		// Update game ID from URL or set to "New Game" if none
+		const urlParams = new URLSearchParams(window.location.search);
+		const gameId = urlParams.get('game') || 'Creating new game...';
+		gameIdDisplay.value = gameId;
+		
+		// Copy game ID to clipboard
+		copyButton.addEventListener('click', () => {
+			gameIdDisplay.select();
+			document.execCommand('copy');
+			
+			// Show feedback
+			const originalText = copyButton.textContent;
+			copyButton.textContent = 'Copied!';
+			setTimeout(() => {
+				copyButton.textContent = originalText;
+			}, 2000);
+		});
+		
+		// Share game with others
+		shareButton.addEventListener('click', () => {
+			const gameUrl = new URL(window.location.href);
+			
+			// Ensure we have a game ID in the URL
+			if (!urlParams.has('game')) {
+				alert('Please wait until the game is fully created before sharing');
+				return;
+			}
+			
+			// Use Web Share API if available
+			if (navigator.share) {
+				navigator.share({
+					title: 'Join my Russian-themed Shaktris game!',
+					text: 'Join my Shaktris game with Russian visuals! A multiplayer chess + tetris experience.',
+					url: gameUrl.href
+				})
+				.catch((error) => console.log('Error sharing:', error));
+			} else {
+				// Fall back to copying the URL
+				const tempInput = document.createElement('input');
+				tempInput.value = gameUrl.href;
+				document.body.appendChild(tempInput);
+				tempInput.select();
+				document.execCommand('copy');
+				document.body.removeChild(tempInput);
+				
+				// Show feedback
+				const originalText = shareButton.textContent;
+				shareButton.textContent = 'Game URL Copied!';
+				setTimeout(() => {
+					shareButton.textContent = originalText;
+				}, 2000);
+			}
+		});
+	</script>
+</body>
+</html> 

@@ -1762,7 +1762,7 @@ function getPlayerColor(playerId) {
  * @param {number} height - Board height 
  * @returns {boolean} Success status
  */
-export function createGameBoard(width = 16, height = 16) {
+export function createGameBoard(width = 30, height = 30) {
 	try {
 		// Use the available scene
 		const currentScene = _scene || scene;

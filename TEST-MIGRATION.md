@@ -325,6 +325,25 @@ Once all tests are converted, we'll need to:
 3. Consider adding new tests for untested functionality 
 
 
+## Completed Tests
+
+The following tests have been successfully migrated and are now passing:
+
+### 1. Row Clearing (rowClearing.test.js)
+- Implementation Date: 2023-06-15
+- Status: PASSING
+- Description: Verifies that rows with 8 cells can be detected and cleared, handling special cases like home cells and pieces that need to be restored to their home positions.
+
+### 2. Home Zone Spiral (homeZoneSpiral.test.js)
+- Implementation Date: 2023-06-16
+- Status: PASSING
+- Description: Tests the spiral pattern placement of home zones, ensuring proper distances between players, no overlapping zones, and valid clash points for pawns.
+
+### 3. Orphaned Pieces (orphanedPieces.test.js)
+- Implementation Date: 2023-06-20
+- Status: PASSING
+- Description: Validates that pieces disconnected from their king are properly identified and removed from the board. Tests scenarios including row clearing disconnection, multiple disconnected pieces, and path validation.
+
 
 # Comprehensive Test Assessment
 

@@ -14,7 +14,7 @@ if (THREE.REVISION) {
 	console.warn('THREE.js not found in global scope');
 }
 
-// Export THREE as default
+// Export the THREE object as default
 export default THREE;
 
 // Export commonly used classes
@@ -51,11 +51,12 @@ export const Clock = THREE.Clock;
 export const Raycaster = THREE.Raycaster;
 export const Matrix4 = THREE.Matrix4;
 export const Quaternion = THREE.Quaternion;
-export const Euler = THREE.Euler;
-export const GridHelper = THREE.GridHelper;
-export const EdgesGeometry = THREE.EdgesGeometry;
-export const LineBasicMaterial = THREE.LineBasicMaterial;
-export const LineSegments = THREE.LineSegments;
+export const HemisphereLight = THREE.HemisphereLight;
+export const MeshPhysicalMaterial = THREE.MeshPhysicalMaterial;
+export const MeshToonMaterial = THREE.MeshToonMaterial;
+export const Fog = THREE.Fog;
+export const TorusGeometry = THREE.TorusGeometry;
+
 
 // Sides and blending modes
 export const DoubleSide = THREE.DoubleSide;
@@ -63,6 +64,12 @@ export const FrontSide = THREE.FrontSide;
 export const BackSide = THREE.BackSide;
 export const AdditiveBlending = THREE.AdditiveBlending;
 export const NormalBlending = THREE.NormalBlending;
+
+// Export OrbitControls if available
+export const OrbitControls = window.THREE && window.THREE.OrbitControls;
+
+// Export GLTFLoader if available
+export const GLTFLoader = window.THREE && window.THREE.GLTFLoader;
 
 // No need to re-export from three.js as it would create a circular reference
 // export * from './three.js'; 

@@ -30,6 +30,8 @@ This document tracks the implementation status of various features in the Shaktr
 | Home Zone Visualization | ✅ Implemented | Visual distinction for home zones and their degradation |
 | Spectator Mode | ✅ Implemented | Interface for spectating other players' games |
 | Responsive Design | ✅ Implemented | UI adapts to different screen sizes |
+| Tetromino Placement Animations | ✅ Implemented | Visual feedback with drop and explosion animations |
+| Server Integration | ✅ Implemented | Robust server communication for tetromino placement validation |
 
 ## Backend Implementation
 
@@ -45,6 +47,8 @@ This document tracks the implementation status of various features in the Shaktr
 | Asynchronous Turns | ✅ Implemented | Independent turn cycles for each player |
 | King Capture | ✅ Implemented | Transfer of ownership and rewards |
 | Row Clearing | ✅ Implemented | Any 8 cells in a line are cleared |
+| Adjacency Checking | ✅ Implemented | Ensures tetrominos are placed adjacent to existing player cells |
+| Collision Detection | ✅ Implemented | Prevents overlap between tetrominos and existing blocks |
 
 ### Networking
 | Feature | Status | Description |

@@ -15,8 +15,7 @@ const BOARD_SETTINGS = {
 	MAX_PLAYERS_PER_GAME: 2048,
 	DEFAULT_CELL_SIZE: 1,
 	HOME_ZONE_DISTANCE: 16,  // Exact distance for 8-move pawn clash
-	HOME_ZONE_SIZE: 5,       // Standard home zone size
-	// Direction vectors for spiral pattern
+	// Direction vectors for spiral pattern (right angles)
 	SPIRAL_DIRECTIONS: [
 		{ x: 1, z: 0 },  // Right (+X)
 		{ x: 0, z: 1 },  // Down (+Z)

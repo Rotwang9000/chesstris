@@ -39,7 +39,7 @@ Network.isConnected = function() {
 
 // Add throttling for board updates to prevent flooding
 let lastBoardUpdate = 0;
-const BOARD_UPDATE_THROTTLE = 500; // ms
+const BOARD_UPDATE_THROTTLE = 2000; // Increase to 2 seconds to reduce updates
 
 // Create a throttled emit function
 Network.throttledEmit = function(event, data) {
@@ -47,7 +47,6 @@ Network.throttledEmit = function(event, data) {
 	if (event === 'requestBoardUpdate') {
 		const now = Date.now();
 		if (now - lastBoardUpdate < BOARD_UPDATE_THROTTLE) {
-			console.log('Throttling board update request');
 			return Promise.resolve({ throttled: true });
 		}
 		lastBoardUpdate = now;

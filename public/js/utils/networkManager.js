@@ -20,6 +20,13 @@ let isInitializing = false;
 let hasJoinedGame = false;
 let lastConnectionAttempt = 0;
 let connectionThrottleMs = 2000; // Prevent connection attempts more frequently than 2 seconds
+let gameState = null;
+
+// Add a poll interval for game state updates
+let gameStatePollingEnabled = false;
+let gameStatePollingInterval = null;
+const POLL_INTERVAL = 5000; // Reduced from 2000ms to 5000ms (5 seconds)
+let lastUpdateTimestamp = 0;
 
 // Add event listeners support
 const eventListeners = {
@@ -44,6 +51,12 @@ export function initialize(playerName) {
 	// Check if we already have a connection with a player ID
 	if (socket && socket.connected && playerId) {
 		console.log('NetworkManager: Already initialized and connected');
+		
+		// Notify NetworkStatusManager if available
+		if (window.NetworkStatusManager) {
+			window.NetworkStatusManager.setStatus(window.NetworkStatusManager.NetworkStatus.CONNECTED);
+		}
+		
 		return Promise.resolve({ playerId, status: 'connected' });
 	}
 	
@@ -143,6 +156,45 @@ function connectSocketIO() {
 				emitMessage(data.type, data.payload || {});
 			}
 		});
+
+		// Add direct listener for game_state events (these might not come through the message event)
+		socket.on('game_state', (data) => {
+			console.log('NetworkManager: Received direct game_state event:', data);
+			
+			try {
+				// Process the game state data
+				// The structure may be different based on the server response
+				let payload;
+				
+				if (data && typeof data === 'object') {
+					// Extract the game state based on the structure
+					if (data.state) {
+						// Format: {gameId: 'x', state: {...}, players: [...]}
+						payload = {
+							...data.state,
+							players: data.players || [],
+							gameId: data.gameId
+						};
+					} else {
+						// Assume the data itself is the payload
+						payload = data;
+					}
+					
+					// Store the game state locally for future reference
+					gameState = payload;
+					
+					// Emit message using common event system - both methods for compatibility
+					emitEvent('message', { type: 'game_state', payload });
+					emitMessage('game_state', payload);
+					
+					console.log('NetworkManager: Game state processed successfully');
+				} else {
+					console.warn('NetworkManager: Received invalid game state format:', data);
+				}
+			} catch (error) {
+				console.error('NetworkManager: Error processing game state:', error);
+			}
+		});
 	}
 	
 	return new Promise((resolve, reject) => {
@@ -240,13 +292,13 @@ function handleSocketConnect() {
 	connectionStatus = 'connected';
 	reconnectAttempts = 0;
 	
-	// Send authentication message
-	if (playerId) {
-		socket.emit('auth', { playerId });
+	// Notify NetworkStatusManager if available
+	if (window.NetworkStatusManager) {
+		window.NetworkStatusManager.setStatus(window.NetworkStatusManager.NetworkStatus.CONNECTED);
 	}
 	
 	// Trigger connect event
-	triggerEvent('connect', { status: 'connected' });
+	triggerEvent('connect', { playerId });
 }
 
 /**
@@ -256,6 +308,11 @@ function handleSocketConnect() {
 function handleSocketDisconnect(reason) {
 	console.log(`NetworkManager: Socket.IO disconnected: ${reason}`);
 	connectionStatus = 'disconnected';
+	
+	// Notify NetworkStatusManager if available
+	if (window.NetworkStatusManager) {
+		window.NetworkStatusManager.setStatus(window.NetworkStatusManager.NetworkStatus.DISCONNECTED);
+	}
 	
 	// Socket.IO handles reconnection automatically
 	
@@ -268,8 +325,14 @@ function handleSocketDisconnect(reason) {
  */
 function handleSocketError(error) {
 	console.error('NetworkManager: Socket.IO error:', error);
-	connectionStatus = 'failed';
-	triggerEvent('error', error);
+	
+	// Notify NetworkStatusManager if available
+	if (window.NetworkStatusManager) {
+		window.NetworkStatusManager.setStatus(window.NetworkStatusManager.NetworkStatus.ERROR);
+	}
+	
+	// Trigger error event
+	triggerEvent('error', { error });
 }
 
 /**
@@ -317,10 +380,25 @@ export function onMessage(messageType, handler) {
  * @param {Function} callback - Callback function
  */
 export function addEventListener(eventType, callback) {
-	if (eventListeners[eventType]) {
+	// Initialize the event type array if it doesn't exist
+	if (!eventListeners[eventType]) {
+		eventListeners[eventType] = [];
+		console.log(`NetworkManager: Created new event listener category: ${eventType}`);
+	}
+	
+	if (Array.isArray(eventListeners[eventType])) {
 		eventListeners[eventType].push(callback);
 	} else {
-		console.warn(`NetworkManager: Unknown event type: ${eventType}`);
+		console.warn(`NetworkManager: Event listener array for ${eventType} is not properly initialized`);
+		eventListeners[eventType] = [callback]; // Reset and initialize properly
+	}
+	
+	// Register direct socket event listener for standard events
+	if (socket && ['connect', 'disconnect', 'error'].includes(eventType)) {
+		console.log(`NetworkManager: Adding direct socket listener for: ${eventType}`);
+		socket.on(eventType, (data) => {
+			callback(data || {});
+		});
 	}
 }
 
@@ -407,6 +485,9 @@ export function joinGame(gameId = null, playerName = null) {
 				const confirmedGameId = response.gameId || finalGameId;
 				setGameId(confirmedGameId);
 				hasJoinedGame = true;
+				
+				// Start polling for game state updates
+				startGameStatePolling();
 				
 				resolve({
 					success: true,
@@ -641,6 +722,14 @@ export function getGameState(options = {}) {
 	});
 }
 
+/**
+ * Get current game state (if available)
+ * @returns {Object|null} - Current game state or null if not available
+ */
+export function getCurrentGameState() {
+	return gameState;
+}
+
 // For development: Auto-initialize with a mock player when in development mode
 if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
 	// Check if io is available (Socket.IO loaded)
@@ -666,20 +755,36 @@ if (window.location.hostname === 'localhost' || window.location.hostname === '12
 }
 
 /**
- * Emit an event to all registered listeners
- * @param {string} event - Event name
+ * Emit an event to registered listeners
+ * @param {string} eventType - Event type
  * @param {any} data - Event data
  */
-function emitEvent(event, data) {
-	if (eventListeners[event]) {
-		for (const callback of eventListeners[event]) {
+function emitEvent(eventType, data) {
+	// Create the array if it doesn't exist yet
+	if (!eventListeners[eventType]) {
+		eventListeners[eventType] = [];
+	}
+
+	// Ensure it's an array before iterating
+	if (Array.isArray(eventListeners[eventType])) {
+		// Call all event listeners for this type
+		for (const callback of eventListeners[eventType]) {
 			try {
 				callback(data);
 			} catch (error) {
-				console.error(`NetworkManager: Error in ${event} event listener:`, error);
+				console.error(`NetworkManager: Error in ${eventType} event listener:`, error);
 			}
 		}
+	} else {
+		console.warn(`NetworkManager: eventListeners["${eventType}"] is not an array:`, eventListeners[eventType]);
 	}
+	
+	// Also raise a DOM event for components not directly using the NetworkManager
+	const event = new CustomEvent(`network:${eventType}`, { detail: data });
+	document.dispatchEvent(event);
+	
+	// For debug purposes
+	console.log(`NetworkManager: Event emitted: ${eventType}`, data);
 }
 
 /**
@@ -688,13 +793,225 @@ function emitEvent(event, data) {
  * @param {any} data - Message data
  */
 function emitMessage(messageType, data) {
-	if (eventListeners.message[messageType]) {
-		for (const callback of eventListeners.message[messageType]) {
-			try {
-				callback(data);
-			} catch (error) {
-				console.error(`NetworkManager: Error in ${messageType} message listener:`, error);
-			}
+	// Initialize message handlers for this type if they don't exist
+	if (!eventListeners.message[messageType]) {
+		eventListeners.message[messageType] = [];
+	}
+	
+	// Call all message handlers for this type
+	for (const callback of eventListeners.message[messageType]) {
+		try {
+			callback(data);
+		} catch (error) {
+			console.error(`NetworkManager: Error in ${messageType} message listener:`, error);
 		}
 	}
+	
+	// Also emit as a standard message event with type information
+	emitEvent('message', { type: messageType, payload: data });
+	
+	// For debug purposes
+	console.log(`NetworkManager: Message emitted: ${messageType}`, data);
+}
+
+/**
+ * Attempt to reconnect to the server
+ * @returns {Promise} - Resolves when reconnection is successful
+ */
+export function reconnect() {
+	console.log('NetworkManager: Attempting to reconnect...');
+	
+	// If we're still connected, no need to reconnect
+	if (socket && socket.connected) {
+		console.log('NetworkManager: Socket already connected, no need to reconnect');
+		
+		// Notify NetworkStatusManager if available
+		if (window.NetworkStatusManager) {
+			window.NetworkStatusManager.setStatus(window.NetworkStatusManager.NetworkStatus.CONNECTED);
+		}
+		
+		return Promise.resolve({ playerId, status: 'connected' });
+	}
+	
+	// Close existing socket if it exists
+	if (socket) {
+		socket.close();
+		socket = null;
+	}
+	
+	// Reset connection status
+	connectionStatus = 'disconnected';
+	
+	// Attempt to initialize a new connection
+	return initialize(playerName)
+		.then(result => {
+			console.log('NetworkManager: Reconnection successful');
+			
+			// If we were in a game before, attempt to rejoin
+			if (gameId) {
+				console.log(`NetworkManager: Attempting to rejoin game ${gameId}`);
+				return joinGame(gameId, playerName);
+			}
+			
+			return result;
+		});
+}
+
+/**
+ * Get direct access to the socket (emergency use only)
+ * @returns {Object} Socket.io socket
+ */
+export function getSocket() {
+	return socket;
+}
+
+/**
+ * Start polling for game state updates
+ */
+function startGameStatePolling() {
+	// Clean up any existing polling
+	stopGameStatePolling();
+	
+	// Only start if we have a game ID
+	if (!gameId) {
+		console.warn('NetworkManager: Cannot start polling without a game ID');
+		return;
+	}
+	
+	console.log(`NetworkManager: Starting game state polling every ${POLL_INTERVAL}ms`);
+	
+	// Flag that polling is enabled
+	gameStatePollingEnabled = true;
+	
+	// Request initial game state immediately
+	requestInitialGameState();
+	
+	// Set up periodic polling
+	gameStatePollingInterval = setInterval(() => {
+		if (gameStatePollingEnabled) {
+			// After initial state, only request updates
+			requestGameUpdates();
+		}
+	}, POLL_INTERVAL);
+	
+	// Also explicitly listen for game_state events from the server
+	if (socket) {
+		socket.on('game_state', handleGameStateEvent);
+		socket.on('game_update', handleGameUpdateEvent);
+	}
+}
+
+/**
+ * Stop polling for game state updates
+ */
+function stopGameStatePolling() {
+	gameStatePollingEnabled = false;
+	
+	if (gameStatePollingInterval) {
+		clearInterval(gameStatePollingInterval);
+		gameStatePollingInterval = null;
+	}
+	
+	// Remove event listeners
+	if (socket) {
+		socket.off('game_state', handleGameStateEvent);
+		socket.off('game_update', handleGameUpdateEvent);
+	}
+}
+
+/**
+ * Request initial full game state from server
+ */
+function requestInitialGameState() {
+	if (!gameId || !socket || !socket.connected) {
+		return;
+	}
+	
+	// Request full game state via socket
+	socket.emit('get_game_state', { gameId }, (response) => {
+		if (response) {
+			handleGameStateEvent(response);
+			
+			// Store timestamp for future delta updates
+			lastUpdateTimestamp = Date.now();
+		}
+	});
+}
+
+/**
+ * Request only updates since last state
+ */
+function requestGameUpdates() {
+	if (!gameId || !socket || !socket.connected) {
+		return;
+	}
+	
+	// Only request updates since last update
+	socket.emit('get_game_updates', { 
+		gameId,
+		since: lastUpdateTimestamp 
+	}, (response) => {
+		if (response) {
+			handleGameUpdateEvent(response);
+			
+			// Update timestamp
+			lastUpdateTimestamp = Date.now();
+		}
+	});
+}
+
+/**
+ * Handle game state event from server
+ */
+function handleGameStateEvent(data) {
+	console.log('NetworkManager: Received game state from server', data);
+	
+	// Process received game state
+	let processedData = data;
+	
+	// Check if the data has a different structure (common inconsistency between servers)
+	if (data.state) {
+		// Format: {gameId: 'x', state: {...}, players: [...]}
+		processedData = {
+			...data.state,
+			players: data.players || [],
+			gameId: data.gameId
+		};
+	}
+	
+	// Store the game state
+	gameState = processedData;
+	
+	// Emit processed game state to listeners
+	emitEvent('game_state', processedData);
+	emitMessage('game_state', processedData);
+}
+
+/**
+ * Handle game update events (smaller updates between full state updates)
+ */
+function handleGameUpdateEvent(data) {
+	console.log('NetworkManager: Received game update from server', data);
+	
+	// Update our stored state with this update
+	if (gameState) {
+		// Apply updates to our stored state based on what fields are in the update
+		if (data.board) {
+			gameState.board = data.board;
+		}
+		
+		if (data.players) {
+			gameState.players = data.players;
+		}
+		
+		if (data.chessPieces) {
+			gameState.chessPieces = data.chessPieces;
+		}
+		
+		// Add any other important fields from the update
+	}
+	
+	// Emit game update event
+	emitEvent('game_update', data);
+	emitMessage('game_update', data);
 } 
