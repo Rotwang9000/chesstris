@@ -34,6 +34,7 @@ const testFiles = [
 	'gameplay/pawnPromotion.test.js',       // Tests for pawn promotion
 	'gameplay/homeZoneDegradation.test.js', // Tests for home zone degradation when empty
 	'gameplay/orphanedPieces.test.js',      // Tests for handling of pieces disconnected from king
+	'gameplay/homeZoneChessPieces.test.js', // Tests for chess piece initialization with home zones
 	
 	// Backend API tests
 	'backend/gameStateManager.test.js',     // Tests for the game state manager and state integrity
@@ -51,7 +52,15 @@ const colors = {
 	yellow: '\x1b[33m',
 	blue: '\x1b[34m',
 	magenta: '\x1b[35m',
-	cyan: '\x1b[36m'
+	cyan: '\x1b[36m',
+	brightRed: '\x1b[91m',
+	brightGreen: '\x1b[92m',
+	brightYellow: '\x1b[93m',
+	brightBlue: '\x1b[94m',
+	brightMagenta: '\x1b[95m',
+	brightCyan: '\x1b[96m',
+	bold: '\x1b[1m',
+	underline: '\x1b[4m'
 };
 
 // Track test results for summary reporting
@@ -72,11 +81,11 @@ function runTest(testFile) {
 	
 	// Skip if file doesn't exist to prevent errors
 	if (!fs.existsSync(fullPath)) {
-		console.log(`${colors.yellow}SKIPPED${colors.reset} ${testFile} (file not found)`);
+		console.log(`${colors.yellow}${colors.bold}SKIPPED${colors.reset} ${testFile} (file not found)`);
 		return;
 	}
 	
-	console.log(`\n${colors.cyan}RUNNING${colors.reset} ${testFile}`);
+	console.log(`\n${colors.cyan}${colors.bold}RUNNING${colors.reset} ${testFile}`);
 	console.log('-'.repeat(80));
 	
 	try {
@@ -84,11 +93,11 @@ function runTest(testFile) {
 		execSync(`node ${fullPath}`, { stdio: 'inherit' });
 		
 		// If we get here, the test passed (no exception was thrown)
-		console.log(`${colors.green}PASSED${colors.reset} ${testFile}`);
+		console.log(`${colors.brightGreen}${colors.bold}PASSED${colors.reset} ${testFile}`);
 		results.passed++;
 	} catch (error) {
 		// If an exception was thrown, the test failed
-		console.log(`${colors.red}FAILED${colors.reset} ${testFile}`);
+		console.log(`${colors.brightRed}${colors.bold}FAILED${colors.reset} ${testFile}`);
 		results.failed++;
 		results.failedTests.push(testFile);
 	}
@@ -110,16 +119,16 @@ function main() {
 	
 	// Print summary with colour-coded results
 	console.log('\n' + '='.repeat(80));
-	console.log(`${colors.blue}SUMMARY:${colors.reset}`);
-	console.log(`Total tests: ${results.total}`);
-	console.log(`Passed: ${colors.green}${results.passed}${colors.reset}`);
-	console.log(`Failed: ${results.failed > 0 ? colors.red : colors.reset}${results.failed}${colors.reset}`);
+	console.log(`${colors.blue}${colors.bold}SUMMARY:${colors.reset}`);
+	console.log(`Total tests: ${colors.bold}${results.total}${colors.reset}`);
+	console.log(`Passed: ${colors.brightGreen}${colors.bold}${results.passed}${colors.reset}`);
+	console.log(`Failed: ${results.failed > 0 ? colors.brightRed + colors.bold : colors.reset}${results.failed}${colors.reset}`);
 	
 	// List failed tests if any
 	if (results.failedTests.length > 0) {
-		console.log(`\n${colors.red}Failed tests:${colors.reset}`);
+		console.log(`\n${colors.brightRed}${colors.bold}Failed tests:${colors.reset}`);
 		results.failedTests.forEach((test, index) => {
-			console.log(`  ${index + 1}. ${test}`);
+			console.log(`  ${index + 1}. ${colors.underline}${test}${colors.reset}`);
 		});
 	}
 	
@@ -127,6 +136,9 @@ function main() {
 	if (results.failed > 0) {
 		process.exit(1);
 	}
+	
+	// Exit cleanly if all tests passed
+	process.exit(0);
 }
 
 // Run the main function

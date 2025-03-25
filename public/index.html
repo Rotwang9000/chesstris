@@ -145,6 +145,21 @@
 			color: rgba(255, 255, 255, 0.7);
 			font-size: 12px;
 		}
+		
+		.error-message {
+			position: fixed;
+			top: 20px;
+			left: 50%;
+			transform: translateX(-50%);
+			background-color: #ff4444;
+			color: white;
+			padding: 10px 20px;
+			border-radius: 5px;
+			z-index: 1000;
+			text-align: center;
+			font-weight: bold;
+			box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+		}
 	</style>
 </head>
 <body>
@@ -181,101 +196,51 @@
 	</div>
 	
 	<!-- Loading Screen -->
-	<div id="loading">
-		<div class="symbol">☦</div>
-		Loading Shaktris Russian Theme...
-		<div class="loader"></div>
+	<div id="loading" class="loading-screen">
+		<div class="spinner"></div>
+		<div class="loading-text">Loading Shaktris...</div>
 	</div>
 	
-	<!-- Error Message -->
-	<div id="error-message"></div>
+	<!-- Error message container - will be shown if there's an error -->
+	<div id="error-message" class="error-message" style="display: none;">
+		Network manager not available. Please refresh the page.
+		<button id="dismiss-error" style="margin-top: 10px; padding: 5px 10px; background: #222; color: #ffcc00; border: 1px solid #ffcc00; cursor: pointer;">Dismiss</button>
+	</div>
 	
 	<!-- Game Container -->
-	<div id="game-container" style="display: none;"></div>
+	<div id="game-container" style="display: none;">
+	</div>
 	
 	<!-- Core game scripts -->
-	<script src="js/utils/debugUtils.js" type="module"></script>
-	<script src="js/networkStatus.js"></script>
-	
-	<script type="module">
-		// Import the enhanced main module instead of simplified
-		import * as gameMain from './js/main-enhanced.js';
+	<script src="/socket.io/socket.io.js"></script>
+	<script>
+		// Ensure socket.io is loaded
+		if (typeof io === 'undefined') {
+			console.error('Socket.io failed to load');
+			document.getElementById('error-message').textContent = 'Socket.io failed to load. Please check your internet connection and refresh the page.';
+			document.getElementById('error-message').style.display = 'block';
+			document.getElementById('loading').style.display = 'none';
+		}
 		
-		// Add reset camera button functionality
-		document.getElementById('reset-camera-btn').addEventListener('click', () => {
-			try {
-				// Import the enhanced game core to access resetCameraView
-				import('./js/enhanced-gameCore.js').then(gameCore => {
-					if (gameCore.resetCameraView) {
-						gameCore.resetCameraView(true);
-					}
-				});
-			} catch (error) {
-				console.error('Error resetting camera:', error);
-			}
+		// Handle error dismissal
+		document.getElementById('dismiss-error').addEventListener('click', function() {
+			document.getElementById('error-message').style.display = 'none';
+			// Force show game container
+			document.getElementById('game-container').style.display = 'block';
 		});
 		
-		// Game ID and sharing functionality
-		const gameIdDisplay = document.getElementById('game-id-display');
-		const copyButton = document.getElementById('copy-game-id');
-		const shareButton = document.getElementById('share-game');
-		
-		// Update game ID from URL or set to "New Game" if none
-		const urlParams = new URLSearchParams(window.location.search);
-		const gameId = urlParams.get('game') || 'Creating new game...';
-		gameIdDisplay.value = gameId;
-		
-		// Copy game ID to clipboard
-		copyButton.addEventListener('click', () => {
-			gameIdDisplay.select();
-			document.execCommand('copy');
-			
-			// Show feedback
-			const originalText = copyButton.textContent;
-			copyButton.textContent = 'Copied!';
-			setTimeout(() => {
-				copyButton.textContent = originalText;
-			}, 2000);
-		});
-		
-		// Share game with others
-		shareButton.addEventListener('click', () => {
-			const gameUrl = new URL(window.location.href);
-			
-			// Ensure we have a game ID in the URL
-			if (!urlParams.has('game')) {
-				alert('Please wait until the game is fully created before sharing');
-				return;
+		// Force hide loading screen after timeout (failsafe)
+		setTimeout(function() {
+			const loadingElement = document.getElementById('loading');
+			if (loadingElement && loadingElement.style.display !== 'none') {
+				console.log('Force hiding loading screen after timeout');
+				loadingElement.style.display = 'none';
 			}
-			
-			// Use Web Share API if available
-			if (navigator.share) {
-				navigator.share({
-					title: 'Join my Shaktris game!',
-					text: 'Join my Shaktris game! A multiplayer chess + tetris experience.',
-					url: gameUrl.href
-				})
-				.catch((error) => console.log('Error sharing:', error));
-			} else {
-				// Fall back to copying the URL
-				const tempInput = document.createElement('input');
-				tempInput.value = gameUrl.href;
-				document.body.appendChild(tempInput);
-				tempInput.select();
-				document.execCommand('copy');
-				document.body.removeChild(tempInput);
-				
-				// Show feedback
-				const originalText = shareButton.textContent;
-				shareButton.textContent = 'Game URL Copied!';
-				setTimeout(() => {
-					shareButton.textContent = originalText;
-				}, 2000);
-			}
-		});
+		}, 10000); // 10 second timeout
 	</script>
 	
-	<script type="module" src="js/boardFunctions.js"></script>
-	<script type="module" src="js/enhanced-gameCore.js"></script>
+	<!-- Import enhanced game -->
+	<script type="module" src="js/main-enhanced.js"></script>
+	
 </body>
 </html>

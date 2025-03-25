@@ -3,6 +3,14 @@
  * This module provides utilities for API calls and Socket.IO connections
  */
 
+// Make the module available as a global
+if (typeof window !== 'undefined') {
+	window.NetworkManager = window.NetworkManager || {};
+}
+
+// Define exports object to hold all exported functions
+const exports = {};
+
 // Configuration
 const API_BASE_URL = '/api'; // Default to same-origin API
 const SOCKET_URL = ''; // Empty string means connect to the same server
@@ -15,7 +23,7 @@ let playerName = null;
 let connectionStatus = 'disconnected';
 let messageHandlers = {};
 let reconnectAttempts = 0;
-let maxReconnectAttempts = 5;
+let maxReconnectAttempts = Infinity; // No limit on reconnect attempts
 let isInitializing = false;
 let hasJoinedGame = false;
 let lastConnectionAttempt = 0;
@@ -36,12 +44,47 @@ const eventListeners = {
 	message: {}
 };
 
+// Initialize as soon as this module loads to make sure it's ready
+// This self-initializing behavior helps ensure the network is available
+if (typeof window !== 'undefined' && typeof io !== 'undefined') {
+	setTimeout(() => {
+		// Do a preliminary connection to make sure the network is up
+		console.log('NetworkManager: Self-initializing connection...');
+		
+		// Store current state in window.NetworkManager for global access
+		// Ensure we're always using our exports object
+		window.NetworkManager = exports;
+		
+		// If we're in dev mode, auto-connect
+		const isDevMode = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+		if (isDevMode) {
+			const mockPlayerName = 'DevPlayer_' + Math.floor(Math.random() * 1000);
+			initialize(mockPlayerName)
+				.then(() => {
+					console.log('NetworkManager: Auto-initialized in development mode');
+					return joinGame();
+				})
+				.then(gameData => {
+					console.log('NetworkManager: Auto-joined game in development mode:', gameData);
+				})
+				.catch(error => {
+					console.warn('NetworkManager: Auto-initialization failed:', error);
+				});
+		}
+	}, 1000);
+}
+
 /**
  * Initialize network connection
  * @param {string} playerName - Player name
  * @returns {Promise} - Resolves when connection is established
  */
 export function initialize(playerName) {
+	// Update global reference first thing
+	if (typeof window !== 'undefined') {
+		window.NetworkManager = exports;
+	}
+	
 	// Prevent multiple simultaneous initialization attempts
 	if (isInitializing) {
 		console.log('NetworkManager: Already initializing, ignoring duplicate call');
@@ -90,6 +133,34 @@ export function initialize(playerName) {
 			});
 	});
 }
+// Add to exports
+exports.initialize = initialize;
+
+/**
+ * Reconnect if disconnected and join game if needed
+ */
+export function ensureConnected(playerNameArg = null) {
+	const playerNameToUse = playerNameArg || playerName || 'Guest';
+	
+	// Check connection and initialize if needed
+	if (!socket || !socket.connected) {
+		return initialize(playerNameToUse)
+			.then(() => {
+				// If we have a game ID, rejoin it
+				if (gameId) {
+					return joinGame(gameId);
+				}
+				return true;
+			})
+			.catch(error => {
+				console.error('Failed to ensure connection:', error);
+				return false;
+			});
+	}
+	
+	// Already connected
+	return Promise.resolve(true);
+}
 
 /**
  * Connect to Socket.IO server
@@ -109,10 +180,12 @@ function connectSocketIO() {
 		socket = io(SOCKET_URL, { 
 			reconnection: true, 
 			reconnectionDelay: 1000,
-			reconnectionDelayMax: 5000,
-			reconnectionAttempts: 10,
-			// Prevent auto reconnect attempts
-			reconnect: false
+			reconnectionDelayMax: 30000, // Increased from 5000 to 30000
+			reconnectionAttempts: Infinity, // Changed from 10 to Infinity for unlimited attempts
+			timeout: 20000, // Add longer timeout
+			// Use exponential backoff for reconnection
+			randomizationFactor: 0.5,
+			reconnect: true // Enable automatic reconnection
 		});
 		
 		// Set up connection events
@@ -141,10 +214,8 @@ function connectSocketIO() {
 			// Emit event to listeners
 			emitEvent('error', { error });
 			
-			if (reconnectAttempts >= maxReconnectAttempts) {
-				console.error(`NetworkManager: Max reconnect attempts (${maxReconnectAttempts}) reached.`);
-				socket.disconnect();
-			}
+			// Log the reconnect attempt
+			console.log(`NetworkManager: Reconnect attempt ${reconnectAttempts}, will retry automatically`);
 		});
 		
 		// Set up message handler for all server messages
@@ -414,6 +485,15 @@ export function removeEventListener(eventType, callback) {
 }
 
 /**
+ * Alias for addEventListener to provide socket.io-like interface 
+ * @param {string} eventType - Event type
+ * @param {Function} callback - Callback function
+ */
+export function on(eventType, callback) {
+	return addEventListener(eventType, callback);
+}
+
+/**
  * Trigger event
  * @param {string} eventType - Event type
  * @param {Object} data - Event data
@@ -487,7 +567,7 @@ export function joinGame(gameId = null, playerName = null) {
 				hasJoinedGame = true;
 				
 				// Start polling for game state updates
-				startGameStatePolling();
+				_startGameStatePolling();
 				
 				resolve({
 					success: true,
@@ -730,42 +810,18 @@ export function getCurrentGameState() {
 	return gameState;
 }
 
-// For development: Auto-initialize with a mock player when in development mode
-if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-	// Check if io is available (Socket.IO loaded)
-	if (typeof io === 'undefined') {
-		console.warn('NetworkManager: Socket.IO not available. Auto-initialization disabled.');
-	} else {
-		// setTimeout to let other scripts load first
-		setTimeout(() => {
-			const mockPlayerName = 'DevPlayer_' + Math.floor(Math.random() * 1000);
-			initialize(mockPlayerName)
-				.then(() => {
-					console.log('NetworkManager: Auto-initialized in development mode');
-					return joinGame();
-				})
-				.then(gameData => {
-					console.log('NetworkManager: Auto-joined game in development mode:', gameData);
-				})
-				.catch(error => {
-					console.warn('NetworkManager: Auto-initialization failed:', error);
-				});
-		}, 1000);
-	}
-}
-
 /**
  * Emit an event to registered listeners
  * @param {string} eventType - Event type
  * @param {any} data - Event data
  */
 function emitEvent(eventType, data) {
-	// Create the array if it doesn't exist yet
+	// Create the event type array if it doesn't exist
 	if (!eventListeners[eventType]) {
 		eventListeners[eventType] = [];
 	}
-
-	// Ensure it's an array before iterating
+	
+	// Verify event listeners array is properly initialized
 	if (Array.isArray(eventListeners[eventType])) {
 		// Call all event listeners for this type
 		for (const callback of eventListeners[eventType]) {
@@ -776,7 +832,8 @@ function emitEvent(eventType, data) {
 			}
 		}
 	} else {
-		console.warn(`NetworkManager: eventListeners["${eventType}"] is not an array:`, eventListeners[eventType]);
+		console.warn(`NetworkManager: eventListeners["${eventType}"] is not an array, initializing it`);
+		eventListeners[eventType] = [];
 	}
 	
 	// Also raise a DOM event for components not directly using the NetworkManager
@@ -793,30 +850,47 @@ function emitEvent(eventType, data) {
  * @param {any} data - Message data
  */
 function emitMessage(messageType, data) {
-	// Initialize message handlers for this type if they don't exist
+	// Make sure eventListeners.message exists
+	if (!eventListeners.message) {
+		eventListeners[messageType] = {};
+	}
+	
+	// Check if the message type has valid handlers
 	if (!eventListeners.message[messageType]) {
+		// Initialize properly if it doesn't exist
+		eventListeners.message[messageType] = [];
+		console.log(`NetworkManager: Initialized event listeners for message type: ${messageType}`);
+	}
+	
+	// Ensure it's an array before proceeding
+	if (!Array.isArray(eventListeners.message[messageType])) {
+		console.warn(`NetworkManager: eventListeners.message["${messageType}"] is not an array, reinitializing it`);
 		eventListeners.message[messageType] = [];
 	}
 	
 	// Call all message handlers for this type
-	for (const callback of eventListeners.message[messageType]) {
-		try {
-			callback(data);
-		} catch (error) {
-			console.error(`NetworkManager: Error in ${messageType} message listener:`, error);
+	if (eventListeners.message[messageType].length > 0) {
+		// Log only if we have listeners
+		console.log(`NetworkManager: Emitting message: ${messageType} to ${eventListeners.message[messageType].length} listeners`);
+		
+		for (const callback of eventListeners.message[messageType]) {
+			try {
+				callback(data);
+			} catch (error) {
+				console.error(`NetworkManager: Error in ${messageType} message listener:`, error);
+			}
 		}
+	} else {
+		console.log(`NetworkManager: Message emitted: ${messageType} (no listeners registered)`);
 	}
 	
 	// Also emit as a standard message event with type information
 	emitEvent('message', { type: messageType, payload: data });
-	
-	// For debug purposes
-	console.log(`NetworkManager: Message emitted: ${messageType}`, data);
 }
 
 /**
- * Attempt to reconnect to the server
- * @returns {Promise} - Resolves when reconnection is successful
+ * Attempt to reconnect to the server with progressive backoff
+ * @returns {Promise} - Resolves when reconnected
  */
 export function reconnect() {
 	console.log('NetworkManager: Attempting to reconnect...');
@@ -842,19 +916,58 @@ export function reconnect() {
 	// Reset connection status
 	connectionStatus = 'disconnected';
 	
-	// Attempt to initialize a new connection
-	return initialize(playerName)
-		.then(result => {
-			console.log('NetworkManager: Reconnection successful');
-			
-			// If we were in a game before, attempt to rejoin
-			if (gameId) {
-				console.log(`NetworkManager: Attempting to rejoin game ${gameId}`);
-				return joinGame(gameId, playerName);
-			}
-			
-			return result;
+	// Use progressive backoff for reconnection attempts
+	const tryReconnect = (attempt = 1, maxAttempts = Infinity) => {
+		// Calculate delay with exponential backoff, starting with 2 seconds
+		// Cap the maximum delay at 30 seconds
+		const baseDelay = 2000;
+		const maxDelay = 30000;
+		const delay = Math.min(baseDelay * Math.pow(1.5, attempt - 1), maxDelay);
+		
+		console.log(`NetworkManager: Reconnection attempt ${attempt}, delay: ${delay}ms`);
+		
+		// Notify NetworkStatusManager if available
+		if (window.NetworkStatusManager) {
+			window.NetworkStatusManager.setStatus(window.NetworkStatusManager.NetworkStatus.CONNECTING);
+		}
+		
+		// Return a promise that resolves when connection succeeds
+		return new Promise((resolve, reject) => {
+			// Try to initialize a new connection
+			initialize(playerName)
+				.then(result => {
+					console.log('NetworkManager: Reconnection successful');
+					
+					// If we were in a game before, attempt to rejoin
+					if (gameId) {
+						console.log(`NetworkManager: Attempting to rejoin game ${gameId}`);
+						return joinGame(gameId, playerName);
+					}
+					
+					return result;
+				})
+				.then(resolve)
+				.catch(error => {
+					console.error(`NetworkManager: Reconnection attempt ${attempt} failed:`, error);
+					
+					// If we've reached max attempts, reject
+					if (attempt >= maxAttempts) {
+						return reject(new Error(`Failed to reconnect after ${attempt} attempts`));
+					}
+					
+					// Otherwise, wait and try again
+					console.log(`NetworkManager: Will retry in ${delay}ms...`);
+					setTimeout(() => {
+						tryReconnect(attempt + 1, maxAttempts)
+							.then(resolve)
+							.catch(reject);
+					}, delay);
+				});
 		});
+	};
+	
+	// Start the reconnection process
+	return tryReconnect();
 }
 
 /**
@@ -867,10 +980,11 @@ export function getSocket() {
 
 /**
  * Start polling for game state updates
+ * @private
  */
-function startGameStatePolling() {
+function _startGameStatePolling() {
 	// Clean up any existing polling
-	stopGameStatePolling();
+	_stopGameStatePolling();
 	
 	// Only start if we have a game ID
 	if (!gameId) {
@@ -902,9 +1016,17 @@ function startGameStatePolling() {
 }
 
 /**
- * Stop polling for game state updates
+ * Export startGameStatePolling for external use
  */
-function stopGameStatePolling() {
+export function startGameStatePolling() {
+	return _startGameStatePolling();
+}
+
+/**
+ * Stop polling for game state updates
+ * @private
+ */
+function _stopGameStatePolling() {
 	gameStatePollingEnabled = false;
 	
 	if (gameStatePollingInterval) {
@@ -917,6 +1039,13 @@ function stopGameStatePolling() {
 		socket.off('game_state', handleGameStateEvent);
 		socket.off('game_update', handleGameUpdateEvent);
 	}
+}
+
+/**
+ * Export stopGameStatePolling for external use
+ */
+export function stopGameStatePolling() {
+	return _stopGameStatePolling();
 }
 
 /**
@@ -1014,4 +1143,33 @@ function handleGameUpdateEvent(data) {
 	// Emit game update event
 	emitEvent('game_update', data);
 	emitMessage('game_update', data);
+}
+
+// Add all exported functions to the exports object
+exports.initialize = initialize;
+exports.ensureConnected = ensureConnected;
+exports.onMessage = onMessage;
+exports.addEventListener = addEventListener;
+exports.removeEventListener = removeEventListener;
+exports.on = on;
+exports.sendMessage = sendMessage;
+exports.joinGame = joinGame;
+exports.updateGameId = updateGameId;
+exports.submitTetrominoPlacement = submitTetrominoPlacement;
+exports.submitChessMove = submitChessMove;
+exports.getStatus = getStatus;
+exports.isConnected = isConnected;
+exports.getPlayerId = getPlayerId;
+exports.getGameId = getGameId;
+exports.requestPlayerList = requestPlayerList;
+exports.getGameState = getGameState;
+exports.getCurrentGameState = getCurrentGameState;
+exports.reconnect = reconnect;
+exports.getSocket = getSocket;
+exports.startGameStatePolling = startGameStatePolling;
+exports.stopGameStatePolling = stopGameStatePolling;
+
+// Update the window.NetworkManager reference
+if (typeof window !== 'undefined') {
+	window.NetworkManager = exports;
 } 

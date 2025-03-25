@@ -578,13 +578,18 @@ function testGameStateIntegrity() {
 		() => gameManager.registerPlayer(gameId, 'test-player-3', 'Test Player 3'),
 		// Player 1 moves a chess piece
 		() => {
-			const piece = stateAfterInvalidMove.chessPieces.find(p => p.playerId === playerId);
+			const stateForPlayer = gameManager.getGameStateForPlayer(gameId, playerId);
+			const piece = stateForPlayer.chessPieces && stateForPlayer.chessPieces.find(p => p.playerId === playerId);
 			if (piece) {
-				return gameManager.processChessMove(gameId, playerId, {
-					pieceId: piece.id,
-					toX: piece.x + 1,
-					toY: piece.y
-				});
+				const chessAction = {
+					type: 'chess',
+					move: {
+						pieceId: piece.id,
+						toX: piece.x + 1,
+						toY: piece.y
+					}
+				};
+				return gameManager.handlePlayerAction(gameId, playerId, chessAction);
 			}
 			return { success: false, reason: 'No piece found' };
 		},
@@ -598,7 +603,7 @@ function testGameStateIntegrity() {
 	}
 	
 	// Get final state
-	const finalState = gameManager.getGameState(gameId);
+	const finalState = gameManager.getGameStateForPlayer(gameId, playerId).gameState;
 	
 	// Check if state is still valid
 	assert.ok(finalState, 'Game state should still exist');

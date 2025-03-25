@@ -113,116 +113,148 @@ export function setupScene(containerElement, scene, camera, renderer, controls, 
 	return { _scene: scene, _camera: camera, _renderer: renderer, _controls: controls, _boardGroup: boardGroup, _tetrominoGroup: tetrominoGroup, _chessPiecesGroup: chessPiecesGroup };
 }
 
-export function rebuildScene() {
-	// Clear existing tetrominos and chess pieces
-	while (tetrominoGroup.children.length > 0) {
-		tetrominoGroup.remove(tetrominoGroup.children[0]);
+export function rebuildScene(containerElement, options = {}) {
+	// Extract options
+	const { 
+		lowQuality = false, 
+		pixelRatio = window.devicePixelRatio, 
+		shadows = true, 
+		antialiasing = true,
+		groups = {}
+	} = options;
+	
+	// Extract groups if provided
+	const { 
+		boardGroup: existingBoardGroup, 
+		tetrominoGroup: existingTetrominoGroup, 
+		chessPiecesGroup: existingChessPiecesGroup 
+	} = groups;
+	
+	// Initialize scene from scratch
+	const scene = new THREE.Scene();
+	scene.background = new THREE.Color(0x87CEEB); // Sky blue
+	
+	// Create camera
+	const camera = new THREE.PerspectiveCamera(
+		75, // FOV
+		containerElement.clientWidth / containerElement.clientHeight, // Aspect ratio
+		0.1, // Near
+		1000 // Far
+	);
+	
+	// Position camera
+	camera.position.set(5, 20, 25);
+	
+	// Create renderer with quality options
+	const renderer = new THREE.WebGLRenderer({ 
+		antialias: !lowQuality && antialiasing,
+		powerPreference: 'high-performance',
+		precision: lowQuality ? 'lowp' : 'mediump'
+	});
+	renderer.setSize(containerElement.clientWidth, containerElement.clientHeight);
+	renderer.setPixelRatio(lowQuality ? Math.min(1, pixelRatio) : pixelRatio);
+	
+	// Add or replace renderer in container
+	while (containerElement.firstChild) {
+		containerElement.removeChild(containerElement.firstChild);
+	}
+	containerElement.appendChild(renderer.domElement);
+	
+	// Configure shadows based on quality settings
+	renderer.shadowMap.enabled = shadows && !lowQuality;
+	if (renderer.shadowMap.enabled) {
+		renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 	}
 	
-	while (chessPiecesGroup.children.length > 0) {
-		chessPiecesGroup.remove(chessPiecesGroup.children[0]);
+	// Create controls
+	const controls = new THREE.OrbitControls(camera, renderer.domElement);
+	controls.enableDamping = true;
+	controls.dampingFactor = 0.25;
+	controls.screenSpacePanning = false;
+	controls.enableKeys = false; // Disable arrow key controls to prevent page scrolling
+	controls.maxPolarAngle = Math.PI / 2;
+	controls.target.set(0, 0, 0);
+	controls.update();
+	
+	// Create light
+	const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+	scene.add(ambientLight);
+	
+	const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+	directionalLight.position.set(50, 75, 50);
+	directionalLight.castShadow = shadows && !lowQuality;
+	scene.add(directionalLight);
+	
+	if (directionalLight.castShadow) {
+		directionalLight.shadow.mapSize.width = lowQuality ? 512 : 2048;
+		directionalLight.shadow.mapSize.height = lowQuality ? 512 : 2048;
+		directionalLight.shadow.camera.near = 0.5;
+		directionalLight.shadow.camera.far = 500;
 	}
 	
-	// Create base board cells first
-	if (typeof boardFunctions !== 'undefined' && boardFunctions.createBoardCells) {
-		// Use the imported module function
-		boardFunctions.createBoardCells(gameState, boardGroup, createFloatingIsland, THREE);
+	// Create groups for board elements
+	let boardGroup, tetrominoGroup, chessPiecesGroup;
+	
+	// Create or reuse board group
+	if (existingBoardGroup) {
+		boardGroup = existingBoardGroup;
+		// Clear children
+		while (boardGroup.children.length > 0) {
+			boardGroup.remove(boardGroup.children[0]);
+		}
+		scene.add(boardGroup);
+					} else {
+		boardGroup = new THREE.Group();
+		boardGroup.name = 'board';
+		scene.add(boardGroup);
+	}
+	
+	// Create or reuse tetromino group
+	if (existingTetrominoGroup) {
+		tetrominoGroup = existingTetrominoGroup;
+		// Clear children
+		while (tetrominoGroup.children.length > 0) {
+			tetrominoGroup.remove(tetrominoGroup.children[0]);
+		}
+		scene.add(tetrominoGroup);
+					} else {
+		tetrominoGroup = new THREE.Group();
+		tetrominoGroup.name = 'tetrominos';
+		scene.add(tetrominoGroup);
+	}
+	
+	// Create or reuse chess pieces group
+	if (existingChessPiecesGroup) {
+		chessPiecesGroup = existingChessPiecesGroup;
+		// Clear children
+		while (chessPiecesGroup.children.length > 0) {
+			chessPiecesGroup.remove(chessPiecesGroup.children[0]);
+		}
+		scene.add(chessPiecesGroup);
 	} else {
-		// Fall back to old function if available
-		if (typeof createBoardCells === 'function') {
-			createBoardCells();
-		} else {
-			console.warn('createBoardCells function not available');
-		}
+		chessPiecesGroup = new THREE.Group();
+		chessPiecesGroup.name = 'chessPieces';
+		scene.add(chessPiecesGroup);
 	}
 	
-	// Check if we have valid board data
-	if (!gameState.board || !Array.isArray(gameState.board) || gameState.board.length === 0) {
-		console.warn('No board data to visualize');
-		return;
+	// Add beautiful fluffy clouds to scene if not in low quality mode
+	if (!lowQuality) {
+		createFewClouds(scene);
 	}
 	
-	// Get board size
-	const boardSize = gameState.board.length;
+	// Add resize listener
+	window.addEventListener('resize', () => onWindowResize(camera, renderer, containerElement));
 	
-	// Debug output of the actual board structure
-	console.log('Board structure first row sample:', 
-		gameState.board.length > 0 ? JSON.stringify(gameState.board[0]) : 'Empty');
-	
-	// Create visuals for each cell
-	for (let z = 0; z < boardSize; z++) {
-		const row = gameState.board[z];
-		if (!row) continue;
-		
-		for (let x = 0; x < row.length; x++) {
-			const cellType = row[x];
-			
-			// Skip empty cells
-			if (cellType === 0 || cellType === null || cellType === undefined) continue;
-			
-			// Process based on cell type
-			if (typeof cellType === 'object' && cellType !== null) {
-				// Handle object-based cell data
-				if (cellType.type === 'chess') {
-					// Chess piece
-					if (typeof boardFunctions !== 'undefined' && boardFunctions.createChessPiece) {
-						const chessPiece = boardFunctions.createChessPiece(
-							gameState, 
-							x, 
-							z, 
-							cellType.chessPiece.type || "PAWN",
-							cellType.chessPiece.player || 1,
-							gameState.currentPlayer,
-							THREE
-						);
-						chessPiecesGroup.add(chessPiece);
-					} else {
-						console.warn('createChessPiece function not available');
-					}
-				} else if (cellType.type === 'tetromino') {
-					// Tetromino block
-					createTetrominoBlock(x, z, cellType.player || 1);
-				} else if (cellType.type === 'homeZone') {
-					// Home zone
-					const zoneType = (cellType.player + 5);
-					updateHomeZoneVisual(x, z, zoneType);
-				}
-			} else if (typeof cellType === 'number') {
-				// Handle legacy numeric cell types
-				if (cellType >= 1 && cellType <= 5) {
-					// Player tetromino placements - create block
-					createTetrominoBlock(x, z, cellType);
-				} else if (cellType >= 6 && cellType <= 10) {
-					// Home zones - add visual indicator
-					updateHomeZoneVisual(x, z, cellType);
-				} else if (cellType >= 11) {
-					// Chess pieces - create piece
-					if (typeof boardFunctions !== 'undefined' && boardFunctions.createChessPiece) {
-						const chessPiece = boardFunctions.createChessPiece(
-							gameState, 
-							x, 
-							z, 
-							cellType, 
-							Math.floor(cellType / 10), // Extract player ID from cellType
-							gameState.currentPlayer,
-							THREE
-						);
-						chessPiecesGroup.add(chessPiece);
-					} else {
-						console.warn('createChessPiece function not available');
-					}
-				}
-			}
-		}
-	}
-	
-	// Now that we've processed the board, also update chess pieces from separate array if available
-	if (gameState.chessPieces && Array.isArray(gameState.chessPieces)) {
-		updateChessPieces();
-	}
+	return { 
+		_scene: scene, 
+		_camera: camera, 
+		_renderer: renderer, 
+		_controls: controls, 
+		_boardGroup: boardGroup, 
+		_tetrominoGroup: tetrominoGroup, 
+		_chessPiecesGroup: chessPiecesGroup 
+	};
 }
-
-
 
 /**
  * Create a single floating island at the given position

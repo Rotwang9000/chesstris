@@ -75,7 +75,20 @@ class PlayerManager {
 				
 				// Initialize chess pieces for the player
 				const chessPieces = this.chessManager.initializeChessPieces(game, playerId, homeZone);
-				game.chessPieces.push(...chessPieces);
+				
+				// Make sure game.chessPieces is initialized
+				if (!Array.isArray(game.chessPieces)) {
+					game.chessPieces = [];
+					log(`Warning: chessPieces array was not properly initialized for game before adding player ${playerId}`);
+				}
+				
+				// Add chess pieces to the game state and log counts
+				if (Array.isArray(chessPieces) && chessPieces.length > 0) {
+					game.chessPieces.push(...chessPieces);
+					log(`Added ${chessPieces.length} chess pieces for player ${playerId}. Game now has ${game.chessPieces.length} total pieces.`);
+				} else {
+					log(`Warning: No chess pieces created for player ${playerId}`);
+				}
 				
 				// Generate initial tetrominos for the player
 				player.availableTetrominos = this.tetrominoManager.generateTetrominos(game, playerId);

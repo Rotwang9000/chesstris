@@ -356,18 +356,52 @@ function createBoardCells(gameState, boardGroup, createFloatingIsland, THREE) {
 		return mesh;
 	};
 	
+	// Also extract chess pieces from board cells
+	const extractedPieces = [];
+	
 	for (let z = startZ; z < endZ; z++) {
 		for (let x = startX; x < endX; x++) {
 			// Check if this position has actual content in the sparse board
 			const key = `${x},${z}`;
-			const hasContent = gameState.board && 
+			const cellContent = gameState.board && 
 							  gameState.board.cells && 
-							  gameState.board.cells[key] !== undefined && 
-							  gameState.board.cells[key] !== null;
+							  gameState.board.cells[key];
+							  
+			const hasContent = cellContent !== undefined && cellContent !== null;
 							  
 			// Always create a cell for border areas or non-empty cells
 			const isBorder = x === startX || x === endX - 1 || z === startZ || z === endZ - 1;
 			const isCheckerboardSquare = (x + z) % 2 === 0;
+			
+			// Check if this cell contains a chess piece
+			if (hasContent) {
+				const cell = cellContent;
+				
+				// Process based on cell type to extract chess pieces
+				if (typeof cell === 'object' && cell !== null) {
+					// Handle object-based cell data
+					if (cell.type === 'chess' && cell.chessPiece) {
+						extractedPieces.push({
+							id: cell.chessPiece.id || `${cell.player}-${cell.chessPiece.type}-${x}-${z}`,
+							position: { x, z },
+							type: cell.chessPiece.type || "PAWN",
+							player: cell.player || cell.chessPiece.player || 1,
+							color: cell.color || cell.chessPiece.color
+						});
+					}
+				} else if (typeof cell === 'number' && cell >= 11) {
+					// Handle legacy numeric cell types
+					const player = Math.floor(cell / 10);
+					const pieceType = cell % 10;
+					
+					extractedPieces.push({
+						id: `${player}-${pieceType}-${x}-${z}`,
+						position: { x, z },
+						type: pieceType,
+						player: player
+					});
+				}
+			}
 			
 			if (hasContent || (isCheckerboardSquare && (isBorder || Math.random() < 0.3))) {
 				// Full cell for actual content or checkerboard pattern
@@ -415,6 +449,32 @@ function createBoardCells(gameState, boardGroup, createFloatingIsland, THREE) {
 				cloudCount++;
 			}
 		}
+	}
+	
+	// Update the game state with extracted chess pieces
+	if (extractedPieces.length > 0) {
+		// Only replace if we found pieces
+		if (gameState.chessPieces && gameState.chessPieces.length > 0) {
+			// Keep existing pieces that might not be on the visible board area
+			// but update positions for ones we found
+			extractedPieces.forEach(extractedPiece => {
+				const existingIndex = gameState.chessPieces.findIndex(p => 
+					p.id === extractedPiece.id);
+				
+				if (existingIndex >= 0) {
+					// Update existing piece
+					gameState.chessPieces[existingIndex] = extractedPiece;
+				} else {
+					// Add new piece
+					gameState.chessPieces.push(extractedPiece);
+				}
+			});
+		} else {
+			// No existing pieces, just set the array
+			gameState.chessPieces = extractedPieces;
+		}
+		
+		console.log(`Extracted ${extractedPieces.length} chess pieces from board cells`);
 	}
 	
 	console.log(`Created ${cellCount} board cells and ${cloudCount} decorative clouds for visualization`);
@@ -747,6 +807,9 @@ function createChessPiece(gameState, x, z, pieceType, playerIdent, ourPlayerIden
 		const centerX = (minX + maxX) / 2;
 		const centerZ = (minZ + maxZ) / 2;
 		
+		// Log for debugging the positioning
+		console.log(`Creating piece at board coordinates (${x}, ${z}), board center: (${centerX}, ${centerZ})`);
+		
 		// Verify parameters for debugging
 		if (pieceType === undefined || pieceType === null) {
 			console.warn(`Invalid pieceType (${pieceType}) for cell at (${x},${z}), using default`);
@@ -802,7 +865,8 @@ function createChessPiece(gameState, x, z, pieceType, playerIdent, ourPlayerIden
 			position: { x, z }
 		};
 		
-		// Position the group using the SAME coordinate system as the board cells
+		// Position the piece group relative to the board center
+		// This is critical for correct positioning on the cells
 		pieceGroup.position.set(x - centerX, 0, z - centerZ);
 		
 		// Base of piece
@@ -1037,8 +1101,23 @@ function createChessPiece(gameState, x, z, pieceType, playerIdent, ourPlayerIden
 			if (child.isMesh) {
 				child.castShadow = true;
 				child.receiveShadow = true;
+				// Ensure visibility
+				child.visible = true;
+				if (child.material) {
+					child.material.needsUpdate = true;
+				}
 			}
 		});
+		
+		// Add a debug marker at the base of the piece
+		const markerGeometry = new THREE.SphereGeometry(0.05, 8, 8);
+		const markerMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+		const marker = new THREE.Mesh(markerGeometry, markerMaterial);
+		marker.position.y = 0.05;
+		pieceGroup.add(marker);
+		
+		// Ensure the entire piece group is visible
+		pieceGroup.visible = true;
 		
 		return pieceGroup;
 	} catch (err) {
@@ -1047,10 +1126,26 @@ function createChessPiece(gameState, x, z, pieceType, playerIdent, ourPlayerIden
 		// Create a simple fallback piece
 		const fallbackGroup = new THREE.Group();
 		const fallbackGeometry = new THREE.BoxGeometry(0.5, 0.8, 0.5);
-		const fallbackMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+		const fallbackMaterial = new THREE.MeshStandardMaterial({ 
+			color: 0xff0000,
+			emissive: 0xff0000,
+			emissiveIntensity: 0.5
+		});
 		const fallbackMesh = new THREE.Mesh(fallbackGeometry, fallbackMaterial);
+		fallbackMesh.position.y = 0.4; // Raise above the board
 		fallbackGroup.add(fallbackMesh);
-		fallbackGroup.position.set(x, 0.4, z);
+		
+		// Get board center for correct positioning
+		const minX = gameState.boardBounds?.minX || 0;
+		const maxX = gameState.boardBounds?.maxX || 20;
+		const minZ = gameState.boardBounds?.minZ || 0;
+		const maxZ = gameState.boardBounds?.maxZ || 20;
+		const centerX = (minX + maxX) / 2;
+		const centerZ = (minZ + maxZ) / 2;
+		
+		// Position the error mesh using the same coordinate system as cells
+		fallbackGroup.position.set(x - centerX, 0, z - centerZ);
+		fallbackGroup.visible = true;
 		
 		return fallbackGroup;
 	}

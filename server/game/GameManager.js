@@ -76,7 +76,7 @@ class GameManager {
 		const game = {
 			id: gameId,
 			board,
-			chessPieces: [],
+			chessPieces: [], // Always initialize as an empty array
 			islands: [],
 			players: {},
 			homeZones: {},
@@ -86,6 +86,12 @@ class GameManager {
 			createdAt: Date.now(),
 			updatedAt: Date.now()
 		};
+		
+		// Ensure chess pieces is always an array even if empty
+		if (!Array.isArray(game.chessPieces)) {
+			game.chessPieces = [];
+			log(`Initialized empty chessPieces array for game ${gameId}`);
+		}
 		
 		// Store the game
 		this.games[gameId] = game;
@@ -359,10 +365,10 @@ class GameManager {
 	}
 	
 	/**
-	 * Get the game state for a specific player
+	 * Get game state formatted for a specific player
 	 * @param {string} gameId - The game ID
 	 * @param {string} playerId - The player's ID
-	 * @returns {Object} The game state
+	 * @returns {Object} Game state for the player
 	 */
 	getGameStateForPlayer(gameId, playerId) {
 		// Get the game
@@ -381,6 +387,9 @@ class GameManager {
 				error: `Player ${playerId} not found in game ${gameId}`
 			};
 		}
+		
+		// Debug chess pieces
+		console.log(`Game ${gameId} has ${game.chessPieces ? game.chessPieces.length : 0} chess pieces to send to ${playerId}`);
 		
 		// Convert sparse board to 2D array for compatibility with client
 		const visibleRegion = {
@@ -417,6 +426,9 @@ class GameManager {
 			currentPlayer: playerId,
 			updatedAt: game.updatedAt
 		};
+		
+		// Debug the final gameState
+		console.log(`Sending ${gameState.chessPieces ? gameState.chessPieces.length : 0} chess pieces to client for player ${playerId}`);
 		
 		return {
 			success: true,

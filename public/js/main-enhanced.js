@@ -6,16 +6,24 @@
 
 import * as gameCore from './enhanced-gameCore.js';
 import * as debugUtils from './utils/debugUtils.js';
-import * as NetworkManager from './utils/networkManager.js';
+import * as NetworkManagerModule from './utils/networkManager.js';
 import './boardFunctions.js'; // Import the updated board functions
+
+// Make NetworkManager available globally for other modules to access
+window.NetworkManager = NetworkManagerModule;
 
 // Global state
 let isGameStarted = false;
 let playerName = localStorage.getItem('playerName') || '';
+let currentGameId = null;
 
 // Main initialization
 async function init() {
 	console.log('Initializing enhanced Shaktris game with Russian theme...');
+	
+	// Force hide loading screen and error messages - failsafe
+	hideLoadingScreen();
+	hideError();
 	
 	try {
 		// Run diagnostics first to catch any issues
@@ -24,6 +32,12 @@ async function init() {
 		// Check THREE.js status
 		if (!diagnostics.threeStatus || !diagnostics.threeStatus.isLoaded) {
 			throw new Error('THREE.js not available. Please check your internet connection.');
+		}
+		
+		// Make sure NetworkManager is globally available
+		if (!window.NetworkManager) {
+			console.warn('NetworkManager not globally available, assigning it now');
+			window.NetworkManager = NetworkManagerModule;
 		}
 		
 		// Initialize NetworkStatusManager if available
@@ -50,21 +64,20 @@ async function init() {
 		
 		// Show player login if needed
 		if (!playerName) {
+			// Always hide loading screen before showing login
+			document.getElementById('loading').style.display = 'none';
 			showPlayerNamePrompt();
 			return;
 		}
 		
-		// Initialize network connection
-		try {
-			await NetworkManager.initialize(playerName);
-			console.log('Network connection established');
-		} catch (error) {
-			console.warn('Network initialization failed, continuing in offline mode:', error);
-		}
+		// Hide loading screen only after game is initialized
+		// DO NOT hide it here to avoid flash of content
 		
-		// Hide loading screen, show game container
-		document.getElementById('loading').style.display = 'none';
+		// Create player list sidebar with Russian theme
+		createPlayerListSidebar();
 		
+		// Initialize the game first
+		console.log('Starting enhanced game initialization...');
 		const gameContainer = document.getElementById('game-container');
 		gameContainer.style.display = 'block';
 		
@@ -72,11 +85,6 @@ async function init() {
 		gameContainer.style.height = '100vh';
 		gameContainer.style.minHeight = '100vh';
 		
-		// Create player list sidebar with Russian theme
-		createPlayerListSidebar();
-		
-		// Initialize the game
-		console.log('Starting enhanced game initialization...');
 		isGameStarted = gameCore.initGame(gameContainer);
 		
 		if (!isGameStarted) {
@@ -90,7 +98,7 @@ async function init() {
 			}
 		});
 		
-		// Join or create a game
+		// Join or create a game - this will handle the loading screen
 		joinGame();
 		
 		console.log('Enhanced game initialized successfully');
@@ -290,16 +298,16 @@ function toggleSidebar() {
  * Set up player list updates
  */
 function setupPlayerListUpdates() {
-	if (NetworkManager.isConnected()) {
+	if (NetworkManagerModule.isConnected()) {
 		// Listen for player list updates
-		NetworkManager.onMessage('player_list', (data) => {
+		NetworkManagerModule.onMessage('player_list', (data) => {
 			if (data && data.players) {
 				updatePlayerList(data.players);
 			}
 		});
 		
 		// Request initial player list
-		NetworkManager.requestPlayerList();
+		NetworkManagerModule.requestPlayerList();
 	}
 }
 
@@ -340,15 +348,15 @@ function updatePlayerList(players) {
 			padding: '8px',
 			marginBottom: '5px',
 			borderRadius: '3px',
-			backgroundColor: player.id === NetworkManager.getPlayerId() ? 'rgba(255, 204, 0, 0.2)' : 'transparent',
-			border: player.id === NetworkManager.getPlayerId() ? '1px solid #ffcc00' : 'none'
+			backgroundColor: player.id === NetworkManagerModule.getPlayerId() ? 'rgba(255, 204, 0, 0.2)' : 'transparent',
+			border: player.id === NetworkManagerModule.getPlayerId() ? '1px solid #ffcc00' : 'none'
 		});
 		
 		// Add player info with Russian theme
 		playerItem.innerHTML = `
 			<div style="display: flex; align-items: center;">
 				<div style="width: 10px; height: 10px; border-radius: 50%; background-color: ${playerColor}; margin-right: 5px;"></div>
-				<span style="font-family: 'Times New Roman', serif;">${player.name || player.id} ${player.id === NetworkManager.getPlayerId() ? '(You)' : ''}</span>
+				<span style="font-family: 'Times New Roman', serif;">${player.name || player.id} ${player.id === NetworkManagerModule.getPlayerId() ? '(You)' : ''}</span>
 			</div>
 			${player.isComputer ? '<div style="font-size: 11px; color: #ffcc00; font-style: italic;">(Computer)</div>' : ''}
 		`;
@@ -358,45 +366,274 @@ function updatePlayerList(players) {
 }
 
 /**
- * Join or create game
+ * Join or create a game
  */
-async function joinGame() {
+async function joinGame(gameId = null) {
 	try {
-		// Check if network is available
-		if (!NetworkManager.isConnected()) {
-			console.warn('Network not connected, cannot join game');
-			showToastNotification('Network not connected. Game will start in offline mode.');
+		// Force hide any error messages - failsafe
+		hideError();
+		
+		// First check if NetworkManager is available
+		if (!window.NetworkManager) {
+			console.error('NetworkManager not available, trying to reinitialize');
+			window.NetworkManager = NetworkManagerModule;
 			
-			// Update network status if NetworkStatusManager is available
-			if (window.NetworkStatusManager) {
-				window.NetworkStatusManager.setStatus(window.NetworkStatusManager.NetworkStatus.DISCONNECTED);
+			// If still not available, show error
+			if (!window.NetworkManager) {
+				showError('Network manager not available. Please refresh the page.');
+				hideLoadingScreen(); // Ensure loading screen is hidden
+				return false;
 			}
+		}
+
+		// Show connecting message
+		showToastNotification('Connecting to game server...');
+
+		// Initialize network connection with progressive retry
+		let connected = false;
+		let attempts = 0;
+		const maxInitialAttempts = 3;
+		let retryDelay = 2000; // Start with 2 seconds
+		const maxRetryDelay = 30000; // Cap at 30 seconds
+
+		while (!connected && attempts < maxInitialAttempts) {
+			attempts++;
+			console.log(`Connection attempt ${attempts}...`);
 			
-			return;
+			try {
+				const connectionResult = await NetworkManagerModule.initialize(playerName || 'Guest');
+				if (connectionResult && connectionResult.playerId) {
+					connected = true;
+					hideError();
+					console.log('Successfully connected to server');
+				} else {
+					await new Promise(resolve => setTimeout(resolve, retryDelay));
+					retryDelay = Math.min(retryDelay * 1.5, maxRetryDelay);
+				}
+			} catch (error) {
+				console.warn(`Connection attempt ${attempts} failed:`, error);
+				await new Promise(resolve => setTimeout(resolve, retryDelay));
+				retryDelay = Math.min(retryDelay * 1.5, maxRetryDelay);
+			}
 		}
-		
-		console.log('Joining game...');
-		
-		// Attempt to join game
-		await NetworkManager.joinGame();
-		
-		// Success! Set up player list updates
-		setupPlayerListUpdates();
-		showToastNotification('Connected to game server successfully');
-		
-		// Update network status if NetworkStatusManager is available
-		if (window.NetworkStatusManager) {
-			window.NetworkStatusManager.setStatus(window.NetworkStatusManager.NetworkStatus.CONNECTED);
+
+		// If not connected after initial attempts, set up continuous retry in background
+		if (!connected) {
+			showError('Having trouble connecting to server. Will keep trying in background...');
+			
+			// Set up progressive retry in background
+			const retryConnection = async () => {
+				try {
+					console.log(`Background connection attempt, delay: ${retryDelay}ms`);
+					const result = await NetworkManagerModule.initialize(playerName || 'Guest');
+					if (result && result.playerId) {
+						hideError();
+						showToastNotification('Connected to server!');
+						console.log('Background connection attempt successful');
+						
+						// Now try to join the game
+						joinGameAfterConnection(gameId);
+						return true;
+					}
+				} catch (error) {
+					console.warn('Background connection attempt failed:', error);
+				}
+				
+				// Schedule next retry with increasing delay
+				retryDelay = Math.min(retryDelay * 1.5, maxRetryDelay);
+				setTimeout(retryConnection, retryDelay);
+				return false;
+			};
+			
+			// Start background retry process
+			setTimeout(retryConnection, retryDelay);
+			
+			// Don't block UI - hide loading screen
+			document.getElementById('loading').style.display = 'none';
+			return false;
 		}
+
+		// Set up connection status monitoring
+		NetworkManagerModule.on('disconnect', () => {
+			showError('Lost connection to server. Attempting to reconnect...');
+			
+			// Set up progressive retry
+			let reconnectDelay = 2000;
+			const reconnectMaxDelay = 30000;
+			
+			const attemptReconnect = async () => {
+				try {
+					console.log(`Reconnection attempt, delay: ${reconnectDelay}ms`);
+					await NetworkManagerModule.reconnect();
+					if (NetworkManagerModule.isConnected()) {
+						hideError();
+						showToastNotification('Reconnected to server!');
+						
+						// Rejoin the game if we have a game ID
+						if (currentGameId) {
+							NetworkManagerModule.joinGame(currentGameId);
+						}
+						return;
+					}
+				} catch (error) {
+					console.warn('Reconnection attempt failed:', error);
+				}
+				
+				// Schedule next retry with increasing delay
+				reconnectDelay = Math.min(reconnectDelay * 1.5, reconnectMaxDelay);
+				setTimeout(attemptReconnect, reconnectDelay);
+			};
+			
+			// Start reconnection process
+			setTimeout(attemptReconnect, reconnectDelay);
+		});
+
+		NetworkManagerModule.on('connect', () => {
+			hideError();
+			console.log('Reconnected to server');
+		});
+
+		return joinGameAfterConnection(gameId);
 	} catch (error) {
 		console.error('Error joining game:', error);
-		showToastNotification('Failed to connect to game server. Playing in offline mode.');
+		showError('An error occurred while joining the game. Please try again.');
 		
-		// Update network status if NetworkStatusManager is available
-		if (window.NetworkStatusManager) {
-			window.NetworkStatusManager.setStatus(window.NetworkStatusManager.NetworkStatus.ERROR);
-		}
+		// Hide loading screen even if there's an error
+		document.getElementById('loading').style.display = 'none';
+		return false;
 	}
+}
+
+/**
+ * Join game after connection is established
+ */
+async function joinGameAfterConnection(gameId = null) {
+	try {
+		// Attempt to join the game
+		const joinResult = await NetworkManagerModule.joinGame(gameId);
+		if (!joinResult || !joinResult.success) {
+			console.error('Failed to join game:', joinResult);
+			showError('Could not join game. Please try again.');
+			
+			// Hide loading screen
+			document.getElementById('loading').style.display = 'none';
+			return false;
+		}
+
+		// Store the game ID
+		currentGameId = joinResult.gameId;
+
+		// Register for game state updates
+		NetworkManagerModule.onMessage('game_state', (data) => {
+			console.log('Game state message received:', data);
+			if (typeof gameCore !== 'undefined' && gameCore.handleGameStateUpdate) {
+				gameCore.handleGameStateUpdate(data);
+			}
+		});
+
+		// Register for game updates
+		NetworkManagerModule.onMessage('game_update', (data) => {
+			console.log('Game update message received:', data);
+			if (typeof gameCore !== 'undefined' && gameCore.handleGameUpdate) {
+				gameCore.handleGameUpdate(data);
+			}
+		});
+
+		// Enable game state polling
+		NetworkManagerModule.startGameStatePolling();
+
+		// Explicitly request initial game state
+		setTimeout(() => {
+			console.log('Requesting initial game state...');
+			if (NetworkManagerModule.getGameState) {
+				NetworkManagerModule.getGameState()
+					.then(state => {
+						console.log('Initial game state received:', state);
+						if (typeof gameCore !== 'undefined' && gameCore.handleGameStateUpdate) {
+							gameCore.handleGameStateUpdate(state);
+						}
+					})
+					.catch(err => console.error('Error fetching initial game state:', err));
+			}
+		}, 1000);
+
+		// Update game ID display
+		const gameIdDisplay = document.getElementById('game-id-display');
+		if (gameIdDisplay) {
+			gameIdDisplay.value = currentGameId;
+		}
+
+		// Hide loading screen
+		document.getElementById('loading').style.display = 'none';
+		
+		// Show success message
+		showToastNotification('Connected to game server!');
+		
+		return true;
+	} catch (error) {
+		console.error('Error joining game after connection:', error);
+		showError('Error joining game. Will retry in background.');
+		
+		// Hide loading screen
+		document.getElementById('loading').style.display = 'none';
+		return false;
+	}
+}
+
+function showError(message) {
+	const errorElement = document.getElementById('error-message');
+	if (errorElement) {
+		errorElement.textContent = message;
+		errorElement.style.display = 'block';
+	} else {
+		console.error(message);
+	}
+}
+
+function hideError() {
+	const errorElement = document.getElementById('error-message');
+	if (errorElement) {
+		errorElement.style.display = 'none';
+	}
+}
+
+/**
+ * Initialize network connection with retry
+ */
+async function initializeNetworkWithRetry() {
+	let connected = false;
+	let attempts = 0;
+	let retryDelay = 2000; // Start with 2 seconds
+	const maxRetryDelay = 30000; // Cap at 30 seconds
+
+	while (!connected && attempts < 10) { // Limit to 10 attempts before returning
+		attempts++;
+		console.log(`Network initialization attempt ${attempts}...`);
+		
+		try {
+			const result = await NetworkManagerModule.initialize(playerName || 'Guest');
+			if (result && result.playerId) {
+				connected = true;
+				console.log('Successfully connected to server');
+				return true;
+			}
+		} catch (error) {
+			console.warn(`Network initialization attempt ${attempts} failed:`, error);
+			
+			// Show message every few attempts
+			if (attempts % 3 === 0) {
+				showToastNotification(`Still trying to connect (attempt ${attempts})...`);
+			}
+		}
+		
+		// Wait before retrying
+		await new Promise(resolve => setTimeout(resolve, retryDelay));
+		
+		// Increase delay for next attempt (with cap)
+		retryDelay = Math.min(retryDelay * 1.5, maxRetryDelay);
+	}
+	
+	return false;
 }
 
 /**
@@ -464,6 +701,29 @@ function showToastNotification(message) {
 			}
 		}, 300);
 	}, 3000);
+}
+
+// Helper function to ensure loading screen is always hidden
+function hideLoadingScreen() {
+	console.log('Forcibly hiding loading screen');
+	const loadingElement = document.getElementById('loading');
+	if (loadingElement) {
+		loadingElement.style.display = 'none';
+	}
+	
+	// Also hide any loading indicator elements
+	const loadingIndicator = document.getElementById('loading-indicator');
+	if (loadingIndicator) {
+		if (loadingIndicator.parentNode) {
+			loadingIndicator.parentNode.removeChild(loadingIndicator);
+		}
+	}
+	
+	// Hide other potential loading elements
+	const elements = document.querySelectorAll('[id*="loading"]');
+	elements.forEach(el => {
+		el.style.display = 'none';
+	});
 }
 
 // Start initialization
