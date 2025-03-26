@@ -1,9 +1,10 @@
-import * as THREE from './utils/three.module.js';
+// import * as THREE from './utils/three.module.js';
 import { createFewClouds } from './createFewClouds.js';
-import { onWindowResize } from './enhanced-gameCore.js';
+import { onWindowResize, THREE } from './enhanced-gameCore.js';
 import { boardFunctions } from './boardFunctions.js';
+import { getChessPiece } from './chessPieceCreator.js';
 
-export function setupScene(containerElement, scene, camera, renderer, controls, boardGroup, tetrominoGroup, chessPiecesGroup) {
+export function setupScene(containerElement, scene, camera, renderer, controls, boardGroup, tetrominoGroup, chessPiecesGroup, clouds, gameState) {
 	console.log('Setting up enhanced 3D scene with beautiful sky...');
 	
 	// Create scene
@@ -14,8 +15,8 @@ export function setupScene(containerElement, scene, camera, renderer, controls, 
 	scene.fog = new THREE.Fog(0xC5F0FF, 60, 150); // Lighter blue fog, pushed further back
 	
 	// Create camera
-	const width = containerElement.clientWidth || window.innerWidth;
-	const height = containerElement.clientHeight || window.innerHeight;
+	const width = containerElement?.clientWidth || window.innerWidth;
+	const height = containerElement?.clientHeight || window.innerHeight;
 	
 	camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 1000);
 	camera.position.set(20, 25, 20);
@@ -92,6 +93,17 @@ export function setupScene(containerElement, scene, camera, renderer, controls, 
 	
 	// Create board group
 	boardGroup = new THREE.Group();
+	boardGroup.name = 'boardGroup';
+	// Initialize the board with initial visualization
+	console.log("Creating initial board visualization...");
+	try {
+		createBoard(boardGroup, gameState);
+		console.log("Board created successfully", boardGroup);
+		boardFunctions.createBoardCells(gameState, boardGroup, createFloatingIsland, THREE);
+	} catch (err) {
+		console.error("Error creating initial board:", err);
+		// Continue with setup, we'll try again when we get data
+	}
 	scene.add(boardGroup);
 	
 	// Create tetromino group
@@ -105,12 +117,12 @@ export function setupScene(containerElement, scene, camera, renderer, controls, 
 	scene.add(chessPiecesGroup);
 	
 	// Add beautiful fluffy clouds to scene
-	createFewClouds(scene);
+	clouds = createFewClouds(scene);
 	
 	// Add resize listener
 	window.addEventListener('resize', () => onWindowResize(camera, renderer, containerElement));
 
-	return { _scene: scene, _camera: camera, _renderer: renderer, _controls: controls, _boardGroup: boardGroup, _tetrominoGroup: tetrominoGroup, _chessPiecesGroup: chessPiecesGroup };
+	return { _scene: scene, _camera: camera, _renderer: renderer, _controls: controls, _boardGroup: boardGroup, _tetrominoGroup: tetrominoGroup, _chessPiecesGroup: chessPiecesGroup, _clouds: clouds };
 }
 
 export function rebuildScene(containerElement, options = {}) {
@@ -441,4 +453,225 @@ function createRoundedBoxGeometry(width, height, depth, radius, segments) {
 
 	return geometry;
 }
+/**
+ * Create a single floating cube cell at the given position
+ * @param {number} x - X position
+ * @param {number} z - Z position
+ * @param {THREE.Material} material - Material to use for the cell
+ * @param {THREE.Group} boardGroup - The board group to add the cell to
+ * @returns {THREE.Mesh} The created cell
+ */
+export function createFloatingCube(x, z, material, boardGroup) {
+	try {
+		// Create a cube for the cell
+		const cellGeometry = new THREE.BoxGeometry(0.9, 0.9, 0.9);
+		const cellMesh = new THREE.Mesh(cellGeometry, material);
 
+		// Position the cell at its grid coordinates - perfectly aligned
+		cellMesh.position.set(x, 0, z);
+
+		// Ensure no rotation at all - critical to prevent board from becoming tilted
+		cellMesh.rotation.set(0, 0, 0);
+
+		// Mark it as a board cell to prevent it from being animated
+		cellMesh.userData = {
+			type: 'cell',
+			position: { x, z },
+			isWhite: (x + z) % 2 === 0,
+			isStatic: true // Indicates this should not be rotated or bobbed
+		};
+
+		// Add shadows
+		cellMesh.castShadow = true;
+		cellMesh.receiveShadow = true;
+
+		// Add to board group
+		boardGroup.add(cellMesh);
+
+		return cellMesh;
+	} catch (error) {
+		console.error(`Error creating floating cube at (${x}, ${z}):`, error);
+		return null;
+	}
+}
+/**
+ * Set up lights for the scene
+ */
+export function setupLights(scene) {
+	// Clear any existing lights first
+	scene.children = scene.children.filter(child => !(child instanceof THREE.Light));
+
+	// Create a beautiful light blue sky background
+	scene.background = new THREE.Color(0xAFE9FF); // Light sky blue
+	scene.fog = new THREE.Fog(0xC5F0FF, 60, 150); // Light blue fog, pushed back
+
+
+	// Main sunlight - golden warm directional light
+	const sunLight = new THREE.DirectionalLight(0xFFFBE8, 1.35); // Warm sunlight
+	sunLight.position.set(25, 80, 30);
+	sunLight.castShadow = true;
+	sunLight.shadow.mapSize.width = 2048;
+	sunLight.shadow.mapSize.height = 2048;
+	sunLight.shadow.camera.near = 10;
+	sunLight.shadow.camera.far = 200;
+	sunLight.shadow.camera.left = -50;
+	sunLight.shadow.camera.right = 50;
+	sunLight.shadow.camera.top = 50;
+	sunLight.shadow.camera.bottom = -50;
+	sunLight.shadow.bias = -0.0001; // Reduce shadow acne
+	scene.add(sunLight);
+
+	// Ambient light for general illumination - sky colored
+	const ambientLight = new THREE.AmbientLight(0xB0E2FF, 0.65); // Sky-colored
+	scene.add(ambientLight);
+
+	// Add a soft golden backlight for rim lighting effect
+	const backLight = new THREE.DirectionalLight(0xFFF0E0, 0.4);
+	backLight.position.set(-15, 20, -25);
+	scene.add(backLight);
+
+	// Add a soft blue-ish fill light from below for floating cells
+	const fillLight = new THREE.DirectionalLight(0xC8E0FF, 0.25);
+	fillLight.position.set(-20, -5, -20);
+	scene.add(fillLight);
+
+	// Add a subtle hemisphere light for better outdoor lighting
+	const hemisphereLight = new THREE.HemisphereLight(0xFFFBE8, 0x080820, 0.5);
+	scene.add(hemisphereLight);
+
+	// Add beautiful fluffy clouds to scene
+	addCloudsToScene(scene);
+}
+/**
+ * Add decorative clouds to the scene
+ */
+function addCloudsToScene(scene) {
+	// Create cloud material
+	const cloudMaterial = new THREE.MeshStandardMaterial({
+		color: 0xffffff,
+		transparent: true,
+		opacity: 0.85,
+		roughness: 1.0,
+		metalness: 0.0
+	});
+
+	// Create cloud group
+	const cloudGroup = new THREE.Group();
+	cloudGroup.name = 'clouds';
+
+	// Create several clouds at different positions
+	for (let i = 0; i < 15; i++) {
+		const cloudCluster = new THREE.Group();
+
+		// Random position in the sky
+		const x = (Math.random() - 0.5) * 100;
+		const y = 20 + Math.random() * 20;
+		const z = (Math.random() - 0.5) * 100;
+
+		// Create 3-5 puffs for each cloud
+		const puffCount = 3 + Math.floor(Math.random() * 3);
+
+		for (let j = 0; j < puffCount; j++) {
+			// Create a puff (a simple sphere)
+			const size = 2 + Math.random() * 3;
+			const puffGeometry = new THREE.SphereGeometry(size, 7, 7);
+			const puff = new THREE.Mesh(puffGeometry, cloudMaterial);
+
+			// Position within cluster
+			const puffX = (Math.random() - 0.5) * 5;
+			const puffY = (Math.random() - 0.5) * 2;
+			const puffZ = (Math.random() - 0.5) * 5;
+
+			puff.position.set(puffX, puffY, puffZ);
+			cloudCluster.add(puff);
+		}
+
+		// Position the whole cluster
+		cloudCluster.position.set(x, y, z);
+		cloudGroup.add(cloudCluster);
+	}
+
+	// Add clouds to scene
+	scene.add(cloudGroup);
+}
+
+
+/**
+ * Creates a board with floating islands in the sky
+ * @param {THREE.Group} boardGroup - Group to add board cells to
+ */
+export function createBoard(boardGroup, gameState) {
+	console.log('Creating floating islands based on received game state...');
+
+	// Safety check for null boardGroup
+	if (!boardGroup) {
+		console.error('Cannot create board: boardGroup is undefined');
+		return;
+	}
+
+	try {
+		// Clear any existing board content
+		while (boardGroup.children.length > 0) {
+			boardGroup.remove(boardGroup.children[0]);
+		}
+
+		// Get board dimensions from game state
+		const boardSize = gameState?.boardSize || 16;
+
+		// Create materials for cells - use more natural colors
+		const whiteMaterial = new THREE.MeshStandardMaterial({
+			color: 0xf5f5f5,
+			roughness: 0.8,
+			metalness: 0.1
+		});
+
+		const darkMaterial = new THREE.MeshStandardMaterial({
+			color: 0x3a3a3a,
+			roughness: 0.7,
+			metalness: 0.2
+		});
+
+		// Check if there's board data
+		const hasBoardData = gameState?.board &&
+			typeof gameState.board === 'object' &&
+			gameState.board.cells &&
+			Object.keys(gameState.board.cells).length > 0;
+
+		console.log(`Creating board with size ${boardSize}. Has board data: ${hasBoardData} (${hasBoardData ? Object.keys(gameState.board.cells).length : 0} cells)`);
+
+		// ONLY create cells where there's data
+		if (hasBoardData) {
+			// Track count for logging
+			let createdCellCount = 0;
+
+			// Create cells based on actual board data
+			for (const key in gameState.board.cells) {
+				const [x, z] = key.split(',').map(Number);
+				const cell = gameState.board.cells[key];
+
+				// Only create a cell if there's content
+				if (cell !== null && cell !== undefined) {
+					const material = (x + z) % 2 === 0 ? whiteMaterial : darkMaterial;
+					createFloatingCube(x, z, material, boardGroup);
+					createdCellCount++;
+				}
+			}
+
+			console.log(`Created ${createdCellCount} board cells based on data`);
+		} else {
+			// If no board data, create a default checkerboard grid for testing
+			console.warn("No board data available, creating default test board");
+			for (let z = 0; z < boardSize; z++) {
+				for (let x = 0; x < boardSize; x++) {
+					// Create a sparse test board
+					if ((x + z) % 3 === 0) {
+						const material = (x + z) % 2 === 0 ? whiteMaterial : darkMaterial;
+						createFloatingCube(x, z, material, boardGroup);
+					}
+				}
+			}
+		}
+	} catch (error) {
+		console.error("Error in createBoard:", error);
+	}
+}

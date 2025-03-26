@@ -74,7 +74,7 @@ async function init() {
 		// DO NOT hide it here to avoid flash of content
 		
 		// Create player list sidebar with Russian theme
-		createPlayerListSidebar();
+		//createPlayerListSidebar();
 		
 		// Initialize the game first
 		console.log('Starting enhanced game initialization...');
@@ -335,12 +335,26 @@ function updatePlayerList(players) {
 	players.forEach(player => {
 		const playerItem = document.createElement('div');
 		
-		// Determine player color based on player number
-		let playerColor = '#aaaaaa';
-		if (player.playerNumber === 1 || player.player === 1) {
-			playerColor = '#3377FF';
-		} else if (player.playerNumber === 2 || player.player === 2) {
-			playerColor = '#FF8800';
+		// Determine player color based on whether it's the local player
+		let playerColor;
+		
+		// Local player uses red color
+		if (player.id === NetworkManagerModule.getPlayerId()) {
+			playerColor = '#AA0000'; // Red for local player
+		} else {
+			// Generate a deterministic color for this player ID (blue/green shades)
+			let hash = 0;
+			const playerId = player.id || 'unknown';
+			for (let i = 0; i < playerId.length; i++) {
+				hash = playerId.charCodeAt(i) + ((hash << 5) - hash);
+			}
+			
+			// Generate blue/green-ish color (keeping red low)
+			const r = Math.abs(hash % 80); // Keep red low for blue/green shades
+			const g = 100 + Math.abs((hash >> 4) % 155); // Medium to high green
+			const b = 150 + Math.abs((hash >> 8) % 105); // Medium to high blue
+			
+			playerColor = `rgb(${r}, ${g}, ${b})`;
 		}
 		
 		// Style the player item with Russian theme

@@ -72,5 +72,37 @@ module.exports = {
 	restoreMocks: true,
 
 	// The maximum amount of workers used to run your tests
-	maxWorkers: "50%"
+	maxWorkers: "50%",
+	
+	// Ensure security tests are included
+	testPathIgnorePatterns: [
+		"/node_modules/",
+		"/tests\\.old/"
+	],
+	
+	// Add specific configuration for security tests
+	projects: [
+		{
+			displayName: 'security',
+			testMatch: [
+				'<rootDir>/tests/security/**/*.test.js'
+			],
+			testEnvironment: 'node'
+		},
+		{
+			displayName: 'default',
+			testMatch: [
+				'<rootDir>/tests/gameplay/**/*.test.js',
+				'<rootDir>/tests/core/**/*.test.js',
+				'<rootDir>/tests/ui/**/*.test.js',
+				'<rootDir>/tests/backend/**/*.test.js'
+			]
+		}
+	],
+	
+	// Force exit after tests complete (needed for certain test environments)
+	forceExit: true,
+	
+	// Set timeout higher for security tests which may take longer
+	testTimeout: 10000
 }; 

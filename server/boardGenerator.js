@@ -1,159 +1,372 @@
 /**
  * Board Generator - Server-side implementation for Shaktris
- * Handles generation of the board layout including spiral home zone positioning
+ * Handles generation of the board layout including home zone positioning
  * 
  * This module is responsible for:
- * 1. Calculating positions for home zones in a spiral pattern
+ * 1. Calculating positions for home zones with specific pawn clash requirements
  * 2. Generating the home zones for each player
  * 3. Creating chess pieces with the correct orientation
+ * 4. Placing a centre marker for reliable client-side reference
  * 
  * The implementation uses a sparse cell-based approach rather than a traditional 2D array.
  * Each cell is identified by a coordinate key in the format "x,z".
  */
 
 /**
- * Calculate home zone positions in a spiral pattern
+ * Calculate home zone position with controlled pawn clashing
  * 
- * The spiral algorithm works as follows:
- * 1. Start with an initial radius from the center
- * 2. For each player, increase the radius based on the player's index
- * 3. Calculate angle around the center based on player index
- * 4. Determine orientation so pieces face the center
- * 5. Adjust position based on orientation and home zone dimensions
- * 
- * Special cases:
- * - Player 1 (index 0) is positioned close to the center
- * - Players 2-5 (index 1-4) get maximum separation with a large spiral factor
- * - Player 5 (index 4) gets additional offset to avoid overlap with Player 1
- * - Later players use a gradually decreasing spiral factor
+ * This algorithm:
+ * 1. Uses a randomized approach with specific constraints
+ * 2. Ensures home cells aren't directly in the path of other players' pawns (8 spaces)
+ * 3. Arranges for potential pawn clashing after 6 moves (partial clash)
+ * 4. Falls back to placement relative to the furthest cell if needed
  * 
  * @param {number} playerIndex - Player index (0-based)
- * @param {number} totalPlayers - Total number of players
+ * @param {Object} gameState - Current game state to check existing positions
  * @param {number} boardWidth - Board width
  * @param {number} boardHeight - Board height
  * @param {number} homeZoneWidth - Home zone width (typically 8 for chess)
  * @param {number} homeZoneHeight - Home zone height (typically 2 for chess)
  * @returns {Object} Position and orientation for the home zone
  */
-function calculateSpiralHomePosition(playerIndex, totalPlayers, boardWidth, boardHeight, homeZoneWidth, homeZoneHeight) {
-	// Center of the board
+function calculateHomePosition(playerIndex, gameState, boardWidth, boardHeight, homeZoneWidth, homeZoneHeight) {
+	// For the first player, place near the center
+	if (playerIndex === 0) {
+		const centerX = Math.floor(boardWidth / 2) - Math.floor(homeZoneWidth / 2);
+		const centerZ = Math.floor(boardHeight / 2) - Math.floor(homeZoneHeight / 2);
+		
+		return {
+			x: centerX,
+			z: centerZ,
+			orientation: 0 // First player faces up by default
+		};
+	}
+	
+	// Get existing player home zones
+	const existingHomeZones = [];
+	if (gameState && gameState.homeZones) {
+		for (const playerId in gameState.homeZones) {
+			existingHomeZones.push(gameState.homeZones[playerId]);
+		}
+	}
+	
+	// Track pawn paths for existing players
+	const pawnPaths = calculateExistingPawnPaths(existingHomeZones);
+	
+	// Try to find a valid position with 100 attempts
+	for (let attempt = 0; attempt < 100; attempt++) {
+		// Generate random position
+		const randomOrientation = Math.floor(Math.random() * 4); // 0-3
+		let x = Math.floor(Math.random() * (boardWidth - homeZoneWidth));
+		let z = Math.floor(Math.random() * (boardHeight - homeZoneHeight));
+		
+		// Adjust position based on orientation
+		switch (randomOrientation) {
+			case 0: // Facing up - pawns at bottom
+				// Position is already correct
+				break;
+			case 1: // Facing right - pawns at left
+				// Ensure there's room for pawns on the left
+				x = Math.max(6, x);
+				break;
+			case 2: // Facing down - pawns at top
+				// Ensure there's room for pawns on top
+				z = Math.max(6, z);
+				break;
+			case 3: // Facing left - pawns at right
+				// Ensure there's room for pawns on the right
+				x = Math.min(boardWidth - homeZoneWidth - 6, x);
+				break;
+		}
+		
+		// Check if position is valid (not in direct path of other pawns at 8 moves)
+		if (isValidHomePosition(x, z, randomOrientation, homeZoneWidth, homeZoneHeight, pawnPaths, 8)) {
+			// Check if position enables clashing at 6 spaces
+			if (hasPartialPawnClash(x, z, randomOrientation, homeZoneWidth, homeZoneHeight, pawnPaths, 6)) {
+				return {
+					x,
+					z,
+					orientation: randomOrientation
+				};
+			}
+		}
+	}
+	
+	// If no valid position found after 100 attempts, place relative to furthest cell
+	return calculateFallbackPosition(existingHomeZones, boardWidth, boardHeight, homeZoneWidth, homeZoneHeight);
+}
+
+/**
+ * Calculate existing pawn paths for all players
+ * @param {Array} homeZones - Array of home zone objects
+ * @returns {Array} Array of pawn path objects with position and direction
+ */
+function calculateExistingPawnPaths(homeZones) {
+	const pawnPaths = [];
+	
+	for (const homeZone of homeZones) {
+		const { x, z, width, height, orientation } = homeZone;
+		
+		// For each pawn position in the home zone (assuming front row/column has pawns)
+		for (let i = 0; i < width; i++) {
+			let pawnX, pawnZ, dirX = 0, dirZ = 0;
+			
+			switch (orientation) {
+				case 0: // Facing up - pawns at bottom
+					pawnX = x + i;
+					pawnZ = z;
+					dirZ = -1; // Pawns move up
+					break;
+				case 1: // Facing right - pawns at left
+					pawnX = x;
+					pawnZ = z + i;
+					dirX = 1; // Pawns move right
+					break;
+				case 2: // Facing down - pawns at top
+					pawnX = x + i;
+					pawnZ = z + height - 1;
+					dirZ = 1; // Pawns move down
+					break;
+				case 3: // Facing left - pawns at right
+					pawnX = x + width - 1;
+					pawnZ = z + i;
+					dirX = -1; // Pawns move left
+					break;
+			}
+			
+			pawnPaths.push({
+				startX: pawnX,
+				startZ: pawnZ,
+				dirX,
+				dirZ
+			});
+		}
+	}
+	
+	return pawnPaths;
+}
+
+/**
+ * Check if a potential home zone position is valid (not in direct path of other pawns)
+ * @param {number} x - X coordinate
+ * @param {number} z - Z coordinate
+ * @param {number} orientation - Orientation (0-3)
+ * @param {number} width - Home zone width
+ * @param {number} height - Home zone height
+ * @param {Array} pawnPaths - Array of existing pawn paths
+ * @param {number} moveDistance - How many spaces forward to check
+ * @returns {boolean} True if position is valid
+ */
+function isValidHomePosition(x, z, orientation, width, height, pawnPaths, moveDistance) {
+	// Get the cells that would be occupied by this home zone
+	const homeCells = [];
+	
+	for (let dx = 0; dx < width; dx++) {
+		for (let dz = 0; dz < height; dz++) {
+			homeCells.push({ x: x + dx, z: z + dz });
+		}
+	}
+	
+	// Check if any home cells are in the path of existing pawns
+	for (const path of pawnPaths) {
+		for (let move = 1; move <= moveDistance; move++) {
+			const pathX = path.startX + (path.dirX * move);
+			const pathZ = path.startZ + (path.dirZ * move);
+			
+			// Check if this path position conflicts with any home cell
+			if (homeCells.some(cell => cell.x === pathX && cell.z === pathZ)) {
+				return false;
+			}
+		}
+	}
+	
+	return true;
+}
+
+/**
+ * Check if the position allows for partial pawn clashing at a given distance
+ * @param {number} x - X coordinate
+ * @param {number} z - Z coordinate
+ * @param {number} orientation - Orientation (0-3)
+ * @param {number} width - Home zone width
+ * @param {number} height - Home zone height
+ * @param {Array} pawnPaths - Array of existing pawn paths
+ * @param {number} clashDistance - Distance at which pawns should clash
+ * @returns {boolean} True if at least 2 pawns can clash at the specified distance
+ */
+function hasPartialPawnClash(x, z, orientation, width, height, pawnPaths, clashDistance) {
+	// If no existing pawns, any position is valid
+	if (pawnPaths.length === 0) return true;
+	
+	// Calculate pawn positions for this potential home zone
+	const newPawnPaths = [];
+	
+	switch (orientation) {
+		case 0: // Facing up - pawns at bottom
+			for (let i = 0; i < width; i++) {
+				newPawnPaths.push({
+					startX: x + i,
+					startZ: z,
+					dirX: 0,
+					dirZ: -1
+				});
+			}
+			break;
+		case 1: // Facing right - pawns at left
+			for (let i = 0; i < height; i++) {
+				newPawnPaths.push({
+					startX: x,
+					startZ: z + i,
+					dirX: 1,
+					dirZ: 0
+				});
+			}
+			break;
+		case 2: // Facing down - pawns at top
+			for (let i = 0; i < width; i++) {
+				newPawnPaths.push({
+					startX: x + i,
+					startZ: z + height - 1,
+					dirX: 0,
+					dirZ: 1
+				});
+			}
+			break;
+		case 3: // Facing left - pawns at right
+			for (let i = 0; i < height; i++) {
+				newPawnPaths.push({
+					startX: x + width - 1,
+					startZ: z + i,
+					dirX: -1,
+					dirZ: 0
+				});
+			}
+			break;
+	}
+	
+	// Count potential pawn clashes at clashDistance
+	let clashCount = 0;
+	
+	for (const newPath of newPawnPaths) {
+		// Calculate where this pawn would be after moving clashDistance spaces
+		const newPathX = newPath.startX + (newPath.dirX * clashDistance);
+		const newPathZ = newPath.startZ + (newPath.dirZ * clashDistance);
+		
+		// Check existing pawns for clash
+		for (const existingPath of pawnPaths) {
+			const existingPathX = existingPath.startX + (existingPath.dirX * clashDistance);
+			const existingPathZ = existingPath.startZ + (existingPath.dirZ * clashDistance);
+			
+			// If positions match, we have a clash
+			if (newPathX === existingPathX && newPathZ === existingPathZ) {
+				clashCount++;
+				// We need at least 2 clashes
+				if (clashCount >= 2) {
+					return true;
+				}
+			}
+		}
+	}
+	
+	// Not enough clashes found
+	return false;
+}
+
+/**
+ * Calculate a fallback position when no valid random position is found
+ * @param {Array} existingHomeZones - Array of existing home zones
+ * @param {number} boardWidth - Board width
+ * @param {number} boardHeight - Board height 
+ * @param {number} homeZoneWidth - Home zone width
+ * @param {number} homeZoneHeight - Home zone height
+ * @returns {Object} Position and orientation for the home zone
+ */
+function calculateFallbackPosition(existingHomeZones, boardWidth, boardHeight, homeZoneWidth, homeZoneHeight) {
+	// Find furthest cell from center
 	const centerX = boardWidth / 2;
 	const centerZ = boardHeight / 2;
+	let furthestDistance = 0;
+	let furthestX = centerX;
+	let furthestZ = centerZ;
 	
-	// Base spiral parameters - increased for steeper initial expansion
-	const initialRadius = Math.min(boardWidth, boardHeight) / 3;
-	
-	// Each player gets positioned further out in the spiral
-	// The spacing between players should decrease as we go further out
-	// Use a smaller angle step for more players to create a tighter spiral
-	const angleStep = (Math.PI * 2) / Math.min(totalPlayers, 8);
-	
-	// Calculate spiral factor - significantly increased to create more separation
-	// Especially for the first 5 players
-	let spiralFactor;
-	if (playerIndex === 0) {
-		// First player uses initial radius
-		spiralFactor = 0;
-	} else if (playerIndex < 5) {
-		// First 4 players get maximum separation from player 1
-		spiralFactor = 10;
-	} else {
-		// Players further out get gradually decreasing separation
-		// But still maintain significant distance
-		spiralFactor = Math.max(6, 10 - ((playerIndex - 5) * 0.5));
+	// Check all home zone cells
+	for (const zone of existingHomeZones) {
+		// Check corners and edges
+		const points = [
+			{ x: zone.x, z: zone.z },
+			{ x: zone.x + zone.width - 1, z: zone.z },
+			{ x: zone.x, z: zone.z + zone.height - 1 },
+			{ x: zone.x + zone.width - 1, z: zone.z + zone.height - 1 }
+		];
+		
+		for (const point of points) {
+			const distance = Math.sqrt(
+				Math.pow(point.x - centerX, 2) + 
+				Math.pow(point.z - centerZ, 2)
+			);
+			
+			if (distance > furthestDistance) {
+				furthestDistance = distance;
+				furthestX = point.x;
+				furthestZ = point.z;
+			}
+		}
 	}
 	
-	// Calculate radius for this player position
-	// As playerIndex increases, each player is positioned further out
-	const radius = initialRadius + (playerIndex * spiralFactor);
+	// Calculate placement 6 spaces out from furthest cell, facing center
+	const angle = Math.atan2(centerZ - furthestZ, centerX - furthestX);
 	
-	// Calculate angle for this player (in radians)
-	// Add small variation to prevent perfect alignments that could cause overlaps
-	// Larger variation for later players to prevent overlap
-	const variation = (playerIndex % 2 === 0) ? 
-		(0.1 + (playerIndex * 0.02)) : 
-		(-0.1 - (playerIndex * 0.02));
-	const angle = (playerIndex * angleStep) + variation;
-	
-	// Calculate position on the spiral
-	const x = centerX + radius * Math.cos(angle);
-	const z = centerZ + radius * Math.sin(angle);
-	
-	// Calculate orientation - pieces should face towards the center
-	// This angle determines which way the pawns are facing
-	const facingAngle = Math.atan2(centerZ - z, centerX - x);
-	
-	// Normalize to get orientation index (0-3)
-	// 0: facing up (pawns at bottom)
-	// 1: facing right (pawns at left)
-	// 2: facing down (pawns at top)
-	// 3: facing left (pawns at right)
-	let orientation = Math.round(facingAngle / (Math.PI / 2)) % 4;
+	// Convert angle to orientation (0-3)
+	// 0: facing up, 1: facing right, 2: facing down, 3: facing left
+	let orientation = Math.round(angle / (Math.PI / 2)) % 4;
 	if (orientation < 0) orientation += 4;
 	
-	// For players that might be close to each other, force perpendicular orientations
-	// to ensure some pawn clash as requested
-	if (playerIndex > 0 && playerIndex % 4 === 0) {
-		// Every 4th player after the first gets a perpendicular orientation
-		orientation = (orientation + 1) % 4;
-	}
+	// Calculate position 6 spaces away from furthest cell
+	const offsetX = Math.round(6 * Math.cos(angle));
+	const offsetZ = Math.round(6 * Math.sin(angle));
 	
-	// Calculate final home zone coordinates
-	// Adjust the position so the home zone is properly placed based on orientation
-	let homeX = x;
-	let homeZ = z;
+	let x = furthestX + offsetX;
+	let z = furthestZ + offsetZ;
 	
 	// Adjust position based on orientation to ensure pawns face the center
 	switch (orientation) {
 		case 0: // Facing up - pawns at bottom
-			homeX = homeX - (homeZoneWidth / 2);
-			homeZ = homeZ - homeZoneHeight;
+			x = x - Math.floor(homeZoneWidth / 2);
+			z = z - homeZoneHeight;
 			break;
 		case 1: // Facing right - pawns at left
-			homeX = homeX - homeZoneWidth;
-			homeZ = homeZ - (homeZoneHeight / 2);
+			x = x - homeZoneWidth;
+			z = z - Math.floor(homeZoneHeight / 2);
 			break;
 		case 2: // Facing down - pawns at top
-			homeX = homeX - (homeZoneWidth / 2);
-			homeZ = homeZ;
+			x = x - Math.floor(homeZoneWidth / 2);
+			z = z;
 			break;
 		case 3: // Facing left - pawns at right
-			homeX = homeX;
-			homeZ = homeZ - (homeZoneHeight / 2);
+			x = x;
+			z = z - Math.floor(homeZoneHeight / 2);
 			break;
-	}
-	
-	// Apply additional offset for player 5 specifically to avoid overlap with player 1
-	if (playerIndex === 4) { // Index 4 = player 5
-		// Get direction vector from center
-		const dirX = Math.sign(homeX - centerX);
-		const dirZ = Math.sign(homeZ - centerZ);
-		// Apply extra offset in that direction
-		homeX += dirX * 3;
-		homeZ += dirZ * 3;
 	}
 	
 	// Ensure coordinates are within board boundaries
-	homeX = Math.max(0, Math.min(boardWidth - homeZoneWidth, Math.round(homeX)));
-	homeZ = Math.max(0, Math.min(boardHeight - homeZoneHeight, Math.round(homeZ)));
+	x = Math.max(0, Math.min(boardWidth - homeZoneWidth, Math.round(x)));
+	z = Math.max(0, Math.min(boardHeight - homeZoneHeight, Math.round(z)));
 	
 	return {
-		x: homeX,
-		z: homeZ,
-		orientation: orientation
+		x,
+		z,
+		orientation
 	};
 }
 
 /**
- * Generate home zones for all players in a spiral pattern
+ * Generate home zones for all players
  * 
  * This function:
  * 1. Calculates the position and orientation for each player's home zone
  * 2. Creates the home zone cells in the game state
  * 3. Updates the gameState.homeZones object with zone information
- * 
- * The board uses a sparse cell structure where only occupied cells are stored.
- * Each cell is identified by a key in the format "x,z".
+ * 4. Places a board centre marker for reliable positioning reference
  * 
  * @param {Object} gameState - Game state object to update
  * @param {number} boardWidth - Board width
@@ -161,21 +374,21 @@ function calculateSpiralHomePosition(playerIndex, totalPlayers, boardWidth, boar
  * @param {Object} players - Player data keyed by player ID
  * @returns {Object} Updated game state
  */
-function generateSpiralHomeZones(gameState, boardWidth, boardHeight, players) {
+function generateHomeZones(gameState, boardWidth, boardHeight, players) {
 	// Default to at least 2 players if none are provided
 	const playerCount = players ? Object.keys(players).length : 2;
 	const homeZoneWidth = 8; // Standard chess width
 	const homeZoneHeight = 2; // Standard chess height
 	
-	// Generate home zones in spiral pattern
+	// Generate home zones with controlled pawn clashing
 	const homeZones = {};
 	
 	// For each player
 	Object.keys(players).forEach((playerId, index) => {
-		// Get spiral position (0-based player index)
-		const spiralPosition = calculateSpiralHomePosition(
+		// Get position with controlled pawn clashing
+		const homePosition = calculateHomePosition(
 			index,
-			playerCount,
+			gameState,
 			boardWidth,
 			boardHeight,
 			homeZoneWidth,
@@ -184,18 +397,18 @@ function generateSpiralHomeZones(gameState, boardWidth, boardHeight, players) {
 		
 		// Store home zone information
 		homeZones[playerId] = {
-			x: spiralPosition.x,
-			z: spiralPosition.z,
+			x: homePosition.x,
+			z: homePosition.z,
 			width: homeZoneWidth,
 			height: homeZoneHeight,
-			orientation: spiralPosition.orientation
+			orientation: homePosition.orientation
 		};
 		
 		// Create home zone cells on the board
 		for (let dz = 0; dz < homeZoneHeight; dz++) {
 			for (let dx = 0; dx < homeZoneWidth; dx++) {
-				const x = spiralPosition.x + dx;
-				const z = spiralPosition.z + dz;
+				const x = homePosition.x + dx;
+				const z = homePosition.z + dz;
 				
 				// Ensure cells object exists
 				if (!gameState.board.cells) {
@@ -216,6 +429,29 @@ function generateSpiralHomeZones(gameState, boardWidth, boardHeight, players) {
 	
 	// Store home zones in game state
 	gameState.homeZones = homeZones;
+	
+	// Add a board centre marker that clients can use for consistent positioning
+	const centreX = Math.floor(boardWidth / 2);
+	const centreZ = Math.floor(boardHeight / 2);
+	const centreKey = `${centreX},${centreZ}`;
+	
+	// Create or update the centre marker cell, preserving any existing content
+	// This special cell should be kept and never removed - it's our anchor point
+	gameState.board.cells[centreKey] = gameState.board.cells[centreKey] || {};
+	
+	// Attach a special marker that will be recognisable and preserved
+	gameState.board.cells[centreKey].specialMarker = {
+		type: 'boardCentre',
+		isCentreMarker: true,
+		centreX,
+		centreZ
+	};
+	
+	// Also record the centre point in the board properties for easy access
+	gameState.board.centreMarker = {
+		x: centreX,
+		z: centreZ
+	};
 	
 	return gameState;
 }
@@ -370,7 +606,7 @@ function addChessPiece(gameState, pieceType, x, z, playerId, orientation) {
 
 // Export functions for use in server
 module.exports = {
-	calculateSpiralHomePosition,
-	generateSpiralHomeZones,
+	calculateHomePosition,
+	generateHomeZones,
 	createInitialChessPieces
 }; 

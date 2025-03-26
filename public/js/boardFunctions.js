@@ -1,3 +1,5 @@
+import * as sceneModule from './scene';
+
 /**
  * Updated functions for working with the sparse board structure
  * These functions accept parameters rather than relying on global variables
@@ -252,8 +254,55 @@ function updateBoardCell(gameState, x, z, value) {
 		// Remove the cell if setting to empty
 		delete gameState.board.cells[key];
 	} else {
-		// Set the cell value
-		gameState.board.cells[key] = value;
+		// Set the cell value based on type
+		if (typeof value === 'object' && value !== null) {
+			// For object-based values, we might be adding to an array of cell contents
+			const existingCell = gameState.board.cells[key];
+			
+			if (existingCell && Array.isArray(existingCell.contents)) {
+				// Cell already exists with contents array
+				// Check if we're adding a new content type or replacing one
+				if (value.type) {
+					// Find if we already have this type in the contents
+					const existingIndex = existingCell.contents.findIndex(
+						item => item.type === value.type
+					);
+					
+					if (existingIndex >= 0) {
+						// Replace the existing item of this type
+						existingCell.contents[existingIndex] = value;
+					} else {
+						// Add new item to contents
+						existingCell.contents.push(value);
+					}
+				} else {
+					// Just push the new value if it doesn't have a type
+					existingCell.contents.push(value);
+				}
+			} else if (existingCell && !Array.isArray(existingCell.contents)) {
+				// Cell exists but doesn't have contents array
+				// Convert to new multi-content format
+				gameState.board.cells[key] = {
+					contents: [existingCell, value],
+					position: { x, z }
+				};
+			} else {
+				// New cell with this value as its only content
+				if (value.type === 'cell') {
+					// This is a cell definition itself
+					gameState.board.cells[key] = value;
+				} else {
+					// This is a content to put in a cell
+					gameState.board.cells[key] = {
+						contents: [value],
+						position: { x, z }
+					};
+				}
+			}
+		} else {
+			// For primitive values (like numbers), set directly for backward compatibility
+			gameState.board.cells[key] = value;
+		}
 		
 		// Update board boundaries
 		if (x < gameState.board.minX) gameState.board.minX = x;
@@ -268,6 +317,77 @@ function updateBoardCell(gameState, x, z, value) {
 }
 
 /**
+ * Helper function to extract specific content type from a cell
+ * @param {Object} cell - The cell data
+ * @param {string} contentType - The type of content to extract (chess, tetromino, homeZone, etc.)
+ * @returns {Object} The content object or null if not found
+ */
+function extractCellContent(cell, contentType) {
+	// Debug log the input
+	console.log(`Extracting ${contentType} from cell:`, cell);
+	
+	// Handle null/undefined cells
+	if (!cell) {
+		console.log('Cell is null or undefined');
+		return null;
+	}
+	
+	// Handle legacy number format
+	if (typeof cell === 'number') {
+		// Convert legacy numeric cell types
+		if (contentType === 'chess' && cell >= 11) {
+			const player = Math.floor(cell / 10);
+			const pieceType = cell % 10;
+			return {
+				type: 'chess',
+				player: player,
+				chessPiece: {
+					type: pieceType,
+					player: player
+				}
+			};
+		} else if (contentType === 'tetromino' && cell >= 1 && cell <= 5) {
+			return {
+				type: 'tetromino',
+				player: cell
+			};
+		} else if (contentType === 'homeZone' && cell >= 6 && cell <= 10) {
+			return {
+				type: 'homeZone',
+				player: cell - 5
+			};
+		}
+		return null;
+	}
+	
+	// NEW FORMAT: Handle array format (new format where cell is an array of objects)
+	if (Array.isArray(cell)) {
+		const found = cell.find(item => item.type === contentType);
+		console.log(`Array search for ${contentType}:`, found);
+		return found || null;
+	}
+	
+	// Handle modern object format
+	if (typeof cell === 'object') {
+		// Direct match if cell has a type property
+		if (cell.type === contentType) {
+			console.log(`Direct match for ${contentType}:`, cell);
+			return cell;
+		}
+		
+		// Check in contents array if it exists
+		if (cell.contents && Array.isArray(cell.contents)) {
+			const found = cell.contents.find(item => item.type === contentType);
+			console.log(`Contents search for ${contentType}:`, found);
+			return found || null;
+		}
+	}
+	
+	console.log(`No ${contentType} found in cell`);
+	return null;
+}
+
+/**
  * Create a base grid of board cells
  * @param {Object} gameState - The current game state
  * @param {Object} boardGroup - THREE.js group for board cells
@@ -276,11 +396,17 @@ function updateBoardCell(gameState, x, z, value) {
  */
 function createBoardCells(gameState, boardGroup, createFloatingIsland, THREE) {
 	// Clear existing board first
-	const boardElements = boardGroup.children.filter(child => 
+	const boardElements = boardGroup.children?.filter(child => 
 		child.userData && (child.userData.type === 'cell' || child.userData.type === 'cloud'));
 	
+	// Preserve the centre marker cell if it exists
+	let centreMarkerCell = boardGroup.children?.find(child => 
+		child.userData && child.userData.type === 'centreMarker');
+	
 	for (const element of boardElements) {
-		boardGroup.remove(element);
+		if (element !== centreMarkerCell) {
+			boardGroup.remove(element);
+		}
 	}
 	
 	// Create base grid of cells
@@ -305,6 +431,33 @@ function createBoardCells(gameState, boardGroup, createFloatingIsland, THREE) {
 		metalness: 0.2
 	});
 	
+	// Special material for the centre marker
+	const centreMarkerMaterial = new THREE.MeshStandardMaterial({
+		color: 0x00FF00, // Bright green for visibility
+		roughness: 0.5,
+		metalness: 0.5,
+		transparent: true,
+		opacity: 0.7 
+	});
+	
+	// Home zone materials
+	const homeZoneMaterials = {
+		1: new THREE.MeshStandardMaterial({ 
+			color: 0x0055AA, // Blue for player 1
+			roughness: 0.7,
+			metalness: 0.3,
+			transparent: true,
+			opacity: 0.8
+		}),
+		2: new THREE.MeshStandardMaterial({ 
+			color: 0xAA0000, // Red for player 2
+			roughness: 0.7,
+			metalness: 0.3,
+			transparent: true,
+			opacity: 0.8
+		})
+	};
+	
 	// Create a very light cloud material for empty cells - making it more subtle
 	const cloudMaterial = new THREE.MeshStandardMaterial({
 		color: 0xf8f8ff,
@@ -319,9 +472,34 @@ function createBoardCells(gameState, boardGroup, createFloatingIsland, THREE) {
 	const gridWidth = Math.max(maxX - minX + 1, minGridSize);
 	const gridHeight = Math.max(maxZ - minZ + 1, minGridSize);
 	
-	// Calculate board center (where 0,0 should be rendered)
-	const centerX = (minX + maxX) / 2;
-	const centerZ = (minZ + maxZ) / 2;
+	// CRITICAL: Check if the game state has a centre marker 
+	// This is the most important part of ensuring consistent positioning
+	let centerX, centerZ;
+	
+	// Always calculate the mathematical center of the board
+	const calculatedCenterX = Math.floor((minX + maxX) / 2);
+	const calculatedCenterZ = Math.floor((minZ + maxZ) / 2);
+
+	if (gameState.board && gameState.board.centreMarker && 
+		typeof gameState.board.centreMarker.x === 'number' && 
+		typeof gameState.board.centreMarker.z === 'number') {
+		// Use the existing centre marker directly from gameState
+		centerX = gameState.board.centreMarker.x;
+		centerZ = gameState.board.centreMarker.z;
+		console.log(`Using existing board centreMarker at (${centerX}, ${centerZ}) for cell positions`);
+	} else {
+		// Fallback to calculated centre
+		centerX = calculatedCenterX;
+		centerZ = calculatedCenterZ;
+		console.log(`No centreMarker found in game state, using calculated center at (${centerX}, ${centerZ})`);
+		
+		// IMPORTANT: Create the centre marker in the game state for future use
+		if (gameState.board) {
+			// Always create the marker to ensure it exists
+			gameState.board.centreMarker = { x: centerX, z: centerZ };
+			console.log(`Created new centreMarker at (${centerX}, ${centerZ})`);
+		}
+	}
 	
 	// Track the number of cells created for performance monitoring
 	let cellCount = 0;
@@ -356,76 +534,171 @@ function createBoardCells(gameState, boardGroup, createFloatingIsland, THREE) {
 		return mesh;
 	};
 	
+	// IMPORTANT: Always create the centre marker cell to ensure it exists
+	// This is the anchor point for all positioning
+	console.log(`Creating centre marker cell at (${centerX}, ${centerZ})`);
+	
+	// Create a special island for the centre marker
+	const centreIsland = createIsland(centerX, centerZ, centreMarkerMaterial, 0.3, true);
+	
+	// Make it slightly taller to ensure visibility
+	centreIsland.scale.y = 2.0;
+	
+	// Tag as a special cell
+	centreIsland.userData = {
+		type: 'centreMarker',
+		position: { x: centerX, z: centerZ },
+		isCentreMarker: true
+	};
+	
+	// Position relative to center (which is the marker itself)
+	centreIsland.position.x = 0; // Exactly at origin
+	centreIsland.position.z = 0;
+	centreIsland.position.y = -0.3; // Slightly raised to be visible
+	
+	// Add to board group
+	boardGroup.add(centreIsland);
+	cellCount++;
+	
+	// Add to the cells structure if needed
+	if (gameState.board && gameState.board.cells) {
+		const key = `${centerX},${centerZ}`;
+		if (!gameState.board.cells[key]) {
+			// Create new cell with special marker
+			gameState.board.cells[key] = [{
+				type: 'specialMarker',
+				isCentreMarker: true,
+				centreX: centerX,
+				centreZ: centerZ
+			}];
+		} else if (Array.isArray(gameState.board.cells[key])) {
+			// Check if the center marker exists in the array
+			const markerExists = gameState.board.cells[key].some(item => 
+				item.type === 'specialMarker' && item.isCentreMarker);
+				
+			if (!markerExists) {
+				// Add to existing array
+				gameState.board.cells[key].push({
+					type: 'specialMarker',
+					isCentreMarker: true,
+					centreX: centerX,
+					centreZ: centerZ
+				});
+			}
+		} else if (typeof gameState.board.cells[key] === 'object') {
+			// Legacy format - add special marker property
+			gameState.board.cells[key].specialMarker = {
+				type: 'boardCentre',
+				isCentreMarker: true,
+				centreX: centerX,
+				centreZ: centerZ
+			};
+		}
+		
+		// Also ensure the game state has a direct reference to the centre marker
+		gameState.board.centreMarker = { x: centerX, z: centerZ };
+	}
+	
 	// Also extract chess pieces from board cells
 	const extractedPieces = [];
 	
 	for (let z = startZ; z < endZ; z++) {
 		for (let x = startX; x < endX; x++) {
+			// Skip the centre marker cell as we already created it
+			if (x === centerX && z === centerZ) {
+				continue;
+			}
+			
 			// Check if this position has actual content in the sparse board
 			const key = `${x},${z}`;
-			const cellContent = gameState.board && 
-							  gameState.board.cells && 
-							  gameState.board.cells[key];
+			const cellData = gameState.board.cells ? gameState.board.cells[key] : null;
 							  
-			const hasContent = cellContent !== undefined && cellContent !== null;
+			const hasContent = cellData !== undefined && cellData !== null;
 							  
 			// Always create a cell for border areas or non-empty cells
 			const isBorder = x === startX || x === endX - 1 || z === startZ || z === endZ - 1;
 			const isCheckerboardSquare = (x + z) % 2 === 0;
-			
-			// Check if this cell contains a chess piece
-			if (hasContent) {
-				const cell = cellContent;
-				
-				// Process based on cell type to extract chess pieces
-				if (typeof cell === 'object' && cell !== null) {
-					// Handle object-based cell data
-					if (cell.type === 'chess' && cell.chessPiece) {
-						extractedPieces.push({
-							id: cell.chessPiece.id || `${cell.player}-${cell.chessPiece.type}-${x}-${z}`,
-							position: { x, z },
-							type: cell.chessPiece.type || "PAWN",
-							player: cell.player || cell.chessPiece.player || 1,
-							color: cell.color || cell.chessPiece.color
-						});
-					}
-				} else if (typeof cell === 'number' && cell >= 11) {
-					// Handle legacy numeric cell types
-					const player = Math.floor(cell / 10);
-					const pieceType = cell % 10;
-					
-					extractedPieces.push({
-						id: `${player}-${pieceType}-${x}-${z}`,
-						position: { x, z },
-						type: pieceType,
-						player: player
-					});
-				}
-			}
-			
 			if (hasContent || (isCheckerboardSquare && (isBorder || Math.random() < 0.3))) {
-				// Full cell for actual content or checkerboard pattern
-				// Choose material based on checkerboard pattern
-				const material = isCheckerboardSquare ? whiteMaterial : darkMaterial;
+				// Choose material based on content and checkerboard pattern
+				let material;
 				
-				// Create floating island with slightly less vertical offset
-				const island = createIsland(x, z, material, 0.3, hasContent);
-				
-				// Tag as a proper cell
-				island.userData = {
-					type: 'cell',
-					position: { x, z },
-					isEmpty: !hasContent
-				};
-
-				// Add to board group
-				boardGroup.add(island);
-				// Position relative to center
-				island.position.x = x - centerX;
-				island.position.z = z - centerZ;
-				island.position.y = -0.5; // Move lower to create flat board
-				
-				cellCount++;
+				// Check for special home zone content
+				if (hasContent) {
+					const homeZoneContent = extractCellContent(cellData, 'homeZone');
+					
+					// First check if it's a home zone
+					if (homeZoneContent && homeZoneContent.player) {
+						material = homeZoneMaterials[homeZoneContent.player] || (isCheckerboardSquare ? whiteMaterial : darkMaterial);
+					} else {
+						// Use standard checkerboard pattern
+						material = isCheckerboardSquare ? whiteMaterial : darkMaterial;
+					}
+					
+					// Create floating island with slightly less vertical offset
+					const island = createIsland(x, z, material, 0.3, hasContent);
+					
+					// Tag as a proper cell
+					island.userData = {
+						type: 'cell',
+						position: { x, z },
+						isEmpty: !hasContent,
+						cellData: cellData
+					};
+					
+					// Add to board group
+					boardGroup.add(island);
+					
+					// Position relative to center marker
+					island.position.x = x - centerX;
+					island.position.z = z - centerZ;
+					island.position.y = -0.5; // Move lower to create flat board
+					
+					cellCount++;
+					
+					// Check for chess pieces in this cell
+					if (hasContent) {
+						// Extract chess content from cell data
+						const chessContent = extractCellContent(cellData, 'chess');
+						
+						// Log more detailed information about what we're finding
+						if (chessContent) {
+							console.log(`Found chess piece: ${chessContent.pieceType || chessContent.chessPiece?.type || 'UNKNOWN'} for player ${chessContent.player || 'unknown'}`);
+							
+							// Create a properly formatted chess piece object from the data
+							extractedPieces.push({
+								id: chessContent.pieceId || 
+									`${chessContent.player}-${chessContent.pieceType || 'PAWN'}-${x}-${z}`,
+								position: { x, z },
+								type: chessContent.pieceType ? chessContent.pieceType.toUpperCase() : 
+									(chessContent.chessPiece?.type || "PAWN"),
+								player: chessContent.player || 'player1',
+								color: chessContent.color || 0xcccccc
+							});
+							
+							console.log(`Extracted chess piece at (${x},${z}): ${chessContent.pieceType || 'PAWN'} for player ${chessContent.player || 'player1'}`);
+						} else if (Array.isArray(cellData)) {
+							// Try direct array handling as a backup
+							for (const cellItem of cellData) {
+								if (cellItem.type === 'chess') {
+									console.log(`Found chess piece through direct array access: ${cellItem.pieceType || 'UNKNOWN'}`);
+									
+									extractedPieces.push({
+										id: cellItem.pieceId || 
+											`${cellItem.player}-${cellItem.pieceType || 'PAWN'}-${x}-${z}`,
+										position: { x, z },
+										type: cellItem.pieceType ? cellItem.pieceType.toUpperCase() : "PAWN",
+										player: cellItem.player || 'player1',
+										color: cellItem.color || 0xcccccc
+									});
+									
+									console.log(`Extracted chess piece at (${x},${z}): ${cellItem.pieceType || 'PAWN'} for player ${cellItem.player || 'player1'}`);
+								}
+							}
+						} else {
+							console.log(`No chess piece found at (${x},${z}) in:`, cellData);
+						}
+					}
+				}
 			} else if ((x + z) % 4 === 0 && Math.random() < 0.15) { // Reduced density
 				// Create a very simple flat plane for empty areas - no caps, just flat clouds
 				const cloudSize = 0.5 + Math.random() * 0.2; // Smaller size
@@ -438,7 +711,7 @@ function createBoardCells(gameState, boardGroup, createFloatingIsland, THREE) {
 					position: { x, z }
 				};
 				
-				// Set position
+				// Set position relative to center marker
 				cloud.position.x = x - centerX;
 				cloud.position.z = z - centerZ;
 				cloud.position.y = -1.5 - Math.random() * 0.3; // Lower than cells
@@ -453,28 +726,11 @@ function createBoardCells(gameState, boardGroup, createFloatingIsland, THREE) {
 	
 	// Update the game state with extracted chess pieces
 	if (extractedPieces.length > 0) {
-		// Only replace if we found pieces
-		if (gameState.chessPieces && gameState.chessPieces.length > 0) {
-			// Keep existing pieces that might not be on the visible board area
-			// but update positions for ones we found
-			extractedPieces.forEach(extractedPiece => {
-				const existingIndex = gameState.chessPieces.findIndex(p => 
-					p.id === extractedPiece.id);
-				
-				if (existingIndex >= 0) {
-					// Update existing piece
-					gameState.chessPieces[existingIndex] = extractedPiece;
-				} else {
-					// Add new piece
-					gameState.chessPieces.push(extractedPiece);
-				}
-			});
-		} else {
-			// No existing pieces, just set the array
-			gameState.chessPieces = extractedPieces;
-		}
-		
 		console.log(`Extracted ${extractedPieces.length} chess pieces from board cells`);
+		// Always set the pieces we found, as they should be the most current representation
+		gameState.chessPieces = extractedPieces;
+	} else {
+		console.warn('No chess pieces were extracted from the board');
 	}
 	
 	console.log(`Created ${cellCount} board cells and ${cloudCount} decorative clouds for visualization`);
@@ -495,18 +751,24 @@ function findPlayerKingPosition(gameState) {
 		return null;
 	}
 	
+	console.log(`Looking for ${currentPlayer}'s king among ${gameState.chessPieces.length} pieces`);
+	
 	// Find the king for the current player
 	for (const piece of gameState.chessPieces) {
 		// Skip pieces that don't belong to the current player
-		if (piece.player !== currentPlayer) continue;
+		if (piece.player !== currentPlayer) {
+			continue;
+		}
 		
 		// Check if this is a king (type 6 or "KING")
 		const isKing = 
 			piece.type === 6 || 
 			piece.type === "KING" || 
+			piece.type === "king" || 
 			(typeof piece.type === 'string' && piece.type.toUpperCase() === "KING");
 		
 		if (isKing && piece.position) {
+			console.log(`Found king at (${piece.position.x}, ${piece.position.z})`);
 			return {
 				x: piece.position.x,
 				z: piece.position.z
@@ -659,7 +921,7 @@ function createRandomTetromino(gameState) {
 		type: selectedType.type,
 		shape: selectedType.shape,
 		position: { x: startX, z: startZ },
-		player: gameState.currentPlayer || 1,
+		player: gameState.currentPlayer || 'unknown_player',
 		heightAboveBoard: 5 // Start above the board for animation
 	};
 }
@@ -797,18 +1059,60 @@ function handleTetrisPhaseClick(gameState, updateGameStatusDisplay, updateBoardV
  */
 function createChessPiece(gameState, x, z, pieceType, playerIdent, ourPlayerIdent, orientation, THREE) {
 	try {
-		// Get board center for correct positioning
-		const minX = gameState.boardBounds?.minX || 0;
-		const maxX = gameState.boardBounds?.maxX || 20;
-		const minZ = gameState.boardBounds?.minZ || 0;
-		const maxZ = gameState.boardBounds?.maxZ || 20;
+		// First check for a board centre marker which gives us the most accurate centre
+		let centerX, centerZ;
 		
-		// Calculate board center (where 0,0 should be rendered)
-		const centerX = (minX + maxX) / 2;
-		const centerZ = (minZ + maxZ) / 2;
+		if (gameState.board && gameState.board.centreMarker) {
+			// Use the explicitly provided centre marker
+			centerX = gameState.board.centreMarker.x;
+			centerZ = gameState.board.centreMarker.z;
+			console.log(`Using board centre marker at (${centerX}, ${centerZ})`);
+		} else if (gameState.board && gameState.board.cells) {
+			// Search for the centre marker in cells
+			let markerFound = false;
+			
+			for (const key in gameState.board.cells) {
+				const cell = gameState.board.cells[key];
+				
+				// Check if this cell has the special marker
+				if (cell && cell.specialMarker && cell.specialMarker.type === 'boardCentre') {
+					// Extract coordinates from the key (format: "x,z")
+					const [markerX, markerZ] = key.split(',').map(Number);
+					centerX = markerX;
+					centerZ = markerZ;
+					markerFound = true;
+					console.log(`Found board centre marker in cell at (${centerX}, ${centerZ})`);
+					break;
+				}
+			}
+			
+			// If no marker found, fall back to board boundaries
+			if (!markerFound) {
+				// Get board center for correct positioning
+				const minX = gameState.boardBounds?.minX || 0;
+				const maxX = gameState.boardBounds?.maxX || 20;
+				const minZ = gameState.boardBounds?.minZ || 0;
+				const maxZ = gameState.boardBounds?.maxZ || 20;
+				
+				// Calculate board center (where 0,0 should be rendered)
+				centerX = (minX + maxX) / 2;
+				centerZ = (minZ + maxZ) / 2;
+				console.log(`No centre marker found, using calculated board centre at (${centerX}, ${centerZ})`);
+			}
+		} else {
+			// Fallback if there's no board data at all
+			const minX = gameState.boardBounds?.minX || 0;
+			const maxX = gameState.boardBounds?.maxX || 20;
+			const minZ = gameState.boardBounds?.minZ || 0;
+			const maxZ = gameState.boardBounds?.maxZ || 20;
+			
+			// Calculate board center (where 0,0 should be rendered)
+			centerX = (minX + maxX) / 2;
+			centerZ = (minZ + maxZ) / 2;
+		}
 		
 		// Log for debugging the positioning
-		console.log(`Creating piece at board coordinates (${x}, ${z}), board center: (${centerX}, ${centerZ})`);
+		console.log(`Creating piece at board coordinates (${x}, ${z}), using board centre: (${centerX}, ${centerZ})`);
 		
 		// Verify parameters for debugging
 		if (pieceType === undefined || pieceType === null) {
@@ -836,23 +1140,40 @@ function createChessPiece(gameState, x, z, pieceType, playerIdent, ourPlayerIden
 			type = 'PAWN'; // Default if unrecognized format
 		}
 		
-		// Map player identity to player number (1 or 2)
-		const player = playerIdent === ourPlayerIdent ? 1 : 2;
+		// Map player to appropriate format
+		// Handle both string player IDs and numeric values
+		let playerStr = playerIdent || 'unknown_player'; // Default to generic value
 		
-		// Define colors for pieces - using traditional Russian chess colors
-		const playerColors = {
-			1: { // Our player - blue/gold theme
-				primary: 0x0055AA,
-				secondary: 0xFFD700
-			},
-			2: { // Opponent - red/gold theme
-				primary: 0xAA0000,
-				secondary: 0xFFD700
-			}
-		};
+		// Define colors for pieces 
+		const playerColors = {};
 		
 		// Get colors for this player
-		const colors = playerColors[player] || playerColors[1]; // Default to player 1 colors
+		let colors;
+		
+		// Use colors based on whether it's the local player or another player
+		if (playerStr === ourPlayerIdent) {
+			// Local player uses red/gold theme
+			colors = {
+				primary: 0xAA0000,
+				secondary: 0xFFD700
+			};
+		} else {
+			// Remote players use blue/green with some variation
+			// Generate player-specific color if not already done
+			if (!playerColors[playerStr]) {
+				// Generate blue/green-ish color
+				const r = Math.floor(Math.random() * 80);  // Keep red low
+				const g = 100 + Math.floor(Math.random() * 155); // Medium to high green
+				const b = 150 + Math.floor(Math.random() * 105); // Medium to high blue
+				
+				playerColors[playerStr] = {
+					primary: (r << 16) | (g << 8) | b,
+					secondary: 0xFFD700 // Gold secondary for all
+				};
+			}
+			
+			colors = playerColors[playerStr];
+		}
 		
 		// Create a piece group to hold all components
 		const pieceGroup = new THREE.Group();
@@ -861,8 +1182,10 @@ function createChessPiece(gameState, x, z, pieceType, playerIdent, ourPlayerIden
 		pieceGroup.userData = {
 			type: 'chessPiece',
 			pieceType: type,
-			player: playerIdent,
-			position: { x, z }
+			player: playerStr,
+			originalPlayer: playerIdent,
+			position: { x, z },
+			visible: true
 		};
 		
 		// Position the piece group relative to the board center
@@ -1151,6 +1474,44 @@ function createChessPiece(gameState, x, z, pieceType, playerIdent, ourPlayerIden
 	}
 }
 
+/**
+ * Helper function to add a chess piece to the game state
+ * 
+ * This function:
+ * 1. Adds the piece to the gameState.chessPieces array
+ * 2. Updates the cell in gameState.board.cells
+ * 
+ * Both the piece and cell include the player ID and orientation data.
+ * 
+ * @param {Object} gameState - Game state to update
+ * @param {string} pieceType - Type of piece
+ * @param {number} x - X position
+ * @param {number} z - Z position
+ * @param {string} playerId - Player ID
+ * @param {number} orientation - Orientation (0-3)
+ */
+function addChessPiece(gameState, pieceType, x, z, playerId, orientation) {
+	// Add to chess pieces array
+	if (!gameState.chessPieces) {
+		gameState.chessPieces = [];
+	}
+	
+	gameState.chessPieces.push({
+		position: { x, z },
+		type: pieceType,
+		player: playerId,
+		orientation: orientation
+	});
+	
+	// Update board cell
+	const cellKey = `${x},${z}`;
+	gameState.board.cells[cellKey] = {
+		type: 'chess',
+		chessPiece: { type: pieceType },
+		player: playerId
+	};
+}
+
 // Export all functions as a module
 export const boardFunctions = {
 	createRandomTetromino,
@@ -1163,5 +1524,7 @@ export const boardFunctions = {
 	updateBoardCell,
 	createBoardCells,
 	findPlayerKingPosition,
-	createChessPiece
+	createChessPiece,
+	extractCellContent,
+	addChessPiece
 };

@@ -1,5 +1,7 @@
 # Spiral Board Layout for Shaktris
 
+> **IMPORTANT**: This approach has been replaced by the new controlled pawn clash positioning system. This document is maintained for historical reference only. Please see [Cell-Based Board with Controlled Pawn Clash](cell-based-board.md) for the current implementation.
+
 ## Overview
 
 Shaktris uses a dynamic spiral layout for positioning player home zones. This document explains the implementation details and the reasoning behind this approach.

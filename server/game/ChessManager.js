@@ -50,13 +50,24 @@ class ChessManager {
 				
 				pieces.push(piece);
 				
-				// Mark the cell as occupied using the new sparse board structure
-				this.boardManager.setCell(game.board, x, z, {
+				// Create chess cell object
+				const chessPieceObj = {
 					type: 'chess',
+					pieceType: pieceType.toLowerCase(),
 					player: playerId,
-					chessPiece: piece,
+					color: playerColor,
+					pieceId: piece.id
+				};
+				
+				// Create home zone marker
+				const homeZoneObj = {
+					type: 'home',
+					player: playerId,
 					color: playerColor
-				});
+				};
+				
+				// Add both objects to the cell
+				this.boardManager.setCell(game.board, x, z, [homeZoneObj, chessPieceObj]);
 			}
 			
 			// Place pawns in the second row (row 1)
@@ -77,13 +88,24 @@ class ChessManager {
 				
 				pieces.push(piece);
 				
-				// Mark the cell as occupied using the new sparse board structure
-				this.boardManager.setCell(game.board, x, z, {
+				// Create chess cell object
+				const chessPieceObj = {
 					type: 'chess',
+					pieceType: pieceType.toLowerCase(),
 					player: playerId,
-					chessPiece: piece,
+					color: playerColor,
+					pieceId: piece.id
+				};
+				
+				// Create home zone marker
+				const homeZoneObj = {
+					type: 'home',
+					player: playerId,
 					color: playerColor
-				});
+				};
+				
+				// Add both objects to the cell
+				this.boardManager.setCell(game.board, x, z, [homeZoneObj, chessPieceObj]);
 			}
 		} else {
 			// Vertical home zone (2x8)
@@ -108,13 +130,24 @@ class ChessManager {
 				
 				pieces.push(piece);
 				
-				// Mark the cell as occupied using the new sparse board structure
-				this.boardManager.setCell(game.board, x, z, {
+				// Create chess cell object
+				const chessPieceObj = {
 					type: 'chess',
+					pieceType: pieceType.toLowerCase(),
 					player: playerId,
-					chessPiece: piece,
+					color: playerColor,
+					pieceId: piece.id
+				};
+				
+				// Create home zone marker
+				const homeZoneObj = {
+					type: 'home',
+					player: playerId,
 					color: playerColor
-				});
+				};
+				
+				// Add both objects to the cell
+				this.boardManager.setCell(game.board, x, z, [homeZoneObj, chessPieceObj]);
 			}
 			
 			// Place pawns in the second column (column 1)
@@ -135,13 +168,24 @@ class ChessManager {
 				
 				pieces.push(piece);
 				
-				// Mark the cell as occupied using the new sparse board structure
-				this.boardManager.setCell(game.board, x, z, {
+				// Create chess cell object
+				const chessPieceObj = {
 					type: 'chess',
+					pieceType: pieceType.toLowerCase(),
 					player: playerId,
-					chessPiece: piece,
+					color: playerColor,
+					pieceId: piece.id
+				};
+				
+				// Create home zone marker
+				const homeZoneObj = {
+					type: 'home',
+					player: playerId,
 					color: playerColor
-				});
+				};
+				
+				// Add both objects to the cell
+				this.boardManager.setCell(game.board, x, z, [homeZoneObj, chessPieceObj]);
 			}
 		}
 		

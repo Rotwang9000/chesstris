@@ -56,6 +56,7 @@ export const MeshPhysicalMaterial = THREE.MeshPhysicalMaterial;
 export const MeshToonMaterial = THREE.MeshToonMaterial;
 export const Fog = THREE.Fog;
 export const TorusGeometry = THREE.TorusGeometry;
+export const LatheGeometry = THREE.LatheGeometry;
 
 
 // Sides and blending modes

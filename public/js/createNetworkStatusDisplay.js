@@ -1,4 +1,4 @@
-import { updateNetworkStatus } from './enhanced-gameCore.js';
+import { updateNetworkStatus } from './createLoadingIndicator.js';
 import * as NetworkManager from './utils/networkManager.js';
 
 /**

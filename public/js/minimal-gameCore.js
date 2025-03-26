@@ -692,14 +692,16 @@ function createNewTetromino() {
 	const types = Object.keys(TETROMINO_SHAPES);
 	const randomType = types[Math.floor(Math.random() * types.length)];
 	
-	// Set initial position based on current player
+	// Set initial position based on whether it's the local player
 	let x, z;
-	if (gameState.currentPlayer === 1) {
-		// Player 1 starts from bottom
+	const isLocalPlayer = gameState.currentPlayer === gameState.localPlayerId;
+	
+	if (isLocalPlayer) {
+		// Local player starts from bottom
 		x = 4;
 		z = gameState.boardSize - 4;
 	} else {
-		// Player 2 starts from top
+		// Other players start from top
 		x = gameState.boardSize - 4;
 		z = 4;
 	}
@@ -710,7 +712,7 @@ function createNewTetromino() {
 		shape: TETROMINO_SHAPES[randomType],
 		position: { x, z },
 		rotation: 0,
-		color: gameState.currentPlayer === 1 ? 1 : 2, // Use different colors for each player
+		color: isLocalPlayer ? 1 : 2, // Use different colors based on local player status
 		fallSpeed: 2000, // Initial speed: 2 seconds per cell
 		lastFallTime: Date.now(), // Track last time piece fell
 		startHeight: 8 // Start higher above the board (was 5)
@@ -2075,6 +2077,27 @@ function startGameLoop() {
 }
 
 /**
+ * Generate a random player ID
+ * @returns {string} Random player ID
+ */
+function generateRandomPlayerId() {
+	return 'player_' + Math.random().toString(36).substring(2, 10);
+}
+
+/**
+ * Generate a random player color in blue/green range
+ * @returns {number} Hex color value
+ */
+function generatePlayerColor() {
+	// Generate colors in blue-green range
+	const r = Math.floor(Math.random() * 80);  // Keep red low for blue/green shades
+	const g = 100 + Math.floor(Math.random() * 155); // Medium to high green
+	const b = 150 + Math.floor(Math.random() * 105); // Medium to high blue
+	
+	return (r << 16) | (g << 8) | b;
+}
+
+/**
  * Switch to the next player's turn
  */
 export function nextTurn() {
@@ -2084,8 +2107,8 @@ export function nextTurn() {
 		gameState.fallInterval = null;
 	}
 	
-	// Switch players
-	gameState.currentPlayer = gameState.currentPlayer === 1 ? 2 : 1;
+	// Generate a new random player ID
+	gameState.currentPlayer = generateRandomPlayerId();
 	
 	// Reset to tetris phase
 	gameState.turnPhase = 'tetris';
@@ -2093,10 +2116,10 @@ export function nextTurn() {
 	// Create new tetromino for the current player
 	createNewTetromino();
 	
-	// Show turn change notification
-	showToastMessage(`Player ${gameState.currentPlayer}'s turn`);
+	// Show turn change notification - use player name not number
+	showToastMessage(`New player's turn`);
 	
-	console.log(`Player ${gameState.currentPlayer}'s turn`);
+	console.log(`New player's turn: ${gameState.currentPlayer}`);
 	
 	// Update game status display
 	updateGameStatusDisplay();
@@ -2316,7 +2339,9 @@ function getValidMoves(piece) {
 	switch (piece.type) {
 		case 'pawn':
 			// Pawns move forward based on player
-			const direction = piece.player === 1 ? -1 : 1;
+			// Direction depends on whether it's the local player
+			const isLocalPlayer = piece.player === gameState.localPlayerId;
+			const direction = isLocalPlayer ? -1 : 1;
 			const forwardPos = { x: piece.x, z: piece.z + direction };
 			
 			// Forward movement
@@ -2324,8 +2349,10 @@ function getValidMoves(piece) {
 				validMoves.push(forwardPos);
 				
 				// Check for double move on first move
-				const isPawnOnStartingRank = (piece.player === 1 && piece.z === 14) || 
-											 (piece.player === 2 && piece.z === 1);
+				// For local player, pawns start at the bottom (high z)
+				// For other players, pawns start at the top (low z)
+				const isPawnOnStartingRank = (isLocalPlayer && piece.z === 14) || 
+											 (!isLocalPlayer && piece.z === 1);
 											 
 				if (isPawnOnStartingRank) {
 					const doubleMovePos = { x: piece.x, z: piece.z + (direction * 2) };
@@ -2796,7 +2823,7 @@ function updateChessPieces() {
 		}
 		
 		// Get piece color based on player number (1=blue, 2=orange)
-		const color = piece.player === 1 ? 0x3333ff : 0xff8800;
+		const color = piece.player === 'player1' ? 0x3333ff : 0xff8800;
 		
 		// Check the height of the cell at the piece's position (0 if not on a cell)
 		let cellHeight = 0;
@@ -2854,7 +2881,7 @@ function updateChessPieces() {
 					topMesh.position.set(0.1, 0.75, 0);
 					knightGroup.add(topMesh);
 					
-					knightGroup.rotation.y = piece.player === 1 ? 0 : Math.PI;
+					knightGroup.rotation.y = piece.player === 'player1' ? 0 : Math.PI;
 					chessPiecesGroup.add(knightGroup);
 					
 					// Position the group on top of the cell
@@ -4083,4 +4110,290 @@ export function toggleDebug(enabled = null) {
 	if (debugPanel) {
 		debugPanel.style.display = gameState.debugMode ? 'block' : 'none';
 	}
+}
+
+/**
+ * Get color for a player based on player ID
+ * @param {string} playerId - Player ID
+ * @returns {number} - Color as hex
+ */
+function getPlayerColor(playerId) {
+	// If this is the local player, use red
+	if (playerId === gameState.localPlayerId) {
+		return 0xAA0000; // Red for local player
+	}
+	
+	// Use deterministic color generation based on player ID
+	// This ensures the same player always gets the same color
+	let hash = 0;
+	for (let i = 0; i < playerId.length; i++) {
+		hash = playerId.charCodeAt(i) + ((hash << 5) - hash);
+	}
+	
+	// Generate blue/green-ish color (keeping red low)
+	const r = Math.abs(hash % 80); // Keep red low for blue/green shades
+	const g = 100 + Math.abs((hash >> 4) % 155); // Medium to high green
+	const b = 150 + Math.abs((hash >> 8) % 105); // Medium to high blue
+	
+	return (r << 16) | (g << 8) | b;
+}
+
+/**
+ * Update chess pieces visuals
+ */
+function updateChessPieces() {
+	console.log('Updating chess pieces visualization with', gameState.chessPieces.length, 'pieces');
+	
+	// Clear existing chess pieces
+	while (chessPiecesGroup.children.length > 0) {
+		chessPiecesGroup.remove(chessPiecesGroup.children[0]);
+	}
+	
+	// If no chess pieces, log warning and return
+	if (!gameState.chessPieces || !Array.isArray(gameState.chessPieces) || gameState.chessPieces.length === 0) {
+		console.warn('No chess pieces to render');
+		return;
+	}
+	
+	// Offset for centering board
+	const offsetX = gameState.boardSize / 2 - 0.5;
+	const offsetZ = gameState.boardSize / 2 - 0.5;
+	
+	// Create a mapping of piece types to more descriptive debug names
+	const pieceTypeDebug = {
+		'pawn': 'Pawn',
+		'rook': 'Rook',
+		'knight': 'Knight',
+		'bishop': 'Bishop',
+		'queen': 'Queen',
+		'king': 'King'
+	};
+	
+	// Debug: log pieces by type and player
+	const piecesByType = {};
+	gameState.chessPieces.forEach(piece => {
+		const key = `${piece.type}_p${piece.player}`;
+		if (!piecesByType[key]) piecesByType[key] = 0;
+		piecesByType[key]++;
+	});
+	console.log('Pieces by type:', piecesByType);
+	
+	// Render chess pieces
+	let piecesCreated = 0;
+	let piecesSkipped = 0;
+	
+	for (let i = 0; i < gameState.chessPieces.length; i++) {
+		const piece = gameState.chessPieces[i];
+		
+		// Skip invalid pieces
+		if (!piece.type || piece.x === undefined || piece.z === undefined || piece.player === undefined) {
+			console.warn('Skipping invalid chess piece:', piece);
+			piecesSkipped++;
+			continue;
+		}
+		
+		// Validate coordinates are within sensible ranges
+		if (piece.x < 0 || piece.x >= 100 || piece.z < 0 || piece.z >= 100) {
+			console.warn(`Piece at extreme coordinates (${piece.x},${piece.z}), skipping:`, piece);
+			piecesSkipped++;
+			continue;
+		}
+		
+		// Get piece color based on player number (1=blue, 2=orange)
+		const color = piece.player === 'player1' ? 0x3333ff : 0xff8800;
+		
+		// Check the height of the cell at the piece's position (0 if not on a cell)
+		let cellHeight = 0;
+		try {
+			// Make sure we have valid board data
+			if (gameState.board && 
+				gameState.board[piece.z] && 
+				gameState.board[piece.z][piece.x] !== undefined && 
+				gameState.board[piece.z][piece.x] !== 0) {
+				cellHeight = 1; // Cell exists and is not empty
+			}
+		} catch (error) {
+			console.warn(`Error checking cell height at (${piece.x},${piece.z}):`, error);
+		}
+		
+		// Base height of the piece - place on top of cells
+		const baseHeight = cellHeight;
+		
+		// Create piece geometry based on type
+		let geometry;
+		let height = baseHeight;
+		
+		// Debug log piece creation
+		console.log(`Creating ${pieceTypeDebug[piece.type] || piece.type} for player ${piece.player} at (${piece.x},${piece.z})`);
+		
+		try {
+			switch (piece.type.toLowerCase()) {
+				case 'pawn':
+					geometry = new THREE.ConeGeometry(0.3, 0.8, 8);
+					height = baseHeight + 0.5;
+					break;
+					
+				case 'rook':
+					geometry = new THREE.BoxGeometry(0.5, 0.9, 0.5);
+					height = baseHeight + 0.6;
+					break;
+					
+				case 'knight':
+					// L-shaped geometry for knight
+					const knightGroup = new THREE.Group();
+					
+					const baseGeom = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+					const baseMesh = new THREE.Mesh(
+						baseGeom,
+						new THREE.MeshStandardMaterial({ color })
+					);
+					baseMesh.position.y = 0.25;
+					knightGroup.add(baseMesh);
+					
+					const topGeom = new THREE.BoxGeometry(0.3, 0.5, 0.3);
+					const topMesh = new THREE.Mesh(
+						topGeom,
+						new THREE.MeshStandardMaterial({ color })
+					);
+					topMesh.position.set(0.1, 0.75, 0);
+					knightGroup.add(topMesh);
+					
+					knightGroup.rotation.y = piece.player === 'player1' ? 0 : Math.PI;
+					chessPiecesGroup.add(knightGroup);
+					
+					// Position the group on top of the cell
+					knightGroup.position.set(
+						piece.x - offsetX,
+						baseHeight,
+						piece.z - offsetZ
+					);
+					
+					// Store piece index in the group's userData
+					knightGroup.userData = { 
+						pieceIndex: i,
+						type: 'chessPiece',
+						x: piece.x,
+						z: piece.z,
+						pieceType: piece.type,
+						player: piece.player
+					};
+					
+					knightGroup.castShadow = true;
+					knightGroup.receiveShadow = true;
+					
+					// Increment counter and skip the standard piece creation for knight
+					piecesCreated++;
+					continue;
+					
+				case 'bishop':
+					geometry = new THREE.ConeGeometry(0.3, 1.0, 8);
+					height = baseHeight + 0.7;
+					break;
+					
+				case 'queen':
+					geometry = new THREE.CylinderGeometry(0.2, 0.4, 1.1, 8);
+					height = baseHeight + 0.8;
+					break;
+					
+				case 'king':
+					const kingGroup = new THREE.Group();
+					
+					// Base
+					const kingBase = new THREE.Mesh(
+						new THREE.CylinderGeometry(0.3, 0.4, 0.8, 8),
+						new THREE.MeshStandardMaterial({ color })
+					);
+					kingBase.position.y = 0.4;
+					kingGroup.add(kingBase);
+					
+					// Cross on top
+					const crossVert = new THREE.Mesh(
+						new THREE.BoxGeometry(0.1, 0.5, 0.1),
+						new THREE.MeshStandardMaterial({ color })
+					);
+					crossVert.position.y = 1.0;
+					kingGroup.add(crossVert);
+					
+					const crossHoriz = new THREE.Mesh(
+						new THREE.BoxGeometry(0.3, 0.1, 0.1),
+						new THREE.MeshStandardMaterial({ color })
+					);
+					crossHoriz.position.y = 0.9;
+					kingGroup.add(crossHoriz);
+					
+					chessPiecesGroup.add(kingGroup);
+					
+					// Position the group on top of the cell
+					kingGroup.position.set(
+						piece.x - offsetX,
+						baseHeight,
+						piece.z - offsetZ
+					);
+					
+					// Store piece info in the group's userData
+					kingGroup.userData = { 
+						pieceIndex: i,
+						type: 'chessPiece',
+						x: piece.x,
+						z: piece.z,
+						pieceType: piece.type,
+						player: piece.player
+					};
+					
+					kingGroup.castShadow = true;
+					kingGroup.receiveShadow = true;
+					
+					// Increment counter and skip the standard piece creation for king
+					piecesCreated++;
+					continue;
+					
+				default:
+					// Default simple box for unrecognized piece types
+					console.warn(`Unknown piece type: ${piece.type}, using default box`);
+					geometry = new THREE.BoxGeometry(0.5, 0.8, 0.5);
+					height = baseHeight + 0.4;
+			}
+			
+			// Create material with stronger colors to be more visible
+			const material = new THREE.MeshStandardMaterial({
+				color,
+				roughness: 0.7,
+				metalness: 0.3,
+				emissive: color,
+				emissiveIntensity: 0.2 // Add glow to make pieces more visible
+			});
+			
+			// Create mesh
+			const pieceMesh = new THREE.Mesh(geometry, material);
+			pieceMesh.position.set(
+				piece.x - offsetX,
+				height, // Position based on height
+				piece.z - offsetZ
+			);
+			
+			// Store piece info in the mesh's userData for raycasting
+			pieceMesh.userData = { 
+				pieceIndex: i,
+				type: 'chessPiece',
+				x: piece.x,
+				z: piece.z,
+				pieceType: piece.type,
+				player: piece.player
+			};
+			
+			pieceMesh.castShadow = true;
+			pieceMesh.receiveShadow = true;
+			chessPiecesGroup.add(pieceMesh);
+			
+			// Increment counter for successfully created pieces
+			piecesCreated++;
+			
+		} catch (error) {
+			console.error(`Error creating chess piece (${piece.type}) at (${piece.x},${piece.z}):`, error);
+			piecesSkipped++;
+		}
+	}
+	
+	// Log summary
+	console.log(`Chess pieces rendering complete: ${piecesCreated} created, ${piecesSkipped} skipped`);
 }

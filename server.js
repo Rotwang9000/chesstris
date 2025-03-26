@@ -12,7 +12,7 @@ const socketIO = require('socket.io');
 const { v4: uuidv4 } = require('uuid');
 const bodyParser = require('body-parser');
 const { BOARD_SETTINGS, GAME_RULES } = require('./server/game/Constants');
-
+const fs = require('fs');
 // Import API routes
 const apiRoutes = require('./routes/api');
 
@@ -67,6 +67,28 @@ if (!isDevelopment) {
 	app.use(express.static(path.join(__dirname, 'client/build')));
 } 
 
+
+// Catch-all route that will serve the React app in production, but public/index.html in development
+app.get('/js/*', (req, res) => {
+
+	//if no file exists with the filename bit of the url but there is one ending with .js, then load it
+	const url = req.url;
+	const file = (path.join(__dirname, 'public', url));
+	if (!fs.existsSync(file) && fs.existsSync(file + '.js')) {
+		res.sendFile(file + '.js');
+	}
+});
+
+// Catch-all route that will serve the React app in production, but public/index.html in development
+app.get('*', (req, res) => {
+		if (isDevelopment) {
+			res.sendFile(path.join(__dirname, 'public', 'index.html'));
+		} else {
+			res.sendFile(path.join(__dirname, 'client/build', 'index.html'));
+		}
+	
+});
+
 // API routes
 app.use('/api', apiRoutes);
 
@@ -75,14 +97,7 @@ app.get('/2d', (req, res) => {
 	res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Catch-all route that will serve the React app in production, but public/index.html in development
-app.get('*', (req, res) => {
-	if (isDevelopment) {
-		res.sendFile(path.join(__dirname, 'public', 'index.html'));
-	} else {
-		res.sendFile(path.join(__dirname, 'client/build', 'index.html'));
-	}
-});
+
 
 // Socket.IO connection handling
 io.on('connection', (socket) => {
@@ -250,7 +265,7 @@ io.on('connection', (socket) => {
 			// object format the game managers expect
 			const gameObject = {
 				id: gameId,
-				board: game.state.board || [],
+				board: game.state.board || { cells: {}, width: 0, height: 0 },
 				chessPieces: game.state.chessPieces || [],
 				players: game.players.reduce((obj, id) => {
 					const playerObj = players.get(id) || computerPlayers.get(id) || {};
@@ -470,7 +485,7 @@ io.on('connection', (socket) => {
 			// Create a proper game object format for our managers
 			const gameObject = {
 				id: gameId,
-				board: game.state.board || [],
+				board: game.state.board || { cells: {}, width: 0, height: 0 },
 				chessPieces: game.state.chessPieces || [],
 				players: game.players.reduce((obj, id) => {
 					const playerObj = players.get(id) || computerPlayers.get(id) || {};
@@ -510,6 +525,15 @@ io.on('connection', (socket) => {
 				return;
 			}
 			
+			// Alternatively, find the piece in the board cells
+			const sourceCell = gameManager.boardManager.getCell(gameObject.board, piece.position.x, piece.position.z);
+			if (!sourceCell) {
+				console.log(`Cannot find the source cell for piece at (${piece.position.x}, ${piece.position.z})`);
+				socket.emit('chessFailed', { message: 'Source cell not found' });
+				if (callback) callback({ success: false, error: 'Source cell not found' });
+				return;
+			}
+			
 			// Check if the move is valid
 			console.log(`Checking if move to (${targetPosition.x}, ${targetPosition.z}) is valid`);
 			const isValidMove = gameManager.chessManager.isValidChessMove(
@@ -528,24 +552,77 @@ io.on('connection', (socket) => {
 			
 			console.log(`Move is valid, executing chess move`);
 			
-			// Get any captured piece at the target position
-			let capturedPiece = null;
-			const capturedPieceIndex = gameObject.chessPieces.findIndex(p => 
-				p && p.position.x === targetPosition.x && p.position.z === targetPosition.z && p.id !== pieceId
+			// Get the source cell's chess piece object
+			const chessPieceObj = sourceCell.find(item => 
+				item && item.type === 'chess' && item.pieceId === pieceId
 			);
 			
-			if (capturedPieceIndex !== -1) {
-				capturedPiece = gameObject.chessPieces[capturedPieceIndex];
-				console.log(`Capturing piece: ${capturedPiece.type} belonging to ${capturedPiece.player}`);
-				// Remove the captured piece
-				gameObject.chessPieces.splice(capturedPieceIndex, 1);
+			if (!chessPieceObj) {
+				console.log(`Cannot find the chess piece object in the source cell`);
+				socket.emit('chessFailed', { message: 'Chess piece data not found in cell' });
+				if (callback) callback({ success: false, error: 'Chess piece data not found in cell' });
+				return;
 			}
 			
-			// Move the piece
+			// Get the target cell
+			const targetCell = gameManager.boardManager.getCell(gameObject.board, targetPosition.x, targetPosition.z);
+			
+			// Check for captured piece at the target position
+			let capturedPiece = null;
+			if (targetCell && targetCell.length > 0) {
+				const capturedPieceObj = targetCell.find(item => 
+					item && item.type === 'chess' && item.player !== playerId
+				);
+				
+				if (capturedPieceObj) {
+					// Find the actual piece in the chess pieces array
+					const capturedPieceIndex = gameObject.chessPieces.findIndex(p => 
+						p && p.id === capturedPieceObj.pieceId
+					);
+					
+					if (capturedPieceIndex !== -1) {
+						capturedPiece = gameObject.chessPieces[capturedPieceIndex];
+						console.log(`Capturing piece: ${capturedPiece.type} belonging to ${capturedPiece.player}`);
+						// Remove the captured piece
+						gameObject.chessPieces.splice(capturedPieceIndex, 1);
+					}
+				}
+			}
+			
+			// Remove the piece from the source cell
+			const homeMarkersAtSource = sourceCell.filter(item => 
+				item && item.type === 'home'
+			);
+			
+			// Only keep home zone markers at the source
+			if (homeMarkersAtSource.length > 0) {
+				gameManager.boardManager.setCell(gameObject.board, piece.position.x, piece.position.z, homeMarkersAtSource);
+			} else {
+				// Remove the cell completely if no home markers
+				gameManager.boardManager.setCell(gameObject.board, piece.position.x, piece.position.z, null);
+			}
+			
+			// Prepare the target cell
+			const targetCellContents = targetCell ? 
+				targetCell.filter(item => item && item.type !== 'chess') : 
+				[];
+			
+			// Add the chess piece to the target cell
+			targetCellContents.push({
+				...chessPieceObj,
+				position: targetPosition // Update position in the cell object
+			});
+			
+			// Set the target cell
+			gameManager.boardManager.setCell(gameObject.board, targetPosition.x, targetPosition.z, targetCellContents);
+			
+			// Move the piece in the chessPieces array
 			piece.position = targetPosition;
+			piece.hasMoved = true;
 			gameObject.chessPieces[pieceIndex] = piece;
 			
 			// Update the game state with our modified gameObject
+			game.state.board = gameObject.board;
 			game.state.chessPieces = gameObject.chessPieces;
 			
 			// Update game state
@@ -578,7 +655,7 @@ io.on('connection', (socket) => {
 			});
 			
 			// Check for game over (king captured)
-			if (capturedPiece && capturedPiece.type === 'king') {
+			if (capturedPiece && capturedPiece.type === 'KING') {
 				console.log(`Game over: ${playerId} captured a king!`);
 				endGame(gameId, {
 					winner: playerId,
@@ -947,6 +1024,9 @@ io.on('connection', (socket) => {
 		players.delete(playerId);
 	});
 });
+
+
+
 
 // Create a new game
 function createNewGame(gameId = null, settings = {}) {
@@ -1414,11 +1494,27 @@ function simulateTetrominoPlacement(board, computerId, strategy) {
 	// Helper function to set a cell
 	function setCell(x, z, type) {
 		const key = `${x},${z}`;
-		newBoard.cells[key] = {
+		
+		// Create tetromino cell object
+		const tetrominoObj = {
 			type: 'tetromino',
+			pieceType: `type${type}`,
 			player: computerId,
-			tetrominoType: type
+			placedAt: Date.now()
 		};
+		
+		// If the cell already exists, add to its contents
+		if (newBoard.cells[key] && Array.isArray(newBoard.cells[key])) {
+			// Filter out any existing tetromino objects (replace them)
+			const nonTetrominoContent = newBoard.cells[key].filter(item => 
+				item && item.type !== 'tetromino'
+			);
+			// Add the new tetromino object
+			newBoard.cells[key] = [...nonTetrominoContent, tetrominoObj];
+		} else {
+			// Create a new cell with the tetromino object
+			newBoard.cells[key] = [tetrominoObj];
+		}
 		
 		// Update board boundaries if necessary
 		if (x < newBoard.minX) newBoard.minX = x;
@@ -1482,28 +1578,28 @@ function simulateChessMove(chessPieces, computerId, strategy) {
 		// Add a few basic pieces
 		newChessPieces.push({
 			type: 'king',
-			player: 2, // Computer is usually player 2
+			player: 'player2',
 			x: 4,
 			z: 0
 		});
 		
 		newChessPieces.push({
 			type: 'queen',
-			player: 2,
+			player: 'player2',
 			x: 3,
 			z: 0
 		});
 		
 		newChessPieces.push({
 			type: 'pawn',
-			player: 2,
+			player: 'player2',
 			x: 0,
 			z: 1
 		});
 		
 		newChessPieces.push({
 			type: 'pawn',
-			player: 2,
+			player: 'player2',
 			x: 1,
 			z: 1
 		});
@@ -1512,7 +1608,7 @@ function simulateChessMove(chessPieces, computerId, strategy) {
 	}
 	
 	// Find all pieces belonging to the computer player
-	const computerPieces = newChessPieces.filter(piece => piece.player === 2);
+	const computerPieces = newChessPieces.filter(piece => piece.player === computerId);
 	
 	if (computerPieces.length === 0) {
 		return newChessPieces;
@@ -1680,6 +1776,7 @@ function initializeGlobalGame() {
 	
 	console.log(`Global game created with ID: ${GLOBAL_GAME_ID}`);
 }
+
 
 // Start the server
 server.listen(PORT, () => {

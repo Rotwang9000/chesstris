@@ -16,7 +16,7 @@ class BoardManager {
 	createEmptyBoard(width = BOARD_SETTINGS.DEFAULT_WIDTH, height = BOARD_SETTINGS.DEFAULT_HEIGHT) {
 		// Instead of a 2D array, use a sparse structure with occupied cells
 		return {
-			cells: {},  // Map of "x,z" coordinates to cell data
+			cells: {},  // Map of "x,z" coordinates to cell data (now arrays of objects)
 			width: width,
 			height: height,
 			minX: 0,
@@ -31,10 +31,11 @@ class BoardManager {
 	 * @param {Object} board - The board object
 	 * @param {number} x - X coordinate
 	 * @param {number} z - Z coordinate
-	 * @returns {Object|null} The cell or null if empty
+	 * @returns {Array|null} The cell array or null if empty
 	 */
 	getCell(board, x, z) {
 		const key = `${x},${z}`;
+		// Return the array of objects in the cell, or null if empty
 		return board.cells[key] || null;
 	}
 	
@@ -43,7 +44,7 @@ class BoardManager {
 	 * @param {Object} board - The board object
 	 * @param {number} x - X coordinate
 	 * @param {number} z - Z coordinate
-	 * @param {Object} cell - Cell data to set
+	 * @param {Object|Array} cell - Cell data to set (object or array of objects)
 	 */
 	setCell(board, x, z, cell) {
 		const key = `${x},${z}`;
@@ -58,8 +59,78 @@ class BoardManager {
 		board.width = board.maxX - board.minX + 1;
 		board.height = board.maxZ - board.minZ + 1;
 		
-		// Set the cell
-		board.cells[key] = cell;
+		// Ensure we're setting an array of objects
+		if (Array.isArray(cell)) {
+			board.cells[key] = cell;
+		} else if (cell === null) {
+			// If explicitly setting to null, clear the cell
+			delete board.cells[key];
+		} else {
+			// Convert single object to array
+			board.cells[key] = [cell];
+		}
+	}
+	
+	/**
+	 * Add an object to a cell at specific coordinates
+	 * @param {Object} board - The board object
+	 * @param {number} x - X coordinate
+	 * @param {number} z - Z coordinate
+	 * @param {Object} cellObject - Cell object to add
+	 */
+	addToCellContents(board, x, z, cellObject) {
+		const key = `${x},${z}`;
+		
+		// Update board boundaries if necessary
+		if (x < board.minX) board.minX = x;
+		if (x > board.maxX) board.maxX = x;
+		if (z < board.minZ) board.minZ = z;
+		if (z > board.maxZ) board.maxZ = z;
+		
+		// Update width and height
+		board.width = board.maxX - board.minX + 1;
+		board.height = board.maxZ - board.minZ + 1;
+		
+		// Add the object to the cell array
+		if (!board.cells[key]) {
+			board.cells[key] = [];
+		}
+		
+		board.cells[key].push(cellObject);
+	}
+	
+	/**
+	 * Remove an object from a cell based on a filter function
+	 * @param {Object} board - The board object
+	 * @param {number} x - X coordinate
+	 * @param {number} z - Z coordinate
+	 * @param {Function} filterFn - Function that returns true for items to keep
+	 * @returns {Object|null} The removed object or null if none found
+	 */
+	removeFromCellContents(board, x, z, filterFn) {
+		const key = `${x},${z}`;
+		const cell = board.cells[key];
+		
+		if (!cell || !Array.isArray(cell) || cell.length === 0) {
+			return null;
+		}
+		
+		// Find the index of the first item that should be removed
+		const indexToRemove = cell.findIndex(item => !filterFn(item));
+		
+		if (indexToRemove !== -1) {
+			// Remove the item
+			const removedItem = cell.splice(indexToRemove, 1)[0];
+			
+			// If the cell is now empty, remove it
+			if (cell.length === 0) {
+				delete board.cells[key];
+			}
+			
+			return removedItem;
+		}
+		
+		return null;
 	}
 	
 	/**
@@ -165,11 +236,17 @@ class BoardManager {
 				let hasPiece = false;
 				for (let hz = homeZ; hz < homeZ + homeHeight; hz++) {
 					for (let hx = homeX; hx < homeX + homeWidth; hx++) {
-						const cell = this.getCell(game.board, hx, hz);
-						if (cell && cell.chessPiece && cell.chessPiece.player === playerId) {
-							hasPiece = true;
-							log(`Found piece in home zone for player ${playerId} at (${hx}, ${hz})`);
-							break;
+						const cellContents = this.getCell(game.board, hx, hz);
+						if (cellContents) {
+							// Look for chess pieces in the cell array
+							for (const item of cellContents) {
+								if (item && item.type === 'chess' && item.player === playerId) {
+									hasPiece = true;
+									log(`Found piece in home zone for player ${playerId} at (${hx}, ${hz})`);
+									break;
+								}
+							}
+							if (hasPiece) break;
 						}
 					}
 					if (hasPiece) break;
@@ -199,8 +276,39 @@ class BoardManager {
 	 * @returns {boolean} True if there's a cell underneath
 	 */
 	hasCellUnderneath(game, x, z) {
-		// Check if there's a cell at this position
-		return this.getCell(game.board, x, z) !== null;
+		// Check if there's a cell at this position (any content means it's occupied)
+		const cellContents = this.getCell(game.board, x, z);
+		return cellContents !== null && Array.isArray(cellContents) && cellContents.length > 0;
+	}
+	
+	/**
+	 * Check if a cell has a specific type of content
+	 * @param {Object} game - The game object
+	 * @param {number} x - X coordinate
+	 * @param {number} z - Z coordinate
+	 * @param {string} type - The type to look for (e.g., 'tetromino', 'chess', 'home')
+	 * @returns {boolean} True if the cell has the specified type
+	 */
+	hasCellType(game, x, z, type) {
+		const cellContents = this.getCell(game.board, x, z);
+		if (!cellContents) return false;
+		
+		return cellContents.some(item => item && item.type === type);
+	}
+	
+	/**
+	 * Find all cell contents of a specific type
+	 * @param {Object} game - The game object
+	 * @param {number} x - X coordinate
+	 * @param {number} z - Z coordinate
+	 * @param {string} type - The type to look for
+	 * @returns {Array} Array of matching cell contents
+	 */
+	getCellContentsByType(game, x, z, type) {
+		const cellContents = this.getCell(game.board, x, z);
+		if (!cellContents) return [];
+		
+		return cellContents.filter(item => item && item.type === type);
 	}
 	
 	/**
@@ -224,13 +332,13 @@ class BoardManager {
 			
 			// Check cells across the x-axis for this z-coordinate
 			for (let x = game.board.minX; x <= game.board.maxX; x++) {
-				const cell = this.getCell(game.board, x, z);
+				const cellContents = this.getCell(game.board, x, z);
 				
 				// Check if this cell is in a home zone
 				const isHomeCellSafe = this.isCellInSafeHomeZone(game, x, z);
 				
 				// Count only non-home cells that are filled
-				if (cell) {
+				if (cellContents && cellContents.length > 0) {
 					if (isHomeCellSafe) {
 						skippedHomeCells++;
 					} else {
@@ -266,29 +374,44 @@ class BoardManager {
 	/**
 	 * Clear a row on the board
 	 * @param {Object} game - The game object
-	 * @param {number} rowIndex - The row index to clear
+	 * @param {number} rowIndex - The index of the row to clear
 	 */
 	clearRow(game, rowIndex) {
-		// Clear all non-home cells in the row
+		// Loop through the cells in the row
 		for (let x = game.board.minX; x <= game.board.maxX; x++) {
-			const isHomeCellSafe = this.isCellInSafeHomeZone(game, x, rowIndex);
-			if (!isHomeCellSafe) {
-				// Find chess pieces at this position and remove them
-				const cell = this.getCell(game.board, x, rowIndex);
-				if (cell && cell.chessPiece) {
-					// Remove the chess piece from the game's pieces array
-					const pieceIndex = game.chessPieces.findIndex(p => 
-						p.position.x === x && p.position.z === rowIndex);
-					
-					if (pieceIndex !== -1) {
-						game.chessPieces.splice(pieceIndex, 1);
-					}
-				}
-				
-				// Clear the cell
-				delete game.board.cells[`${x},${rowIndex}`];
+			const key = `${x},${rowIndex}`;
+			const cellContents = game.board.cells[key];
+			
+			// Skip empty cells
+			if (!cellContents || cellContents.length === 0) continue;
+			
+			// Skip cells in safe home zones
+			if (this.isCellInSafeHomeZone(game, x, rowIndex)) {
+				log(`Skipping cell at (${x}, ${rowIndex}) in safe home zone`);
+				continue;
 			}
+			
+			// Remove non-home cell content (tetrominos, etc.)
+			// But preserve home zone markers
+			const homeZoneMarkers = cellContents.filter(item => 
+				item && item.type === 'home'
+			);
+			
+			if (homeZoneMarkers.length > 0) {
+				// Only keep home zone markers
+				game.board.cells[key] = homeZoneMarkers;
+			} else {
+				// Remove the cell completely
+				delete game.board.cells[key];
+			}
+			
+			log(`Cleared cell at (${x}, ${rowIndex})`);
 		}
+		
+		log(`Cleared row ${rowIndex}`);
+		
+		// Check if there are any chess pieces that need to be adjusted
+		this._makePiecesFallTowardsKing(game, [rowIndex]);
 	}
 	
 	/**
