@@ -6,7 +6,8 @@
  * and custom 3D models that can be loaded and cached.
  */
 
-import * as THREE from './utils/three.module.js';
+import { getTHREE } from './enhanced-gameCore.js';
+const THREE = getTHREE();
 
 // Global scaling factor for all chess pieces
 const PIECE_SCALE = 1.5; // 50% larger than original
@@ -39,8 +40,6 @@ const ENHANCED_MATERIALS = {
 	}
 };
 
-// Initialize materials right away to prevent any race conditions
-initMaterials();
 
 // Initialize materials when first needed (prevent THREE not being defined issues)
 function initMaterials() {
@@ -976,6 +975,7 @@ export function getChessPiece(type, player, isLocalPlayer = false) {
 
 // Export the main functions and constants
 export default {
+	initMaterials,
 	getChessPiece,
 	registerCustomModel,
 	loadCustomModels,
@@ -983,3 +983,4 @@ export default {
 	DEFAULT_COLORS,
 	ENHANCED_MATERIALS
 };
+

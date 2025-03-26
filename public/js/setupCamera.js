@@ -2,92 +2,120 @@ import { THREE } from './enhanced-gameCore';
 import * as NetworkManager from './utils/networkManager';
 
 /**
- * Set up the camera position and controls
+ * Set up camera with proper position and controls
+ * @param {THREE.Camera} camera - The camera to set up
+ * @param {THREE.OrbitControls} controls - The orbit controls to set up
+ * @param {THREE.WebGLRenderer} renderer - The renderer being used
  */
 export function setupCamera(camera, controls, renderer) {
-	// Position camera at an isometric view
-	camera.position.set(15, 20, 15);
-	camera.lookAt(0, 0, 0);
-
-	// Initialize orbit controls for camera manipulation
-	if (typeof THREE.OrbitControls !== 'undefined') {
-		// Use THREE's built-in OrbitControls if available
-		controls = new THREE.OrbitControls(camera, renderer.domElement);
-	} else if (window.OrbitControls) {
-		// Or use globally available OrbitControls
-		controls = new window.OrbitControls(camera, renderer.domElement);
-	} else {
-		console.warn("OrbitControls not available, camera controls will be limited");
-		// Create minimal controls to avoid errors
-		controls = {
-			update: function () { },
-			enabled: false,
-			enableDamping: false,
-			dampingFactor: 0.05,
-			minDistance: 5,
-			maxDistance: 100,
-			maxPolarAngle: Math.PI / 2
-		};
+	if (!camera) {
+		console.error('Cannot setup camera: camera is undefined');
+		return;
 	}
-
-	// Configure controls if they exist
-	if (controls.enableDamping !== undefined) {
+	
+	console.log('Setting up camera with enhanced position and controls');
+	
+	// Set initial camera position for a good view of the board
+	camera.position.set(20, 25, 20);
+	camera.lookAt(8, 0, 8);
+	
+	// Check if THREE.OrbitControls is available
+	if (typeof THREE !== 'undefined' && typeof THREE.OrbitControls !== 'undefined') {
+		// Create new controls if not provided
+		if (!controls) {
+			console.log('Creating new OrbitControls');
+			controls = new THREE.OrbitControls(camera, renderer.domElement);
+		}
+		
+		// Configure controls for smooth movement
 		controls.enableDamping = true;
-		controls.dampingFactor = 0.1;
+		controls.dampingFactor = 0.15;
+		controls.screenSpacePanning = true;
+		controls.minDistance = 10;
+		controls.maxDistance = 80;
+		controls.maxPolarAngle = Math.PI / 2 - 0.1; // Prevent going below horizon
+		controls.target.set(8, 0, 8); // Look at center of board
+		
+		// Set up controls to handle touch events properly
+		controls.touches = {
+			ONE: THREE.TOUCH.ROTATE,
+			TWO: THREE.TOUCH.DOLLY_PAN
+		};
+		
+		// Enable smooth rotating/panning
 		controls.rotateSpeed = 0.7;
-		controls.minDistance = 5;
-		controls.maxDistance = 50;
-		controls.maxPolarAngle = Math.PI / 2 - 0.1; // Prevent camera from going below the ground
+		controls.panSpeed = 0.8;
+		controls.zoomSpeed = 1.0;
+		
+		// Ensure controls are updated
+		controls.update();
+		
+		console.log('Camera controls initialized successfully');
+		return controls;
+	} else {
+		console.warn('THREE.OrbitControls not available, camera will be static');
+		return null;
 	}
-}/**
+}
+
+/**
  * Reset camera with specific gameplay settings
+ * @param {THREE.WebGLRenderer} renderer - The renderer
+ * @param {THREE.Camera} camera - The camera to reset
+ * @param {THREE.OrbitControls} controls - The orbit controls
+ * @param {Object} gameState - The current game state
+ * @param {THREE.Scene} scene - The scene
  * @param {boolean} animate - Whether to animate the camera movement
- * @param {boolean} forceImmediate - Whether to position immediately without waiting for home zone
+ * @param {boolean} forceImmediate - Whether to force immediate repositioning
  */
 export function resetCameraForGameplay(renderer, camera, controls, gameState, scene, animate = true, forceImmediate = false) {
 	console.log('Resetting camera for gameplay view');
 
-	if (!camera || !controls) {
-		console.warn('Camera or controls not initialized');
+	// Validate required parameters
+	if (!camera) {
+		console.error('Cannot reset camera: camera is undefined');
 		return;
 	}
-
-	// If we want to wait for game data but don't have it yet, defer the repositioning
-	if (!forceImmediate && (!gameState.board || !gameState.board.length || !gameState.homeZones)) {
-		console.log('Waiting for game data before repositioning camera...');
-
-		// Store the request for later execution
-		gameState.pendingCameraReset = {
-			animate: animate,
-			requestTime: Date.now()
-		};
-
-		// Set a default position for now
-		camera.position.set(20, 25, 20);
-		controls.target.set(8, 0, 8);
-		controls.update();
-
-		return;
+	
+	if (!controls) {
+		console.warn('Controls not available - creating new controls if possible');
+		// Try to create controls if THREE is available
+		if (typeof THREE !== 'undefined' && typeof THREE.OrbitControls !== 'undefined' && renderer) {
+			controls = new THREE.OrbitControls(camera, renderer.domElement);
+			controls.enableDamping = true;
+			controls.dampingFactor = 0.15;
+			controls.minDistance = 10;
+			controls.maxDistance = 80;
+			console.log('Created new controls during camera reset');
+		} else {
+			console.error('Cannot create controls - THREE.OrbitControls not available');
+			// Set camera position directly
+			camera.position.set(20, 25, 20); 
+			camera.lookAt(8, 0, 8);
+			return;
+		}
 	}
 
 	// Default camera position - looking at the center of the board
+	// Position further back for better board visibility
 	let targetPosition = {
-		x: 8, // Default x
-		y: 20, // Default height 
-		z: 25 // Default z
+		x: 20, 
+		y: 25, 
+		z: 20
 	};
 
 	let lookAt = {
-		x: 8, // Default focus x - center of the board
-		y: 0, // Default focus y
-		z: 8 // Default focus z - center of the board
+		x: 8, // Center of the board
+		y: 0, 
+		z: 8  // Center of the board
 	};
 
 	// Get player ID
-	const playerId = NetworkManager.getPlayerId ? NetworkManager.getPlayerId() : null;
+	const playerId = typeof NetworkManager !== 'undefined' && NetworkManager.getPlayerId ? 
+		NetworkManager.getPlayerId() : null;
 
 	// If we have home zones data and playerId, position based on player's home zone
-	if (playerId && gameState.homeZones && Object.keys(gameState.homeZones).length > 0) {
+	if (playerId && gameState && gameState.homeZones && Object.keys(gameState.homeZones).length > 0) {
 		// Find the player's home zone
 		let homeZone = null;
 		for (const [id, zone] of Object.entries(gameState.homeZones)) {
@@ -106,25 +134,28 @@ export function resetCameraForGameplay(renderer, camera, controls, gameState, sc
 		if (homeZone) {
 			console.log('Positioning camera based on home zone:', homeZone);
 
-			// Calculate position behind the home zone
 			// Use cell coordinates directly as they match the board grid
-			const homeX = homeZone.x;
-			const homeZ = homeZone.z;
+			const homeX = homeZone.x !== undefined ? homeZone.x : 0;
+			const homeZ = homeZone.z !== undefined ? homeZone.z : 0;
 			const homeWidth = homeZone.width || 2;
 			const homeHeight = homeZone.height || 2;
 
-			// Position camera behind and slightly to the side of home zone
+			// Calculate center of home zone
+			const centerX = homeX + homeWidth / 2;
+			const centerZ = homeZ + homeHeight / 2;
+
+			// Position camera diagonally from home zone for better view
 			targetPosition = {
-				x: homeX - 5, // Position to left of home zone
-				y: 15, // Height
-				z: homeZ + homeHeight + 10 // Position behind home zone
+				x: centerX - 12, 
+				y: 20, 
+				z: centerZ + 12
 			};
 
 			// Look at center of home zone
 			lookAt = {
-				x: homeX + homeWidth / 2, // Center X of home zone
-				y: 0, // Board level
-				z: homeZ + homeHeight / 2 // Center Z of home zone
+				x: centerX,
+				y: 0,
+				z: centerZ
 			};
 
 			console.log('Camera will move to:', targetPosition, 'looking at:', lookAt);
@@ -132,9 +163,16 @@ export function resetCameraForGameplay(renderer, camera, controls, gameState, sc
 	}
 
 	// Set camera position immediately or animate
-	if (!animate) {
+	if (!animate || forceImmediate) {
+		// Directly set camera position and look at target
 		camera.position.set(targetPosition.x, targetPosition.y, targetPosition.z);
-
+		controls.target.set(lookAt.x, lookAt.y, lookAt.z);
+		
+		// Update controls
+		controls.update();
+		
+		console.log('Camera position set immediately to:', targetPosition);
+		
 		// Force a render
 		if (renderer && scene) {
 			renderer.render(scene, camera);
@@ -142,7 +180,7 @@ export function resetCameraForGameplay(renderer, camera, controls, gameState, sc
 		return;
 	}
 
-	// Get current position
+	// Get current position for animation
 	const startPosition = {
 		x: camera.position.x,
 		y: camera.position.y,
@@ -150,7 +188,11 @@ export function resetCameraForGameplay(renderer, camera, controls, gameState, sc
 	};
 
 	// Get current look-at
-	const startLookAt = controls.target.clone();
+	const startLookAt = {
+		x: controls.target.x,
+		y: controls.target.y,
+		z: controls.target.z
+	};
 
 	// Animation duration
 	const duration = 2000; // 2 seconds
@@ -185,16 +227,19 @@ export function resetCameraForGameplay(renderer, camera, controls, gameState, sc
 		// Continue animation if not done
 		if (progress < 1) {
 			requestAnimationFrame(animateCamera);
+		} else {
+			console.log('Camera animation completed');
 		}
 	}
 
 	// Start animation
 	animateCamera();
 }
+
 /**
  * Position camera based on home zone data
  */
-function resetCameraBasedOnHomeZone() {
+export function resetCameraBasedOnHomeZone(camera, controls, gameState) {
 	if (!camera || !controls) return;
 
 	// Default position in case we can't find home zone
@@ -241,26 +286,28 @@ function resetCameraBasedOnHomeZone() {
 	}
 
 	// Animate camera movement
-	animateCamera(targetPosition, lookAt);
+	animateCamera(camera, controls, targetPosition, lookAt);
 }
+
 /**
  * Position camera at default position
  */
-function positionCameraDefault() {
+export function positionCameraDefault() {
 	if (!camera || !controls) return;
 
 	const targetPosition = { x: 8, y: 20, z: 25 };
 	const lookAt = { x: 0, y: 0, z: 0 };
 
 	// Animate camera movement
-	animateCamera(targetPosition, lookAt);
+	animateCamera(camera, controls, targetPosition, lookAt);
 }
+
 /**
  * Animate camera to target position
  * @param {Object} targetPosition - Target camera position
  * @param {Object} lookAt - Target look-at point
  */
-function animateCamera(targetPosition, lookAt) {
+export function animateCamera(camera, controls, targetPosition, lookAt) {
 	// Get current position
 	const startPosition = {
 		x: camera.position.x,
@@ -309,5 +356,45 @@ function animateCamera(targetPosition, lookAt) {
 
 	// Start animation
 	animate();
+}
+
+/**
+ * Move the camera to view a player's home zone
+ */
+export function moveToPlayerZone(camera, controls, gameState, renderer, scene) {
+	// If no local player ID, do nothing
+	if (!gameState.localPlayerId) return;
+
+	// Find the player's king
+	const playerPieces = gameState.chessPieces.filter(
+		piece => String(piece.player) === String(gameState.localPlayerId)
+	);
+
+	// If no pieces, use center of board
+	if (!playerPieces.length) {
+		resetCameraForGameplay(renderer, camera, controls, gameState, scene);
+		return;
+	}
+
+	// Find the king, or any piece if king not found
+	const kingPiece = playerPieces.find(piece => piece.type === 'KING' || piece.type === 'king'
+	) || playerPieces[0];
+
+	// Get the position
+	const position = kingPiece.position;
+
+	// Move camera to focus on that position
+	if (camera && controls && position) {
+		// Calculate target position
+		const targetX = position.x - gameState.board.centreMarker.x;
+		const targetZ = position.z - gameState.board.centreMarker.z;
+
+		// Set camera position
+		controls.target.set(targetX, 0, targetZ);
+		camera.position.set(targetX, 15, targetZ + 15);
+
+		// Update controls
+		controls.update();
+	}
 }
 

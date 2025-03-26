@@ -8,11 +8,24 @@
 import * as THREE_MODULE from './utils/three.module.js';
 
 // Set THREE to either the global version or the imported module
-export const THREE = (typeof window !== 'undefined' && window.THREE) ? window.THREE : THREE_MODULE;
+const THREE = (typeof window !== 'undefined' && window.THREE) ? window.THREE : THREE_MODULE;
 
 // Ensure THREE is available
 if (!THREE) {
-  console.error('THREE.js not available. Game will not function correctly.');
+	console.error('THREE.js not available. Game will not function correctly.');
+}
+
+// Export THREE getter function for modules that need it
+export function getTHREE() {
+	return THREE;
+}
+
+/**
+ * Get the current game state
+ * @returns {Object} - Current game state
+ */
+export function getGameState() {
+	return gameState;
 }
 
 // Import other modules
@@ -23,12 +36,14 @@ import { showToastMessage } from './showToastMessage.js';
 import { createNetworkStatusDisplay,  } from './createNetworkStatusDisplay.js';
 import * as sceneModule from './scene.js';
 import { boardFunctions } from './boardFunctions.js';
-import { getChessPiece } from './chessPieceCreator.js';
 import { createLoadingIndicator, hideAllLoadingElements, showErrorMessage, updateGameIdDisplay, updateGameStatusDisplay, updateNetworkStatus } from './createLoadingIndicator.js';
 import { moveTetrominoHorizontal, moveTetrominoVertical, rotateTetromino, hardDropTetromino, createTetrominoBlock } from './tetromino.js';
 import { resetCameraForGameplay, setupCamera } from './setupCamera.js';
 import { showTutorialMessage } from './createLoadingIndicator.js';
-import { findBoardCentreMarker, preserveCentreMarker, updateCellPreservingMarker } from './centreBoardMarker.js';
+import { preserveCentreMarker, updateCellPreservingMarker } from './centreBoardMarker.js';
+import { updatePlayerBar, createPlayerBar } from './updatePlayerBar.js';
+import { updateChessPieces } from './updateChessPieces.js';
+import chessPieceCreator from './chessPieceCreator.js';
 
 // Core game state
 let gameState = {
@@ -75,29 +90,12 @@ function generateRandomPlayerId() {
 	return 'player_' + Math.random().toString(36).substring(2, 10);
 }
 
-/**
- * Generate a random color in blue/green range for player
- * @returns {number} Color as hex value
- */
-function generatePlayerColor() {
-	// Generate colors in blue-green range
-	const r = Math.floor(Math.random() * 80);  // Keep red low for blue/green shades
-	const g = 100 + Math.floor(Math.random() * 155); // Medium to high green
-	const b = 150 + Math.floor(Math.random() * 105); // Medium to high blue
-	
-	// Convert RGB to hex
-	return (r << 16) | (g << 8) | b;
-}
-
 // Cached DOM elements
 let containerElement, gameContainer;
 let scene, camera, renderer, controls, animationFrameId = null;
 let boardGroup, tetrominoGroup, chessPiecesGroup;
 let raycaster, mouse;
 let clouds = null, animationQueue = [];
-
-// Tetromino drop height
-const TETROMINO_DROP_HEIGHT = 0.6; 
 
 // Player colors and identifiers
 /**
@@ -110,51 +108,8 @@ const TETROMINO_DROP_HEIGHT = 0.6;
  */
 export const PLAYER_COLORS = {
 	self: 0xDD0000,   // Red for local player
-	other: 0x0088AA   // Blue-green for all other players
+	other: 0x0088AA   // Blue-green for all other players - should come from server tho
 };
-
-// Tetromino shapes (unchanged from minimal version)
-const TETROMINO_SHAPES = {
-	I: [
-		[0, 0, 0, 0],
-		[1, 1, 1, 1],
-		[0, 0, 0, 0],
-		[0, 0, 0, 0]
-	],
-	O: [
-		[1, 1],
-		[1, 1]
-	],
-	T: [
-		[0, 1, 0],
-		[1, 1, 1],
-		[0, 0, 0]
-	],
-	J: [
-		[1, 0, 0],
-		[1, 1, 1],
-		[0, 0, 0]
-	],
-	L: [
-		[0, 0, 1],
-		[1, 1, 1],
-		[0, 0, 0]
-	],
-	S: [
-		[0, 1, 1],
-		[1, 1, 0],
-		[0, 0, 0]
-	],
-	Z: [
-		[1, 1, 0],
-		[0, 1, 1],
-		[0, 0, 0]
-	]
-};
-
-// // Texture cache
-// const textureLoader = new THREE.TextureLoader();
-// const modelLoader = new GLTFLoader();
 
 // Enhanced game assets
 export const models = {
@@ -181,12 +136,17 @@ let uiButtons = {};
  * @returns {boolean} - Whether initialization was successful
  */
 export function initGame(container) {
-	console.log("Initializing Chesstris game...");
+	console.log("Initializing Shaktris game...");
 	
 	try {
 		// Create a thematic loading indicator
 		const loadingIndicator = createLoadingIndicator();
-		
+		console.log("Loading indicator created");
+
+		// Initialize game state
+		console.log("Initializing game state...");
+		resetGameState(gameState);
+
 		// Validate container parameter
 		if (!container) {
 			console.warn("No container provided for game initialization, looking for default container");
@@ -226,21 +186,33 @@ export function initGame(container) {
 			throw new Error("THREE.js is not initialized");
 		}
 
+		// Initialize materials for chess pieces
+		console.log("Initializing chess piece materials...");
+		chessPieceCreator.initMaterials();
+		
 		// Initialize THREE.js scene
 		console.log("Creating THREE.js scene...");
 		scene = new THREE.Scene();
+		// Use a pleasant sky blue color
+		scene.background = new THREE.Color(0xAFE9FF);
+		scene.fog = new THREE.Fog(0xC5F0FF, 60, 150);
+		
 		console.log("Creating camera...");
 		camera = new THREE.PerspectiveCamera(75, containerWidth / containerHeight, 0.1, 1000);
+		camera.position.set(20, 25, 20);
+		camera.lookAt(8, 0, 8);
 		
 		// Set up renderer with proper pixel ratio for sharper rendering
 		console.log("Creating renderer...");
 		renderer = new THREE.WebGLRenderer({ 
 			antialias: true,
-			alpha: true
+			alpha: true,
+			powerPreference: 'high-performance'
 		});
 		renderer.setPixelRatio(window.devicePixelRatio);
 		renderer.setSize(containerWidth, containerHeight);
 		renderer.shadowMap.enabled = true;
+		renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 		
 		// Clear container before adding new renderer
 		console.log("Preparing container...");
@@ -250,37 +222,56 @@ export function initGame(container) {
 		
 		// Add renderer to container
 		containerElement.appendChild(renderer.domElement);
-
-
 		
-		// Initialize game state
-		console.log("Initializing game state...");
-		resetGameState();
-
-
+		// Check if renderer is successfully attached
+		if (!containerElement.contains(renderer.domElement)) {
+			console.error("Renderer canvas was not successfully attached to container");
+			// Force attach
+			containerElement.appendChild(renderer.domElement);
+		}
 		
 		// Add lights to the scene
 		console.log("Setting up lights...");
 		sceneModule.setupLights(scene);
 		
-		// Set up camera position
-		console.log("Setting up camera...");
-		setupCamera(camera, controls, renderer);
+		// Set up camera position and controls
+		console.log("Setting up camera and controls...");
+		controls = initializeOrbitControls(camera, renderer.domElement);
 		
-		// Initialize mouse and raycaster
-		console.log("Initializing input components...");
-		mouse = new THREE.Vector2();
-		raycaster = new THREE.Raycaster();
+		if (!controls) {
+			console.error("Failed to initialize orbit controls");
+		} else {
+			// Show a toast message that controls are ready
+			setTimeout(() => {
+				if (typeof showToastMessage === 'function') {
+					showToastMessage("Game controls active. Click and drag to move camera.", 8000);
+				}
+			}, 1500);
+		}
 		
-		// Initialize input handlers only after scene is set up
-		console.log("Setting up input handlers...");
-		setupInputHandlers();
+		// Initialize scene components
+		console.log("Setting up scene components...");
+		initializeScene();
 		
 		// Set up the event system
 		console.log("Setting up event system...");
 		setupEventSystem();
 		
-		// Initialize UI with player bar but without start button (we'll show tutorial instead)
+		// Setup network events - this should happen BEFORE requesting data
+		console.log("Setting up network events...");
+		setupNetworkEvents();
+		
+		// Ensure network connection
+		if (NetworkManager && NetworkManager.ensureConnected) {
+			console.log("Ensuring network connection...");
+			NetworkManager.ensureConnected();
+		}
+		
+		// Request game state after the network is set up
+		console.log("Requesting initial game state...");
+		requestGameState();
+		
+		// Initialize UI with player bar but without start button
 		console.log("Setting up game UI...");
 		initializeGameUI();
 		
@@ -289,33 +280,27 @@ export function initGame(container) {
 			uiButtons.startButton.style.display = 'none';
 		}
 
-		startGame(true);
-		// Skip tutorial and directly start playing the game instead
+		// Show tutorial message with a delay to allow the scene to render first
 		setTimeout(() => {
-
 			// Make sure startPlayingGame is accessible globally
 			window.startShaktrisGame = startPlayingGame;
 			
+			console.log("Showing tutorial message...");
 			showTutorialMessage(window.startShaktrisGame);
-		}, 500); // Short delay to allow the scene to render first
+		}, 500);
 		
 		// Start game loop
 		console.log("Starting game loop...");
 		startGameLoop();
 		
-		// Request game state only after setup is complete
-		console.log("Requesting initial game state...");
-		requestGameState();
-		
-		// Set up a mechanism to hide loading screen if game state doesn't arrive after a timeout
+		// Set up a mechanism to hide loading screen if game state doesn't arrive
 		setTimeout(() => {
 			const loadingElement = document.getElementById('loading');
 			if (loadingElement && loadingElement.style.display !== 'none') {
 				console.log("Loading screen timeout - hiding loading screen forcibly");
 				loadingElement.style.display = 'none';
 			}
-	
-		}, 15000); // 15 seconds timeout
+		}, 10000); // 10 seconds timeout
 		
 		console.log("Game initialization complete!");
 		return true; // Return success
@@ -339,6 +324,43 @@ export function initGame(container) {
 		}
 		
 		return false; // Return failure
+	}
+}
+
+/**
+ * Initialize the scene components
+ */
+function initializeScene() {
+	// Create or initialize groups if they don't exist
+	if (!boardGroup) {
+		boardGroup = new THREE.Group();
+		boardGroup.name = 'boardGroup';
+		scene.add(boardGroup);
+	}
+	
+	if (!tetrominoGroup) {
+		tetrominoGroup = new THREE.Group();
+		tetrominoGroup.name = 'tetrominos';
+		scene.add(tetrominoGroup);
+	}
+	
+	if (!chessPiecesGroup) {
+		chessPiecesGroup = new THREE.Group();
+		chessPiecesGroup.name = 'chessPieces';
+		scene.add(chessPiecesGroup);
+	}
+	
+	// Initialize raycaster for interactions
+	raycaster = new THREE.Raycaster();
+	mouse = new THREE.Vector2();
+	
+	// Set up input handlers
+	console.log("Setting up input handlers...");
+	setupInputHandlers();
+	
+	// Force a render of the scene to show something
+	if (renderer && scene && camera) {
+		renderer.render(scene, camera);
 	}
 }
 
@@ -376,7 +398,7 @@ function setupEventSystem() {
 			
 			// Update chess pieces if we have them
 			if (e.detail.chessPieces && boardGroup) {
-				updateChessPieces(e.detail.chessPieces);
+				updateChessPieces(chessPiecesGroup, camera, gameState);
 			}
 			
 			// Update current tetromino if available
@@ -395,7 +417,7 @@ function setupEventSystem() {
 /**
  * Reset game state to initial values
  */
-export function resetGameState() {
+export function resetGameState(gameState) {
 	console.log('Resetting game state...');
 	
 	// Initialize game state
@@ -405,7 +427,8 @@ export function resetGameState() {
 			minX: 0,
 			maxX: 15,
 			minZ: 0,
-			maxZ: 15
+			maxZ: 15,
+			centreMarker: { x: 7, z: 7 }
 		},
 		selectedPiece: null, // Currently selected chess piece
 		chessPieces: [], // Array of all chess pieces
@@ -430,15 +453,7 @@ export function resetGameState() {
 		boardHeight: 16
 	};
 	
-	// Initialize some cells in the board for testing
-	for (let z = 0; z < 16; z++) {
-		for (let x = 0; x < 16; x++) {
-			// Add every third cell for a checkered pattern
-			if ((x + z) % 3 === 0) {
-				gameState.board.cells[`${x},${z}`] = { type: 'cell' };
-			}
-		}
-	}
+
 }
 
 
@@ -474,34 +489,6 @@ export function startPlayingGame() {
 		// Clear any error states first
 		gameState.error = null;
 		
-		
-		// Initialize basic board if needed
-		if (!gameState.board || !gameState.board.cells) {
-			gameState.board = { 
-				cells: {},
-				minX: 0,
-				maxX: 15,
-				minZ: 0,
-				maxZ: 15,
-				centreMarker: { x: 8, z: 8 }
-			};
-			
-			// Create a simple default board with a checkered pattern
-			for (let z = 0; z < 16; z++) {
-				for (let x = 0; x < 16; x++) {
-					// Add cells with a pattern
-					if ((x + z) % 3 === 0) {
-						const key = `${x},${z}`;
-						gameState.board.cells[key] = { type: 'cell' };
-					}
-				}
-			}
-			
-			// Update boardSize properties
-			gameState.boardSize = 16;
-			gameState.boardWidth = 16;
-			gameState.boardHeight = 16;
-		}
 		
 		// Initialize phase to tetris phase as default
 		gameState.turnPhase = 'tetris';
@@ -578,174 +565,6 @@ function updateGameState(data) {
 	console.log("Game state updated:", gameState);
 }
 
-/**
- * Start the first turn of the game (local fallback)
- */
-function startFirstTurn() {
-	console.log('Waiting for board data from server...');
-	
-	// Update status display
-	updateGameStatusDisplay();
-	
-	// Show a toast to guide the player
-	showToastMessage('Connecting to game server...');
-	
-	// Create overlay for dimming the screen during connection attempts
-	const createConnectionOverlay = () => {
-		// Remove any existing overlay first
-		const existingOverlay = document.getElementById('connection-overlay');
-		if (existingOverlay) {
-			existingOverlay.parentNode.removeChild(existingOverlay);
-		}
-		
-		// Create new overlay
-		const overlay = document.createElement('div');
-		overlay.id = 'connection-overlay';
-		overlay.style.position = 'fixed';
-		overlay.style.top = '0';
-		overlay.style.left = '0';
-		overlay.style.width = '100%';
-		overlay.style.height = '100%';
-		overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-		overlay.style.display = 'flex';
-		overlay.style.flexDirection = 'column';
-		overlay.style.justifyContent = 'center';
-		overlay.style.alignItems = 'center';
-		overlay.style.zIndex = '9999';
-		overlay.style.color = 'white';
-		overlay.style.fontFamily = 'Arial, sans-serif';
-		overlay.style.transition = 'opacity 0.5s ease';
-		
-		// Add connection message
-		const message = document.createElement('div');
-		message.id = 'connection-message';
-		message.textContent = 'Connecting to game server...';
-		message.style.fontSize = '24px';
-		message.style.marginBottom = '20px';
-		
-		// Add spinner
-		const spinner = document.createElement('div');
-		spinner.style.border = '5px solid #f3f3f3';
-		spinner.style.borderTop = '5px solid #3498db';
-		spinner.style.borderRadius = '50%';
-		spinner.style.width = '50px';
-		spinner.style.height = '50px';
-		spinner.style.animation = 'spin 2s linear infinite';
-		
-		// Add spinner animation
-		const style = document.createElement('style');
-		style.textContent = '@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }';
-		document.head.appendChild(style);
-		
-		// Add retry info
-		const retryInfo = document.createElement('div');
-		retryInfo.id = 'retry-info';
-		retryInfo.textContent = 'Attempting to connect...';
-		retryInfo.style.marginTop = '20px';
-		retryInfo.style.fontSize = '16px';
-		
-		// Assemble overlay
-		overlay.appendChild(message);
-		overlay.appendChild(spinner);
-		overlay.appendChild(retryInfo);
-		document.body.appendChild(overlay);
-		
-		return {
-			overlay,
-			message,
-			retryInfo
-		};
-	};
-	
-	// Create the initial overlay
-	const { overlay, message, retryInfo } = createConnectionOverlay();
-	
-	// Set up reconnection attempts with increasing timeouts
-	let reconnectAttempt = 0;
-	const maxReconnectAttempts = 10;
-	const baseTimeout = 2000; // 2 seconds initial timeout
-	
-	const attemptReconnect = () => {
-		reconnectAttempt++;
-		
-		if (reconnectAttempt > maxReconnectAttempts) {
-			// Max attempts reached, show final message
-			message.textContent = 'Could not connect to game server';
-			retryInfo.textContent = 'Please check your connection and refresh the page.';
-			return;
-		}
-		
-		// Calculate timeout with exponential backoff
-		const timeout = baseTimeout * Math.pow(1.5, reconnectAttempt - 1);
-		
-		// Update overlay message
-		message.textContent = 'Connecting to game server...';
-		retryInfo.textContent = `Attempt ${reconnectAttempt} of ${maxReconnectAttempts} (waiting ${Math.round(timeout/1000)}s)`;
-		
-		// Try to reconnect after timeout
-		setTimeout(() => {
-			// Check if we have data already
-			if (gameState.board && gameState.board.length) {
-				// We got data while waiting, remove overlay
-				overlay.style.opacity = '0';
-				setTimeout(() => {
-					if (overlay.parentNode) {
-						overlay.parentNode.removeChild(overlay);
-					}
-				}, 500);
-				return;
-			}
-			
-			// Try to reconnect via NetworkManager
-			if (typeof NetworkManager !== 'undefined' && NetworkManager.initialize) {
-				retryInfo.textContent = `Attempt ${reconnectAttempt} of ${maxReconnectAttempts} - Reconnecting...`;
-				
-				// Reinitialize connection and attempt to join game
-				NetworkManager.initialize()
-					.then(() => NetworkManager.joinGame())
-					.then((result) => {
-						console.log('Reconnection successful:', result);
-						retryInfo.textContent = 'Connection established!';
-						
-						// Give a moment for the server to send game state
-						setTimeout(() => {
-							if (!gameState.board || !gameState.board.length) {
-								// Still no board data, try next attempt
-								attemptReconnect();
-							} else {
-								// We got data, remove overlay
-								overlay.style.opacity = '0';
-								setTimeout(() => {
-									if (overlay.parentNode) {
-										overlay.parentNode.removeChild(overlay);
-									}
-								}, 500);
-							}
-						}, 2000);
-					})
-					.catch((error) => {
-						console.error('Reconnection failed:', error);
-						retryInfo.textContent = `Connection failed. Retrying in ${Math.round(timeout/1000)}s...`;
-						attemptReconnect();
-					});
-			} else {
-				// NetworkManager not available, try next attempt
-				retryInfo.textContent = 'Connection service unavailable';
-				attemptReconnect();
-			}
-		}, timeout);
-	};
-	
-	// Start connection attempts if we don't already have board data
-	if (!gameState.board || !gameState.board.length) {
-		attemptReconnect();
-	} else {
-		// We already have board data, no need for connection overlay
-		if (overlay.parentNode) {
-			overlay.parentNode.removeChild(overlay);
-		}
-	}
-}
 
 
 /**
@@ -1028,18 +847,27 @@ function startGameLoop() {
 	let lastLODUpdate = 0;
 	let lastGameLogicUpdate = 0;
 	let lastUiUpdate = 0; // For tracking UI updates
+	let lastControlsUpdate = 0; // For tracking controls updates
 	
 	// Track FPS for performance monitoring
 	let frameCount = 0;
 	let lastFpsUpdate = performance.now();
 	
 	// Frame limiting
-	const TARGET_FRAMERATE = gameState.performanceMode ? 20 : 30; // Lower target in performance mode
+	const TARGET_FRAMERATE = gameState.performanceMode ? 20 : 60; // Higher framerate for smoother controls
 	const FRAME_TIME = 1000 / TARGET_FRAMERATE;
 	let lastFrameTime = 0;
 	
 	// Flag to track if clouds are in camera view (initialized here, used in animate)
 	let cloudsInView = true;
+	
+	// Ensure controls are initialized with damping enabled
+	if (controls) {
+		controls.enableDamping = true;
+		controls.dampingFactor = 0.1; // Make camera movement smoother
+		controls.update();
+		console.log("Ensuring OrbitControls are properly configured in game loop");
+	}
 	
 	/**
 	 * Main render function
@@ -1055,14 +883,26 @@ function startGameLoop() {
 			
 			// Skip if delta is too large (likely due to tab being inactive)
 			if (delta > 1) {
+				console.log("Skipping large delta frame:", delta);
 				return;
 			}
 			
 			// Update game logic elements if not paused
 			if (!gameState.paused) {
-				// Update orbit controls if available
+				// Always update controls every frame for smooth camera movement
 				if (controls) {
 					controls.update();
+				}
+				
+				// Calculate time since last controls update
+				const timeSinceControlsUpdate = time - lastControlsUpdate;
+				
+				// Update controls more frequently for responsive UI
+				if (timeSinceControlsUpdate > 16) { // ~60fps
+					if (controls) {
+						controls.update();
+					}
+					lastControlsUpdate = time;
 				}
 				
 				// Update animated clouds - ensure clouds array exists and contains valid objects
@@ -1080,14 +920,23 @@ function startGameLoop() {
 				}
 			}
 			
-			// // Update text display frames
-			// if (textDisplay) {
-			// 	textDisplay.update();
-			// }
-			
-			// Handle TWEEN animations
+			// Handle TWEEN animations if available
 			if (window.TWEEN) {
 				window.TWEEN.update();
+			}
+			
+			// Update FPS counter
+			frameCount++;
+			const timeSinceFpsUpdate = time - lastFpsUpdate;
+			if (timeSinceFpsUpdate > 1000) { // Every second
+				const fps = Math.round((frameCount * 1000) / timeSinceFpsUpdate);
+				frameCount = 0;
+				lastFpsUpdate = time;
+				
+				// Monitor performance - but don't apply drastic measures too early
+				if (time > 10000) { // Only after 10 seconds of runtime
+					monitorPerformance(fps);
+				}
 			}
 			
 			// Render the scene only if all required elements exist and are properly initialized
@@ -1137,37 +986,6 @@ function startGameLoop() {
 					renderer.render(scene, camera);
 				} catch (renderError) {
 					console.error('Error during render:', renderError);
-					// If there's a specific error about 'visible' property, try to fix it
-					if (renderError.message && renderError.message.includes("Cannot read properties of null (reading 'visible')")) {
-						console.warn('Attempting to recover from null object error with recursive cleanup...');
-						
-						// Recursive function to clean null objects from scene graph
-						const cleanNullObjectsRecursive = function(object) {
-							if (!object) return null;
-							
-							// Clean null children
-							if (object.children && Array.isArray(object.children)) {
-								// Filter out null/undefined children
-								const validChildren = object.children.filter(child => child !== null && child !== undefined);
-								
-								// Process remaining children recursively
-								for (let i = 0; i < validChildren.length; i++) {
-									cleanNullObjectsRecursive(validChildren[i]);
-								}
-								
-								// Replace original children array with filtered one
-								object.children = validChildren;
-							}
-							
-							return object;
-						};
-						
-						// Apply recursive cleanup to the entire scene
-						if (scene) {
-							cleanNullObjectsRecursive(scene);
-							console.log('Scene graph cleaned recursively');
-						}
-					}
 				}
 			} else {
 				console.warn('Skipping render - missing required components:', 
@@ -1328,13 +1146,13 @@ function handleGameUpdate(data) {
 	if (data.players) {
 		gameState.players = data.players;
 		// Update player bar when players change
-		updatePlayerBar();
+		updatePlayerBar(gameState);
 	}
 	
 	// Update chess pieces if included
 	if (data.chessPieces) {
 		gameState.chessPieces = data.chessPieces;
-		updateChessPieces();
+		updateChessPieces(chessPiecesGroup, camera, gameState);
 	}
 	
 	// Handle tetromino placements
@@ -1413,10 +1231,11 @@ export function handleGameStateUpdate(data) {
 			console.log('Chess pieces sample:', chessPieces.slice(0, 2));
 			gameState.chessPieces = chessPieces;
 			// Force update of chess pieces
-			updateChessPieces();
+			updateChessPieces(chessPiecesGroup, camera, gameState);
 		} else {
 			console.log('No chess pieces in direct array - will extract from cells');
-			// The updateBoardVisuals function will handle extracting pieces from cells
+			// Update chess pieces from board cells
+			updateChessPieces(chessPiecesGroup, camera, gameState);
 		}
 		
 		// Check for home zones
@@ -1424,9 +1243,6 @@ export function handleGameStateUpdate(data) {
 		if (homeZones) {
 			console.log('Home zones received:', homeZones);
 			gameState.homeZones = homeZones;
-			
-			// Set camera based on home zones
-			resetCameraForGameplay(renderer, camera, controls, gameState, scene, true, true); // Force immediate update
 		}
 		
 		// Update player list
@@ -1438,7 +1254,8 @@ export function handleGameStateUpdate(data) {
 			gameState.players = players;
 			
 			// Update player bar to show all connected players
-			updatePlayerBar();
+			createPlayerBar(gameState);
+			updatePlayerBar(gameState);
 		}
 		
 		// Update current player and turn phase
@@ -1455,14 +1272,18 @@ export function handleGameStateUpdate(data) {
 			// If we entered chess phase, make sure pieces are visible
 			if (turnPhase === 'chess' && gameState.chessPieces && gameState.chessPieces.length > 0) {
 				console.log("Entered chess phase - ensuring pieces are visible");
-				updateChessPieces();
+				updateChessPieces(chessPiecesGroup, camera, gameState);
 			}
 		}
 		
 		// Update game status display
 		updateGameStatusDisplay();
 		
-		// Final board render - force a render pass to ensure visibility
+		// Reset camera position based on received data 
+		console.log("Resetting camera based on received game data");
+		resetCameraForGameplay(renderer, camera, controls, gameState, scene, true, true);
+		
+		// Force a final render pass to ensure visibility
 		if (renderer && scene && camera) {
 			console.log("Forcing a render pass to ensure visibility");
 			renderer.render(scene, camera);
@@ -1645,7 +1466,7 @@ function updateBoardVisuals() {
 		
 		// Update chess pieces for current state
 		try {
-			updateChessPieces();
+			updateChessPieces(chessPiecesGroup, camera, gameState);
 		} catch (err) {
 			console.warn('Error updating chess pieces:', err);
 		}
@@ -1702,533 +1523,6 @@ export function handleChessPhaseClick() {
 }
 
 
-
-function updateChessPiecesLOD() {
-	// Update LOD based on distance
-	// const distance = camera.position.distanceTo(chessPiecesGroup.position);
-	
-	// // Update LOD based on distance
-	// if (distance < 10) {
-	// 	chessPiecesGroup.visible = true;
-	// } else {
-	// 	chessPiecesGroup.visible = false;
-	// }
-	
-	// // Update LOD for each piece
-	// for (const piece of chessPiecesGroup.children) {
-	// 	const pieceDistance = camera.position.distanceTo(piece.position);
-	// 	if (pieceDistance < 10) {
-	// 		piece.visible = true;
-	// 	} else {
-	// 		piece.visible = false;
-	// 	}
-	// }
-
-	// Update LOD for each piece
-	updateChessPieces();
-
-}
-
-// Add a timer to track when chess pieces were last updated
-let lastChessPiecesUpdate = 0;
-const CHESS_PIECES_UPDATE_INTERVAL = 250; // Milliseconds between updates
-
-function updateChessPieces() {
-	// Rate-limit updates to reduce performance impact
-	const now = Date.now();
-	if (now - lastChessPiecesUpdate < CHESS_PIECES_UPDATE_INTERVAL) {
-		return; // Skip if called too soon after previous update
-	}
-	lastChessPiecesUpdate = now;
-
-	// Only log during debug mode or first run
-	const isFirstRun = !chessPiecesGroup?.userData?.initialized;
-	
-	// Ensure the group is valid before proceeding
-	if (!chessPiecesGroup) {
-		console.error('Chess pieces group is not initialized, cannot update chess pieces');
-		return;
-	}
-	
-	// Mark as initialized 
-	if (!chessPiecesGroup.userData) {
-		chessPiecesGroup.userData = {};
-	}
-	chessPiecesGroup.userData.initialized = true;
-	
-	if (isFirstRun || gameState.debugMode) {
-		console.log('Updating chess pieces visuals');
-	}
-	
-	try {
-		// Safety check - ensure the group has a children array
-		if (!chessPiecesGroup.children) {
-			console.error('Chess pieces group has no children array');
-			chessPiecesGroup.children = [];
-			return;
-		}
-		
-		// Create a map of existing pieces by ID for quick lookup
-		const existingPieceMap = {};
-		chessPiecesGroup.children.forEach(piece => {
-			if (piece && piece.userData && piece.userData.id) {
-				existingPieceMap[piece.userData.id] = piece;
-			}
-		});
-		
-		// Extract pieces data - first look in gameState.chessPieces
-		let chessPieces = [];
-		
-		if (gameState.chessPieces && Array.isArray(gameState.chessPieces) && gameState.chessPieces.length > 0) {
-			// Use the pre-extracted pieces from boardFunctions
-			chessPieces = gameState.chessPieces;
-			if (isFirstRun || gameState.debugMode) {
-				console.log(`Using ${chessPieces.length} pre-extracted chess pieces`);
-			}
-		} else {
-			// Otherwise manually extract from board cells - legacy method
-			// Check if we have valid board data
-			if (gameState.board && gameState.board.cells) {
-				// Iterate through all cells to find chess pieces
-				for (const key in gameState.board.cells) {
-					try {
-						const [x, z] = key.split(',').map(Number);
-						
-						// Get cell content
-						const cellData = gameState.board.cells[key];
-						
-						// Ensure boardFunctions is available
-						if (!boardFunctions || !boardFunctions.extractCellContent) {
-							console.warn('boardFunctions.extractCellContent is not available');
-							continue;
-						}
-						
-						// Extract chess content using the new helper function
-						const chessContent = boardFunctions.extractCellContent(cellData, 'chess');
-						
-						// If chess piece content exists, extract it for rendering
-						if (chessContent) {
-							const pieceId = chessContent.pieceId || 
-								`${chessContent.player}-${chessContent.chessPiece?.type || 'PAWN'}-${x}-${z}`;
-							
-							chessPieces.push({
-								id: pieceId,
-								position: { x, z },
-								type: chessContent.pieceType || "PAWN",
-								player: chessContent.player || 1,
-								color: chessContent.color || 0xcccccc
-							});
-						}
-					} catch (cellErr) {
-						console.error('Error processing board cell:', cellErr);
-					}
-				}
-				if (isFirstRun || gameState.debugMode) {
-					console.log(`Extracted ${chessPieces.length} chess pieces from board cells`);
-				}
-			}
-		}
-		
-		// Quick safety check - if we have no chess pieces, stop processing
-		if (!chessPieces || chessPieces.length === 0) {
-			if (isFirstRun || gameState.debugMode) {
-				console.warn('No chess pieces to render, skipping update');
-			}
-			return;
-		}
-		
-		// Create/update visual pieces
-		if (isFirstRun || gameState.debugMode) {
-			console.log(`Processing ${chessPieces.length} chess pieces`, chessPieces);
-		}
-		
-		// Keep track of which pieces we've processed to remove any that are no longer needed
-		const processedPieceIds = new Set();
-		let piecesCreated = 0;
-		let piecesReused = 0;
-		
-		// Reset the group position to origin - this is critical!
-		// The board cells are positioned directly at their coordinates without any group offset
-		chessPiecesGroup.position.set(0, 0, 0);
-		
-		// Find the board centre marker for accurate positioning - CRITICAL for alignment with cells
-		const centreMarker = findBoardCentreMarker(gameState);
-		
-		// Always ensure we have a valid centre marker
-		if (!centreMarker && gameState.board) {
-			console.error('Centre marker not found! Creating a new one');
-			// Force create a centre marker in case it doesn't exist
-			gameState.board.centreMarker = {
-				x: Math.floor((gameState.boardBounds?.minX || 0 + gameState.boardBounds?.maxX || 20) / 2),
-				z: Math.floor((gameState.boardBounds?.minZ || 0 + gameState.boardBounds?.maxZ || 20) / 2)
-			};
-		}
-		
-		const centreX = centreMarker?.x ?? 14;
-		const centreZ = centreMarker?.z ?? 17;
-		
-		console.log(`Using board centre at (${centreX}, ${centreZ}) for chess piece positioning`);
-		
-		chessPieces.forEach(piece => {
-			try {
-				// Skip invalid pieces
-				if (!piece || !piece.position) {
-					console.warn('Skipping invalid chess piece:', piece);
-					return;
-				}
-				
-				// Ensure player is always defined and represented consistently
-				if (piece.player === undefined || piece.player === null) {
-					piece.player = 'unknown';
-				}
-				
-				// Generate a consistent ID for the piece
-				const pieceId = piece.id || `${piece.player}-${piece.type}-${piece.position.x}-${piece.position.z}`;
-				processedPieceIds.add(pieceId);
-				
-				// Get the position and orientation of the piece
-				const { x, z } = piece.position;
-				
-				// Check if we already have this piece at this location
-				const existingPiece = existingPieceMap[pieceId];
-				
-				// If the piece exists and hasn't moved, reuse it
-				if (existingPiece && 
-					existingPiece.userData && 
-					existingPiece.userData.position && 
-					existingPiece.userData.position.x === x && 
-					existingPiece.userData.position.z === z) {
-					
-					// Update player info in userData
-					existingPiece.userData.player = piece.player;
-					
-					// Piece hasn't changed, just make sure it's visible
-					existingPiece.visible = true;
-					
-					// Apply hover highlight if needed
-					if (gameState.hoveredPlayer && 
-					    (String(gameState.hoveredPlayer) === String(piece.player)) && 
-					    typeof highlightSinglePiece === 'function') {
-						try {
-							highlightSinglePiece(existingPiece);
-						} catch (highlightErr) {
-							console.error('Error highlighting piece:', highlightErr);
-						}
-					}
-					
-					piecesReused++;
-					return;
-				}
-				
-				// If the piece exists but has moved, update its position
-				if (existingPiece) {
-					// Calculate position exactly as the board cells do - relative to centre marker
-					existingPiece.position.x = x - centreX;
-					existingPiece.position.z = z - centreZ;
-					existingPiece.position.y = 0.7; // Height above cell
-					
-					// Update userData
-					existingPiece.userData.position = { x, z };
-					existingPiece.userData.player = piece.player;
-					existingPiece.visible = true;
-					
-					// Apply hover highlight if needed
-					if (gameState.hoveredPlayer && 
-					    (String(gameState.hoveredPlayer) === String(piece.player)) && 
-					    typeof highlightSinglePiece === 'function') {
-						try {
-							highlightSinglePiece(existingPiece);
-						} catch (highlightErr) {
-							console.error('Error highlighting piece:', highlightErr);
-						}
-					}
-					
-					piecesReused++;
-					return;
-				}
-				
-				// Create a new piece if it doesn't exist
-				let pieceObject;
-				
-				try {
-					if (typeof getChessPiece === 'function') {
-						// Use the imported getChessPiece function
-						const pieceTypeStr = typeof piece.type === 'string' 
-							? piece.type.toUpperCase() // Convert to uppercase
-							: (piece.type >= 1 && piece.type <= 6) 
-								? ['PAWN', 'ROOK', 'KNIGHT', 'BISHOP', 'QUEEN', 'KING'][piece.type - 1] 
-								: 'PAWN'; // Default to PAWN if invalid
-								
-						console.log(`Creating ${pieceTypeStr} piece for player ${piece.player}`);
-						
-						// Create the piece with correct type
-						pieceObject = getChessPiece(
-							pieceTypeStr, // Use proper string type
-							piece.player === gameState.localPlayerId ? 'self' : 'other',
-							piece.player === gameState.localPlayerId
-						);
-						
-						// Position correctly relative to board centre at increased height
-						pieceObject.position.set(x - centreX, 0.7, z - centreZ); // Raised to 0.7 from 0.5
-						
-						// Apply rotation based on player
-						pieceObject.rotation.y = String(piece.player) === String(gameState.localPlayerId) ? 0 : Math.PI;
-					} else if (boardFunctions && typeof boardFunctions.createChessPiece === 'function') {
-						// Fallback to boardFunctions implementation - modify the function inputs to use our centreMarker
-						const modifiedGameState = {...gameState};
-						
-						// Override boardBounds to ensure correct centre calculation
-						if (centreMarker) {
-							modifiedGameState.boardBounds = {
-								...gameState.boardBounds,
-								// Use the actual centre marker for reliable positioning
-								minX: centreX * 2 - gameState.boardBounds.maxX,
-								maxX: gameState.boardBounds.maxX,
-								minZ: centreZ * 2 - gameState.boardBounds.maxZ,
-								maxZ: gameState.boardBounds.maxZ
-							};
-						}
-						
-						pieceObject = boardFunctions.createChessPiece(
-							modifiedGameState, 
-							x, z, 
-							piece.type, 
-							piece.player, // Ensure player is set correctly
-							gameState.playerId, 
-							String(piece.player) !== String(gameState.localPlayerId) ? Math.PI : 0, // Rotation based on player comparison
-							THREE
-						);
-					} else {
-						console.error('Cannot create chess piece - no creation functions available');
-						return;
-					}
-					
-					// Verify the piece was created successfully
-					if (!pieceObject) {
-						console.error('Failed to create chess piece object for', piece);
-						return;
-					}
-					
-					// Add the piece ID to the userData
-					pieceObject.userData = pieceObject.userData || {};
-					pieceObject.userData.id = pieceId;
-					pieceObject.userData.player = piece.player;
-					pieceObject.userData.position = { x, z };
-					
-					// Make sure the piece is visible
-					pieceObject.visible = true;
-					
-					// Make sure all child meshes are visible
-					pieceObject.traverse(child => {
-						if (child.isMesh) {
-							child.visible = true;
-							
-							// Ensure child has materials
-							if (!child.material) {
-								// console.warn('Chess piece mesh has no material, creating default');
-								child.material = new THREE.MeshBasicMaterial({ color: 0xcccccc });
-							}
-						}
-					});
-					
-					// Apply hover highlight if needed
-					if (gameState.hoveredPlayer && 
-					    (String(gameState.hoveredPlayer) === String(piece.player)) && 
-					    typeof highlightSinglePiece === 'function') {
-						try {
-							highlightSinglePiece(pieceObject);
-						} catch (highlightErr) {
-							console.error('Error highlighting piece:', highlightErr);
-						}
-					}
-					
-					// Add the piece to the chess pieces group
-					chessPiecesGroup.add(pieceObject);
-					piecesCreated++;
-				} catch (createErr) {
-					console.error(`Error creating chess piece:`, createErr);
-				}
-			} catch (pieceErr) {
-				console.error(`Error processing chess piece:`, pieceErr);
-			}
-		});
-		
-		if (isFirstRun || gameState.debugMode) {
-			console.log(`Chess pieces update complete: ${piecesCreated} created, ${piecesReused} reused`);
-		}
-		
-		// Remove any pieces that are no longer in the game state
-		for (let i = chessPiecesGroup.children.length - 1; i >= 0; i--) {
-			try {
-				const piece = chessPiecesGroup.children[i];
-				if (!piece) {
-					// Remove null pieces
-					chessPiecesGroup.children.splice(i, 1);
-					continue;
-				}
-				
-				// Skip pieces without userData or ID
-				if (!piece.userData || !piece.userData.id) continue;
-				
-				// Remove pieces not in the current game state
-				if (!processedPieceIds.has(piece.userData.id)) {
-					// Dispose resources
-					if (piece.geometry) piece.geometry.dispose();
-					if (piece.material) {
-						if (Array.isArray(piece.material)) {
-							piece.material.forEach(m => m && m.dispose && m.dispose());
-						} else if (piece.material && piece.material.dispose) {
-							piece.material.dispose();
-						}
-					}
-					
-					// Remove from group
-					chessPiecesGroup.remove(piece);
-				}
-			} catch (removeErr) {
-				console.error('Error removing outdated chess piece:', removeErr);
-				// Force removal anyway to prevent errors
-				if (i < chessPiecesGroup.children.length) {
-					chessPiecesGroup.children.splice(i, 1);
-				}
-			}
-		}
-	} catch (mainErr) {
-		console.error('Error in updateChessPieces:', mainErr);
-	}
-}
-
-/**
- * Highlight a single chess piece with a hover effect
- */
-function highlightSinglePiece(piece) {
-	// Safety check - if piece is null or undefined, don't proceed
-	if (!piece) {
-		console.warn('Attempted to highlight null/undefined piece');
-		return;
-	}
-	
-	// Clean up previous highlight elements if they exist
-	const existingHighlight = piece.getObjectByName('hover-highlight');
-	const existingGlow = piece.getObjectByName('hover-glow');
-	
-	// Remove old elements from animation loop first
-	if (existingHighlight && existingHighlight.userData && existingHighlight.userData.animation) {
-		if (window._highlightAnimations) {
-			const index = window._highlightAnimations.indexOf(existingHighlight.userData.animation);
-			if (index > -1) {
-				window._highlightAnimations.splice(index, 1);
-			}
-		}
-	}
-	
-	// Remove old highlight meshes
-	if (existingHighlight) {
-		piece.remove(existingHighlight);
-		if (existingHighlight.geometry) existingHighlight.geometry.dispose();
-		if (existingHighlight.material) existingHighlight.material.dispose();
-	}
-	
-	if (existingGlow) {
-		piece.remove(existingGlow);
-		if (existingGlow.geometry) existingGlow.geometry.dispose();
-		if (existingGlow.material) existingGlow.material.dispose();
-	}
-	
-	// Create new highlight
-	try {
-		const geometry = new THREE.RingGeometry(0.5, 0.6, 32);
-		const material = new THREE.MeshBasicMaterial({
-			color: 0xFFFFFF,
-			transparent: true,
-			opacity: 0.6,
-			side: THREE.DoubleSide
-		});
-		
-		const highlight = new THREE.Mesh(geometry, material);
-		highlight.name = 'hover-highlight';
-		highlight.rotation.x = -Math.PI / 2; // Lay flat
-		highlight.position.y = -0.65; // Positioned below the piece, adjusted for new height
-		
-		// Create glow effect - add a larger, fainter ring
-		const glowGeometry = new THREE.RingGeometry(0.7, 0.9, 32);
-		const glowMaterial = new THREE.MeshBasicMaterial({
-			color: 0xFFFFFF,
-			transparent: true,
-			opacity: 0.3,
-			side: THREE.DoubleSide
-		});
-		const glow = new THREE.Mesh(glowGeometry, glowMaterial);
-		glow.name = 'hover-glow';
-		glow.rotation.x = -Math.PI / 2; // Lay flat
-		glow.position.y = -0.67; // Positioned just below the highlight, adjusted for new height
-		
-		piece.add(highlight);
-		piece.add(glow);
-		
-		// Add animation using TWEEN for better performance if available
-		if (window.TWEEN) {
-			const scaleData = { value: 1.0 };
-			const scaleTween = new TWEEN.Tween(scaleData)
-				.to({ value: 1.1 }, 800)
-				.easing(TWEEN.Easing.Quadratic.InOut)
-				.yoyo(true)
-				.repeat(Infinity)
-				.onUpdate(() => {
-					if (highlight && highlight.scale) {
-						highlight.scale.set(scaleData.value, scaleData.value, 1);
-					}
-					if (glow && glow.scale) {
-						glow.scale.set(scaleData.value * 1.1, scaleData.value * 1.1, 1);
-					}
-				})
-				.start();
-			
-			// Store reference to the tween for later cleanup
-			highlight.userData.tween = scaleTween;
-		} else {
-			// Fallback to traditional animation loop
-			const startTime = Date.now();
-			highlight.userData.animation = function() {
-				const elapsed = (Date.now() - startTime) / 1000;
-				const scale = 1 + 0.1 * Math.sin(elapsed * 3);
-				highlight.scale.set(scale, scale, 1);
-				glow.scale.set(scale * 1.1, scale * 1.1, 1);
-			};
-			
-			// Add to animation loop
-			if (!window._highlightAnimations) {
-				window._highlightAnimations = [];
-				
-				// Set up animation loop if not already running
-				if (!window._highlightAnimationLoop) {
-					window._highlightAnimationLoop = function() {
-						if (window._highlightAnimations && window._highlightAnimations.length > 0) {
-							window._highlightAnimations.forEach(anim => {
-								if (typeof anim === 'function') {
-									try {
-										anim();
-									} catch (e) {
-										console.warn('Error in highlight animation:', e);
-									}
-								}
-							});
-						}
-						requestAnimationFrame(window._highlightAnimationLoop);
-					};
-					window._highlightAnimationLoop();
-				}
-			}
-			
-			window._highlightAnimations.push(highlight.userData.animation);
-		}
-		
-		// Scale piece slightly
-		piece.scale.set(1.1, 1.1, 1.1);
-	} catch (error) {
-		console.error('Error creating highlight effect:', error);
-	}
-}
 
 /**
  * Update board state incrementally with only changed cells
@@ -2504,315 +1798,28 @@ function renderCurrentTetromino() {
  * Initialize the game UI elements
  */
 function initializeGameUI() {
-	// Create player bar if it doesn't exist
-	if (!document.getElementById('player-bar')) {
-		createPlayerBar();
-	}
+	console.log("Initializing game UI...");
 	
-	// Create phase buttons if they don't exist
-	if (!document.getElementById('phase-buttons')) {
-		const phaseButtonsContainer = document.createElement('div');
-		phaseButtonsContainer.id = 'phase-buttons';
-		phaseButtonsContainer.className = 'phase-buttons';
-		
-		// Tetris phase button
-		const tetrisButton = document.createElement('button');
-		tetrisButton.textContent = 'Tetris Phase';
-		tetrisButton.className = 'phase-button tetris-button';
-		tetrisButton.onclick = handleTetrisPhaseClick;
-		
-		// Chess phase button
-		const chessButton = document.createElement('button');
-		chessButton.textContent = 'Chess Phase';
-		chessButton.className = 'phase-button chess-button';
-		chessButton.onclick = handleChessPhaseClick;
-		
-		// Add buttons to container
-		phaseButtonsContainer.appendChild(tetrisButton);
-		phaseButtonsContainer.appendChild(chessButton);
-		
-		// Add container to document
-		document.body.appendChild(phaseButtonsContainer);
-	}
-	
-	// Create debug panel if debugging is enabled
-	if (gameState.debugMode && !document.getElementById('debug-panel')) {
-		const debugPanel = document.createElement('div');
-		debugPanel.id = 'debug-panel';
-		debugPanel.className = 'debug-panel';
-		debugPanel.innerHTML = '<h4>Debug Panel</h4><div id="debug-content"></div>';
-		document.body.appendChild(debugPanel);
-	}
-
-
-}
-
-/**
- * Create a player bar to display player information
- */
-function createPlayerBar() {
-	// Create player bar container
-	const playerBar = document.createElement('div');
-	playerBar.id = 'player-bar';
-	playerBar.className = 'player-bar';
-	
-	// Setup header
-	const header = document.createElement('div');
-	header.className = 'player-bar-header';
-	header.innerHTML = '<h3>Players</h3>';
-	playerBar.appendChild(header);
-	
-	// Create player container
-	const playerContainer = document.createElement('div');
-	playerContainer.id = 'player-container';
-	playerContainer.className = 'player-container';
-	playerBar.appendChild(playerContainer);
-	
-	// Add to document
-	document.body.appendChild(playerBar);
-	
-	// Populate player information
-	if (gameState.players) {
-		Object.keys(gameState.players).forEach(playerId => {
-			const player = gameState.players[playerId];
-			// Add player info to the bar
-			addPlayerToBar(
-				playerBar,
-				playerId,
-				player.name || `Player ${playerId}`,
-				{
-					color: player.color || '#4399ea',
-					isCurrentTurn: playerId === gameState.currentPlayer,
-					score: player.score || 0
-				},
-				playerId === gameState.localPlayerId
-			);
-		});
-	}
-	
-	// If we don't have players yet, show a message
-	if (!gameState.players || Object.keys(gameState.players).length === 0) {
-		const waitingMessage = document.createElement('div');
-		waitingMessage.className = 'waiting-message';
-		waitingMessage.textContent = 'Waiting for players...';
-		playerContainer.appendChild(waitingMessage);
-	}
-	
-	return playerBar;
-}
-
-/**
- * Add a player to the player bar
- * @param {HTMLElement} playerBar - The player bar element
- * @param {string} playerId - Player ID
- * @param {string} playerName - Player name
- * @param {Object} colorInfo - Player color and turn information
- * @param {boolean} isLocalPlayer - Whether this is the local player
- */
-function addPlayerToBar(playerBar, playerId, playerName, colorInfo, isLocalPlayer) {
-	// Get or create the player container
-	let playerContainer = document.getElementById('player-container');
-	if (!playerContainer) {
-		playerContainer = document.createElement('div');
-		playerContainer.id = 'player-container';
-		playerContainer.className = 'player-container';
-		playerBar.appendChild(playerContainer);
-	}
-	
-	// Check if player already exists
-	let playerElement = document.getElementById(`player-${playerId}`);
-	
-	// If player element doesn't exist, create it
-	if (!playerElement) {
-		playerElement = document.createElement('div');
-		playerElement.id = `player-${playerId}`;
-		playerElement.className = 'player-item';
-		
-		// Add player element to container
-		playerContainer.appendChild(playerElement);
-	}
-	
-	// Update player element content
-	playerElement.innerHTML = '';
-	
-	// Create color indicator
-	const colorIndicator = document.createElement('div');
-	colorIndicator.className = 'player-color';
-	colorIndicator.style.backgroundColor = colorInfo.color || '#4399ea';
-	playerElement.appendChild(colorIndicator);
-	
-	// Create name display
-	const nameDisplay = document.createElement('div');
-	nameDisplay.className = 'player-name';
-	nameDisplay.textContent = playerName;
-	
-	// Highlight if this is the local player
-	if (isLocalPlayer) {
-		nameDisplay.classList.add('local-player');
-		nameDisplay.textContent += ' (You)';
-	}
-	
-	// Highlight if this is the current player's turn
-	if (colorInfo.isCurrentTurn) {
-		playerElement.classList.add('current-turn');
-		const turnIndicator = document.createElement('span');
-		turnIndicator.className = 'turn-indicator';
-		turnIndicator.textContent = '🎮';
-		nameDisplay.appendChild(turnIndicator);
-	} else {
-		playerElement.classList.remove('current-turn');
-	}
-	
-	playerElement.appendChild(nameDisplay);
-	
-	// Create score display if score exists
-	if (colorInfo.score !== undefined) {
-		const scoreDisplay = document.createElement('div');
-		scoreDisplay.className = 'player-score';
-		scoreDisplay.textContent = `Score: ${colorInfo.score}`;
-		playerElement.appendChild(scoreDisplay);
-	}
-	
-	// Add hover effect that highlights this player's pieces
-	playerElement.addEventListener('mouseenter', () => {
-		// Set this as the hovered player in game state
-		gameState.hoveredPlayer = playerId;
-		
-		// Highlight all of this player's pieces
-		highlightPlayerPieces(playerId);
-	});
-	
-	playerElement.addEventListener('mouseleave', () => {
-		// Clear the hovered player
-		gameState.hoveredPlayer = null;
-		
-		// Remove highlights
-		removePlayerPiecesHighlight();
-	});
-}
-
-/**
- * Highlight all pieces belonging to a specific player
- * @param {string} playerId - Player ID
- */
-function highlightPlayerPieces(playerId) {
-	// If no chess pieces group, return
-	if (!chessPiecesGroup) return;
-	
-	// Apply highlight to matching pieces
-	chessPiecesGroup.children.forEach(piece => {
-		if (piece.userData && String(piece.userData.player) === String(playerId)) {
-			highlightSinglePiece(piece);
+	// Create player bar with current game state
+	try {
+		// Explicitly create player bar
+		if (typeof createPlayerBar === 'function') {
+			console.log("Creating player bar...");
+			createPlayerBar(gameState);
+		} else {
+			console.error("createPlayerBar function not available");
 		}
-	});
-}
-
-/**
- * Remove highlights from all chess pieces
- */
-function removePlayerPiecesHighlight() {
-	// If no chess pieces group, return
-	if (!chessPiecesGroup) return;
-	
-	// Remove highlights from all pieces
-	chessPiecesGroup.children.forEach(piece => {
-		// Clean up previous highlight elements
-		const existingHighlight = piece.getObjectByName('hover-highlight');
-		const existingGlow = piece.getObjectByName('hover-glow');
-		
-		// Remove animations
-		if (existingHighlight && existingHighlight.userData && existingHighlight.userData.animation) {
-			if (window._highlightAnimations) {
-				const index = window._highlightAnimations.indexOf(existingHighlight.userData.animation);
-				if (index > -1) {
-					window._highlightAnimations.splice(index, 1);
-				}
-			}
-		}
-		
-		// Remove meshes
-		if (existingHighlight) {
-			piece.remove(existingHighlight);
-			if (existingHighlight.geometry) existingHighlight.geometry.dispose();
-			if (existingHighlight.material) existingHighlight.material.dispose();
-		}
-		
-		if (existingGlow) {
-			piece.remove(existingGlow);
-			if (existingGlow.geometry) existingGlow.geometry.dispose();
-			if (existingGlow.material) existingGlow.material.dispose();
-		}
-		
-		// Reset scale
-		piece.scale.set(1, 1, 1);
-	});
-}
-
-/**
- * Update the player bar with current game state
- */
-function updatePlayerBar() {
-	// Get the player container
-	const playerContainer = document.getElementById('player-container');
-	if (!playerContainer) return;
-	
-	// Clear existing content
-	playerContainer.innerHTML = '';
-	
-	// Add each player
-	if (gameState.players) {
-		Object.keys(gameState.players).forEach(playerId => {
-			const player = gameState.players[playerId];
-			// Add player to bar
-			addPlayerToBar(
-				document.getElementById('player-bar'),
-				playerId,
-				player.name || `Player ${playerId}`,
-				{
-					color: player.color || '#4399ea',
-					isCurrentTurn: playerId === gameState.currentPlayer,
-					score: player.score || 0
-				},
-				playerId === gameState.localPlayerId
-			);
-		});
-	}
-}
-
-/**
- * Update the UI state based on the current game state
- */
-function updateUIState() {
-	// Update player bar
-	updatePlayerBar();
-	
-	// Update phase buttons
-	const tetrisButton = document.querySelector('.tetris-button');
-	const chessButton = document.querySelector('.chess-button');
-	
-	if (tetrisButton && chessButton) {
-		// Highlight the current phase
-		if (gameState.turnPhase === 'tetris') {
-			tetrisButton.classList.add('active');
-			chessButton.classList.remove('active');
-		} else if (gameState.turnPhase === 'chess') {
-			tetrisButton.classList.remove('active');
-			chessButton.classList.add('active');
-		}
+	} catch (error) {
+		console.error("Error creating player bar:", error);
 	}
 	
-	// Update debug panel if it exists
-	if (gameState.debugMode) {
-		const debugContent = document.getElementById('debug-content');
-		if (debugContent) {
-			const debugInfo = `
-				<p>Current player: ${gameState.currentPlayer}</p>
-				<p>Turn phase: ${gameState.turnPhase}</p>
-				<p>Player count: ${gameState.players ? Object.keys(gameState.players).length : 0}</p>
-				<p>FPS: ${gameState.lastFPS ? gameState.lastFPS.toFixed(1) : 'N/A'}</p>
-			`;
-			debugContent.innerHTML = debugInfo;
+	// Create network status display
+	try {
+		if (typeof createNetworkStatusDisplay === 'function') {
+			createNetworkStatusDisplay();
 		}
+	} catch (error) {
+		console.error("Error creating network status display:", error);
 	}
 }
 
@@ -2875,10 +1882,14 @@ function startGame(justLooking = false) {
 	// Setup raycaster for mouse interactions
 	raycaster = new THREE.Raycaster();
 	mouse = new THREE.Vector2();
-	
-	// Setup input handlers
+
+	// Initialize input handlers only after scene is set up
+	console.log("Setting up input handlers...");
 	setupInputHandlers();
-	
+
+	// Set up the event system
+	console.log("Setting up event system...");
+	setupEventSystem();
 	// Setup network events
 	setupNetworkEvents();
 	
@@ -2924,56 +1935,10 @@ function skipCurrentMove() {
 }
 
 /**
- * Move the camera to view a player's home zone
- */
-function moveToPlayerZone() {
-	// If no local player ID, do nothing
-	if (!gameState.localPlayerId) return;
-	
-	// Find the player's king
-	const playerPieces = gameState.chessPieces.filter(
-		piece => String(piece.player) === String(gameState.localPlayerId)
-	);
-	
-	// If no pieces, use center of board
-	if (!playerPieces.length) {
-		resetCameraForGameplay(renderer, camera, controls, gameState, scene);
-		return;
-	}
-	
-	// Find the king, or any piece if king not found
-	const kingPiece = playerPieces.find(piece => 
-		piece.type === 'KING' || piece.type === 'king'
-	) || playerPieces[0];
-	
-	// Get the position
-	const position = kingPiece.position;
-	
-	// Move camera to focus on that position
-	if (camera && controls && position) {
-		// Calculate target position
-		const targetX = position.x - gameState.board.centreMarker.x;
-		const targetZ = position.z - gameState.board.centreMarker.z;
-		
-		// Set camera position
-		controls.target.set(targetX, 0, targetZ);
-		camera.position.set(targetX, 15, targetZ + 15);
-		
-		// Update controls
-		controls.update();
-	}
-}
-
-/**
  * Start the player's turn
  */
 function startTurn() {	
 	// If not our turn, do nothing
-	if (String(gameState.currentPlayer) !== String(gameState.localPlayerId)) {
-		console.log(`Not our turn (current: ${gameState.currentPlayer}, local: ${gameState.localPlayerId})`);
-		updateGameStatusDisplay();
-		return;
-	}
 	
 	console.log(`Starting turn for player ${gameState.localPlayerId}`);
 	
@@ -2993,46 +1958,6 @@ function startTurn() {
 	
 	// Render current tetromino
 	renderCurrentTetromino();
-}
-
-/**
- * Highlight a chess piece
- * @param {Object} piece - The piece to highlight
- * @param {boolean} isHighlighted - Whether to highlight or unhighlight
- */
-function highlightChessPiece(piece, isHighlighted) {
-	if (!piece) return;
-	
-	// Handle array of pieces
-	if (Array.isArray(piece)) {
-		piece.forEach(p => highlightChessPiece(p, isHighlighted));
-		return;
-	}
-	
-	// Skip if the piece doesn't have a material
-	if (!piece.material) return;
-	
-	// Store original material if not already stored
-	if (isHighlighted && !piece.userData.originalMaterial) {
-		piece.userData.originalMaterial = piece.material.clone();
-	}
-	
-	if (isHighlighted) {
-		// Apply highlight material
-		const highlightMaterial = new THREE.MeshBasicMaterial({
-			color: 0xffff00,
-			transparent: true,
-			opacity: 0.8
-		});
-		piece.material = highlightMaterial;
-	} else {
-		// Restore original material
-		if (piece.userData.originalMaterial) {
-			piece.material.dispose();
-			piece.material = piece.userData.originalMaterial;
-			delete piece.userData.originalMaterial;
-		}
-	}
 }
 
 /**
@@ -3125,102 +2050,94 @@ export function onPageUnload() {
 }
 
 /**
- * Test function to verify the scene setup is working correctly
+ * Initialize orbit controls for camera manipulation
+ * @param {THREE.Camera} camera - The camera to control
+ * @param {HTMLElement} domElement - The DOM element to attach controls to
+ * @returns {Object} - The initialized controls
  */
-export function testSceneSetup() {
+function initializeOrbitControls(camera, domElement) {
+	console.log("Initializing orbit controls...");
+	
+	let orbitControls = null;
+	
 	try {
-		console.log("Running scene setup test...");
-		
-		// Create a container if needed
-		if (!containerElement) {
-			console.log("Creating temporary container for test");
-			containerElement = document.createElement('div');
-			containerElement.style.width = '400px';
-			containerElement.style.height = '300px';
-			document.body.appendChild(containerElement);
+		// Check if OrbitControls is available from THREE
+		if (typeof THREE.OrbitControls === 'function') {
+			orbitControls = new THREE.OrbitControls(camera, domElement);
+			console.log("Using THREE.OrbitControls");
+		} 
+		// Check if it's available as a global
+		else if (typeof OrbitControls === 'function') {
+			orbitControls = new OrbitControls(camera, domElement);
+			console.log("Using global OrbitControls");
+		}
+		// Check if the original THREE module has it
+		else if (THREE_MODULE && typeof THREE_MODULE.OrbitControls === 'function') {
+			orbitControls = new THREE_MODULE.OrbitControls(camera, domElement);
+			console.log("Using THREE_MODULE.OrbitControls");
+		} 
+		else {
+			console.error("OrbitControls not found in any expected location");
+			return null;
 		}
 		
-		// Create new groups
-		const testBoardGroup = new THREE.Group();
-		testBoardGroup.name = 'testBoardGroup';
+		// Configure controls for smooth movement
+		orbitControls.enableDamping = true;
+		orbitControls.dampingFactor = 0.15;
+		orbitControls.screenSpacePanning = true;
+		orbitControls.minDistance = 10;
+		orbitControls.maxDistance = 80;
+		orbitControls.maxPolarAngle = Math.PI / 2 - 0.1; // Prevent going below horizon
+		orbitControls.target.set(8, 0, 8); // Look at center of board
 		
-		const testTetrominoGroup = new THREE.Group();
-		testTetrominoGroup.name = 'testTetrominoGroup';
-		
-		const testChessPiecesGroup = new THREE.Group();
-		testChessPiecesGroup.name = 'testChessPiecesGroup';
-		
-		// Setup scene with sceneModule
-		console.log("Setting up test scene with sceneModule");
-		const sceneResult = sceneModule.setupScene(
-			containerElement,
-			null, // New scene
-			null, // New camera
-			null, // New renderer
-			null, // New controls
-			testBoardGroup,
-			testTetrominoGroup,
-			testChessPiecesGroup,
-			null, // New clouds
-			gameState
-		);
-		
-		// Extract return values
-		const testScene = sceneResult._scene;
-		const testCamera = sceneResult._camera;
-		const testRenderer = sceneResult._renderer;
-		const testControls = sceneResult._controls;
-		const retrievedBoardGroup = sceneResult._boardGroup;
-		
-		// Create a sample board
-		console.log("Creating sample board");
-		
-		// Create a simple mock game state for testing
-		const testGameState = {
-			board: {
-				cells: {
-					"0,0": { type: "cell" },
-					"1,0": { type: "cell" },
-					"0,1": { type: "cell" },
-					"1,1": { type: "cell" }
-				}
-			},
-			boardSize: 2
+		// Set up controls to handle touch events properly
+		orbitControls.touches = {
+			ONE: THREE.TOUCH ? THREE.TOUCH.ROTATE : 0,
+			TWO: THREE.TOUCH ? THREE.TOUCH.DOLLY_PAN : 1
 		};
 		
-		// Temporarily swap game state
-		const oldGameState = gameState;
-		gameState = testGameState;
+		// Enable smoother rotating/panning
+		orbitControls.rotateSpeed = 0.7;
+		orbitControls.panSpeed = 0.8;
+		orbitControls.zoomSpeed = 1.0;
 		
-		// Create a test board
-		sceneModule.createBoard(retrievedBoardGroup, gameState);
+		// Ensure first update is called
+		orbitControls.update();
 		
-		// Restore original game state
-		gameState = oldGameState;
+		console.log("OrbitControls initialized successfully");
 		
-		// Check results
-		const success = 
-			testScene !== null && 
-			testCamera !== null && 
-			testRenderer !== null && 
-			retrievedBoardGroup !== null &&
-			retrievedBoardGroup.children.length === 4; // Should have 4 cells
+		// Add a visible indicator in the corner to show controls are active
+		const controlIndicator = document.createElement('div');
+		controlIndicator.style.position = 'fixed';
+		controlIndicator.style.bottom = '10px';
+		controlIndicator.style.right = '10px';
+		controlIndicator.style.background = 'rgba(0,0,0,0.5)';
+		controlIndicator.style.color = '#ffcc00';
+		controlIndicator.style.padding = '5px 10px';
+		controlIndicator.style.borderRadius = '3px';
+		controlIndicator.style.fontSize = '12px';
+		controlIndicator.style.zIndex = '9999';
+		controlIndicator.textContent = 'Camera Controls Active';
+		document.body.appendChild(controlIndicator);
 		
-		console.log(`Scene test ${success ? 'PASSED' : 'FAILED'}`);
-		console.log(`- Scene: ${testScene ? 'OK' : 'MISSING'}`);
-		console.log(`- Camera: ${testCamera ? 'OK' : 'MISSING'}`);
-		console.log(`- Renderer: ${testRenderer ? 'OK' : 'MISSING'}`);
-		console.log(`- BoardGroup: ${retrievedBoardGroup ? 'OK' : 'MISSING'}`);
-		console.log(`- Board cells: ${retrievedBoardGroup ? retrievedBoardGroup.children.length : 0}/4`);
+		// Add some help text
+		const helpText = document.createElement('div');
+		helpText.style.position = 'fixed';
+		helpText.style.bottom = '40px';
+		helpText.style.right = '10px';
+		helpText.style.background = 'rgba(0,0,0,0.5)';
+		helpText.style.color = '#ffffff';
+		helpText.style.padding = '5px 10px';
+		helpText.style.borderRadius = '3px';
+		helpText.style.fontSize = '12px';
+		helpText.style.zIndex = '9999';
+		helpText.style.maxWidth = '200px';
+		helpText.innerHTML = 'Mouse: Left click + drag to rotate<br>Right click + drag to pan<br>Scroll to zoom';
+		document.body.appendChild(helpText);
 		
-		// Clean up - remove renderer from DOM
-		if (testRenderer && testRenderer.domElement && testRenderer.domElement.parentNode) {
-			testRenderer.domElement.parentNode.removeChild(testRenderer.domElement);
-		}
-		
-		return success;
+		return orbitControls;
 	} catch (error) {
-		console.error("Scene test failed with error:", error);
-		return false;
+		console.error("Error initializing OrbitControls:", error);
+		return null;
 	}
 }

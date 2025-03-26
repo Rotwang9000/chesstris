@@ -1,5 +1,4 @@
 import { handleTetrisPhaseClick, handleChessPhaseClick, resetGameState, startPlayingGame } from './enhanced-gameCore';
-import * as NetworkManager from './utils/networkManager';
 import * as sceneModule from './scene';
 
 /**
@@ -146,7 +145,7 @@ export function showErrorMessage(message) {
 /**
  * Create game status display
  */
-function createGameStatusDisplay() {
+export function createGameStatusDisplay(gameState) {
 	console.log('Creating game status display...');
 
 	// Create or get status container
@@ -218,9 +217,9 @@ function createGameStatusDisplay() {
 		document.getElementById('debug-chess-phase').addEventListener('click', handleChessPhaseClick);
 
 		document.getElementById('debug-reset-board').addEventListener('click', () => {
-			resetGameState();
+			resetGameState(gameState);
 			sceneModule.createBoard(boardGroup, gameState);
-			updateGameStatusDisplay();
+			updateGameStatusDisplay(gameState);
 		});
 
 		document.getElementById('debug-reset-camera').addEventListener('click', () => {
@@ -229,13 +228,13 @@ function createGameStatusDisplay() {
 	}
 
 	// Initial update
-	updateGameStatusDisplay();
+	updateGameStatusDisplay(gameState);
 }
 /**
  * Update the game status display
  * Uses the global gameState object to show the current status
  */
-export function updateGameStatusDisplay() {
+export function updateGameStatusDisplay(gameState) {
 	// Get status container
 	const statusContainer = document.getElementById('game-status');
 	
@@ -254,8 +253,6 @@ export function updateGameStatusDisplay() {
 		return;
 	}
 	
-	// Reference to gameState for convenience
-	const gameState = window.gameState;
 	
 	// Check various game status conditions
 	if (gameState.gameOver) {

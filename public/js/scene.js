@@ -7,7 +7,7 @@ import { getChessPiece } from './chessPieceCreator.js';
 export function setupScene(containerElement, scene, camera, renderer, controls, boardGroup, tetrominoGroup, chessPiecesGroup, clouds, gameState) {
 	console.log('Setting up enhanced 3D scene with beautiful sky...');
 	
-	// Create scene
+	// // Create scene
 	scene = new THREE.Scene();
 	
 	// Create a beautiful light blue sky background - lighter color
