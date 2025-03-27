@@ -1,5 +1,11 @@
 import * as sceneModule from './scene';
 
+// Import the centre marker module functions
+import { findBoardCentreMarker, createCentreMarker } from './centreBoardMarker.js';
+
+// Import the chess piece creator functionality
+import { createChessPiece as createChessPieceFromCreator } from './chessPieceCreator.js';
+
 /**
  * Updated functions for working with the sparse board structure
  * These functions accept parameters rather than relying on global variables
@@ -117,7 +123,7 @@ function placeTetromino(gameState, showPlacementEffect, updateGameStatusDisplay,
 	
 	// Display the placed tetromino with a nice effect
 	if (typeof showPlacementEffect === 'function') {
-		showPlacementEffect(posX, posZ);
+		showPlacementEffect(posX, posZ, gameState);
 	}
 	
 	// Switch to chess phase
@@ -136,7 +142,7 @@ function placeTetromino(gameState, showPlacementEffect, updateGameStatusDisplay,
 }
 
 /**
- * Check if a tetromino is adjacent to existing cells (for valid placement)
+ * Improved version of isTetrominoAdjacentToExistingCells that better handles edge cases
  * @param {Object} gameState - The current game state
  * @param {Array} shape - 2D array representing tetromino shape
  * @param {number} posX - X position
@@ -144,6 +150,28 @@ function placeTetromino(gameState, showPlacementEffect, updateGameStatusDisplay,
  * @returns {boolean} - Whether the tetromino is adjacent to existing cells
  */
 function isTetrominoAdjacentToExistingCells(gameState, shape, posX, posZ) {
+	// First check if the board is completely empty
+	const hasCells = gameState.board && 
+		gameState.board.cells && 
+		Object.keys(gameState.board.cells).length > 0;
+	
+	// If the board is completely empty, allow placement anywhere
+	if (!hasCells) {
+		console.log('Board is empty, allowing first piece placement');
+		return true;
+	}
+	
+	// For the very first piece on the board, we need to handle the special case
+	const occupiedCells = Object.keys(gameState.board.cells || {}).filter(key => {
+		const cell = gameState.board.cells[key];
+		return cell !== null && cell !== undefined;
+	});
+	
+	if (occupiedCells.length === 0) {
+		console.log('No occupied cells on board, allowing first piece placement');
+		return true;
+	}
+	
 	// For each block in the tetromino, check if it's adjacent to an existing cell
 	for (let z = 0; z < shape.length; z++) {
 		for (let x = 0; x < shape[z].length; x++) {
@@ -172,12 +200,16 @@ function isTetrominoAdjacentToExistingCells(gameState, shape, posX, posZ) {
 					if (gameState.board && gameState.board.cells && 
 						gameState.board.cells[key] !== undefined && 
 						gameState.board.cells[key] !== null) {
+						console.log(`Found adjacent cell at (${adjX}, ${adjZ})`);
 						return true;
 					}
 				}
 			}
 		}
 	}
+	
+	// Debug logging
+	console.log('No adjacent existing cells found for tetromino at position:', { posX, posZ });
 	
 	// No adjacent existing cells found
 	return false;
@@ -324,7 +356,7 @@ function updateBoardCell(gameState, x, z, value) {
  */
 function extractCellContent(cell, contentType) {
 	// Debug log the input
-	console.log(`Extracting ${contentType} from cell:`, cell);
+	// console.log(`Extracting ${contentType} from cell:`, cell);
 	
 	// Handle null/undefined cells
 	if (!cell) {
@@ -363,7 +395,7 @@ function extractCellContent(cell, contentType) {
 	// NEW FORMAT: Handle array format (new format where cell is an array of objects)
 	if (Array.isArray(cell)) {
 		const found = cell.find(item => item.type === contentType);
-		console.log(`Array search for ${contentType}:`, found);
+		// console.log(`Array search for ${contentType}:`, found);
 		return found || null;
 	}
 	
@@ -738,6 +770,255 @@ function createBoardCells(gameState, boardGroup, createFloatingIsland, THREE) {
 }
 
 /**
+ * Improved renderBoard function with efficient cell reuse
+ * @param {Object} gameState - The current game state
+ * @param {Object} boardGroup - THREE.js group for board cells
+ * @param {Function} createFloatingIsland - Function to create island mesh
+ * @param {Object} THREE - THREE.js library
+ * @returns {Object} Stats about the update operation
+ */
+function renderBoard(gameState, boardGroup, createFloatingIsland, THREE) {
+	// Start timing for performance measurement
+	const startTime = performance.now();
+	console.log("Rendering board with efficient cell reuse...");
+	
+	// Get board boundaries
+	const minX = gameState.boardBounds?.minX || 0;
+	const maxX = gameState.boardBounds?.maxX || 32;
+	const minZ = gameState.boardBounds?.minZ || 0;
+	const maxZ = gameState.boardBounds?.maxZ || 32;
+	
+	// Find center marker - critical for positioning
+	let centerX, centerZ;
+	
+	// Use the centralized function to find or create the centre marker
+	const centreMark = findBoardCentreMarker(gameState);
+	centerX = centreMark.x;
+	centerZ = centreMark.z;
+	console.log(`Using centralized centre marker at (${centerX}, ${centerZ}) for board rendering`);
+	
+	// Ensure the marker is saved to the game state for future use
+	if (gameState.board) {
+		gameState.board.centreMarker = { x: centerX, z: centerZ };
+	}
+	
+	// Define the visible grid size based on screen size
+	const screenWidth = window.innerWidth;
+	const gridWidth = screenWidth > 1200 ? 40 : (screenWidth > 800 ? 30 : 20);
+	const gridHeight = gridWidth; // Keep it square for simplicity
+	
+	// Create map of existing cells for fast lookup
+	const existingCells = {};
+	if (boardGroup && boardGroup.children) {
+		boardGroup.children.forEach(child => {
+			if (child && child.userData && child.userData.type === 'cell' && 
+				child.userData.position && child.userData.position.x !== undefined && 
+				child.userData.position.z !== undefined) {
+				const key = `${child.userData.position.x},${child.userData.position.z}`;
+				existingCells[key] = child;
+			}
+		});
+	}
+	
+	// Keep track of cells we've processed in this update
+	const processedCells = {};
+	let cellsCreated = 0;
+	let cellsRemoved = 0;
+	let cellsReused = 0;
+	
+	// Process all cells in the board data regardless of position
+	// This ensures we don't miss any cells including those with negative coordinates
+	if (gameState.board && gameState.board.cells) {
+		for (const key in gameState.board.cells) {
+			// Extract coordinates from the key
+			const [x, z] = key.split(',').map(Number);
+			
+			// Skip invalid coordinates
+			if (isNaN(x) || isNaN(z)) continue;
+			
+			// Generate a unique key for this cell position
+			const cellKey = `${x},${z}`;
+			processedCells[cellKey] = true;
+			
+			// Get the cell data
+			const cellData = gameState.board.cells[key];
+			
+			// Skip empty cells
+			if (cellData === null || cellData === undefined) continue;
+			
+			// Check if a cell already exists at this position
+			const existingCell = existingCells[cellKey];
+			
+			if (existingCell) {
+				// Reuse the existing cell - just update its userData if needed
+				existingCell.userData.data = cellData;
+				existingCell.userData.processed = true;
+				cellsReused++;
+				
+				// Position the cell relative to the center marker
+				// This is CRITICAL for alignment with chess pieces
+				existingCell.position.x = x - centerX;
+				existingCell.position.z = z - centerZ;
+			} else {
+				// Create a new cell
+				try {
+					// Choose the appropriate material based on cell type
+					let material;
+					
+					// Extract the home zone or tetromino data if present
+					let isHomeZone = false;
+					let homePlayer = null;
+					let tetrominoPlayer = null;
+					
+					// Handle array-based cells
+					if (Array.isArray(cellData)) {
+						// Look for home zone in array
+						const homeZone = cellData.find(item => item && item.type === 'home');
+						if (homeZone) {
+							isHomeZone = true;
+							homePlayer = homeZone.player;
+						}
+						
+						// Look for tetromino in array
+						const tetromino = cellData.find(item => item && item.type === 'tetromino');
+						if (tetromino) {
+							tetrominoPlayer = tetromino.player;
+						}
+					} 
+					// Handle object-based cells
+					else if (typeof cellData === 'object') {
+						// Extract home zone
+						if (cellData.type === 'home' || cellData.homeZone) {
+							isHomeZone = true;
+							homePlayer = cellData.player;
+						}
+						
+						// Extract tetromino
+						if (cellData.type === 'tetromino' || cellData.tetromino) {
+							tetrominoPlayer = cellData.player;
+						}
+					}
+					
+					// Create the material based on cell content
+					if (isHomeZone) {
+						// Home zone material - use player color if available
+						const homeColor = getPlayerColor(homePlayer, gameState, 'home');
+						material = new THREE.MeshStandardMaterial({ 
+							color: homeColor, 
+							roughness: 0.7,
+							metalness: 0.3,
+							transparent: true,
+							opacity: 0.85
+						});
+					} else if (tetrominoPlayer) {
+						// Tetromino material - use player color with tetromino flag
+						const tetrominoColor = getPlayerColor(tetrominoPlayer, gameState, 'tetromino');
+						material = new THREE.MeshStandardMaterial({ 
+							color: tetrominoColor, 
+							roughness: 0.5,
+							metalness: 0.5,
+							transparent: false,
+							opacity: 1.0
+						});
+					} else {
+						// Default chess board material - maintain chequered pattern
+						const isWhite = (x + z) % 2 === 0;
+						material = new THREE.MeshStandardMaterial({ 
+							color: isWhite ? 0xe9e9e9 : 0x808080, 
+							roughness: 0.6,
+							metalness: 0.2,
+							transparent: true,
+							opacity: 0.9
+						});
+					}
+					
+					// Create the cell mesh
+					const newCell = createFloatingIsland(
+						x - centerX,   // Position relative to the center marker
+						z - centerZ, 
+						material, 
+						boardGroup,
+						centerX,
+						centerZ
+					);
+					
+					// Store the cell data in userData
+					newCell.userData = {
+						type: 'cell',
+						position: { x, z },
+						data: cellData,
+						processed: true
+					};
+					
+					// Add to board group
+					if (!boardGroup.children.includes(newCell)) {
+						boardGroup.add(newCell);
+					}
+					
+					cellsCreated++;
+				} catch (error) {
+					console.error(`Error creating cell at (${x}, ${z}):`, error);
+				}
+			}
+		}
+	}
+	
+	// Remove any cells that are no longer in the game state
+	if (boardGroup && boardGroup.children) {
+		const cellsToRemove = [];
+		
+		boardGroup.children.forEach(child => {
+			if (child && child.userData && child.userData.type === 'cell' && 
+				child.userData.position) {
+				const key = `${child.userData.position.x},${child.userData.position.z}`;
+				
+				// If the cell wasn't processed in this update, remove it
+				if (!processedCells[key]) {
+					cellsToRemove.push(child);
+				}
+			}
+		});
+		
+		// Remove the cells that are no longer needed
+		cellsToRemove.forEach(cell => {
+			boardGroup.remove(cell);
+			if (cell.material) {
+				if (Array.isArray(cell.material)) {
+					cell.material.forEach(m => m && m.dispose());
+				} else {
+					cell.material.dispose();
+				}
+			}
+			if (cell.geometry) cell.geometry.dispose();
+			cellsRemoved++;
+		});
+	}
+	
+	// Extract chess pieces from the board cells
+	if (gameState.chessPieces === undefined || gameState.chessPieces.length === 0) {
+		// Use the centralized function for consistent extraction
+		gameState.chessPieces = extractChessPiecesFromCells(gameState);
+		console.log(`Extracted ${gameState.chessPieces.length} chess pieces during board rendering`);
+	}
+	
+	// Report performance and statistics
+	const endTime = performance.now();
+	console.log(`Board rendering completed in ${(endTime - startTime).toFixed(2)}ms`);
+	console.log(`Statistics: ${cellsCreated} cells created, ${cellsReused} reused, ${cellsRemoved} removed`);
+	
+	// Return statistics for callers
+	return {
+		cellsCreated,
+		cellsReused,
+		cellsRemoved,
+		totalCells: cellsCreated + cellsReused,
+		centerX,
+		centerZ,
+		renderTime: endTime - startTime
+	};
+}
+
+/**
  * Find the current player's king position
  * @param {Object} gameState - The current game state
  * @returns {Object|null} - The king's position {x, z} or null if not found
@@ -747,8 +1028,8 @@ function findPlayerKingPosition(gameState) {
 	
 	// Check if we have chess pieces
 	if (!gameState.chessPieces || !Array.isArray(gameState.chessPieces)) {
-		console.warn("No chess pieces found in game state");
-		return null;
+		console.log("No chess pieces found in game state, using default position for player " + currentPlayer);
+		return getDefaultPlayerPosition(gameState, currentPlayer);
 	}
 	
 	console.log(`Looking for ${currentPlayer}'s king among ${gameState.chessPieces.length} pieces`);
@@ -776,8 +1057,64 @@ function findPlayerKingPosition(gameState) {
 		}
 	}
 	
-	console.warn(`No king found for player ${currentPlayer}`);
-	return null;
+	console.log(`No king found for player ${currentPlayer}, using default position`);
+	return getDefaultPlayerPosition(gameState, currentPlayer);
+}
+
+/**
+ * Get default starting position for a player when no king is found
+ * @param {Object} gameState - The current game state
+ * @param {string|number} playerId - The player ID
+ * @returns {Object} - A default position {x, z} based on player ID
+ */
+function getDefaultPlayerPosition(gameState, playerId) {
+	// Get board size from gameState
+	const boardWidth = gameState.boardWidth || gameState.boardSize || 16;
+	const boardHeight = gameState.boardHeight || gameState.boardSize || 16;
+	
+	// Set default board boundaries if not available
+	const minX = gameState.boardBounds?.minX || 0;
+	const maxX = gameState.boardBounds?.maxX || boardWidth - 1;
+	const minZ = gameState.boardBounds?.minZ || 0;
+	const maxZ = gameState.boardBounds?.maxZ || boardHeight - 1;
+	
+	// Calculate center of the board
+	const centerX = Math.floor((minX + maxX) / 2);
+	const centerZ = Math.floor((minZ + maxZ) / 2);
+	
+	// Determine player position based on player ID
+	if (playerId === 1 || playerId === "1" || playerId === "player1") {
+		// Player 1 starts at the bottom of the board
+		return {
+			x: centerX - 4,
+			z: maxZ - 3
+		};
+	} else if (playerId === 2 || playerId === "2" || playerId === "player2") {
+		// Player 2 starts at the top of the board
+		return {
+			x: centerX + 4,
+			z: minZ + 3
+		};
+	} else if (typeof playerId === 'string' && playerId.startsWith('player')) {
+		// For player3, player4, etc.
+		const playerNum = parseInt(playerId.replace('player', ''), 10);
+		if (!isNaN(playerNum)) {
+			// Position players around the center with some offset
+			const angle = (playerNum * Math.PI / 2) % (2 * Math.PI);
+			const distance = 5; // Distance from center
+			return {
+				x: centerX + Math.floor(Math.cos(angle) * distance),
+				z: centerZ + Math.floor(Math.sin(angle) * distance)
+			};
+		}
+	}
+	
+	// Default to board center for unknown players
+	console.log(`Using center position for unknown player ${playerId}`);
+	return {
+		x: centerX,
+		z: centerZ
+	};
 }
 
 /**
@@ -860,37 +1197,17 @@ function createRandomTetromino(gameState) {
 	// Try to find the king's position
 	const kingPos = findPlayerKingPosition(gameState);
 	
-	// Default position parameters if king not found
+	// Default position parameters
 	let startX, startZ;
 	
 	if (kingPos) {
-		// Position the tetromino 2-3 cells away from the king
-		// Direction is randomly chosen but biased towards the player's side of the board
-		const direction = Math.floor(Math.random() * 4); // 0: up, 1: right, 2: down, 3: left
-		const distance = 2 + Math.floor(Math.random() * 2); // 2-3 cells away
-		
-		switch (direction) {
-			case 0: // Up
-				startX = kingPos.x - Math.floor(selectedType.shape[0].length / 2);
-				startZ = kingPos.z - distance - selectedType.shape.length;
-				break;
-			case 1: // Right
-				startX = kingPos.x + distance;
-				startZ = kingPos.z - Math.floor(selectedType.shape.length / 2);
-				break;
-			case 2: // Down
-				startX = kingPos.x - Math.floor(selectedType.shape[0].length / 2);
-				startZ = kingPos.z + distance;
-				break;
-			case 3: // Left
-				startX = kingPos.x - distance - selectedType.shape[0].length;
-				startZ = kingPos.z - Math.floor(selectedType.shape.length / 2);
-				break;
-		}
+		// Position the tetromino above the king in the XZ plane
+		startX = kingPos.x - Math.floor(selectedType.shape[0].length / 2);
+		startZ = kingPos.z - 2 - selectedType.shape.length; // Position a few cells away from the king
 		
 		console.log(`Positioning tetromino near king at (${kingPos.x}, ${kingPos.z})`);
 	} else {
-		// Fallback to board center if king not found
+		// Fallback to board center if no king found
 		const minX = gameState.boardBounds?.minX || 0;
 		const maxX = gameState.boardBounds?.maxX || 20;
 		const minZ = gameState.boardBounds?.minZ || 0;
@@ -904,7 +1221,7 @@ function createRandomTetromino(gameState) {
 		startX = centerX - Math.floor(selectedType.shape[0].length / 2);
 		startZ = minZ + Math.floor((maxZ - minZ) / 3);
 		
-		console.log("King not found. Positioning tetromino at board center.");
+		console.log(`Using board center for tetromino positioning. Board bounds: [${minX},${maxX}] × [${minZ},${maxZ}]`);
 	}
 	
 	// Ensure the tetromino is within board bounds
@@ -916,13 +1233,16 @@ function createRandomTetromino(gameState) {
 	startX = Math.max(minX, Math.min(maxX - selectedType.shape[0].length, startX));
 	startZ = Math.max(minZ, Math.min(maxZ - selectedType.shape.length, startZ));
 	
-	// Create the tetromino object
+	console.log(`Created ${selectedType.type} tetromino at position (${startX}, ${startZ}) with height 5 units above board`);
+	
+	// Create the tetromino object with a height above the board
 	return {
 		type: selectedType.type,
 		shape: selectedType.shape,
 		position: { x: startX, z: startZ },
 		player: gameState.currentPlayer || 'unknown_player',
-		heightAboveBoard: 5 // Start above the board for animation
+		heightAboveBoard: 5, // Start 5 units above the board for Y-axis falling animation
+		fallSpeed: 1 // Units to fall per step
 	};
 }
 
@@ -951,6 +1271,16 @@ function renderTetromino(gameState, tetromino, tetrominoGroup, createTetrominoBl
 	const centerX = (minX + maxX) / 2;
 	const centerZ = (minZ + maxZ) / 2;
 	
+	// Create a container group for proper positioning
+	const container = new THREE.Group();
+	tetrominoGroup.add(container);
+	
+	// Move the container to offset from board center
+	container.position.set(-centerX, 0, -centerZ);
+	
+	// Log placement for debugging
+	console.log(`Rendering tetromino of type ${tetromino.type} at (${tetromino.position.x}, ${tetromino.position.z}) with height ${tetromino.heightAboveBoard}`);
+	
 	// Iterate through the tetromino shape
 	for (let z = 0; z < tetromino.shape.length; z++) {
 		for (let x = 0; x < tetromino.shape[z].length; x++) {
@@ -960,13 +1290,18 @@ function renderTetromino(gameState, tetromino, tetrominoGroup, createTetrominoBl
 				const blockZ = tetromino.position.z + z;
 				
 				// Create a tetromino block with height above board
-				createTetrominoBlock(
+				const block = createTetrominoBlock(
 					blockX, 
 					blockZ, 
 					tetromino.player, 
 					false, 
 					tetromino.heightAboveBoard || 0
 				);
+				
+				// Add the block to the container
+				if (block) {
+					container.add(block);
+				}
 				
 				// Also create ghost piece position if the tetromino is above the board
 				if (tetromino.heightAboveBoard > 0) {
@@ -996,21 +1331,20 @@ function renderTetromino(gameState, tetromino, tetrominoGroup, createTetrominoBl
 					
 					// Create ghost block at the lowest valid position
 					if (ghostZ > blockZ) {
-						createTetrominoBlock(blockX, ghostZ, tetromino.player, true, 0);
+						const ghostBlock = createTetrominoBlock(blockX, ghostZ, tetromino.player, true, 0);
+						
+						// Add the ghost block to the container
+						if (ghostBlock) {
+							container.add(ghostBlock);
+						}
 					}
 				}
 			}
 		}
 	}
-	
-	// Update all tetromino blocks to have the correct relative position to the board center
-	tetrominoGroup.children.forEach(block => {
-		if (block.userData && block.userData.position) {
-			const { x, z } = block.userData.position;
-			block.position.x = x - centerX;
-			block.position.z = z - centerZ;
-		}
-	});
+
+	// Log the number of blocks in the group
+	console.log(`Tetromino rendered with ${tetrominoGroup.children.length} blocks and ${container.children.length} in container`);
 }
 
 /**
@@ -1054,66 +1388,29 @@ function handleTetrisPhaseClick(gameState, updateGameStatusDisplay, updateBoardV
  * @param {string|number} pieceType - Type of piece (PAWN, ROOK, etc. or numeric)
  * @param {number|string} playerIdent - Player identifier
  * @param {number|string} ourPlayerIdent - Our player identifier
+ * @param {Object} orientation - Orientation for the piece, if specified
  * @param {Object} THREE - THREE.js library
  * @returns {Object} THREE.js Group containing the piece
  */
 function createChessPiece(gameState, x, z, pieceType, playerIdent, ourPlayerIdent, orientation, THREE) {
+	// Get board center for correct positioning 
+	let centerX, centerZ;
+	
+	// Use the centralized function to find the centre marker
+	const centreMark = findBoardCentreMarker(gameState);
+	centerX = centreMark.x;
+	centerZ = centreMark.z;
+	console.log(`Using centralized centre marker at (${centerX}, ${centerZ}) for chess piece creation`);
+	
+	// Ensure the marker is saved to the game state for future use
+	if (gameState.board) {
+		gameState.board.centreMarker = { x: centerX, z: centerZ };
+	}
+	
+	// Log for debugging the positioning
+	console.log(`Creating piece at board coordinates (${x}, ${z}), using board centre: (${centerX}, ${centerZ})`);
+	
 	try {
-		// First check for a board centre marker which gives us the most accurate centre
-		let centerX, centerZ;
-		
-		if (gameState.board && gameState.board.centreMarker) {
-			// Use the explicitly provided centre marker
-			centerX = gameState.board.centreMarker.x;
-			centerZ = gameState.board.centreMarker.z;
-			console.log(`Using board centre marker at (${centerX}, ${centerZ})`);
-		} else if (gameState.board && gameState.board.cells) {
-			// Search for the centre marker in cells
-			let markerFound = false;
-			
-			for (const key in gameState.board.cells) {
-				const cell = gameState.board.cells[key];
-				
-				// Check if this cell has the special marker
-				if (cell && cell.specialMarker && cell.specialMarker.type === 'boardCentre') {
-					// Extract coordinates from the key (format: "x,z")
-					const [markerX, markerZ] = key.split(',').map(Number);
-					centerX = markerX;
-					centerZ = markerZ;
-					markerFound = true;
-					console.log(`Found board centre marker in cell at (${centerX}, ${centerZ})`);
-					break;
-				}
-			}
-			
-			// If no marker found, fall back to board boundaries
-			if (!markerFound) {
-				// Get board center for correct positioning
-				const minX = gameState.boardBounds?.minX || 0;
-				const maxX = gameState.boardBounds?.maxX || 20;
-				const minZ = gameState.boardBounds?.minZ || 0;
-				const maxZ = gameState.boardBounds?.maxZ || 20;
-				
-				// Calculate board center (where 0,0 should be rendered)
-				centerX = (minX + maxX) / 2;
-				centerZ = (minZ + maxZ) / 2;
-				console.log(`No centre marker found, using calculated board centre at (${centerX}, ${centerZ})`);
-			}
-		} else {
-			// Fallback if there's no board data at all
-			const minX = gameState.boardBounds?.minX || 0;
-			const maxX = gameState.boardBounds?.maxX || 20;
-			const minZ = gameState.boardBounds?.minZ || 0;
-			const maxZ = gameState.boardBounds?.maxZ || 20;
-			
-			// Calculate board center (where 0,0 should be rendered)
-			centerX = (minX + maxX) / 2;
-			centerZ = (minZ + maxZ) / 2;
-		}
-		
-		// Log for debugging the positioning
-		console.log(`Creating piece at board coordinates (${x}, ${z}), using board centre: (${centerX}, ${centerZ})`);
-		
 		// Verify parameters for debugging
 		if (pieceType === undefined || pieceType === null) {
 			console.warn(`Invalid pieceType (${pieceType}) for cell at (${x},${z}), using default`);
@@ -1144,279 +1441,47 @@ function createChessPiece(gameState, x, z, pieceType, playerIdent, ourPlayerIden
 		// Handle both string player IDs and numeric values
 		let playerStr = playerIdent || 'unknown_player'; // Default to generic value
 		
-		// Define colors for pieces 
-		const playerColors = {};
+		// Determine if this is the local player
+		const isLocalPlayer = (String(playerStr) === String(ourPlayerIdent) || 
+					          String(playerStr) === String(gameState.myPlayerId));
 		
-		// Get colors for this player
-		let colors;
+		// Get player color using our getPlayerColor function
+		const playerColor = getPlayerColor(playerStr, gameState);
 		
-		// Use colors based on whether it's the local player or another player
-		if (playerStr === ourPlayerIdent) {
-			// Local player uses red/gold theme
-			colors = {
-				primary: 0xAA0000,
-				secondary: 0xFFD700
-			};
-		} else {
-			// Remote players use blue/green with some variation
-			// Generate player-specific color if not already done
-			if (!playerColors[playerStr]) {
-				// Generate blue/green-ish color
-				const r = Math.floor(Math.random() * 80);  // Keep red low
-				const g = 100 + Math.floor(Math.random() * 155); // Medium to high green
-				const b = 150 + Math.floor(Math.random() * 105); // Medium to high blue
-				
-				playerColors[playerStr] = {
-					primary: (r << 16) | (g << 8) | b,
-					secondary: 0xFFD700 // Gold secondary for all
-				};
+		// Create the piece using the chessPieceCreator module
+		const pieceGroup = createChessPieceFromCreator(
+			gameState,
+			x,
+			z,
+			type,
+			playerStr,
+			{ 
+				orientation: orientation,
+				color: playerColor,  // Pass the color we generated
+				isLocalPlayer: isLocalPlayer  // Also pass the local player flag
 			}
-			
-			colors = playerColors[playerStr];
+		);
+		
+		// If the creator didn't return a piece, create a fallback
+		if (!pieceGroup) {
+			throw new Error("Chess piece creator failed to return a piece");
 		}
-		
-		// Create a piece group to hold all components
-		const pieceGroup = new THREE.Group();
-		
-		// Store metadata for identification
-		pieceGroup.userData = {
-			type: 'chessPiece',
-			pieceType: type,
-			player: playerStr,
-			originalPlayer: playerIdent,
-			position: { x, z },
-			visible: true
-		};
 		
 		// Position the piece group relative to the board center
 		// This is critical for correct positioning on the cells
 		pieceGroup.position.set(x - centerX, 0, z - centerZ);
 		
-		// Base of piece
-		const baseGeometry = new THREE.CylinderGeometry(0.35, 0.4, 0.2, 16);
-		const baseMaterial = new THREE.MeshStandardMaterial({
-			color: colors.primary,
-			metalness: 0.7,
-			roughness: 0.3
-		});
-		const base = new THREE.Mesh(baseGeometry, baseMaterial);
-		base.position.y = 0.1;
-		pieceGroup.add(base);
-		
-		// Main body of piece - adjust based on type
-		let height = 1.0; // Default height
-		let bodyWidth = 0.3; // Default width
-		
-		// Customize for each piece type
-		switch (type) {
-			case 'KING':
-				height = 1.6;
-				bodyWidth = 0.35;
-				break;
-			case 'QUEEN':
-				height = 1.5;
-				bodyWidth = 0.32;
-				break;
-			case 'BISHOP':
-				height = 1.4;
-				bodyWidth = 0.28;
-				break;
-			case 'KNIGHT':
-				height = 1.3;
-				bodyWidth = 0.30;
-				break;
-			case 'ROOK':
-				height = 1.2;
-				bodyWidth = 0.35;
-				break;
-			default: // PAWN
-				height = 1.0;
-				bodyWidth = 0.25;
-		}
-		
-		// Main body shape
-		const bodyGeometry = new THREE.CylinderGeometry(bodyWidth * 0.8, bodyWidth, height * 0.7, 16);
-		const bodyMaterial = new THREE.MeshStandardMaterial({
-			color: colors.primary,
-			metalness: 0.5,
-			roughness: 0.5,
-			emissive: colors.primary,
-			emissiveIntensity: 0.2
-		});
-		const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
-		body.position.y = height * 0.35 + 0.1; // Center the body
-		pieceGroup.add(body);
-		
-		// Top part - different for each piece type
-		let topPart;
-		
-		switch (type) {
-			case 'KING':
-				// Create Russian imperial crown with cross
-				const crownGeometry = new THREE.CylinderGeometry(bodyWidth * 1.1, bodyWidth * 0.9, height * 0.2, 16);
-				const crownMaterial = new THREE.MeshStandardMaterial({
-					color: colors.secondary,
-					metalness: 0.8,
-					roughness: 0.2,
-					emissive: colors.secondary,
-					emissiveIntensity: 0.3
-				});
-				topPart = new THREE.Mesh(crownGeometry, crownMaterial);
-				topPart.position.y = height * 0.7 + 0.1;
-				pieceGroup.add(topPart);
-				
-				// Add cross on top
-				const crossVGeometry = new THREE.BoxGeometry(0.08, height * 0.25, 0.08);
-				const crossHGeometry = new THREE.BoxGeometry(0.25, 0.08, 0.08);
-				const crossMaterial = new THREE.MeshStandardMaterial({
-					color: colors.secondary,
-					metalness: 0.9,
-					roughness: 0.1,
-					emissive: colors.secondary,
-					emissiveIntensity: 0.3
-				});
-				
-				const crossV = new THREE.Mesh(crossVGeometry, crossMaterial);
-				crossV.position.y = height * 0.85;
-				pieceGroup.add(crossV);
-				
-				const crossH = new THREE.Mesh(crossHGeometry, crossMaterial);
-				crossH.position.y = height * 0.8;
-				pieceGroup.add(crossH);
-				break;
-				
-			case 'QUEEN':
-				// Create crown with multiple points
-				const queenCrownGeometry = new THREE.CylinderGeometry(bodyWidth * 0.9, bodyWidth * 0.95, height * 0.15, 16);
-				const queenCrownMaterial = new THREE.MeshStandardMaterial({
-					color: colors.secondary,
-					metalness: 0.7,
-					roughness: 0.3,
-					emissive: colors.secondary,
-					emissiveIntensity: 0.25
-				});
-				topPart = new THREE.Mesh(queenCrownGeometry, queenCrownMaterial);
-				topPart.position.y = height * 0.7 + 0.1;
-				pieceGroup.add(topPart);
-				
-				// Add decorative points
-				const pointCount = 5;
-				for (let i = 0; i < pointCount; i++) {
-					const angle = (i / pointCount) * Math.PI * 2;
-					const pointGeometry = new THREE.ConeGeometry(0.06, height * 0.12, 8);
-					const pointMaterial = new THREE.MeshStandardMaterial({
-						color: colors.secondary,
-						metalness: 0.8,
-						roughness: 0.2
-					});
-					
-					const point = new THREE.Mesh(pointGeometry, pointMaterial);
-					point.position.set(
-						Math.cos(angle) * (bodyWidth * 0.7),
-						height * 0.78,
-						Math.sin(angle) * (bodyWidth * 0.7)
-					);
-					pieceGroup.add(point);
-				}
-				
-				// Add central ball
-				const ballGeometry = new THREE.SphereGeometry(0.08, 16, 16);
-				const ball = new THREE.Mesh(ballGeometry, queenCrownMaterial);
-				ball.position.y = height * 0.85;
-				pieceGroup.add(ball);
-				break;
-				
-			case 'BISHOP':
-				// Mitre-like top
-				const bishopTopGeometry = new THREE.ConeGeometry(bodyWidth * 0.8, height * 0.3, 16);
-				const bishopTopMaterial = new THREE.MeshStandardMaterial({
-					color: colors.secondary,
-					metalness: 0.5,
-					roughness: 0.5
-				});
-				topPart = new THREE.Mesh(bishopTopGeometry, bishopTopMaterial);
-				topPart.position.y = height * 0.75;
-				pieceGroup.add(topPart);
-				
-				// Add small ball on top
-				const smallBallGeometry = new THREE.SphereGeometry(0.06, 12, 12);
-				const smallBall = new THREE.Mesh(smallBallGeometry, bishopTopMaterial);
-				smallBall.position.y = height * 0.95;
-				pieceGroup.add(smallBall);
-				break;
-				
-			case 'KNIGHT':
-				// Horse head shape (simplified)
-				const knightTopGeometry = new THREE.BoxGeometry(bodyWidth * 0.8, height * 0.25, bodyWidth * 1.2);
-				const knightTopMaterial = new THREE.MeshStandardMaterial({
-					color: colors.secondary,
-					metalness: 0.4,
-					roughness: 0.6
-				});
-				topPart = new THREE.Mesh(knightTopGeometry, knightTopMaterial);
-				topPart.position.y = height * 0.7;
-				topPart.position.z = bodyWidth * 0.3; // Offset forward
-				topPart.rotation.x = Math.PI * 0.1; // Tilt forward
-				pieceGroup.add(topPart);
-				
-				// Add ears
-				const earGeometry = new THREE.ConeGeometry(0.06, 0.15, 8);
-				const ear1 = new THREE.Mesh(earGeometry, knightTopMaterial);
-				ear1.position.set(bodyWidth * 0.3, height * 0.85, bodyWidth * 0.1);
-				ear1.rotation.x = -Math.PI * 0.15;
-				pieceGroup.add(ear1);
-				
-				const ear2 = new THREE.Mesh(earGeometry, knightTopMaterial);
-				ear2.position.set(-bodyWidth * 0.3, height * 0.85, bodyWidth * 0.1);
-				ear2.rotation.x = -Math.PI * 0.15;
-				pieceGroup.add(ear2);
-				break;
-				
-			case 'ROOK':
-				// Castle tower top
-				const rookTopGeometry = new THREE.BoxGeometry(bodyWidth * 1.1, height * 0.2, bodyWidth * 1.1);
-				const rookTopMaterial = new THREE.MeshStandardMaterial({
-					color: colors.secondary,
-					metalness: 0.5,
-					roughness: 0.5
-				});
-				topPart = new THREE.Mesh(rookTopGeometry, rookTopMaterial);
-				topPart.position.y = height * 0.7;
-				pieceGroup.add(topPart);
-				
-				// Add crenellations (castle tower features)
-				const crenellationCount = 4;
-				const crenellationWidth = bodyWidth * 0.3;
-				const crenellationGeometry = new THREE.BoxGeometry(crenellationWidth, height * 0.1, crenellationWidth);
-				
-				for (let i = 0; i < crenellationCount; i++) {
-					// Position around the top edge
-					const angle = (i / crenellationCount) * Math.PI * 2 + (Math.PI / crenellationCount);
-					const offsetX = Math.cos(angle) * (bodyWidth * 0.6);
-					const offsetZ = Math.sin(angle) * (bodyWidth * 0.6);
-					
-					const crenellation = new THREE.Mesh(crenellationGeometry, rookTopMaterial);
-					crenellation.position.set(offsetX, height * 0.85, offsetZ);
-					pieceGroup.add(crenellation);
-				}
-				break;
-				
-			default: // PAWN
-				// Simple round top
-				const pawnTopGeometry = new THREE.SphereGeometry(bodyWidth * 0.8, 16, 16);
-				const pawnTopMaterial = new THREE.MeshStandardMaterial({
-					color: colors.secondary,
-					metalness: 0.5,
-					roughness: 0.5
-				});
-				topPart = new THREE.Mesh(pawnTopGeometry, pawnTopMaterial);
-				topPart.position.y = height * 0.7;
-				pieceGroup.add(topPart);
-		}
-
-		// Rotate the piece based on orientation
-		if (orientation !== undefined) {
-			pieceGroup.rotation.y = orientation;
+		// Store metadata for identification if not already set by the creator
+		if (!pieceGroup.userData || !pieceGroup.userData.type) {
+			pieceGroup.userData = {
+				type: 'chessPiece',
+				pieceType: type,
+				player: playerStr,
+				originalPlayer: playerIdent,
+				position: { x, z },
+				visible: true,
+				color: playerColor
+			};
 		}
 		
 		// Make all parts cast and receive shadows
@@ -1432,13 +1497,6 @@ function createChessPiece(gameState, x, z, pieceType, playerIdent, ourPlayerIden
 			}
 		});
 		
-		// Add a debug marker at the base of the piece
-		const markerGeometry = new THREE.SphereGeometry(0.05, 8, 8);
-		const markerMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
-		const marker = new THREE.Mesh(markerGeometry, markerMaterial);
-		marker.position.y = 0.05;
-		pieceGroup.add(marker);
-		
 		// Ensure the entire piece group is visible
 		pieceGroup.visible = true;
 		
@@ -1449,24 +1507,20 @@ function createChessPiece(gameState, x, z, pieceType, playerIdent, ourPlayerIden
 		// Create a simple fallback piece
 		const fallbackGroup = new THREE.Group();
 		const fallbackGeometry = new THREE.BoxGeometry(0.5, 0.8, 0.5);
+		
+		// Use player color for the fallback piece too
+		const playerColor = getPlayerColor(playerIdent, gameState);
 		const fallbackMaterial = new THREE.MeshStandardMaterial({ 
-			color: 0xff0000,
-			emissive: 0xff0000,
+			color: playerColor,
+			emissive: playerColor,
 			emissiveIntensity: 0.5
 		});
+		
 		const fallbackMesh = new THREE.Mesh(fallbackGeometry, fallbackMaterial);
 		fallbackMesh.position.y = 0.4; // Raise above the board
 		fallbackGroup.add(fallbackMesh);
 		
-		// Get board center for correct positioning
-		const minX = gameState.boardBounds?.minX || 0;
-		const maxX = gameState.boardBounds?.maxX || 20;
-		const minZ = gameState.boardBounds?.minZ || 0;
-		const maxZ = gameState.boardBounds?.maxZ || 20;
-		const centerX = (minX + maxX) / 2;
-		const centerZ = (minZ + maxZ) / 2;
-		
-		// Position the error mesh using the same coordinate system as cells
+		// Position the error mesh using the board center
 		fallbackGroup.position.set(x - centerX, 0, z - centerZ);
 		fallbackGroup.visible = true;
 		
@@ -1512,19 +1566,975 @@ function addChessPiece(gameState, pieceType, x, z, playerId, orientation) {
 	};
 }
 
+/**
+ * Extract chess pieces from board cells - centralized function to ensure consistent extraction
+ * @param {Object} gameState - The current game state
+ * @returns {Array} Array of chess pieces with position, type, player, etc.
+ */
+function extractChessPiecesFromCells(gameState) {
+	const chessPieces = [];
+	
+	// Verify we have a valid board with cells
+	if (!gameState.board || !gameState.board.cells) {
+		console.warn('No valid board data to extract chess pieces from');
+		return chessPieces;
+	}
+	
+	console.log("Extracting chess pieces from board cells");
+	
+	// Get the centre marker for proper positioning
+	const centreMark = findBoardCentreMarker(gameState);
+	const centreX = centreMark?.x ?? 4;
+	const centreZ = centreMark?.z ?? 4;
+	
+	console.log(`Using board centre at (${centreX}, ${centreZ}) for chess piece extraction`);
+	
+	// Process all cells in the board data
+	for (const key in gameState.board.cells) {
+		try {
+			const [x, z] = key.split(',').map(Number);
+			
+			// Verify coordinates were parsed correctly - negative values are valid!
+			if (isNaN(x) || isNaN(z)) {
+				console.warn(`Invalid cell coordinates in key: ${key}`);
+				continue;
+			}
+			
+			// Get cell content
+			const cellData = gameState.board.cells[key];
+			
+			// Skip empty cells
+			if (!cellData) continue;
+			
+			// Handle both array-based cells and object-based cells
+			if (Array.isArray(cellData)) {
+				// Look for chess piece in array-based cell format
+				const chessPiece = cellData.find(item => 
+					item && item.type === 'chess' && item.pieceType
+				);
+				
+				if (chessPiece) {
+					// Generate a consistent piece ID
+					const pieceId = chessPiece.pieceId || 
+						`${chessPiece.player}-${chessPiece.pieceType}-${x}-${z}`;
+					
+					// Add to our pieces list
+					chessPieces.push({
+						id: pieceId,
+						position: { x, z },
+						type: chessPiece.pieceType || "PAWN",
+						player: chessPiece.player || 1,
+						color: chessPiece.color || 0xcccccc,
+						orientation: chessPiece.orientation || 0
+					});
+				}
+			} else if (typeof cellData === 'object' && cellData !== null) {
+				// Legacy format - direct object with chess property
+				if (cellData.chess) {
+					const chessPiece = cellData.chess;
+					// Generate a consistent piece ID
+					const pieceId = chessPiece.pieceId ||
+						`${chessPiece.player}-${chessPiece.type || 'PAWN'}-${x}-${z}`;
+					
+					// Add to our pieces list
+					chessPieces.push({
+						id: pieceId,
+						position: { x, z },
+						type: chessPiece.type || "PAWN",
+						player: chessPiece.player || 1,
+						color: chessPiece.color || 0xcccccc,
+						orientation: chessPiece.orientation || 0
+					});
+				} else {
+					// Use the extraction function for other formats
+					const chessContent = extractCellContent(cellData, 'chess');
+					
+					// If chess piece content exists, extract it for rendering
+					if (chessContent) {
+						const pieceId = chessContent.pieceId ||
+							`${chessContent.player}-${chessContent.pieceType || 'PAWN'}-${x}-${z}`;
+						
+						chessPieces.push({
+							id: pieceId,
+							position: { x, z },
+							type: chessContent.pieceType || "PAWN",
+							player: chessContent.player || 1,
+							color: chessContent.color || 0xcccccc,
+							orientation: chessContent.orientation || 0
+						});
+					}
+				}
+			}
+		} catch (cellErr) {
+			console.error(`Error extracting chess piece at ${key}:`, cellErr);
+		}
+	}
+	
+	console.log(`Extracted ${chessPieces.length} chess pieces from board cells`);
+	return chessPieces;
+}
+
+/**
+ * Convert a player identifier into a consistent color
+ * @param {string} playerId - The player identifier
+ * @param {Object} gameState - Optional game state to check if this is the current player
+ * @param {string} type - Whether this color is for a chess piece (chess) or tetromino (tetromino) or home zone (home)
+ * @returns {number} - The color as a hexadecimal number
+ */
+function getPlayerColor(playerId, gameState = null, type = 'chess') {
+	// Always convert to string
+	const playerIdStr = String(playerId);
+	
+	// Check if this is the current player
+	const isCurrentPlayer = gameState && (
+		playerIdStr === String(gameState.currentPlayer) || 
+		playerIdStr === String(gameState.myPlayerId) || 
+		playerIdStr === String(gameState.localPlayerId)
+	);
+	
+	// Current player always gets red shades
+	if (isCurrentPlayer) {
+		switch (type) {
+			case 'home':
+				return 0xDD0000; // Darker red for home zone
+			case 'tetromino':
+				return 0xFF3333; // Brighter red for tetromino
+			default:
+				return 0xDD0000; // Standard red for chess pieces
+		}
+	}
+	
+	// For other players, generate a consistent color based on player ID string
+	// Simple hash function to convert string to a number
+	let hash = 0;
+	for (let i = 0; i < playerIdStr.length; i++) {
+		hash = playerIdStr.charCodeAt(i) + ((hash << 5) - hash);
+	}
+	
+	// For non-current players, we want to bias toward blue/green tones
+	// Get a hue in the blue-green range (120-240 degrees)
+	const h = 120 + (Math.abs(hash) % 120); // Hue: 120-240 (green to blue)
+	const s = 65 + (Math.abs(hash >> 8) % 35); // Saturation: 65-100%
+	const l = 45 + (Math.abs(hash >> 16) % 20); // Lightness: 45-65%
+	
+	// Convert HSL to RGB
+	const c = (1 - Math.abs(2 * l / 100 - 1)) * s / 100;
+	const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+	const m = l / 100 - c / 2;
+	
+	let r, g, b;
+	if (h < 180) {
+		[r, g, b] = [0, c, x]; // Green to teal
+	} else {
+		[r, g, b] = [0, x, c]; // Teal to blue
+	}
+	
+	// Convert to proper RGB range
+	const red = Math.round((r + m) * 255);
+	const green = Math.round((g + m) * 255);
+	const blue = Math.round((b + m) * 255);
+	
+	// Convert to hex
+	let color = (red << 16) | (green << 8) | blue;
+	
+	// If this is for a tetromino, make it slightly brighter
+	if (type === 'tetromino') {
+		// Extract the RGB components
+		const r = (color >> 16) & 0xFF;
+		const g = (color >> 8) & 0xFF;
+		const b = color & 0xFF;
+		
+		// Make brighter by increasing all components
+		const newR = Math.min(255, r + 40);
+		const newG = Math.min(255, g + 40);
+		const newB = Math.min(255, b + 40);
+		
+		color = (newR << 16) | (newG << 8) | newB;
+	}
+	
+	return color;
+}
+
+/**
+ * Debug function to test the adjacency check
+ * @param {Object} gameState - The current game state
+ * @param {boolean} logBoardState - Whether to log the current board state as well
+ * @returns {Object} - Debug information about adjacency checks
+ */
+function debugAdjacencyCheck(gameState, logBoardState = false) {
+	if (!gameState.currentTetromino) {
+		console.warn('No current tetromino to check adjacency for');
+		return { success: false, reason: 'no_tetromino' };
+	}
+	
+	// Get current tetromino data
+	const shape = gameState.currentTetromino.shape;
+	const posX = gameState.currentTetromino.position.x;
+	const posZ = gameState.currentTetromino.position.z;
+	
+	// Check if board is empty
+	const hasCells = gameState.board && 
+		gameState.board.cells && 
+		Object.keys(gameState.board.cells).length > 0;
+	
+	// Log board state if requested
+	if (logBoardState) {
+		console.log('Current board state:', {
+			hasCells,
+			cellCount: Object.keys(gameState.board?.cells || {}).length,
+			cells: gameState.board?.cells || {},
+			tetrominoPosition: { x: posX, z: posZ },
+			tetrominoShape: shape
+		});
+	}
+	
+	// Count occupied cells
+	const occupiedCells = Object.keys(gameState.board?.cells || {}).filter(key => {
+		const cell = gameState.board.cells[key];
+		return cell !== null && cell !== undefined;
+	});
+	
+	// Check each block in the tetromino
+	const adjacencyMap = [];
+	
+	for (let z = 0; z < shape.length; z++) {
+		for (let x = 0; x < shape[z].length; x++) {
+			if (shape[z][x] === 1) {
+				const blockX = posX + x;
+				const blockZ = posZ + z;
+				
+				// Check all 8 adjacent positions
+				const directions = [
+					{ dx: -1, dz: 0, name: 'Left' },
+					{ dx: 1, dz: 0, name: 'Right' },
+					{ dx: 0, dz: -1, name: 'Up' },
+					{ dx: 0, dz: 1, name: 'Down' },
+					{ dx: -1, dz: -1, name: 'TopLeft' },
+					{ dx: 1, dz: -1, name: 'TopRight' },
+					{ dx: -1, dz: 1, name: 'BottomLeft' },
+					{ dx: 1, dz: 1, name: 'BottomRight' }
+				];
+				
+				const blockAdjacency = {
+					position: { x: blockX, z: blockZ },
+					adjacentCells: []
+				};
+				
+				for (const dir of directions) {
+					const adjX = blockX + dir.dx;
+					const adjZ = blockZ + dir.dz;
+					const key = `${adjX},${adjZ}`;
+					
+					// Check if the adjacent cell contains a block
+					const hasCell = gameState.board?.cells && 
+						gameState.board.cells[key] !== undefined && 
+						gameState.board.cells[key] !== null;
+					
+					if (hasCell) {
+						blockAdjacency.adjacentCells.push({
+							direction: dir.name,
+							position: { x: adjX, z: adjZ },
+							cell: gameState.board.cells[key]
+						});
+					}
+				}
+				
+				adjacencyMap.push(blockAdjacency);
+			}
+		}
+	}
+	
+	// Final result
+	const isAdjacent = isTetrominoAdjacentToExistingCells(gameState, shape, posX, posZ);
+	
+	return {
+		success: true,
+		tetrominoPosition: { x: posX, z: posZ },
+		boardIsEmpty: !hasCells || occupiedCells.length === 0,
+		occupiedCellCount: occupiedCells.length,
+		adjacencyMap,
+		isAdjacent
+	};
+}
+
+/**
+ * Get adjacent cells at a given position
+ * @param {Object} gameState - The current game state
+ * @param {number} x - X coordinate
+ * @param {number} z - Z coordinate
+ * @returns {Array} Array of adjacent cells with their coordinates
+ */
+function getAdjacentCells(gameState, x, z) {
+	const adjacentCells = [];
+	
+	// Check all 8 adjacent positions
+	const directions = [
+		{ dx: -1, dz: 0, name: 'Left' },
+		{ dx: 1, dz: 0, name: 'Right' },
+		{ dx: 0, dz: -1, name: 'Up' },
+		{ dx: 0, dz: 1, name: 'Down' },
+		{ dx: -1, dz: -1, name: 'TopLeft' },
+		{ dx: 1, dz: -1, name: 'TopRight' },
+		{ dx: -1, dz: 1, name: 'BottomLeft' },
+		{ dx: 1, dz: 1, name: 'BottomRight' }
+	];
+	
+	for (const dir of directions) {
+		const adjX = x + dir.dx;
+		const adjZ = z + dir.dz;
+		const key = `${adjX},${adjZ}`;
+		
+		// Check if the adjacent cell exists in the board
+		if (gameState.board && gameState.board.cells && gameState.board.cells[key]) {
+			adjacentCells.push({
+				direction: dir.name,
+				position: { x: adjX, z: adjZ },
+				cell: gameState.board.cells[key]
+			});
+		}
+	}
+	
+	return adjacentCells;
+}
+
+/**
+ * Find a chess piece by ID or position
+ * @param {Object} gameState - The current game state
+ * @param {string|Object} identifier - Piece ID or position {x, z}
+ * @param {string} [playerId] - Optional player ID to filter by
+ * @returns {Object|null} The chess piece object or null if not found
+ */
+function findChessPiece(gameState, identifier, playerId) {
+	// Verify we have chess pieces to search
+	if (!gameState.chessPieces || !Array.isArray(gameState.chessPieces)) {
+		console.warn('No chess pieces found in game state');
+		return null;
+	}
+	
+	// Search based on type of identifier
+	if (typeof identifier === 'string') {
+		// Search by ID
+		const piece = gameState.chessPieces.find(p => 
+			p.id === identifier && (!playerId || p.player === playerId)
+		);
+		return piece || null;
+	} else if (typeof identifier === 'object' && identifier !== null) {
+		// Search by position
+		const x = identifier.x;
+		const z = identifier.z;
+		
+		if (x !== undefined && z !== undefined) {
+			const piece = gameState.chessPieces.find(p => 
+				p.position.x === x && p.position.z === z && 
+				(!playerId || p.player === playerId)
+			);
+			return piece || null;
+		}
+	}
+	
+	console.warn('Invalid identifier provided to findChessPiece');
+	return null;
+}
+
+/**
+ * Move a chess piece on the board
+ * @param {Object} gameState - The current game state
+ * @param {string|Object} pieceId - ID of the piece or the piece object itself
+ * @param {number} toX - Destination X coordinate
+ * @param {number} toZ - Destination Z coordinate
+ * @param {Function} [updateBoardVisuals] - Optional function to update the board visuals
+ * @returns {Object} Result of the move operation
+ */
+function moveChessPiece(gameState, pieceId, toX, toZ, updateBoardVisuals) {
+	// Find the piece (either by ID or directly use the object)
+	const piece = typeof pieceId === 'string' ? 
+		findChessPiece(gameState, pieceId) : pieceId;
+	
+	if (!piece) {
+		console.error(`Chess piece with ID ${pieceId} not found`);
+		return {
+			success: false,
+			error: 'Piece not found'
+		};
+	}
+	
+	// Get current position
+	const fromX = piece.position.x;
+	const fromZ = piece.position.z;
+	
+	// Check for valid move (simplistic validation - would be expanded)
+	if (fromX === toX && fromZ === toZ) {
+		return {
+			success: false,
+			error: 'Cannot move to the same position'
+		};
+	}
+	
+	// Check if destination is in bounds
+	const minX = gameState.boardBounds?.minX || 0;
+	const maxX = gameState.boardBounds?.maxX || 32;
+	const minZ = gameState.boardBounds?.minZ || 0;
+	const maxZ = gameState.boardBounds?.maxZ || 32;
+	
+	if (toX < minX || toX > maxX || toZ < minZ || toZ > maxZ) {
+		return {
+			success: false,
+			error: 'Destination is out of bounds'
+		};
+	}
+	
+	// Check if destination has a piece of the same player
+	const targetKey = `${toX},${toZ}`;
+	const targetCell = gameState.board?.cells?.[targetKey];
+	let capturedPiece = null;
+	
+	if (targetCell) {
+		// Check for chess piece in cell
+		const chessContent = extractCellContent(targetCell, 'chess');
+		
+		if (chessContent && chessContent.player === piece.player) {
+			return {
+				success: false,
+				error: 'Cannot capture your own piece'
+			};
+		}
+		
+		// We might be capturing an opponent's piece
+		if (chessContent) {
+			// Find the piece in the chessPieces array to remove it
+			const pieceIndex = gameState.chessPieces.findIndex(p => 
+				p.position.x === toX && p.position.z === toZ
+			);
+			
+			if (pieceIndex >= 0) {
+				capturedPiece = gameState.chessPieces[pieceIndex];
+				gameState.chessPieces.splice(pieceIndex, 1);
+			}
+		}
+	}
+	
+	// Update the piece's position
+	piece.position.x = toX;
+	piece.position.z = toZ;
+	piece.hasMoved = true;
+	
+	// Clear the old cell
+	const fromKey = `${fromX},${fromZ}`;
+	if (gameState.board?.cells?.[fromKey]) {
+		delete gameState.board.cells[fromKey];
+	}
+	
+	// Set the new cell
+	if (gameState.board?.cells) {
+		gameState.board.cells[targetKey] = {
+			type: 'chess',
+			player: piece.player,
+			pieceType: piece.type,
+			chessPiece: {
+				type: piece.type,
+				player: piece.player
+			}
+		};
+	}
+	
+	// Update visuals if function provided
+	if (typeof updateBoardVisuals === 'function') {
+		updateBoardVisuals();
+	}
+	
+	return {
+		success: true,
+		piece,
+		fromPosition: { x: fromX, z: fromZ },
+		toPosition: { x: toX, z: toZ },
+		capturedPiece
+	};
+}
+
+/**
+ * Build a 2D representation of the board for easier processing
+ * @param {Object} gameState - The current game state
+ * @returns {Array} 2D array representing the board
+ */
+function buildBoardRepresentation(gameState) {
+	if (!gameState.board || !gameState.board.cells) {
+		console.warn('No valid board data to build representation from');
+		return [];
+	}
+	
+	// Determine board boundaries
+	const minX = gameState.board.minX || 0;
+	const maxX = gameState.board.maxX || 32;
+	const minZ = gameState.board.minZ || 0;
+	const maxZ = gameState.board.maxZ || 32;
+	
+	// Create empty 2D array
+	const boardWidth = maxX - minX + 1;
+	const boardHeight = maxZ - minZ + 1;
+	const boardArray = Array(boardHeight).fill(null).map(() => Array(boardWidth).fill(null));
+	
+	// Fill in cells from the sparse representation
+	for (const key in gameState.board.cells) {
+		const [x, z] = key.split(',').map(Number);
+		
+		// Skip invalid coordinates
+		if (isNaN(x) || isNaN(z)) continue;
+		
+		// Adjust coordinates to 0-based array indices
+		const arrayX = x - minX;
+		const arrayZ = z - minZ;
+		
+		// Skip if out of bounds (shouldn't happen with properly calculated bounds)
+		if (arrayX < 0 || arrayX >= boardWidth || arrayZ < 0 || arrayZ >= boardHeight) continue;
+		
+		// Add the cell to the array
+		boardArray[arrayZ][arrayX] = gameState.board.cells[key];
+	}
+	
+	return boardArray;
+}
+
+/**
+ * Get valid move sets for a chess piece
+ * @param {Object} gameState - The current game state
+ * @param {Object} piece - The chess piece
+ * @returns {Array} Array of valid move positions {x, z}
+ */
+function getChessPieceMoveSets(gameState, piece) {
+	if (!piece || !piece.position) {
+		console.warn('Invalid piece provided to getChessPieceMoveSets');
+		return [];
+	}
+	
+	const validMoves = [];
+	const currentX = piece.position.x;
+	const currentZ = piece.position.z;
+	const pieceType = typeof piece.type === 'string' ? piece.type.toUpperCase() : 'PAWN';
+	
+	// Get board boundaries
+	const minX = gameState.boardBounds?.minX || 0;
+	const maxX = gameState.boardBounds?.maxX || 32;
+	const minZ = gameState.boardBounds?.minZ || 0;
+	const maxZ = gameState.boardBounds?.maxZ || 32;
+	
+	// Generate moves based on piece type
+	switch (pieceType) {
+		case 'KING':
+			// Kings move one square in any direction
+			for (let dz = -1; dz <= 1; dz++) {
+				for (let dx = -1; dx <= 1; dx++) {
+					if (dx === 0 && dz === 0) continue; // Skip the current position
+					
+					const toX = currentX + dx;
+					const toZ = currentZ + dz;
+					
+					// Check bounds
+					if (toX < minX || toX > maxX || toZ < minZ || toZ > maxZ) continue;
+					
+					// Check if destination has own piece
+					const key = `${toX},${toZ}`;
+					const targetCell = gameState.board?.cells?.[key];
+					const chessContent = targetCell ? extractCellContent(targetCell, 'chess') : null;
+					
+					if (chessContent && chessContent.player === piece.player) continue;
+					
+					validMoves.push({ x: toX, z: toZ });
+				}
+			}
+			break;
+			
+		case 'QUEEN':
+			// Queens combine rook and bishop movement
+			// Horizontal and vertical lines (like a rook)
+			addStraightLineMoves(gameState, piece, validMoves, [
+				{ dx: 1, dz: 0 },  // Right
+				{ dx: -1, dz: 0 },  // Left
+				{ dx: 0, dz: 1 },   // Down
+				{ dx: 0, dz: -1 }   // Up
+			]);
+			
+			// Diagonal lines (like a bishop)
+			addStraightLineMoves(gameState, piece, validMoves, [
+				{ dx: 1, dz: 1 },   // Down-right
+				{ dx: -1, dz: 1 },  // Down-left
+				{ dx: 1, dz: -1 },  // Up-right
+				{ dx: -1, dz: -1 }  // Up-left
+			]);
+			break;
+			
+		case 'ROOK':
+			// Rooks move in straight lines horizontally and vertically
+			addStraightLineMoves(gameState, piece, validMoves, [
+				{ dx: 1, dz: 0 },  // Right
+				{ dx: -1, dz: 0 },  // Left
+				{ dx: 0, dz: 1 },   // Down
+				{ dx: 0, dz: -1 }   // Up
+			]);
+			break;
+			
+		case 'BISHOP':
+			// Bishops move in straight diagonal lines
+			addStraightLineMoves(gameState, piece, validMoves, [
+				{ dx: 1, dz: 1 },   // Down-right
+				{ dx: -1, dz: 1 },  // Down-left
+				{ dx: 1, dz: -1 },  // Up-right
+				{ dx: -1, dz: -1 }  // Up-left
+			]);
+			break;
+			
+		case 'KNIGHT':
+			// Knights move in L-shape
+			const knightOffsets = [
+				{ dx: 2, dz: 1 }, { dx: 1, dz: 2 },
+				{ dx: -2, dz: 1 }, { dx: -1, dz: 2 },
+				{ dx: 2, dz: -1 }, { dx: 1, dz: -2 },
+				{ dx: -2, dz: -1 }, { dx: -1, dz: -2 }
+			];
+			
+			for (const offset of knightOffsets) {
+				const toX = currentX + offset.dx;
+				const toZ = currentZ + offset.dz;
+				
+				// Check bounds
+				if (toX < minX || toX > maxX || toZ < minZ || toZ > maxZ) continue;
+				
+				// Check if destination has own piece
+				const key = `${toX},${toZ}`;
+				const targetCell = gameState.board?.cells?.[key];
+				const chessContent = targetCell ? extractCellContent(targetCell, 'chess') : null;
+				
+				if (chessContent && chessContent.player === piece.player) continue;
+				
+				validMoves.push({ x: toX, z: toZ });
+			}
+			break;
+			
+		case 'PAWN':
+			// Pawns move forward one square, or diagonally to capture
+			// Note: This is simplified and assumes pawns move in +z direction
+			// Would need to adjust based on player direction in a real game
+			
+			const forward = 1; // Assume all pawns move in +z direction
+			
+			// Forward move
+			const forwardX = currentX;
+			const forwardZ = currentZ + forward;
+			
+			// Check if forward move is valid (must be empty)
+			if (forwardZ <= maxZ) {
+				const forwardKey = `${forwardX},${forwardZ}`;
+				const forwardCell = gameState.board?.cells?.[forwardKey];
+				
+				if (!forwardCell) {
+					validMoves.push({ x: forwardX, z: forwardZ });
+					
+					// First move can be two squares forward
+					if (!piece.hasMoved) {
+						const doubleForwardZ = currentZ + 2 * forward;
+						
+						if (doubleForwardZ <= maxZ) {
+							const doubleKey = `${forwardX},${doubleForwardZ}`;
+							const doubleCell = gameState.board?.cells?.[doubleKey];
+							
+							if (!doubleCell) {
+								validMoves.push({ x: forwardX, z: doubleForwardZ });
+							}
+						}
+					}
+				}
+			}
+			
+			// Diagonal captures
+			const captureOffsets = [
+				{ dx: -1, dz: forward },  // Capture left
+				{ dx: 1, dz: forward }    // Capture right
+			];
+			
+			for (const offset of captureOffsets) {
+				const captureX = currentX + offset.dx;
+				const captureZ = currentZ + offset.dz;
+				
+				// Check bounds
+				if (captureX < minX || captureX > maxX || captureZ < minZ || captureZ > maxZ) continue;
+				
+				// Check if destination has opponent's piece
+				const captureKey = `${captureX},${captureZ}`;
+				const captureCell = gameState.board?.cells?.[captureKey];
+				const chessContent = captureCell ? extractCellContent(captureCell, 'chess') : null;
+				
+				if (chessContent && chessContent.player !== piece.player) {
+					validMoves.push({ x: captureX, z: captureZ });
+				}
+			}
+			break;
+			
+		default:
+			console.warn(`Unknown piece type: ${pieceType}`);
+			break;
+	}
+	
+	return validMoves;
+}
+
+/**
+ * Helper function to add straight line moves for queens, rooks, and bishops
+ * @param {Object} gameState - The game state
+ * @param {Object} piece - The chess piece
+ * @param {Array} validMoves - Array to add valid moves to
+ * @param {Array} directions - Array of direction vectors
+ */
+function addStraightLineMoves(gameState, piece, validMoves, directions) {
+	const currentX = piece.position.x;
+	const currentZ = piece.position.z;
+	
+	// Get board boundaries
+	const minX = gameState.boardBounds?.minX || 0;
+	const maxX = gameState.boardBounds?.maxX || 32;
+	const minZ = gameState.boardBounds?.minZ || 0;
+	const maxZ = gameState.boardBounds?.maxZ || 32;
+	
+	// Check each direction
+	for (const dir of directions) {
+		let toX = currentX + dir.dx;
+		let toZ = currentZ + dir.dz;
+		
+		// Move in this direction until hitting a boundary or piece
+		while (toX >= minX && toX <= maxX && toZ >= minZ && toZ <= maxZ) {
+			const key = `${toX},${toZ}`;
+			const targetCell = gameState.board?.cells?.[key];
+			
+			if (targetCell) {
+				// Check if it's an opponent's piece (can capture)
+				const chessContent = extractCellContent(targetCell, 'chess');
+				
+				if (chessContent) {
+					if (chessContent.player !== piece.player) {
+						// Can capture opponent's piece
+						validMoves.push({ x: toX, z: toZ });
+					}
+					// Stop after hitting any piece
+					break;
+				} else {
+					// Non-chess cell content (like tetromino block)
+					// Many games would stop here, but let's allow movement onto tetromino blocks
+					validMoves.push({ x: toX, z: toZ });
+				}
+			} else {
+				// Empty square
+				validMoves.push({ x: toX, z: toZ });
+			}
+			
+			// Move to next square in this direction
+			toX += dir.dx;
+			toZ += dir.dz;
+		}
+	}
+}
+
+/**
+ * Select a chess piece for movement
+ * @param {Object} gameState - The current game state
+ * @param {string|Object} pieceId - ID of the piece or the piece object itself
+ * @param {Function} [updateBoardVisuals] - Optional function to update the board visuals
+ * @returns {Object} The selected piece or null if not found
+ */
+function selectChessPiece(gameState, pieceId, updateBoardVisuals) {
+	// Clear previous selection
+	clearSelection(gameState);
+	
+	// Find the piece
+	const piece = typeof pieceId === 'string' ? 
+		findChessPiece(gameState, pieceId) : pieceId;
+	
+	if (!piece) {
+		console.error(`Chess piece with ID ${pieceId} not found`);
+		return null;
+	}
+	
+	// Set as selected
+	gameState.selectedChessPiece = piece;
+	
+	// Calculate valid moves
+	gameState.validMoves = getChessPieceMoveSets(gameState, piece);
+	
+	// Update visuals if function provided
+	if (typeof updateBoardVisuals === 'function') {
+		updateBoardVisuals();
+	}
+	
+	return piece;
+}
+
+/**
+ * Move the currently selected chess piece
+ * @param {Object} gameState - The current game state
+ * @param {number} toX - Destination X coordinate
+ * @param {number} toZ - Destination Z coordinate
+ * @param {Function} [updateBoardVisuals] - Optional function to update the board visuals
+ * @returns {Object} Result of the move operation
+ */
+function moveSelectedChessPiece(gameState, toX, toZ, updateBoardVisuals) {
+	// Ensure a piece is selected
+	if (!gameState.selectedChessPiece) {
+		return {
+			success: false,
+			error: 'No chess piece selected'
+		};
+	}
+	
+	// Validate the move against validMoves
+	const isValidMove = gameState.validMoves &&
+		gameState.validMoves.some(move => move.x === toX && move.z === toZ);
+	
+	if (!isValidMove) {
+		return {
+			success: false,
+			error: 'Invalid move for this piece'
+		};
+	}
+	
+	// Move the piece
+	const result = moveChessPiece(gameState, gameState.selectedChessPiece, toX, toZ, updateBoardVisuals);
+	
+	// Clear selection after moving
+	if (result.success) {
+		clearSelection(gameState);
+	}
+	
+	return result;
+}
+
+/**
+ * Get all chess pieces for a specific player
+ * @param {Object} gameState - The current game state
+ * @param {string|number} playerId - The player ID
+ * @returns {Array} Array of the player's chess pieces
+ */
+function getPiecesForPlayer(gameState, playerId) {
+	if (!gameState.chessPieces || !Array.isArray(gameState.chessPieces)) {
+		console.warn('No chess pieces found in game state');
+		return [];
+	}
+	
+	// Filter pieces by player ID
+	const playerPieces = gameState.chessPieces.filter(piece => 
+		String(piece.player) === String(playerId)
+	);
+	
+	return playerPieces;
+}
+
+/**
+ * Clear the current piece selection
+ * @param {Object} gameState - The current game state
+ * @param {Function} [updateBoardVisuals] - Optional function to update the board visuals
+ */
+function clearSelection(gameState) {
+	gameState.selectedChessPiece = null;
+	gameState.validMoves = [];
+}
+
+/**
+ * Analyze all possible moves for a player
+ * @param {Object} gameState - The current game state
+ * @param {string|number} playerId - The player ID
+ * @returns {Object} Analysis of possible moves
+ */
+function analyzePossibleMoves(gameState, playerId) {
+	const playerPieces = getPiecesForPlayer(gameState, playerId);
+	
+	// Get all possible moves for all pieces
+	const allMoves = [];
+	const piecesWithMoves = [];
+	const piecesWithoutMoves = [];
+	const captureMoves = [];
+	
+	for (const piece of playerPieces) {
+		const moves = getChessPieceMoveSets(gameState, piece);
+		
+		if (moves.length > 0) {
+			piecesWithMoves.push(piece);
+			
+			// Add all moves with piece reference
+			for (const move of moves) {
+				allMoves.push({
+					piece,
+					move
+				});
+				
+				// Check if this is a capture move
+				const key = `${move.x},${move.z}`;
+				const targetCell = gameState.board?.cells?.[key];
+				const chessContent = targetCell ? extractCellContent(targetCell, 'chess') : null;
+				
+				if (chessContent && chessContent.player !== piece.player) {
+					captureMoves.push({
+						piece,
+						move,
+						targetPiece: chessContent
+					});
+				}
+			}
+		} else {
+			piecesWithoutMoves.push(piece);
+		}
+	}
+	
+	// Return analysis
+	return {
+		totalPieces: playerPieces.length,
+		piecesWithMoves: piecesWithMoves.length,
+		piecesWithoutMoves: piecesWithoutMoves.length,
+		totalPossibleMoves: allMoves.length,
+		possibleCaptures: captureMoves.length,
+		allMoves,
+		captureMoves,
+		movablePieces: piecesWithMoves,
+		immobilePieces: piecesWithoutMoves
+	};
+}
+
+/**
+ * Check if a player can capture any opponent pieces
+ * @param {Object} gameState - The current game state
+ * @param {string|number} playerId - The player ID
+ * @returns {boolean} True if the player can capture at least one opponent piece
+ */
+function canCaptureOpponentPiece(gameState, playerId) {
+	const analysis = analyzePossibleMoves(gameState, playerId);
+	return analysis.possibleCaptures > 0;
+}
+
 // Export all functions as a module
 export const boardFunctions = {
-	createRandomTetromino,
-	renderTetromino,
-	handleTetrisPhaseClick,
 	isValidTetrominoPosition,
 	placeTetromino,
 	isTetrominoAdjacentToExistingCells,
 	checkTetrominoCollision,
 	updateBoardCell,
-	createBoardCells,
-	findPlayerKingPosition,
-	createChessPiece,
 	extractCellContent,
-	addChessPiece
+	createBoardCells,
+	createRandomTetromino,
+	renderTetromino,
+	handleTetrisPhaseClick,
+	createChessPiece,
+	addChessPiece,
+	extractChessPiecesFromCells,
+	getPlayerColor,
+	renderBoard,
+	getAdjacentCells,
+	findChessPiece,
+	moveChessPiece,
+	buildBoardRepresentation,
+	getChessPieceMoveSets,
+	selectChessPiece,
+	moveSelectedChessPiece,
+	getPiecesForPlayer,
+	clearSelection,
+	analyzePossibleMoves,
+	canCaptureOpponentPiece,
+	debugAdjacencyCheck
 };
+
+
+export default boardFunctions;

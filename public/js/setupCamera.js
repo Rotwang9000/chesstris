@@ -1,4 +1,4 @@
-import { THREE } from './enhanced-gameCore';
+import { getTHREE } from './enhanced-gameCore';
 import * as NetworkManager from './utils/networkManager';
 
 /**
@@ -8,6 +8,7 @@ import * as NetworkManager from './utils/networkManager';
  * @param {THREE.WebGLRenderer} renderer - The renderer being used
  */
 export function setupCamera(camera, controls, renderer) {
+	const THREE = getTHREE();
 	if (!camera) {
 		console.error('Cannot setup camera: camera is undefined');
 		return;
@@ -69,6 +70,7 @@ export function setupCamera(camera, controls, renderer) {
  * @param {boolean} forceImmediate - Whether to force immediate repositioning
  */
 export function resetCameraForGameplay(renderer, camera, controls, gameState, scene, animate = true, forceImmediate = false) {
+	const THREE = getTHREE();
 	console.log('Resetting camera for gameplay view');
 
 	// Validate required parameters
@@ -113,9 +115,74 @@ export function resetCameraForGameplay(renderer, camera, controls, gameState, sc
 	// Get player ID
 	const playerId = typeof NetworkManager !== 'undefined' && NetworkManager.getPlayerId ? 
 		NetworkManager.getPlayerId() : null;
-
-	// If we have home zones data and playerId, position based on player's home zone
-	if (playerId && gameState && gameState.homeZones && Object.keys(gameState.homeZones).length > 0) {
+	
+	// First priority: Try to find the player's king
+	if (playerId && gameState && gameState.chessPieces && gameState.chessPieces.length > 0) {
+		// Find all pieces belonging to the player
+		const playerPieces = gameState.chessPieces.filter(
+			piece => String(piece.player) === String(playerId)
+		);
+		
+		if (playerPieces.length > 0) {
+			// Find the king, or use any piece if king not found
+			const kingPiece = playerPieces.find(piece => 
+				piece.type === 'KING' || piece.type === 'king'
+			) || playerPieces[0];
+			
+			if (kingPiece && kingPiece.position) {
+				console.log('Positioning camera based on player king:', kingPiece);
+				
+				// Get king position and orientation
+				const position = kingPiece.position;
+				const orientation = kingPiece.orientation || 0;
+				
+				// Calculate camera offset based on orientation
+				let offsetX = 0;
+				let offsetZ = 0;
+				
+				switch(orientation) {
+					case 0: // Facing positive Z
+						offsetX = 0;
+						offsetZ = -15;
+						break;
+					case 1: // Facing negative X
+						offsetX = 15;
+						offsetZ = 0;
+						break;
+					case 2: // Facing negative Z
+						offsetX = 0;
+						offsetZ = 15;
+						break;
+					case 3: // Facing positive X
+						offsetX = -15;
+						offsetZ = 0;
+						break;
+					default:
+						offsetX = 0;
+						offsetZ = -15;
+				}
+				
+				// Set target position and look at based on king
+				targetPosition = {
+					x: position.x + offsetX,
+					y: 25, // Higher elevation for better view
+					z: position.z + offsetZ
+				};
+				
+				lookAt = {
+					x: position.x,
+					y: 0,
+					z: position.z
+				};
+				
+				console.log('Camera will move to king-based position:', targetPosition, 'looking at:', lookAt);
+			}
+		}
+	}
+	
+	// Second priority: If no king found, try home zones
+	if ((targetPosition.x === 20 && targetPosition.z === 20) && // Only if default position wasn't changed
+		playerId && gameState && gameState.homeZones && Object.keys(gameState.homeZones).length > 0) {
 		// Find the player's home zone
 		let homeZone = null;
 		for (const [id, zone] of Object.entries(gameState.homeZones)) {
@@ -132,7 +199,7 @@ export function resetCameraForGameplay(renderer, camera, controls, gameState, sc
 
 		// If home zone found, position camera based on it
 		if (homeZone) {
-			console.log('Positioning camera based on home zone:', homeZone);
+			console.log('Positioning camera based on home zone!:', homeZone);
 
 			// Use cell coordinates directly as they match the board grid
 			const homeX = homeZone.x !== undefined ? homeZone.x : 0;
@@ -158,7 +225,7 @@ export function resetCameraForGameplay(renderer, camera, controls, gameState, sc
 				z: centerZ
 			};
 
-			console.log('Camera will move to:', targetPosition, 'looking at:', lookAt);
+			console.log('Camera will move to home zone-based position:', targetPosition, 'looking at:', lookAt);
 		}
 	}
 
@@ -239,7 +306,7 @@ export function resetCameraForGameplay(renderer, camera, controls, gameState, sc
 /**
  * Position camera based on home zone data
  */
-export function resetCameraBasedOnHomeZone(camera, controls, gameState) {
+export function resetCameraBasedOnHomeZone(camera, controls, gameState, renderer, scene) {
 	if (!camera || !controls) return;
 
 	// Default position in case we can't find home zone
@@ -286,7 +353,7 @@ export function resetCameraBasedOnHomeZone(camera, controls, gameState) {
 	}
 
 	// Animate camera movement
-	animateCamera(camera, controls, targetPosition, lookAt);
+	animateCamera(camera, controls, targetPosition, lookAt, renderer, scene);
 }
 
 /**
@@ -299,7 +366,7 @@ export function positionCameraDefault() {
 	const lookAt = { x: 0, y: 0, z: 0 };
 
 	// Animate camera movement
-	animateCamera(camera, controls, targetPosition, lookAt);
+	animateCamera(camera, controls, targetPosition, lookAt, renderer, scene);
 }
 
 /**
@@ -307,7 +374,7 @@ export function positionCameraDefault() {
  * @param {Object} targetPosition - Target camera position
  * @param {Object} lookAt - Target look-at point
  */
-export function animateCamera(camera, controls, targetPosition, lookAt) {
+export function animateCamera(camera, controls, targetPosition, lookAt, renderer, scene) {
 	// Get current position
 	const startPosition = {
 		x: camera.position.x,
@@ -385,16 +452,63 @@ export function moveToPlayerZone(camera, controls, gameState, renderer, scene) {
 
 	// Move camera to focus on that position
 	if (camera && controls && position) {
-		// Calculate target position
-		const targetX = position.x - gameState.board.centreMarker.x;
-		const targetZ = position.z - gameState.board.centreMarker.z;
-
-		// Set camera position
-		controls.target.set(targetX, 0, targetZ);
-		camera.position.set(targetX, 15, targetZ + 15);
+		// Get king orientation to determine camera offset direction
+		const orientation = kingPiece.orientation || 0;
+		
+		// Calculate the camera offset based on orientation
+		// Position camera behind the king, looking forward
+		let offsetX = 0;
+		let offsetZ = 0;
+		
+		// Default offset values create a camera position behind the king
+		// This creates a 45-degree angle looking at the board from player's perspective
+		switch(orientation) {
+			case 0: // Facing positive Z
+				offsetX = 0;
+				offsetZ = -15; // Camera behind, looking forward
+				break;
+			case 1: // Facing negative X
+				offsetX = 15; // Camera to the right
+				offsetZ = 0;
+				break;
+			case 2: // Facing negative Z
+				offsetX = 0;
+				offsetZ = 15; // Camera in front, looking back
+				break;
+			case 3: // Facing positive X
+				offsetX = -15; // Camera to the left
+				offsetZ = 0;
+				break;
+			default:
+				// Default case if orientation is unknown
+				offsetX = 0;
+				offsetZ = -15;
+		}
+		
+		// Calculate final camera position with height for better view
+		const cameraHeight = 25;
+		
+		console.log('Moving camera to view king at position:', position, 
+			'orientation:', orientation, 
+			'with offsets:', { x: offsetX, z: offsetZ, y: cameraHeight });
+		
+		// Set camera target to king position
+		controls.target.set(position.x, 0, position.z);
+		
+		// Position camera at offset from king with height
+		camera.position.set(
+			position.x + offsetX, 
+			cameraHeight, 
+			position.z + offsetZ
+		);
 
 		// Update controls
 		controls.update();
+		
+		// Force a render
+		if (renderer && scene) {
+			renderer.render(scene, camera);
+		}
 	}
 }
 

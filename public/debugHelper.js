@@ -280,7 +280,6 @@ export function enhanceErrorPage(errorElement, message) {
         <div style="margin-top: 20px;">
             <a href="?minimal=true&diagnostics=true">Try with Minimal Core</a>
             <a href="?minimal=true&diagnostics=true&test=true">Run Render Test</a>
-            <a href="minimal.html">Go to Minimal Page</a>
         </div>
         <button onclick="window.location.reload()">Reload</button>
     `;
@@ -293,9 +292,7 @@ export function enhanceErrorPage(errorElement, message) {
  * @returns {string} Module path
  */
 export function getModulePath() {
-    if (debugSettings.useMinimalCore) {
-        return './js/minimal-gameCore.js';
-    } else {
+
         return './js/main.js';
-    }
+    
 }

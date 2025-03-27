@@ -68,81 +68,35 @@ function generateRandomColor() {
 }
 
 /**
- * Find a valid position for a home zone using a spiral pattern
+ * Find a position for a player's home zone
  * @param {Object} game - The game object
- * @returns {Object} Home zone position, width and height
+ * @returns {Object|null} Home zone position or null if not found
  */
 function findHomeZonePosition(game) {
-	const { HOME_ZONE_WIDTH, HOME_ZONE_HEIGHT, HOME_ZONE_DISTANCE, SPIRAL_DIRECTIONS } = require('./Constants').BOARD_SETTINGS;
+	// Import the BoardGenerator module that has our improved home zone placement logic
+	const BoardGenerator = require('../boardGenerator');
+	const { HOME_ZONE_WIDTH, HOME_ZONE_HEIGHT } = require('./Constants').BOARD_SETTINGS;
 	
-	// If this is the first player, place at the center of the board
-	if (Object.keys(game.homeZones).length === 0) {
-		const centerX = Math.floor(game.board.width / 2) - Math.floor(HOME_ZONE_WIDTH / 2);
-		const centerZ = Math.floor(game.board.height / 2) - Math.floor(HOME_ZONE_HEIGHT / 2);
-		
-		// With sparse board structure, we don't need to expand for the first player
-		// The board will automatically accommodate cells at any position
-		return {
-			x: centerX,
-			z: centerZ,
-			width: HOME_ZONE_WIDTH,
-			height: HOME_ZONE_HEIGHT
-		};
-	}
+	// Get the playerIndex based on the number of existing home zones
+	const playerIndex = Object.keys(game.homeZones).length;
 	
-	// For subsequent players, place in a spiral pattern
-	// Get all existing home zones from the game.homeZones object
-	const homeZones = Object.values(game.homeZones);
+	// Use the improved calculateHomePosition function from BoardGenerator
+	// No longer pass board width and height as we're using a boundless board model
+	const homePosition = BoardGenerator.calculateHomePosition(
+		playerIndex, 
+		game, 
+		HOME_ZONE_WIDTH, 
+		HOME_ZONE_HEIGHT
+	);
 	
-	// Calculate the direction index based on number of home zones
-	const directionIndex = homeZones.length % SPIRAL_DIRECTIONS.length;
-	const direction = SPIRAL_DIRECTIONS[directionIndex];
-	
-	// Get the last home zone
-	const lastHomeZone = homeZones[homeZones.length - 1];
-	
-	// Guard against undefined home zone
-	if (!lastHomeZone) {
-		log('Warning: Last home zone is undefined, falling back to center position');
-		return findHomeZonePosition({...game, homeZones: {}}); // Force first player placement
-	}
-	
-	// Calculate the center of the last home zone
-	const lastHomeX = lastHomeZone.x + Math.floor(lastHomeZone.width / 2);
-	const lastHomeZ = lastHomeZone.z + Math.floor(lastHomeZone.height / 2);
-	
-	// Move in the current direction by HOME_ZONE_DISTANCE
-	const newCenterX = lastHomeX + (direction.x * HOME_ZONE_DISTANCE);
-	const newCenterZ = lastHomeZ + (direction.z * HOME_ZONE_DISTANCE);
-	
-	// Adjust to get the top-left corner of the new home zone
-	let newHomeX, newHomeZ;
-	
-	// Adjust home zone orientation based on direction
-	if (direction.x !== 0) {
-		// Horizontal direction (right/left) - place as a horizontal zone
-		newHomeX = newCenterX - Math.floor(HOME_ZONE_WIDTH / 2);
-		newHomeZ = newCenterZ - Math.floor(HOME_ZONE_HEIGHT / 2);
-		
-		return {
-			x: newHomeX >= 0 ? newHomeX : 0,
-			z: newHomeZ >= 0 ? newHomeZ : 0,
-			width: HOME_ZONE_WIDTH,
-			height: HOME_ZONE_HEIGHT
-		};
-	} else {
-		// Vertical direction (up/down) - place as a vertical zone by swapping dimensions
-		newHomeX = newCenterX - Math.floor(HOME_ZONE_HEIGHT / 2);
-		newHomeZ = newCenterZ - Math.floor(HOME_ZONE_WIDTH / 2);
-		
-		// Return with swapped width and height for vertical zones
-		return {
-			x: newHomeX >= 0 ? newHomeX : 0,
-			z: newHomeZ >= 0 ? newHomeZ : 0,
-			width: HOME_ZONE_HEIGHT,
-			height: HOME_ZONE_WIDTH
-		};
-	}
+	// Return the home zone with the correct dimensions
+	return {
+		x: homePosition.x,
+		z: homePosition.z,
+		width: HOME_ZONE_WIDTH,
+		height: HOME_ZONE_HEIGHT,
+		orientation: homePosition.orientation
+	};
 }
 
 /**

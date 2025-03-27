@@ -1,4 +1,4 @@
-import { highlightPlayerPieces, removePlayerPiecesHighlight } from './updateChessPieces';
+import { highlightPlayerPieces, removePlayerPiecesHighlight } from './pieceHighlightManager';
 
 /**
  * Create a player bar to display player information
@@ -124,7 +124,8 @@ export function createPlayerBar(gameState) {
 					isCurrentTurn: playerId === gameState.currentPlayer,
 					score: player.score || 0
 				},
-				playerId === gameState.localPlayerId
+				playerId === gameState.localPlayerId,
+				gameState
 			);
 		});
 	} else {
@@ -151,7 +152,7 @@ export function createPlayerBar(gameState) {
  * @param {Object} colorInfo - Player color and turn information
  * @param {boolean} isLocalPlayer - Whether this is the local player
  */
-function addPlayerToBar(playerBar, playerId, playerName, colorInfo, isLocalPlayer) {
+function addPlayerToBar(playerBar, playerId, playerName, colorInfo, isLocalPlayer, gameState) {
 	// Get or create the player container
 	let playerContainer = document.getElementById('player-container');
 	if (!playerContainer) {
@@ -307,8 +308,15 @@ function addPlayerToBar(playerBar, playerId, playerName, colorInfo, isLocalPlaye
 		removePlayerPiecesHighlight();
 	});
 }
+
+// Add change detection
+let lastPlayerDataHash = '';
+let lastPlayerUpdateReason = '';
+let forcedPlayerUpdateCounter = 0;
+
 /**
- * Update the player bar with current game state
+ * Update the player bar with current player information
+ * @param {Object} gameState - Current game state
  */
 export function updatePlayerBar(gameState) {
 	// Check if player bar exists, if not create it
@@ -318,6 +326,45 @@ export function updatePlayerBar(gameState) {
 		return;
 	}
 	
+	// Check if player data has actually changed
+	// Generate a simple hash of current player data
+	let currentHash = '';
+	if (gameState.players) {
+		currentHash = Object.keys(gameState.players).map(playerId => {
+			const player = gameState.players[playerId];
+			if (!player) return '';
+			// Include essential properties that would require a visual update
+			return `${playerId}-${player.name || ''}-${player.score || 0}-${player.isActive ? 1 : 0}-${player.isCurrentPlayer ? 1 : 0}`;
+		}).sort().join('|');
+		
+		// Add current player and phase to the hash
+		currentHash += `|currentPlayer:${gameState.currentPlayer}|phase:${gameState.turnPhase}`;
+	}
+	
+	// Force update every 20 intervals (about 5 seconds) even without changes
+	const forcedUpdate = (++forcedPlayerUpdateCounter >= 20);
+	
+	// Skip update if nothing changed and this isn't a forced update
+	if (currentHash === lastPlayerDataHash && !forcedUpdate) {
+		return;
+	}
+	
+	// Track update reason
+	if (forcedUpdate) {
+		forcedPlayerUpdateCounter = 0;
+		lastPlayerUpdateReason = 'forced periodic update';
+	} else if (currentHash !== lastPlayerDataHash) {
+		lastPlayerUpdateReason = 'player data changed';
+		// Update hash
+		lastPlayerDataHash = currentHash;
+	}
+	
+	// Log only when debug mode is enabled or for first run
+	if (gameState.debugMode) {
+		console.log(`Updating player bar (reason: ${lastPlayerUpdateReason})`);
+	}
+	
+	// Continue with player bar update since there are changes
 	// Get the player container
 	const playerContainer = document.getElementById('player-container');
 	if (!playerContainer) return;
@@ -339,7 +386,8 @@ export function updatePlayerBar(gameState) {
 					isCurrentTurn: playerId === gameState.currentPlayer,
 					score: player.score || 0
 				},
-				playerId === gameState.localPlayerId
+				playerId === gameState.localPlayerId,
+				gameState
 			);
 		});
 	} else {

@@ -7,7 +7,7 @@
  */
 
 import { getTHREE } from './enhanced-gameCore.js';
-const THREE = getTHREE();
+
 
 // Global scaling factor for all chess pieces
 const PIECE_SCALE = 1.5; // 50% larger than original
@@ -40,9 +40,44 @@ const ENHANCED_MATERIALS = {
 	}
 };
 
+/**
+ * Helper function to create safe materials that won't cause errors
+ * @param {string} materialKey - Material key ('self' or 'other')
+ * @returns {Object} Object with primary, secondary, and accent materials
+ */
+function createSafeMaterials(materialKey) {
+	const THREE = getTHREE();
+	
+	// Default color for this player type
+	const defaultColor = DEFAULT_COLORS[materialKey] || 0xCCCCCC;
+	
+	// Get materials for this player or create new ones
+	const materials = ENHANCED_MATERIALS[materialKey] || {
+		primary: new THREE.MeshStandardMaterial({ color: defaultColor, roughness: 0.7, metalness: 0.3 }),
+		secondary: new THREE.MeshStandardMaterial({ color: defaultColor, roughness: 0.7, metalness: 0.3 }),
+		accent: new THREE.MeshStandardMaterial({ color: defaultColor, roughness: 0.7, metalness: 0.3 })
+	};
+	
+	// Ensure all materials are valid objects
+	for (const key in materials) {
+		// If material isn't an object, create a new one
+		if (typeof materials[key] !== 'object' || materials[key] === null) {
+			// Use the value as a color if it's a number
+			const color = typeof materials[key] === 'number' ? materials[key] : defaultColor;
+			materials[key] = new THREE.MeshStandardMaterial({ 
+				color: color,
+				roughness: 0.7, 
+				metalness: 0.3 
+			});
+		}
+	}
+	
+	return materials;
+}
 
 // Initialize materials when first needed (prevent THREE not being defined issues)
 function initMaterials() {
+	const THREE = getTHREE();
 	if (ENHANCED_MATERIALS.self.primary !== null) return; // Already initialized
 	
 	// Local player - Red theme
@@ -138,10 +173,11 @@ export function registerCustomModel(player, pieceType, modelObject) {
  * @param {number} z - Z coordinate on the board
  * @param {string|number} pieceType - Type of piece (PAWN, ROOK, etc. or numeric 1-6)
  * @param {number|string} player - Player identifier (1 or 2)
- * @param {Object} orientation - Optional orientation parameters
+ * @param {Object} options - Optional parameters including orientation, color, and isLocalPlayer
  * @returns {Object} THREE.Group containing the piece
  */
-export function createChessPiece(gameState, x, z, pieceType, player, orientation = {}) {
+export function createChessPiece(gameState, x, z, pieceType, player, options = {}) {
+	const THREE = getTHREE();
 	// Normalize inputs
 	const pieceTypeNum = typeof pieceType === 'string' 
 		? PIECE_TYPE_MAP[pieceType] || 1 
@@ -152,8 +188,13 @@ export function createChessPiece(gameState, x, z, pieceType, player, orientation
 	// Convert player ID to number if it's a string
 	const playerNum = parseInt(player, 10) || 1;
 	
-	// Determine if this is the local player
-	const isLocalPlayer = gameState.localPlayerId === playerNum;
+	// Determine if this is the local player (either from options or gameState)
+	const isLocalPlayer = options.isLocalPlayer !== undefined 
+		? options.isLocalPlayer 
+		: (gameState.localPlayerId === playerNum || gameState.myPlayerId === playerNum);
+	
+	// Use provided custom color if available, otherwise default
+	const customColor = options.color;
 	
 	// Material key to use - 'self' for local player, 'other' for opponents
 	const materialKey = isLocalPlayer ? 'self' : 'other';
@@ -185,13 +226,25 @@ export function createChessPiece(gameState, x, z, pieceType, player, orientation
 				if (child.isMesh) {
 					child.visible = true;
 					
-					// If the mesh doesn't have a material, create one
-					if (!child.material) {
-						child.material = new THREE.MeshStandardMaterial({
-							color: DEFAULT_COLORS[materialKey],
-							roughness: 0.7,
-							metalness: 0.3
-						});
+					// If custom color is provided, apply it to the materials
+					if (customColor !== undefined) {
+						if (!child.material) {
+							child.material = new THREE.MeshStandardMaterial({
+								color: customColor,
+								roughness: 0.7,
+								metalness: 0.3
+							});
+						} else if (Array.isArray(child.material)) {
+							// Apply to all materials in the array
+							for (let i = 0; i < child.material.length; i++) {
+								if (child.material[i]) {
+									child.material[i].color.setHex(customColor);
+								}
+							}
+						} else {
+							// Apply to single material
+							child.material.color.setHex(customColor);
+						}
 					}
 					
 					// Add shadows for custom models
@@ -206,27 +259,62 @@ export function createChessPiece(gameState, x, z, pieceType, player, orientation
 			// No custom model available - create a Russian-themed geometric piece
 			let pieceMesh;
 			
-			// Create different geometry based on piece type
-			switch (pieceTypeNum) {
-				case 6: // KING
-					pieceMesh = createRussianKingPiece(materialKey, isLocalPlayer);
-					break;
-				case 5: // QUEEN
-					pieceMesh = createRussianQueenPiece(materialKey, isLocalPlayer);
-					break;
-				case 4: // BISHOP
-					pieceMesh = createRussianBishopPiece(materialKey, isLocalPlayer);
-					break;
-				case 3: // KNIGHT
-					pieceMesh = createRussianKnightPiece(materialKey, isLocalPlayer);
-					break;
-				case 2: // ROOK
-					pieceMesh = createRussianRookPiece(materialKey, isLocalPlayer);
-					break;
-				case 1: // PAWN
-				default:
-					pieceMesh = createRussianPawnPiece(materialKey, isLocalPlayer);
-					break;
+			// Use custom color if provided
+			if (customColor !== undefined) {
+				// Initialize materials if not already done
+				initMaterials();
+				
+				// Temporarily override the material colors for this piece
+				const tempMaterials = createSafeMaterials(materialKey);
+				tempMaterials.primary.color.setHex(customColor);
+				tempMaterials.secondary.color.setHex(customColor);
+				tempMaterials.accent.color.setHex(customColor);
+				
+				// Create piece with custom colors
+				switch (pieceTypeNum) {
+					case 6: // KING
+						pieceMesh = createRussianKingPiece(materialKey, isLocalPlayer, tempMaterials);
+						break;
+					case 5: // QUEEN
+						pieceMesh = createRussianQueenPiece(materialKey, isLocalPlayer, tempMaterials);
+						break;
+					case 4: // BISHOP
+						pieceMesh = createRussianBishopPiece(materialKey, isLocalPlayer, tempMaterials);
+						break;
+					case 3: // KNIGHT
+						pieceMesh = createRussianKnightPiece(materialKey, isLocalPlayer, tempMaterials);
+						break;
+					case 2: // ROOK
+						pieceMesh = createRussianRookPiece(materialKey, isLocalPlayer, tempMaterials);
+						break;
+					case 1: // PAWN
+					default:
+						pieceMesh = createRussianPawnPiece(materialKey, isLocalPlayer, tempMaterials);
+						break;
+				}
+			} else {
+				// Create using standard colors
+				switch (pieceTypeNum) {
+					case 6: // KING
+						pieceMesh = createRussianKingPiece(materialKey, isLocalPlayer);
+						break;
+					case 5: // QUEEN
+						pieceMesh = createRussianQueenPiece(materialKey, isLocalPlayer);
+						break;
+					case 4: // BISHOP
+						pieceMesh = createRussianBishopPiece(materialKey, isLocalPlayer);
+						break;
+					case 3: // KNIGHT
+						pieceMesh = createRussianKnightPiece(materialKey, isLocalPlayer);
+						break;
+					case 2: // ROOK
+						pieceMesh = createRussianRookPiece(materialKey, isLocalPlayer);
+						break;
+					case 1: // PAWN
+					default:
+						pieceMesh = createRussianPawnPiece(materialKey, isLocalPlayer);
+						break;
+				}
 			}
 			
 			// Make sure the piece is visible
@@ -236,6 +324,13 @@ export function createChessPiece(gameState, x, z, pieceType, player, orientation
 			pieceGroup.add(pieceMesh);
 		}
 		
+		// Apply orientation if provided in options - rotate around Y axis for horizontal orientation
+		if (options.orientation !== undefined) {
+			// Convert orientation (0-3) to rotation around Y axis
+			const yRotation = (options.orientation * Math.PI / 2);
+			pieceGroup.rotation.y = yRotation;
+		}
+		
 		// Add metadata to the group for easier identification and interaction
 		pieceGroup.userData = {
 			type: 'chess',
@@ -243,33 +338,27 @@ export function createChessPiece(gameState, x, z, pieceType, player, orientation
 			pieceTypeNum: pieceTypeNum,
 			player: playerNum,
 			position: { x, z },
-			originalPosition: { x, z }
+			originalPosition: { x, z },
+			color: customColor
 		};
 		
 		// Ensure piece is visible
 		pieceGroup.visible = true;
-		
-		// Apply any specified orientation
-		if (orientation.rotationY) {
-			pieceGroup.rotation.y = orientation.rotationY;
-		}
-		
-		// NOTE: We intentionally don't set the position here
-		// The calling function should handle positioning relative to the board center
 		
 		return pieceGroup;
 	} catch (error) {
 		console.error('Error creating chess piece:', error);
 		
 		// Create a simple fallback piece so something is visible
-		const fallbackGeometry = new THREE.SphereGeometry(0.3, 8, 8);
+		const fallbackGeometry = new THREE.BoxGeometry(0.5, 0.8, 0.5);
 		const fallbackMaterial = new THREE.MeshStandardMaterial({ 
-			color: 0xFF0000,  // Bright red to indicate an error
-			emissive: 0xFF0000,
+			color: customColor || (isLocalPlayer ? DEFAULT_COLORS.self : DEFAULT_COLORS.other),
+			emissive: customColor || (isLocalPlayer ? DEFAULT_COLORS.self : DEFAULT_COLORS.other),
 			emissiveIntensity: 0.5
 		});
 		
 		const fallbackPiece = new THREE.Mesh(fallbackGeometry, fallbackMaterial);
+		fallbackPiece.position.y = 0.4; // Position the fallback piece above the board
 		
 		// Create a group for the fallback piece
 		const fallbackGroup = new THREE.Group();
@@ -282,7 +371,8 @@ export function createChessPiece(gameState, x, z, pieceType, player, orientation
 			pieceTypeNum: pieceTypeNum,
 			player: playerNum,
 			position: { x, z },
-			isErrorFallback: true
+			isErrorFallback: true,
+			color: customColor
 		};
 		
 		fallbackGroup.visible = true;
@@ -294,17 +384,15 @@ export function createChessPiece(gameState, x, z, pieceType, player, orientation
  * Create a Russian-styled pawn piece
  * @param {string} materialKey - Material key ('self' or 'other')
  * @param {boolean} isLocalPlayer - Whether this is the local player's piece (for enhanced visuals)
+ * @param {Object} customMaterials - Optional custom materials to use
  * @returns {THREE.Group} The chess piece mesh group
  */
-function createRussianPawnPiece(materialKey, isLocalPlayer) {
+function createRussianPawnPiece(materialKey, isLocalPlayer, customMaterials = null) {
+	const THREE = getTHREE();
 	const group = new THREE.Group();
 	
-	// Get materials for this player
-	const materials = ENHANCED_MATERIALS[materialKey] || {
-		primary: new THREE.MeshStandardMaterial({ color: DEFAULT_COLORS[materialKey], roughness: 0.7, metalness: 0.3 }),
-		secondary: new THREE.MeshStandardMaterial({ color: DEFAULT_COLORS[materialKey], roughness: 0.7, metalness: 0.3 }),
-		accent: new THREE.MeshStandardMaterial({ color: DEFAULT_COLORS[materialKey], roughness: 0.7, metalness: 0.3 })
-	};
+	// Get materials - use custom if provided, otherwise use default
+	const materials = customMaterials || createSafeMaterials(materialKey);
 	
 	// Base
 	const baseGeometry = new THREE.CylinderGeometry(0.20, 0.25, 0.10, isLocalPlayer ? 16 : 12);
@@ -348,17 +436,15 @@ function createRussianPawnPiece(materialKey, isLocalPlayer) {
  * Create a Russian-styled rook piece
  * @param {string} materialKey - Material key ('self' or 'other')
  * @param {boolean} isLocalPlayer - Whether this is the local player's piece (for enhanced visuals)
+ * @param {Object} customMaterials - Optional custom materials to use
  * @returns {THREE.Group} The chess piece mesh group
  */
-function createRussianRookPiece(materialKey, isLocalPlayer) {
+function createRussianRookPiece(materialKey, isLocalPlayer, customMaterials = null) {
+	const THREE = getTHREE();
 	const group = new THREE.Group();
 	
-	// Get materials for this player
-	const materials = ENHANCED_MATERIALS[materialKey] || {
-		primary: new THREE.MeshStandardMaterial({ color: DEFAULT_COLORS[materialKey], roughness: 0.7, metalness: 0.3 }),
-		secondary: new THREE.MeshStandardMaterial({ color: DEFAULT_COLORS[materialKey], roughness: 0.7, metalness: 0.3 }),
-		accent: new THREE.MeshStandardMaterial({ color: DEFAULT_COLORS[materialKey], roughness: 0.7, metalness: 0.3 })
-	};
+	// Get materials - use custom if provided, otherwise use default
+	const materials = customMaterials || createSafeMaterials(materialKey);
 	
 	// Base
 	const baseGeometry = new THREE.CylinderGeometry(0.22, 0.25, 0.15, isLocalPlayer ? 16 : 12);
@@ -440,17 +526,15 @@ function createRussianRookPiece(materialKey, isLocalPlayer) {
  * Create a Russian-styled knight piece
  * @param {string} materialKey - Material key ('self' or 'other')
  * @param {boolean} isLocalPlayer - Whether this is the local player's piece (for enhanced visuals)
+ * @param {Object} customMaterials - Optional custom materials to use
  * @returns {THREE.Group} The chess piece mesh group
  */
-function createRussianKnightPiece(materialKey, isLocalPlayer) {
+function createRussianKnightPiece(materialKey, isLocalPlayer, customMaterials = null) {
+	const THREE = getTHREE();
 	const group = new THREE.Group();
 	
-	// Get materials for this player
-	const materials = ENHANCED_MATERIALS[materialKey] || {
-		primary: new THREE.MeshStandardMaterial({ color: DEFAULT_COLORS[materialKey], roughness: 0.7, metalness: 0.3 }),
-		secondary: new THREE.MeshStandardMaterial({ color: DEFAULT_COLORS[materialKey], roughness: 0.7, metalness: 0.3 }),
-		accent: new THREE.MeshStandardMaterial({ color: DEFAULT_COLORS[materialKey], roughness: 0.7, metalness: 0.3 })
-	};
+	// Get materials - use custom if provided, otherwise use default
+	const materials = customMaterials || createSafeMaterials(materialKey);
 	
 	// Base
 	const baseGeometry = new THREE.CylinderGeometry(0.20, 0.25, 0.15, isLocalPlayer ? 16 : 12);
@@ -524,17 +608,15 @@ function createRussianKnightPiece(materialKey, isLocalPlayer) {
  * Create a Russian-styled bishop piece
  * @param {string} materialKey - Material key ('self' or 'other')
  * @param {boolean} isLocalPlayer - Whether this is the local player's piece (for enhanced visuals)
+ * @param {Object} customMaterials - Optional custom materials to use
  * @returns {THREE.Group} The chess piece mesh group
  */
-function createRussianBishopPiece(materialKey, isLocalPlayer) {
+function createRussianBishopPiece(materialKey, isLocalPlayer, customMaterials = null) {
+	const THREE = getTHREE();
 	const group = new THREE.Group();
 	
-	// Get materials for this player
-	const materials = ENHANCED_MATERIALS[materialKey] || {
-		primary: new THREE.MeshStandardMaterial({ color: DEFAULT_COLORS[materialKey], roughness: 0.7, metalness: 0.3 }),
-		secondary: new THREE.MeshStandardMaterial({ color: DEFAULT_COLORS[materialKey], roughness: 0.7, metalness: 0.3 }),
-		accent: new THREE.MeshStandardMaterial({ color: DEFAULT_COLORS[materialKey], roughness: 0.7, metalness: 0.3 })
-	};
+	// Get materials - use custom if provided, otherwise use default
+	const materials = customMaterials || createSafeMaterials(materialKey);
 	
 	// Base
 	const baseGeometry = new THREE.CylinderGeometry(0.20, 0.25, 0.15, isLocalPlayer ? 16 : 12);
@@ -618,17 +700,15 @@ function createRussianBishopPiece(materialKey, isLocalPlayer) {
  * Create a Russian-styled queen piece
  * @param {string} materialKey - Material key ('self' or 'other')
  * @param {boolean} isLocalPlayer - Whether this is the local player's piece (for enhanced visuals)
+ * @param {Object} customMaterials - Optional custom materials to use
  * @returns {THREE.Group} The chess piece mesh group
  */
-function createRussianQueenPiece(materialKey, isLocalPlayer) {
+function createRussianQueenPiece(materialKey, isLocalPlayer, customMaterials = null) {
+	const THREE = getTHREE();
 	const group = new THREE.Group();
 	
-	// Get materials for this player
-	const materials = ENHANCED_MATERIALS[materialKey] || {
-		primary: new THREE.MeshStandardMaterial({ color: DEFAULT_COLORS[materialKey], roughness: 0.7, metalness: 0.3 }),
-		secondary: new THREE.MeshStandardMaterial({ color: DEFAULT_COLORS[materialKey], roughness: 0.7, metalness: 0.3 }),
-		accent: new THREE.MeshStandardMaterial({ color: DEFAULT_COLORS[materialKey], roughness: 0.7, metalness: 0.3 })
-	};
+	// Get materials - use custom if provided, otherwise use default
+	const materials = customMaterials || createSafeMaterials(materialKey);
 	
 	// Base
 	const baseGeometry = new THREE.CylinderGeometry(0.20, 0.25, 0.15, isLocalPlayer ? 16 : 12);
@@ -735,17 +815,15 @@ function createRussianQueenPiece(materialKey, isLocalPlayer) {
  * Create a Russian-styled king piece
  * @param {string} materialKey - Material key ('self' or 'other')
  * @param {boolean} isLocalPlayer - Whether this is the local player's piece (for enhanced visuals)
+ * @param {Object} customMaterials - Optional custom materials to use
  * @returns {THREE.Group} The chess piece mesh group
  */
-function createRussianKingPiece(materialKey, isLocalPlayer) {
+function createRussianKingPiece(materialKey, isLocalPlayer, customMaterials = null) {
+	const THREE = getTHREE();
 	const group = new THREE.Group();
 	
-	// Get materials for this player
-	const materials = ENHANCED_MATERIALS[materialKey] || {
-		primary: new THREE.MeshStandardMaterial({ color: DEFAULT_COLORS[materialKey], roughness: 0.7, metalness: 0.3 }),
-		secondary: new THREE.MeshStandardMaterial({ color: DEFAULT_COLORS[materialKey], roughness: 0.7, metalness: 0.3 }),
-		accent: new THREE.MeshStandardMaterial({ color: DEFAULT_COLORS[materialKey], roughness: 0.7, metalness: 0.3 })
-	};
+	// Get materials - use custom if provided, otherwise use default
+	const materials = customMaterials || createSafeMaterials(materialKey);
 	
 	// Base
 	const baseGeometry = new THREE.CylinderGeometry(0.22, 0.25, 0.15, isLocalPlayer ? 16 : 12);
@@ -866,6 +944,7 @@ function createRussianKingPiece(materialKey, isLocalPlayer) {
  * @returns {Promise} Promise that resolves when all models are loaded
  */
 export function loadCustomModels(modelLoader, modelPaths) {
+	const THREE = getTHREE();
 	const loadPromises = [];
 	
 	// Check if paths are provided
@@ -915,6 +994,12 @@ export function loadCustomModels(modelLoader, modelPaths) {
  * @returns {THREE.Group} The chess piece mesh
  */
 export function getChessPiece(type, player, isLocalPlayer = false) {
+	const THREE = getTHREE();
+	if (!THREE) {
+		console.error('THREE.js not available in getChessPiece');
+		return null;
+	}
+	
 	// Convert player to a number if it's a string number
 	const playerNum = parseInt(player);
 	
@@ -931,50 +1016,590 @@ export function getChessPiece(type, player, isLocalPlayer = false) {
 	
 	console.log(`Creating ${type} piece for ${materialKey} player (ID: ${player})`);
 	
-	// Check if a custom model exists for this piece type and player
-	if (customModels[materialKey] && customModels[materialKey][type]) {
-		return customModels[materialKey][type].clone();
+	try {
+		// Check if a custom model exists for this piece type and player
+		if (customModels[materialKey] && customModels[materialKey][type]) {
+			const model = customModels[materialKey][type].clone();
+			
+			// Ensure model is properly initialized
+			ensureValidMaterials(model);
+			return model;
+		}
+		
+		// Create the piece based on the piece type
+		let chessPiece;
+		
+		switch (type.toLowerCase()) {
+			case 'pawn':
+				chessPiece = createRussianPawnPiece(materialKey, isLocalPlayer);
+				break;
+			case 'rook':
+				chessPiece = createRussianRookPiece(materialKey, isLocalPlayer);
+				break;
+			case 'knight':
+				chessPiece = createRussianKnightPiece(materialKey, isLocalPlayer);
+				break;
+			case 'bishop':
+				chessPiece = createRussianBishopPiece(materialKey, isLocalPlayer);
+				break;
+			case 'queen':
+				chessPiece = createRussianQueenPiece(materialKey, isLocalPlayer);
+				break;
+			case 'king':
+				chessPiece = createRussianKingPiece(materialKey, isLocalPlayer);
+				break;
+			default:
+				console.error(`Unknown chess piece type: ${type}`);
+				// Return a default piece (pawn) if type is unknown
+				chessPiece = createRussianPawnPiece(materialKey, isLocalPlayer);
+		}
+		
+		// Ensure the piece has valid materials
+		ensureValidMaterials(chessPiece);
+	
+		// Store in cache - this uses the materialKey ('self' or 'other') for caching
+		if (!customModels[materialKey]) {
+			customModels[materialKey] = {};
+		}
+		customModels[materialKey][type] = chessPiece.clone();
+		
+		return chessPiece;
+	} catch (error) {
+		console.error(`Error creating chess piece (${type} for ${materialKey}):`, error);
+		
+		// Create a simple fallback piece
+		const fallbackPiece = createFallbackPiece(materialKey);
+		return fallbackPiece;
+	}
+}
+
+/**
+ * Ensure all meshes in a model have valid materials
+ * @param {THREE.Object3D} model - The model to check
+ */
+function ensureValidMaterials(model) {
+	if (!model) return;
+	
+	const THREE = getTHREE();
+	if (!THREE) return;
+	
+	try {
+		// Set the visible property explicitly
+		model.visible = true;
+		
+		// Remove any material property on Groups - only Meshes should have materials
+		if (model.type === 'Group' && model.material) {
+			console.warn('Removing invalid material from Group object');
+			delete model.material;
+		}
+		
+		// Walk the entire model and ensure all meshes have materials
+		model.traverse(child => {
+			if (!child) return;
+			
+			// Set visible on all children
+			child.visible = true;
+			
+			// Remove material from any Groups
+			if (child.type === 'Group' && child.material) {
+				console.warn('Removing invalid material from Group child');
+				delete child.material;
+			}
+			
+			if (child.isMesh) {
+				// If mesh has no material, create a default one
+				if (!child.material) {
+					// Create a default material based on player
+					const color = child.userData?.player === 'self' ? 0xDD0000 : 0x0088AA;
+					child.material = new THREE.MeshStandardMaterial({
+						color: color,
+						roughness: 0.7,
+						metalness: 0.3
+					});
+				}
+				
+				// Fix array materials
+				if (Array.isArray(child.material)) {
+					// Ensure all materials in the array are valid
+					for (let i = 0; i < child.material.length; i++) {
+						if (!child.material[i]) {
+							const color = child.userData?.player === 'self' ? 0xDD0000 : 0x0088AA;
+							child.material[i] = new THREE.MeshStandardMaterial({
+								color: color,
+								roughness: 0.7,
+								metalness: 0.3
+							});
+						}
+					}
+				}
+				
+				// Force material update
+				if (child.material) {
+					child.material.needsUpdate = true;
+				}
+			}
+		});
+	} catch (error) {
+		console.error('Error ensuring valid materials:', error);
+	}
+}
+
+/**
+ * Create a simple fallback piece when normal creation fails
+ * @param {string} materialKey - 'self' or 'other'
+ * @returns {THREE.Group} A simple piece
+ */
+function createFallbackPiece(materialKey) {
+	const THREE = getTHREE();
+	if (!THREE) return null;
+	
+	try {
+		const group = new THREE.Group();
+		group.visible = true;
+		
+		// Create a simple cube as fallback
+		const geometry = new THREE.BoxGeometry(0.8, 1.2, 0.8);
+		const color = materialKey === 'self' ? 0xDD0000 : 0x0088AA;
+		const material = new THREE.MeshStandardMaterial({
+			color: color,
+			roughness: 0.7,
+			metalness: 0.3
+		});
+		
+		const mesh = new THREE.Mesh(geometry, material);
+		mesh.visible = true;
+		mesh.position.y = 0.6; // Move up half height
+		mesh.castShadow = true;
+		mesh.receiveShadow = true;
+		
+		group.add(mesh);
+		// Ensure the group doesn't have a material directly
+		if (group.material) {
+			delete group.material;
+		}
+		return group;
+	} catch (error) {
+		console.error('Error creating fallback piece:', error);
+		return null;
+	}
+}
+
+/**
+ * Create a king mesh
+ */
+function createKingPieceMesh(THREE, material) {
+	const group = new THREE.Group();
+	
+	// Base
+	const base = new THREE.Mesh(
+		new THREE.CylinderGeometry(0.3, 0.4, 0.2, 16),
+		material
+	);
+	base.position.y = 0.1;
+	group.add(base);
+	
+	// Body
+	const body = new THREE.Mesh(
+		new THREE.CylinderGeometry(0.25, 0.3, 0.5, 16),
+		material
+	);
+	body.position.y = 0.45;
+	group.add(body);
+	
+	// Top
+	const top = new THREE.Mesh(
+		new THREE.CylinderGeometry(0.3, 0.25, 0.2, 16),
+		material
+	);
+	top.position.y = 0.8;
+	group.add(top);
+	
+	// Crown
+	const crown = new THREE.Mesh(
+		new THREE.CylinderGeometry(0.2, 0.3, 0.2, 16),
+		material
+	);
+	crown.position.y = 1.0;
+	group.add(crown);
+	
+	// Cross on top
+	const crossVertical = new THREE.Mesh(
+		new THREE.BoxGeometry(0.05, 0.3, 0.05),
+		material
+	);
+	crossVertical.position.y = 1.25;
+	group.add(crossVertical);
+	
+	const crossHorizontal = new THREE.Mesh(
+		new THREE.BoxGeometry(0.2, 0.05, 0.05),
+		material
+	);
+	crossHorizontal.position.y = 1.2;
+	group.add(crossHorizontal);
+	
+	// Enable shadows
+	group.traverse(child => {
+		if (child.isMesh) {
+			child.castShadow = true;
+			child.receiveShadow = true;
+		}
+	});
+	
+	return group;
+}
+
+/**
+ * Create a queen mesh
+ */
+function createQueenPieceMesh(THREE, material) {
+	const group = new THREE.Group();
+	
+	// Base
+	const base = new THREE.Mesh(
+		new THREE.CylinderGeometry(0.3, 0.4, 0.2, 16),
+		material
+	);
+	base.position.y = 0.1;
+	group.add(base);
+	
+	// Body
+	const body = new THREE.Mesh(
+		new THREE.CylinderGeometry(0.25, 0.3, 0.5, 16),
+		material
+	);
+	body.position.y = 0.45;
+	group.add(body);
+	
+	// Top
+	const top = new THREE.Mesh(
+		new THREE.CylinderGeometry(0.3, 0.25, 0.2, 16),
+		material
+	);
+	top.position.y = 0.8;
+	group.add(top);
+	
+	// Crown
+	const crown = new THREE.Mesh(
+		new THREE.CylinderGeometry(0.1, 0.3, 0.2, 16),
+		material
+	);
+	crown.position.y = 1.0;
+	group.add(crown);
+	
+	// Ball on top
+	const ball = new THREE.Mesh(
+		new THREE.SphereGeometry(0.1, 16, 16),
+		material
+	);
+	ball.position.y = 1.15;
+	group.add(ball);
+	
+	// Enable shadows
+	group.traverse(child => {
+		if (child.isMesh) {
+			child.castShadow = true;
+			child.receiveShadow = true;
+		}
+	});
+	
+	return group;
+}
+
+/**
+ * Create a bishop mesh
+ */
+function createBishopPieceMesh(THREE, material) {
+	const group = new THREE.Group();
+	
+	// Base
+	const base = new THREE.Mesh(
+		new THREE.CylinderGeometry(0.3, 0.4, 0.2, 16),
+		material
+	);
+	base.position.y = 0.1;
+	group.add(base);
+	
+	// Body
+	const body = new THREE.Mesh(
+		new THREE.CylinderGeometry(0.2, 0.3, 0.6, 16),
+		material
+	);
+	body.position.y = 0.5;
+	group.add(body);
+	
+	// Top
+	const top = new THREE.Mesh(
+		new THREE.SphereGeometry(0.2, 16, 16),
+		material
+	);
+	top.position.y = 0.9;
+	group.add(top);
+	
+	// Slit in the top
+	const slit = new THREE.Mesh(
+		new THREE.BoxGeometry(0.1, 0.1, 0.01),
+		material
+	);
+	slit.position.y = 1.0;
+	slit.rotation.x = Math.PI / 2;
+	group.add(slit);
+	
+	// Enable shadows
+	group.traverse(child => {
+		if (child.isMesh) {
+			child.castShadow = true;
+			child.receiveShadow = true;
+		}
+	});
+	
+	return group;
+}
+
+/**
+ * Create a knight mesh
+ */
+function createKnightPieceMesh(THREE, material) {
+	const group = new THREE.Group();
+	
+	// Base
+	const base = new THREE.Mesh(
+		new THREE.CylinderGeometry(0.3, 0.4, 0.2, 16),
+		material
+	);
+	base.position.y = 0.1;
+	group.add(base);
+	
+	// Body
+	const body = new THREE.Mesh(
+		new THREE.CylinderGeometry(0.25, 0.3, 0.4, 16),
+		material
+	);
+	body.position.y = 0.4;
+	group.add(body);
+	
+	// Head base
+	const headBase = new THREE.Mesh(
+		new THREE.BoxGeometry(0.35, 0.2, 0.25),
+		material
+	);
+	headBase.position.y = 0.7;
+	group.add(headBase);
+	
+	// Head top
+	const headTop = new THREE.Mesh(
+		new THREE.BoxGeometry(0.2, 0.3, 0.25),
+		material
+	);
+	headTop.position.y = 0.95;
+	headTop.position.x = 0.1;
+	group.add(headTop);
+	
+	// Ear
+	const ear = new THREE.Mesh(
+		new THREE.ConeGeometry(0.1, 0.3, 16),
+		material
+	);
+	ear.position.y = 1.1;
+	ear.position.x = -0.1;
+	ear.rotation.z = -Math.PI / 4;
+	group.add(ear);
+	
+	// Enable shadows
+	group.traverse(child => {
+		if (child.isMesh) {
+			child.castShadow = true;
+			child.receiveShadow = true;
+		}
+	});
+	
+	return group;
+}
+
+/**
+ * Create a rook mesh
+ */
+function createRookPieceMesh(THREE, material) {
+	const group = new THREE.Group();
+	
+	// Base
+	const base = new THREE.Mesh(
+		new THREE.CylinderGeometry(0.3, 0.4, 0.2, 16),
+		material
+	);
+	base.position.y = 0.1;
+	group.add(base);
+	
+	// Body
+	const body = new THREE.Mesh(
+		new THREE.CylinderGeometry(0.3, 0.3, 0.6, 16),
+		material
+	);
+	body.position.y = 0.5;
+	group.add(body);
+	
+	// Top
+	const top = new THREE.Mesh(
+		new THREE.CylinderGeometry(0.35, 0.3, 0.2, 16),
+		material
+	);
+	top.position.y = 0.9;
+	group.add(top);
+	
+	// Battlements - create small rectangles around the top
+	for (let i = 0; i < 4; i++) {
+		const angle = (i / 4) * Math.PI * 2;
+		const battlement = new THREE.Mesh(
+			new THREE.BoxGeometry(0.1, 0.15, 0.1),
+			material
+		);
+		battlement.position.y = 1.075;
+		battlement.position.x = Math.sin(angle) * 0.25;
+		battlement.position.z = Math.cos(angle) * 0.25;
+		group.add(battlement);
 	}
 	
-	// Create the piece based on the piece type
-	let chessPiece;
+	// Enable shadows
+	group.traverse(child => {
+		if (child.isMesh) {
+			child.castShadow = true;
+			child.receiveShadow = true;
+		}
+	});
 	
-	switch (type.toLowerCase()) {
-		case 'pawn':
-			chessPiece = createRussianPawnPiece(materialKey, isLocalPlayer);
-			break;
-		case 'rook':
-			chessPiece = createRussianRookPiece(materialKey, isLocalPlayer);
-			break;
-		case 'knight':
-			chessPiece = createRussianKnightPiece(materialKey, isLocalPlayer);
-			break;
-		case 'bishop':
-			chessPiece = createRussianBishopPiece(materialKey, isLocalPlayer);
-			break;
-		case 'queen':
-			chessPiece = createRussianQueenPiece(materialKey, isLocalPlayer);
-			break;
-		case 'king':
-			chessPiece = createRussianKingPiece(materialKey, isLocalPlayer);
-			break;
-		default:
-			console.error(`Unknown chess piece type: ${type}`);
-			// Return a default piece (pawn) if type is unknown
-			chessPiece = createRussianPawnPiece(materialKey, isLocalPlayer);
+	return group;
+}
+
+/**
+ * Create a pawn mesh
+ */
+function createPawnPieceMesh(THREE, material) {
+	const group = new THREE.Group();
+	
+	// Base
+	const base = new THREE.Mesh(
+		new THREE.CylinderGeometry(0.25, 0.35, 0.2, 16),
+		material
+	);
+	base.position.y = 0.1;
+	group.add(base);
+	
+	// Body
+	const body = new THREE.Mesh(
+		new THREE.CylinderGeometry(0.15, 0.25, 0.4, 16),
+		material
+	);
+	body.position.y = 0.4;
+	group.add(body);
+	
+	// Head
+	const head = new THREE.Mesh(
+		new THREE.SphereGeometry(0.15, 16, 16),
+		material
+	);
+	head.position.y = 0.7;
+	group.add(head);
+	
+	// Enable shadows
+	group.traverse(child => {
+		if (child.isMesh) {
+			child.castShadow = true;
+			child.receiveShadow = true;
+		}
+	});
+	
+	return group;
+}
+
+/**
+ * Create a chess piece
+ * @param { string } newType - Type of piece
+ * @param { string|number } newColor - Color of piece (hex value or object)
+ * @param { number } orientation - Orientation(0 - 3)
+ * @param { THREE } THREE - THREE instance
+ * @returns { THREE.Group } The chess piece mesh group
+ */
+function createPiece(newType, newColor, orientation, THREE) {
+	let piece;
+	
+	// Ensure we have a valid material, not just a color value
+	let material;
+	
+	if (typeof newColor === 'object' && newColor !== null) {
+		// It's already a material object, use it directly
+		material = newColor;
+	} else {
+		// Convert color value to material
+		const colorValue = typeof newColor === 'number' ? newColor : 0xCCCCCC;
+		material = new THREE.MeshStandardMaterial({
+			color: colorValue,
+			roughness: 0.7,
+			metalness: 0.3
+		});
 	}
 
-	// Store in cache - this uses the materialKey ('self' or 'other') for caching
-	if (!customModels[materialKey]) {
-		customModels[materialKey] = {};
+	switch (newType.toUpperCase()) {
+		case 'KING':
+			piece = createKingPieceMesh(THREE, material);
+			break;
+		case 'QUEEN':
+			piece = createQueenPieceMesh(THREE, material);
+			break;
+		case 'BISHOP':
+			piece = createBishopPieceMesh(THREE, material);
+			break;
+		case 'KNIGHT':
+			piece = createKnightPieceMesh(THREE, material);
+			break;
+		case 'ROOK':
+			piece = createRookPieceMesh(THREE, material);
+			break;
+		case 'PAWN':
+			piece = createPawnPieceMesh(THREE, material);
+			break;
+		default:
+			console.error(`Unknown piece type: ${newType}`);
+			// Create fallback pawn
+			piece = createPawnPieceMesh(THREE, material);
+			break;
 	}
-	customModels[materialKey][type] = chessPiece.clone();
-	
-	return chessPiece;
+
+	// Ensure the piece is a valid object
+	if (!piece) {
+		console.error(`Failed to create piece of type ${newType}`);
+		// Create a fallback piece
+		const fallbackGeometry = new THREE.BoxGeometry(0.5, 0.8, 0.5);
+		const fallbackMesh = new THREE.Mesh(fallbackGeometry, material);
+		
+		piece = new THREE.Group();
+		piece.add(fallbackMesh);
+		fallbackMesh.position.y = 0.4; // Position the mesh at half-height within the group
+	}
+
+	// Add userData
+	piece.userData = {
+		type: newType,
+		color: newColor
+	};
+
+	// Set orientation
+	if (orientation !== undefined) {
+		piece.rotation.y = orientation * Math.PI / 2;
+	}
+
+	// Ensure shadows are enabled
+	piece.traverse(child => {
+		if (child.isMesh) {
+			child.castShadow = true;
+			child.receiveShadow = true;
+		}
+	});
+
+	return piece;
 }
 
 // Export the main functions and constants
 export default {
+	createPiece,
 	initMaterials,
 	getChessPiece,
 	registerCustomModel,

@@ -1,12 +1,13 @@
 // import * as THREE from './utils/three.module.js';
 import { createFewClouds } from './createFewClouds.js';
-import { onWindowResize, THREE } from './enhanced-gameCore.js';
+import { onWindowResize, getTHREE } from './enhanced-gameCore.js';
 import { boardFunctions } from './boardFunctions.js';
-import { getChessPiece } from './chessPieceCreator.js';
+import chessPieceCreator from './chessPieceCreator.js';
+import { findBoardCentreMarker, createCentreMarker } from './centreBoardMarker.js';
 
 export function setupScene(containerElement, scene, camera, renderer, controls, boardGroup, tetrominoGroup, chessPiecesGroup, clouds, gameState) {
 	console.log('Setting up enhanced 3D scene with beautiful sky...');
-	
+	const THREE = getTHREE();
 	// // Create scene
 	scene = new THREE.Scene();
 	
@@ -126,6 +127,7 @@ export function setupScene(containerElement, scene, camera, renderer, controls, 
 }
 
 export function rebuildScene(containerElement, options = {}) {
+	const THREE = getTHREE();
 	// Extract options
 	const { 
 		lowQuality = false, 
@@ -459,16 +461,18 @@ function createRoundedBoxGeometry(width, height, depth, radius, segments) {
  * @param {number} z - Z position
  * @param {THREE.Material} material - Material to use for the cell
  * @param {THREE.Group} boardGroup - The board group to add the cell to
+ * @param {number} centerX - X-coordinate of the board centre
+ * @param {number} centerZ - Z-coordinate of the board centre
  * @returns {THREE.Mesh} The created cell
  */
-export function createFloatingCube(x, z, material, boardGroup) {
+export function createFloatingCube(x, z, material, boardGroup, centerX = 0, centerZ = 0) {
 	try {
 		// Create a cube for the cell
 		const cellGeometry = new THREE.BoxGeometry(0.9, 0.9, 0.9);
 		const cellMesh = new THREE.Mesh(cellGeometry, material);
 
-		// Position the cell at its grid coordinates - perfectly aligned
-		cellMesh.position.set(x, 0, z);
+		// Position the cell relative to the board centre
+		cellMesh.position.set(x - centerX, 0, z - centerZ);
 
 		// Ensure no rotation at all - critical to prevent board from becoming tilted
 		cellMesh.rotation.set(0, 0, 0);
@@ -602,7 +606,7 @@ function addCloudsToScene(scene) {
  */
 export function createBoard(boardGroup, gameState) {
 	console.log('Creating floating islands based on received game state...');
-
+	
 	// Safety check for null boardGroup
 	if (!boardGroup) {
 		console.error('Cannot create board: boardGroup is undefined');
@@ -631,6 +635,17 @@ export function createBoard(boardGroup, gameState) {
 			metalness: 0.2
 		});
 
+		// Find the board centre marker to position cells properly
+		const centreMark = findBoardCentreMarker(gameState);
+		const centerX = centreMark.x;
+		const centerZ = centreMark.z;
+		console.log(`Using centre marker at (${centerX}, ${centerZ}) for board creation`);
+		
+		// Ensure the marker is properly stored in the game state
+		if (gameState.board) {
+			gameState.board.centreMarker = { x: centerX, z: centerZ };
+		}
+
 		// Check if there's board data
 		const hasBoardData = gameState?.board &&
 			typeof gameState.board === 'object' &&
@@ -652,7 +667,8 @@ export function createBoard(boardGroup, gameState) {
 				// Only create a cell if there's content
 				if (cell !== null && cell !== undefined) {
 					const material = (x + z) % 2 === 0 ? whiteMaterial : darkMaterial;
-					createFloatingCube(x, z, material, boardGroup);
+					// Use relative position to center marker
+					createFloatingCube(x, z, material, boardGroup, centerX, centerZ);
 					createdCellCount++;
 				}
 			}
@@ -666,7 +682,8 @@ export function createBoard(boardGroup, gameState) {
 					// Create a sparse test board
 					if ((x + z) % 3 === 0) {
 						const material = (x + z) % 2 === 0 ? whiteMaterial : darkMaterial;
-						createFloatingCube(x, z, material, boardGroup);
+						// Use relative position to center marker
+						createFloatingCube(x, z, material, boardGroup, centerX, centerZ);
 					}
 				}
 			}

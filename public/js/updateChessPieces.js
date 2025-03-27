@@ -1,14 +1,29 @@
 import { boardFunctions } from './boardFunctions';
 import { findBoardCentreMarker } from './centreBoardMarker';
-import { getChessPiece } from './chessPieceCreator';
+import chessPieceCreator from './chessPieceCreator';
 import { getTHREE } from './enhanced-gameCore';
+import { highlightSinglePiece, setChessPiecesGroup } from './pieceHighlightManager';
+import { createCentreMarker } from './centreBoardMarker';
 
-// Get THREE from the getter function
-const THREE = getTHREE();
 
 // Add a timer to track when chess pieces were last updated
 let lastChessPiecesUpdate = 0;
-const CHESS_PIECES_UPDATE_INTERVAL = 250; // Milliseconds between updates
+let baseUpdateInterval = 250; // Base milliseconds between updates
+let CHESS_PIECES_UPDATE_INTERVAL = baseUpdateInterval; // Current interval, may increase on errors
+let consecutiveErrors = 0; // Track consecutive errors to adjust the update frequency
+const MAX_CONSECUTIVE_ERRORS = 5; // After this many errors, log more details
+const ERROR_BACKOFF_MULTIPLIER = 2; // Multiply interval by this amount when errors occur
+const MAX_UPDATE_INTERVAL = 2000; // Maximum milliseconds between updates
+
+// Error tracking
+let lastErrorTime = 0;
+let lastErrorMessage = '';
+let errorCount = 0;
+
+// Change detection
+let lastChessPiecesHash = ''; // Hash of the last processed pieces
+let lastUpdateReason = ''; // Reason for the last update
+let forcedUpdateCounter = 0; // Force update every N intervals regardless of changes
 
 export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 	// Rate-limit updates to reduce performance impact
@@ -16,16 +31,73 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 	if (now - lastChessPiecesUpdate < CHESS_PIECES_UPDATE_INTERVAL) {
 		return; // Skip if called too soon after previous update
 	}
+	
+	// Only process if there are actual changes to the pieces
+	// Generate a simple hash of the current chess pieces
+	let currentHash = '';
+	if (gameState.chessPieces && Array.isArray(gameState.chessPieces)) {
+		// Create a hash based on critical properties of each piece
+		currentHash = gameState.chessPieces.map(piece => {
+			if (!piece) return '';
+			return `${piece.id}-${piece.type}-${piece.player}-${piece.x}-${piece.z}`;
+		}).sort().join('|');
+	}
+	
+	// Force update every 10 intervals (about 2.5 seconds) even without changes
+	// This ensures we handle any external changes that our hash doesn't detect
+	const forcedUpdate = (++forcedUpdateCounter >= 10);
+	
+	// Skip update if the pieces haven't changed and this isn't a forced update
+	if (currentHash === lastChessPiecesHash && !forcedUpdate) {
+		return;
+	}
+	
+	// Reset force counter on actual updates
+	if (forcedUpdate) {
+		forcedUpdateCounter = 0;
+		lastUpdateReason = 'forced periodic update';
+	} else if (currentHash !== lastChessPiecesHash) {
+		lastUpdateReason = 'chess pieces changed';
+		// Update our hash
+		lastChessPiecesHash = currentHash;
+	}
+	
+	// Now we'll proceed with the update since there are changes
 	lastChessPiecesUpdate = now;
+
+	// Get THREE safely
+	let THREE;
+	try {
+		THREE = getTHREE();
+		// Verify THREE is valid
+		if (!THREE) {
+			console.error('THREE.js not available in updateChessPieces');
+			handleUpdateError(new Error('THREE.js not available'));
+			return;
+		}
+	} catch (err) {
+		console.error('Error getting THREE reference:', err);
+		handleUpdateError(err);
+		return;
+	}
+
+	// Safely verify the chess pieces group exists before continuing
+	if (!chessPiecesGroup) {
+		console.error('Chess pieces group is undefined in updateChessPieces');
+		handleUpdateError(new Error('Chess pieces group is undefined'));
+		return;
+	}
+	
+	// Set the chessPiecesGroup in the highlight manager
+	try {
+		setChessPiecesGroup(chessPiecesGroup);
+	} catch (err) {
+		console.error('Error setting chess pieces group in highlight manager:', err);
+		handleUpdateError(err);
+	}
 
 	// Only log during debug mode or first run
 	const isFirstRun = !chessPiecesGroup?.userData?.initialized;
-
-	// Ensure the group is valid before proceeding
-	if (!chessPiecesGroup) {
-		console.error('Chess pieces group is not initialized, cannot update chess pieces');
-		return;
-	}
 
 	// Mark as initialized 
 	if (!chessPiecesGroup.userData) {
@@ -34,7 +106,12 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 	chessPiecesGroup.userData.initialized = true;
 
 	if (isFirstRun || gameState.debugMode) {
-		console.log('Updating chess pieces visuals');
+		console.log(`Updating chess pieces visuals (reason: ${lastUpdateReason})`);
+	}
+
+	// If we've had too many consecutive errors, reduce update frequency
+	if (consecutiveErrors > MAX_CONSECUTIVE_ERRORS) {
+		console.warn(`Chess pieces update experiencing ${consecutiveErrors} consecutive errors, throttling updates`);
 	}
 
 	try {
@@ -42,6 +119,7 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 		if (!chessPiecesGroup.children) {
 			console.error('Chess pieces group has no children array');
 			chessPiecesGroup.children = [];
+			handleUpdateError(new Error('Chess pieces group has no children array'));
 			return;
 		}
 
@@ -63,46 +141,14 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 				console.log(`Using ${chessPieces.length} pre-extracted chess pieces`);
 			}
 		} else {
-			// Otherwise manually extract from board cells - legacy method
-			// Check if we have valid board data
-			if (gameState.board && gameState.board.cells) {
-				// Iterate through all cells to find chess pieces
-				for (const key in gameState.board.cells) {
-					try {
-						const [x, z] = key.split(',').map(Number);
-
-						// Get cell content
-						const cellData = gameState.board.cells[key];
-
-						// Ensure boardFunctions is available
-						if (!boardFunctions || !boardFunctions.extractCellContent) {
-							console.warn('boardFunctions.extractCellContent is not available');
-							continue;
-						}
-
-						// Extract chess content using the new helper function
-						const chessContent = boardFunctions.extractCellContent(cellData, 'chess');
-
-						// If chess piece content exists, extract it for rendering
-						if (chessContent) {
-							const pieceId = chessContent.pieceId ||
-								`${chessContent.player}-${chessContent.chessPiece?.type || 'PAWN'}-${x}-${z}`;
-
-							chessPieces.push({
-								id: pieceId,
-								position: { x, z },
-								type: chessContent.pieceType || "PAWN",
-								player: chessContent.player || 1,
-								color: chessContent.color || 0xcccccc
-							});
-						}
-					} catch (cellErr) {
-						console.error('Error processing board cell:', cellErr);
-					}
-				}
-				if (isFirstRun || gameState.debugMode) {
-					console.log(`Extracted ${chessPieces.length} chess pieces from board cells`);
-				}
+			// Otherwise extract chess pieces from board cells using the centralized function
+			chessPieces = boardFunctions.extractChessPiecesFromCells(gameState);
+			
+			// Store them for future use
+			gameState.chessPieces = chessPieces;
+			
+			if (isFirstRun || gameState.debugMode) {
+				console.log(`Extracted ${chessPieces.length} chess pieces from board cells using centralized function`);
 			}
 		}
 
@@ -129,21 +175,18 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 		chessPiecesGroup.position.set(0, 0, 0);
 
 		// Find the board centre marker for accurate positioning - CRITICAL for alignment with cells
-		const centreMarker = findBoardCentreMarker(gameState);
+		const centreMark = findBoardCentreMarker(gameState);
 
 		// Always ensure we have a valid centre marker
-		if (!centreMarker && gameState.board) {
+		if (!centreMark && gameState.board) {
 			console.error('Centre marker not found! Creating a new one');
-			// Force create a centre marker in case it doesn't exist
-			gameState.board.centreMarker = {
-				x: Math.floor((gameState.boardBounds?.minX || 0 + gameState.boardBounds?.maxX || 20) / 2),
-				z: Math.floor((gameState.boardBounds?.minZ || 0 + gameState.boardBounds?.maxZ || 20) / 2)
-			};
+			// Use the createCentreMarker function to properly initialize it
+			createCentreMarker(gameState);
 		}
 
 		// Use the centre marker or fall back to reasonable defaults
-		const centreX = centreMarker?.x ?? 8;
-		const centreZ = centreMarker?.z ?? 8;
+		const centreX = centreMark?.x ?? 4;
+		const centreZ = centreMark?.z ?? 4;
 
 		console.log(`Using board centre at (${centreX}, ${centreZ}) for chess piece positioning`);
 
@@ -166,66 +209,134 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 
 				// Get the position and orientation of the piece
 				const { x, z } = piece.position;
-
+				const orientation = piece.orientation || 0;
+				
 				// Check if we already have this piece at this location
 				const existingPiece = existingPieceMap[pieceId];
+				let pieceMesh;
 
 				// If the piece exists and hasn't moved, reuse it
-				if (existingPiece &&
-					existingPiece.userData &&
-					existingPiece.userData.position &&
-					existingPiece.userData.position.x === x &&
-					existingPiece.userData.position.z === z) {
-
-					// Update player info in userData
-					existingPiece.userData.player = piece.player;
-
-					// Piece hasn't changed, just make sure it's visible
-					existingPiece.visible = true;
-
-					// Apply hover highlight if needed
-					if (gameState.hoveredPlayer &&
-						(String(gameState.hoveredPlayer) === String(piece.player)) &&
-						typeof highlightSinglePiece === 'function') {
-						try {
-							highlightSinglePiece(existingPiece);
-						} catch (highlightErr) {
-							console.error('Error highlighting piece:', highlightErr);
-						}
-					}
-
-					piecesReused++;
-					return;
-				}
-
-				// Create a new chess piece or update existing one
-				let chessPieceMesh;
-
 				if (existingPiece) {
-					// Reuse existing mesh but update its position
-					chessPieceMesh = existingPiece;
-					piecesReused++;
+					// Update color/appearance if needed
+					const newColor = getChessPieceColor(piece, gameState);
+					const newType = getChessPieceType(piece);
+					
+					// Check if the type or color has changed
+					if (existingPiece.userData.type !== newType || existingPiece.userData.color !== newColor) {
+						// Need to recreate with new appearance
+						chessPiecesGroup.remove(existingPiece);
+						
+						// Create new piece - clear materials for proper garbage collection
+						if (existingPiece.material) {
+							if (Array.isArray(existingPiece.material)) {
+								existingPiece.material.forEach(mat => mat && mat.dispose());
+							} else {
+								existingPiece.material.dispose();
+							}
+						}
+						
+						// Dispose of geometry
+						if (existingPiece.geometry) existingPiece.geometry.dispose();
+
+						// Create a new piece with updated appearance
+						pieceMesh = chessPieceCreator.createPiece(newType, newColor, orientation, THREE);
+						
+						pieceMesh.userData = {
+							...piece,
+							id: pieceId,
+							color: newColor,
+							type: newType
+						};
+						
+						// Calculate position relative to centre marker - CRITICAL for alignment
+						const adjustX = x - centreX;
+						const adjustZ = z - centreZ;
+						
+						pieceMesh.position.set(adjustX, 0, adjustZ);
+						chessPiecesGroup.add(pieceMesh);
+						
+						piecesCreated++;
+					} else {
+						// Just update position if needed
+						const adjustX = x - centreX;
+						const adjustZ = z - centreZ;
+						
+						if (existingPiece.position.x !== adjustX || existingPiece.position.z !== adjustZ) {
+							existingPiece.position.set(adjustX, 0, adjustZ);
+						}
+
+						piecesReused++;
+					}
 				} else {
 					// Create a new piece mesh
-					const pieceColor = getChessPieceColor(piece);
+					const pieceColor = getChessPieceColor(piece, gameState);
 					const pieceType = getChessPieceType(piece);
 					
-					// Determine if this is the local player's piece
-					const isLocalPlayer = String(piece.player) === String(gameState.localPlayerId);
-					const playerIdentifier = isLocalPlayer ? 'self' : 'other';
+					// For debugging
+					console.log(`Creating chess piece: ${pieceType} for player ${piece.player}, color: ${pieceColor.toString(16)}, at position (${x}, ${z})`);
 					
-					console.log(`Creating new ${pieceType} for player ${piece.player} (${playerIdentifier}) with color ${pieceColor.toString(16)}`);
+					// Generate a player identifier
+					const playerIdentifier = piece.player;
 					
-					// Get piece from the chess piece creator
-					chessPieceMesh = getChessPiece(pieceType, playerIdentifier);
+					// Try to use direct creation with color
+					try {
+						// Create piece with explicit color
+						pieceMesh = chessPieceCreator.createPiece(pieceType, pieceColor, orientation, THREE);
+					} catch (err) {
+						console.warn('Error creating piece with color, falling back to getChessPiece:', err);
+						// Fall back to regular getChessPiece
+						pieceMesh = chessPieceCreator.getChessPiece(pieceType, playerIdentifier);
+					}
 					
-					if (!chessPieceMesh) {
+					// Specifically check if this piece is valid with a material before adding it
+					if (!pieceMesh) {
 						console.error(`Failed to create chess piece: ${pieceType} for player ${piece.player}`);
 						return;
 					}
 					
+					// Check if any meshes inside this piece group have materials
+					let hasMaterial = false;
+					if (pieceMesh.traverse) {
+						pieceMesh.traverse(child => {
+							if (child && child.isMesh && child.material) {
+								hasMaterial = true;
+							}
+						});
+					}
+
+					// If no material found, we need to add a fallback material to at least one mesh
+					if (!hasMaterial) {
+						console.warn(`Chess piece has no materials: ${pieceType} for player ${piece.player}, adding fallback material`);
+						
+						// Create a fallback material
+						const fallbackMaterial = new THREE.MeshStandardMaterial({
+							color: pieceColor,
+							roughness: 0.7,
+							metalness: 0.3
+						});
+						
+						// Try to add it to the main mesh if there is one
+						let materialAdded = false;
+						if (pieceMesh.children && pieceMesh.children.length > 0) {
+							// Find the first mesh we can add a material to
+							pieceMesh.traverse(child => {
+								if (!materialAdded && child && child.isMesh) {
+									child.material = fallbackMaterial;
+									child.material.needsUpdate = true;
+									child.visible = true;
+									materialAdded = true;
+								}
+							});
+						}
+						
+						// If we couldn't add to any child, add to the piece itself
+						if (!materialAdded) {
+							pieceMesh.material = fallbackMaterial;
+						}
+					}
+					
 					// Set up piece metadata
-					chessPieceMesh.userData = {
+					pieceMesh.userData = {
 						id: pieceId,
 						type: 'chessPiece',
 						pieceType: pieceType,
@@ -235,72 +346,93 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 					};
 					
 					// Add to the chess pieces group
-					chessPiecesGroup.add(chessPieceMesh);
+					chessPiecesGroup.add(pieceMesh);
 					piecesCreated++;
 				}
 
 				// Position piece correctly relative to the center of the board
-				chessPieceMesh.position.x = x;
-				chessPieceMesh.position.z = z;
-				chessPieceMesh.position.y = 0.5; // Half-height above cell
-				
-				// Ensure the piece is properly rotated to face the correct direction
-				// Black pieces (player 2) face the opposite direction of white pieces
-				if (String(piece.player) === '2') {
-					chessPieceMesh.rotation.y = Math.PI; // 180 degrees
-				} else {
-					chessPieceMesh.rotation.y = 0;
-				}
-				
-				// Ensure the scale is appropriate
-				if (!chessPieceMesh.userData.scaleSet) {
-					chessPieceMesh.scale.set(0.8, 0.8, 0.8);
-					chessPieceMesh.userData.scaleSet = true;
-				}
-				
-				// Update the userData with new position
-				chessPieceMesh.userData.position = { x, z };
-				
-				// Make sure piece is visible
-				chessPieceMesh.visible = true;
-				
-				// Ensure materials are properly set and rendered
-				if (chessPieceMesh.material) {
-					// Make sure material has basic properties
-					if (typeof chessPieceMesh.material.needsUpdate !== 'undefined') {
-						chessPieceMesh.material.needsUpdate = true;
+				if (pieceMesh) {
+					// CRITICAL FIX: Use relative positioning with the center marker
+					const adjustX = x - centreX;
+					const adjustZ = z - centreZ;
+					
+					pieceMesh.position.x = adjustX;
+					pieceMesh.position.z = adjustZ;
+					pieceMesh.position.y = 0.5; // Half-height above cell
+					
+					
+					// For orientation 0(facing up): main pieces at bottom, pawns above
+					// For orientation 2(facing down): main pieces at top, pawns below
+					// For orientation 1(facing right): main pieces at left, pawns to right
+					// For orientation 3(facing left): main pieces at right, pawns to left
+
+					if(piece.orientation) { 
+						// Use Y-axis rotation to rotate pieces horizontally rather than tipping them over
+						pieceMesh.rotation.y = piece.orientation * Math.PI / 2;
 					}
-					chessPieceMesh.material.transparent = false;
-					chessPieceMesh.material.opacity = 1.0;
-				}
-				
-				// Enable shadows for better visuals
-				chessPieceMesh.castShadow = true;
-				chessPieceMesh.receiveShadow = true;
-				
-				// Make sure all child meshes are visible and have proper materials
-				chessPieceMesh.traverse(child => {
-					if (child.isMesh) {
-						child.visible = true;
-						child.castShadow = true;
-						child.receiveShadow = true;
-						
-						if (child.material) {
-							child.material.needsUpdate = true;
-							child.material.transparent = false;
-							child.material.opacity = 1.0;
+
+					// Ensure the scale is appropriate
+					if (!pieceMesh.userData.scaleSet) {
+						pieceMesh.scale.set(0.8, 0.8, 0.8);
+						pieceMesh.userData.scaleSet = true;
+					}
+					
+					// Update the userData with new position
+					pieceMesh.userData.position = { x, z };
+					
+					// Make sure piece is visible
+					pieceMesh.visible = true;
+					
+					// Log positioning for debugging
+					// console.log(`Piece positioned at (${adjustX}, ${adjustZ}) relative to centre (${centreX}, ${centreZ})`);
+					
+					// Ensure materials are properly set and rendered
+					if (pieceMesh.material) {
+						// Make sure material has basic properties
+						if (typeof pieceMesh.material === 'object' && pieceMesh.material !== null) {
+							if (typeof pieceMesh.material.needsUpdate !== 'undefined') {
+								pieceMesh.material.needsUpdate = true;
+							}
+							pieceMesh.material.transparent = false;
+							pieceMesh.material.opacity = 1.0;
 						}
 					}
-				});
-				
-				// Apply hover highlight if needed
-				if (gameState.hoveredPlayer && 
-					(String(gameState.hoveredPlayer) === String(piece.player)) &&
-					typeof highlightSinglePiece === 'function') {
-					try {
-						highlightSinglePiece(chessPieceMesh);
-					} catch (highlightErr) {
-						console.error('Error highlighting piece:', highlightErr);
+					
+					// Enable shadows for better visuals
+					pieceMesh.castShadow = true;
+					pieceMesh.receiveShadow = true;
+					
+					// Make sure all child meshes are visible and have proper materials
+					if (pieceMesh.traverse && typeof pieceMesh.traverse === 'function') {
+						pieceMesh.traverse(child => {
+							if (child && child.isMesh) {
+								child.visible = true;
+								child.castShadow = true;
+								child.receiveShadow = true;
+								
+								if (child.material) {
+									// Check if the material is actually an object and not a primitive value
+									if (typeof child.material === 'object' && child.material !== null) {
+										if (typeof child.material.needsUpdate !== 'undefined') {
+											child.material.needsUpdate = true;
+										}
+										child.material.transparent = false;
+										child.material.opacity = 1.0;
+									}
+								}
+							}
+						});
+					}
+					
+					// Apply hover highlight if needed
+					if (gameState.hoveredPlayer &&
+						(String(gameState.hoveredPlayer) === String(piece.player)) &&
+						typeof highlightSinglePiece === 'function') {
+						try {
+							highlightSinglePiece(pieceMesh);
+						} catch (highlightErr) {
+							console.error('Error highlighting piece:', highlightErr);
+						}
 					}
 				}
 			} catch (pieceErr) {
@@ -340,52 +472,125 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 			}
 		});
 
-		if (isFirstRun || gameState.debugMode || piecesCreated > 0 || piecesRemoved > 0) {
-			console.log(`Chess pieces updated: ${piecesCreated} created, ${piecesReused} reused, ${piecesRemoved} removed`);
-		}
+		// If we're here due to a forced update but nothing actually changed,
+		// we can skip the verbose logging at the end
+		const skipDetailedLogging = forcedUpdate && piecesCreated === 0 && piecesRemoved === 0;
+
+		// if ((isFirstRun || gameState.debugMode || piecesCreated > 0 || piecesRemoved > 0) 
+		// 	&& !skipDetailedLogging) {
+		// 	console.log(`Chess pieces updated: ${piecesCreated} created, ${piecesReused} reused, ${piecesRemoved} removed`);
+		// }
+		
+		// If we get here without errors, reset error tracking
+		resetErrorTracking();
 	} catch (error) {
 		console.error('Error in updateChessPieces:', error);
+		handleUpdateError(error);
 	}
 }
 
 /**
- * Get the appropriate color for a chess piece
+ * Handle update errors and adjust update frequency
+ * @param {Error} error - The error that occurred
+ */
+function handleUpdateError(error) {
+	const now = Date.now();
+	
+	// Track error types
+	const errorMsg = error.message || 'Unknown error';
+	
+	// Check if this is the same error as before
+	if (errorMsg === lastErrorMessage) {
+		errorCount++;
+	} else {
+		// New error type
+		lastErrorMessage = errorMsg;
+		errorCount = 1;
+	}
+	
+	// Increment consecutive errors
+	consecutiveErrors++;
+	
+	// Only log full details periodically to avoid console spam
+	if (now - lastErrorTime > 5000 || consecutiveErrors % 10 === 0) {
+		console.error(`Chess pieces update error (${consecutiveErrors} consecutive, ${errorCount} of this type): ${errorMsg}`);
+		lastErrorTime = now;
+	}
+	
+	// Increase the update interval to reduce error frequency
+	if (consecutiveErrors > 3) {
+		CHESS_PIECES_UPDATE_INTERVAL = Math.min(
+			CHESS_PIECES_UPDATE_INTERVAL * ERROR_BACKOFF_MULTIPLIER,
+			MAX_UPDATE_INTERVAL
+		);
+		console.warn(`Increasing chess pieces update interval to ${CHESS_PIECES_UPDATE_INTERVAL}ms due to errors`);
+	}
+}
+
+/**
+ * Reset error tracking when updates succeed
+ */
+function resetErrorTracking() {
+	if (consecutiveErrors > 0) {
+		consecutiveErrors = 0;
+		// Gradually reduce the update interval back to base level
+		if (CHESS_PIECES_UPDATE_INTERVAL > baseUpdateInterval) {
+			CHESS_PIECES_UPDATE_INTERVAL = Math.max(
+				baseUpdateInterval,
+				CHESS_PIECES_UPDATE_INTERVAL / ERROR_BACKOFF_MULTIPLIER
+			);
+		}
+	}
+}
+
+/**
+ * Get the color for a chess piece
  * @param {Object} piece - The chess piece data
+ * @param {Object} gameState - The current game state
  * @returns {number} - The color as a hexadecimal number
  */
-function getChessPieceColor(piece) {
-	// Process player color setting
-	let pieceColor = 0xeeeeee; // Default to light gray
+function getChessPieceColor(piece, gameState) {
+
+	return boardFunctions.getPlayerColor(piece.player, gameState, false);
+
+	// If piece has an explicit color, use it
+	if (piece.color && piece.color !== 0xcccccc) {
+		return piece.color;
+	}
+	
+	// Use the centralized color function for consistent colors
+	if (boardFunctions && typeof boardFunctions.getPlayerColor === 'function') {
+		// Pass false for forTetromino flag since this is a chess piece
+		return boardFunctions.getPlayerColor(piece.player, gameState, false);
+	}
+	
+	// Fallback if the centralized function isn't available
+	// Always color current player pieces as red
+	if (gameState && gameState.currentPlayer && String(piece.player) === String(gameState.currentPlayer)) {
+		return 0xAA0000; // Red for current player's pieces
+	}
 	
 	// Player 1 is usually white
 	if (String(piece.player) === '1') {
-		pieceColor = 0xf0f0f0; // White
+		return 0xf0f0f0; // White
 	} 
 	// Player 2 is usually black
 	else if (String(piece.player) === '2') {
-		pieceColor = 0x222222; // Black
-	}
-	// If the piece has an explicit color, use it
-	else if (piece.color) {
-		pieceColor = piece.color;
-	}
-	// Otherwise use player ID to determine color
-	else {
-		// Convert player ID to a deterministic color
-		const playerId = String(piece.player);
-		// Simple hash function
-		let hash = 0;
-		for (let i = 0; i < playerId.length; i++) {
-			hash = playerId.charCodeAt(i) + ((hash << 5) - hash);
-		}
-		// Use the hash to generate RGB values
-		const r = (hash & 0xFF0000) >> 16;
-		const g = (hash & 0x00FF00) >> 8;
-		const b = hash & 0x0000FF;
-		pieceColor = (r << 16) | (g << 8) | b;
+		return 0x222222; // Black
 	}
 	
-	return pieceColor;
+	// Convert player ID to a deterministic color
+	const playerId = String(piece.player);
+	// Simple hash function
+	let hash = 0;
+	for (let i = 0; i < playerId.length; i++) {
+		hash = playerId.charCodeAt(i) + ((hash << 5) - hash);
+	}
+	// Use the hash to generate RGB values, but ensure blue/green dominance
+	const r = Math.min(80, (hash & 0xFF0000) >> 16); // Keep red low
+	const g = 100 + Math.min(155, (hash & 0x00FF00) >> 8); // Medium to high green
+	const b = 150 + Math.min(105, hash & 0x0000FF); // Medium to high blue
+	return (r << 16) | (g << 8) | b;
 }
 
 /**
@@ -408,234 +613,5 @@ function getChessPieceType(piece) {
 	};
 	
 	return typeMap[pieceType] || pieceType;
-}
-
-/**
- * Highlight a chess piece
- * @param {Object} piece - The piece to highlight
- * @param {boolean} isHighlighted - Whether to highlight or unhighlight
- */
-function highlightChessPiece(piece, isHighlighted) {
-	if (!piece) return;
-
-	// Handle array of pieces
-	if (Array.isArray(piece)) {
-		piece.forEach(p => highlightChessPiece(p, isHighlighted));
-		return;
-	}
-
-	// Skip if the piece doesn't have a material
-	if (!piece.material) return;
-
-	// Store original material if not already stored
-	if (isHighlighted && !piece.userData.originalMaterial) {
-		piece.userData.originalMaterial = piece.material.clone();
-	}
-
-	if (isHighlighted) {
-		// Apply highlight material
-		const highlightMaterial = new THREE.MeshBasicMaterial({
-			color: 0xffff00,
-			transparent: true,
-			opacity: 0.8
-		});
-		piece.material = highlightMaterial;
-	} else {
-		// Restore original material
-		if (piece.userData.originalMaterial) {
-			piece.material.dispose();
-			piece.material = piece.userData.originalMaterial;
-			delete piece.userData.originalMaterial;
-		}
-	}
-}
-
-/**
- * Highlight all pieces belonging to a specific player
- * @param {string} playerId - Player ID
- */
-export function highlightPlayerPieces(playerId) {
-	// If no chess pieces group, return
-	if (!chessPiecesGroup) return;
-
-	// Apply highlight to matching pieces
-	chessPiecesGroup.children.forEach(piece => {
-		if (piece.userData && String(piece.userData.player) === String(playerId)) {
-			highlightSinglePiece(piece);
-		}
-	});
-}
-
-/**
- * Remove highlights from all chess pieces
- */
-export function removePlayerPiecesHighlight() {
-	// If no chess pieces group, return
-	if (!chessPiecesGroup) return;
-
-	// Remove highlights from all pieces
-	chessPiecesGroup.children.forEach(piece => {
-		// Clean up previous highlight elements
-		const existingHighlight = piece.getObjectByName('hover-highlight');
-		const existingGlow = piece.getObjectByName('hover-glow');
-
-		// Remove animations
-		if (existingHighlight && existingHighlight.userData && existingHighlight.userData.animation) {
-			if (window._highlightAnimations) {
-				const index = window._highlightAnimations.indexOf(existingHighlight.userData.animation);
-				if (index > -1) {
-					window._highlightAnimations.splice(index, 1);
-				}
-			}
-		}
-
-		// Remove meshes
-		if (existingHighlight) {
-			piece.remove(existingHighlight);
-			if (existingHighlight.geometry) existingHighlight.geometry.dispose();
-			if (existingHighlight.material) existingHighlight.material.dispose();
-		}
-
-		if (existingGlow) {
-			piece.remove(existingGlow);
-			if (existingGlow.geometry) existingGlow.geometry.dispose();
-			if (existingGlow.material) existingGlow.material.dispose();
-		}
-
-		// Reset scale
-		piece.scale.set(1, 1, 1);
-	});
-}
-
-/**
- * Highlight a single chess piece with a hover effect
- */
-export function highlightSinglePiece(piece) {
-	// Safety check - if piece is null or undefined, don't proceed
-	if (!piece) {
-		console.warn('Attempted to highlight null/undefined piece');
-		return;
-	}
-
-	// Clean up previous highlight elements if they exist
-	const existingHighlight = piece.getObjectByName('hover-highlight');
-	const existingGlow = piece.getObjectByName('hover-glow');
-
-	// Remove old elements from animation loop first
-	if (existingHighlight && existingHighlight.userData && existingHighlight.userData.animation) {
-		if (window._highlightAnimations) {
-			const index = window._highlightAnimations.indexOf(existingHighlight.userData.animation);
-			if (index > -1) {
-				window._highlightAnimations.splice(index, 1);
-			}
-		}
-	}
-
-	// Remove old highlight meshes
-	if (existingHighlight) {
-		piece.remove(existingHighlight);
-		if (existingHighlight.geometry) existingHighlight.geometry.dispose();
-		if (existingHighlight.material) existingHighlight.material.dispose();
-	}
-
-	if (existingGlow) {
-		piece.remove(existingGlow);
-		if (existingGlow.geometry) existingGlow.geometry.dispose();
-		if (existingGlow.material) existingGlow.material.dispose();
-	}
-
-	// Create new highlight
-	try {
-		const geometry = new THREE.RingGeometry(0.5, 0.6, 32);
-		const material = new THREE.MeshBasicMaterial({
-			color: 0xFFFFFF,
-			transparent: true,
-			opacity: 0.6,
-			side: THREE.DoubleSide
-		});
-
-		const highlight = new THREE.Mesh(geometry, material);
-		highlight.name = 'hover-highlight';
-		highlight.rotation.x = -Math.PI / 2; // Lay flat
-		highlight.position.y = -0.65; // Positioned below the piece, adjusted for new height
-
-		// Create glow effect - add a larger, fainter ring
-		const glowGeometry = new THREE.RingGeometry(0.7, 0.9, 32);
-		const glowMaterial = new THREE.MeshBasicMaterial({
-			color: 0xFFFFFF,
-			transparent: true,
-			opacity: 0.3,
-			side: THREE.DoubleSide
-		});
-		const glow = new THREE.Mesh(glowGeometry, glowMaterial);
-		glow.name = 'hover-glow';
-		glow.rotation.x = -Math.PI / 2; // Lay flat
-		glow.position.y = -0.67; // Positioned just below the highlight, adjusted for new height
-
-		piece.add(highlight);
-		piece.add(glow);
-
-		// Add animation using TWEEN for better performance if available
-		if (window.TWEEN) {
-			const scaleData = { value: 1.0 };
-			const scaleTween = new TWEEN.Tween(scaleData)
-				.to({ value: 1.1 }, 800)
-				.easing(TWEEN.Easing.Quadratic.InOut)
-				.yoyo(true)
-				.repeat(Infinity)
-				.onUpdate(() => {
-					if (highlight && highlight.scale) {
-						highlight.scale.set(scaleData.value, scaleData.value, 1);
-					}
-					if (glow && glow.scale) {
-						glow.scale.set(scaleData.value * 1.1, scaleData.value * 1.1, 1);
-					}
-				})
-				.start();
-
-			// Store reference to the tween for later cleanup
-			highlight.userData.tween = scaleTween;
-		} else {
-			// Fallback to traditional animation loop
-			const startTime = Date.now();
-			highlight.userData.animation = function () {
-				const elapsed = (Date.now() - startTime) / 1000;
-				const scale = 1 + 0.1 * Math.sin(elapsed * 3);
-				highlight.scale.set(scale, scale, 1);
-				glow.scale.set(scale * 1.1, scale * 1.1, 1);
-			};
-
-			// Add to animation loop
-			if (!window._highlightAnimations) {
-				window._highlightAnimations = [];
-
-				// Set up animation loop if not already running
-				if (!window._highlightAnimationLoop) {
-					window._highlightAnimationLoop = function () {
-						if (window._highlightAnimations && window._highlightAnimations.length > 0) {
-							window._highlightAnimations.forEach(anim => {
-								if (typeof anim === 'function') {
-									try {
-										anim();
-									} catch (e) {
-										console.warn('Error in highlight animation:', e);
-									}
-								}
-							});
-						}
-						requestAnimationFrame(window._highlightAnimationLoop);
-					};
-					window._highlightAnimationLoop();
-				}
-			}
-
-			window._highlightAnimations.push(highlight.userData.animation);
-		}
-
-		// Scale piece slightly
-		piece.scale.set(1.1, 1.1, 1.1);
-	} catch (error) {
-		console.error('Error creating highlight effect:', error);
-	}
 }
 

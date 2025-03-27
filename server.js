@@ -25,7 +25,7 @@ const server = http.createServer(app);
 const io = socketIO(server);
 
 // Define constants
-const PORT = process.env.PORT || 3021; // Changed from 3020 to 3021
+const PORT = process.env.PORT || 3022; // Changed from 3020 to 3021
 
 // Create a single GameManager instance to use for all connections
 const gameManager = new GameManager();
@@ -58,6 +58,9 @@ app.use(bodyParser.urlencoded({ extended: true }));
 
 // Environment detection
 const isDevelopment = process.env.NODE_ENV !== 'production';
+
+// Serve socket.io-client from node_modules
+app.use('/node_modules', express.static(path.join(__dirname, 'node_modules')));
 
 // In development mode (localhost), serve files from the public directory directly
 app.use(express.static(path.join(__dirname, 'public')));

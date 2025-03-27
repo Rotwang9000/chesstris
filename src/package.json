@@ -1,8 +1,0 @@
-{
-	"name": "chesstris-modules",
-	"version": "1.0.0",
-	"description": "Supporting modules for Chesstris",
-	"type": "module",
-	"dependencies": {
-	}
-}

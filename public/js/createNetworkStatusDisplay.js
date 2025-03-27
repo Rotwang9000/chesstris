@@ -1,10 +1,13 @@
 import { updateNetworkStatus } from './createLoadingIndicator.js';
-import * as NetworkManager from './utils/networkManager.js';
+import * as NetworkManagerModule from './utils/networkManager.js';
 
 /**
  * Create a network status display
  */
 export function createNetworkStatusDisplay() {
+	// Ensure we have the correct NetworkManager instance
+	const NetworkManager = window.NetworkManager || NetworkManagerModule.default || NetworkManagerModule;
+	
 	// Create the network status element with Russian-style design
 	const networkStatusElement = document.createElement('div');
 	networkStatusElement.id = 'network-status';
@@ -31,6 +34,66 @@ export function createNetworkStatusDisplay() {
 	// Add to DOM
 	document.body.appendChild(networkStatusElement);
 
+	// Check if isConnected function exists before using it
+	let isConnected = false;
+	try {
+		if (NetworkManager && typeof NetworkManager.isConnected === 'function') {
+			isConnected = NetworkManager.isConnected();
+		}
+	} catch (error) {
+		console.error('Error checking network connection status:', error);
+	}
+
 	// Update status based on current connection
-	updateNetworkStatus(NetworkManager.isConnected() ? 'connected' : 'disconnected');
+	updateNetworkStatus(isConnected ? 'connected' : 'disconnected');
+	
+	// Set up event listeners for connection status changes
+	if (NetworkManager) {
+		// Add listeners for connect and disconnect events
+		if (typeof NetworkManager.on === 'function') {
+			NetworkManager.on('connect', () => {
+				updateNetworkStatus('connected');
+				networkStatusElement.textContent = 'Network: Connected';
+			});
+			
+			NetworkManager.on('disconnect', () => {
+				updateNetworkStatus('disconnected');
+				networkStatusElement.textContent = 'Network: Disconnected';
+			});
+			
+			NetworkManager.on('error', () => {
+				updateNetworkStatus('error');
+				networkStatusElement.textContent = 'Network: Error';
+			});
+		}
+		
+		// Also listen for DOM events as a fallback
+		document.addEventListener('network:connect', () => {
+			updateNetworkStatus('connected');
+			networkStatusElement.textContent = 'Network: Connected';
+		});
+		
+		document.addEventListener('network:disconnect', () => {
+			updateNetworkStatus('disconnected');
+			networkStatusElement.textContent = 'Network: Disconnected';
+		});
+		
+		document.addEventListener('network:error', () => {
+			updateNetworkStatus('error');
+			networkStatusElement.textContent = 'Network: Error';
+		});
+	}
+	
+	// Poll for status updates as a failsafe (every 5 seconds)
+	setInterval(() => {
+		try {
+			if (NetworkManager && typeof NetworkManager.isConnected === 'function') {
+				const connectionStatus = NetworkManager.isConnected();
+				updateNetworkStatus(connectionStatus ? 'connected' : 'disconnected');
+				networkStatusElement.textContent = `Network: ${connectionStatus ? 'Connected' : 'Disconnected'}`;
+			}
+		} catch (error) {
+			console.warn('Error during network status polling:', error);
+		}
+	}, 5000);
 }

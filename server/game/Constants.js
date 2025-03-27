@@ -5,8 +5,6 @@
 
 // Game board settings
 const BOARD_SETTINGS = {
-	DEFAULT_WIDTH: 30,
-	DEFAULT_HEIGHT: 30,
 	MIN_HOME_ZONE_DISTANCE: 8,
 	MAX_HOME_ZONE_DISTANCE: 12,
 	HOME_ZONE_WIDTH: 8,
@@ -14,7 +12,7 @@ const BOARD_SETTINGS = {
 	HOME_ZONE_DEGRADATION_INTERVAL: 300000, // 5 minutes
 	MAX_PLAYERS_PER_GAME: 2048,
 	DEFAULT_CELL_SIZE: 1,
-	HOME_ZONE_DISTANCE: 16,  // Exact distance for 8-move pawn clash
+	HOME_ZONE_DISTANCE: 18,  // Used for pawn clash distance
 	// Direction vectors for spiral pattern (right angles)
 	SPIRAL_DIRECTIONS: [
 		{ x: 1, z: 0 },  // Right (+X)

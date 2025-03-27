@@ -9,20 +9,17 @@ const { validateCoordinates, log } = require('./GameUtilities');
 class BoardManager {
 	/**
 	 * Create an empty board
-	 * @param {number} width - Initial width of the board (for visualization purposes)
-	 * @param {number} height - Initial height of the board (for visualization purposes)
-	 * @returns {Object} The empty board structure
+	 * @returns {Object} The empty board structure with a sparse cell representation
 	 */
-	createEmptyBoard(width = BOARD_SETTINGS.DEFAULT_WIDTH, height = BOARD_SETTINGS.DEFAULT_HEIGHT) {
-		// Instead of a 2D array, use a sparse structure with occupied cells
+	createEmptyBoard() {
+		// Use a sparse structure with occupied cells - no predefined boundaries
 		return {
-			cells: {},  // Map of "x,z" coordinates to cell data (now arrays of objects)
-			width: width,
-			height: height,
-			minX: 0,
-			maxX: width - 1,
-			minZ: 0,
-			maxZ: height - 1
+			cells: {},  // Map of "x,z" coordinates to cell data
+			// Track the actual boundaries based on cells that exist
+			minX: Infinity,
+			maxX: -Infinity,
+			minZ: Infinity,
+			maxZ: -Infinity
 		};
 	}
 	
@@ -50,14 +47,12 @@ class BoardManager {
 		const key = `${x},${z}`;
 		
 		// Update board boundaries if necessary
-		if (x < board.minX) board.minX = x;
-		if (x > board.maxX) board.maxX = x;
-		if (z < board.minZ) board.minZ = z;
-		if (z > board.maxZ) board.maxZ = z;
-		
-		// Update width and height
-		board.width = board.maxX - board.minX + 1;
-		board.height = board.maxZ - board.minZ + 1;
+		if (cell !== null) {
+			if (x < board.minX) board.minX = x;
+			if (x > board.maxX) board.maxX = x;
+			if (z < board.minZ) board.minZ = z;
+			if (z > board.maxZ) board.maxZ = z;
+		}
 		
 		// Ensure we're setting an array of objects
 		if (Array.isArray(cell)) {
@@ -65,9 +60,43 @@ class BoardManager {
 		} else if (cell === null) {
 			// If explicitly setting to null, clear the cell
 			delete board.cells[key];
+			
+			// Recalculate board boundaries after deletion
+			this.recalculateBoardBoundaries(board);
 		} else {
 			// Convert single object to array
 			board.cells[key] = [cell];
+		}
+	}
+	
+	/**
+	 * Recalculate board boundaries based on existing cells
+	 * @param {Object} board - The board object
+	 */
+	recalculateBoardBoundaries(board) {
+		// Reset boundaries
+		board.minX = Infinity;
+		board.maxX = -Infinity;
+		board.minZ = Infinity;
+		board.maxZ = -Infinity;
+		
+		// Iterate through all cells to find boundaries
+		for (const key in board.cells) {
+			if (!board.cells[key] || board.cells[key].length === 0) continue;
+			
+			const [x, z] = key.split(',').map(Number);
+			if (x < board.minX) board.minX = x;
+			if (x > board.maxX) board.maxX = x;
+			if (z < board.minZ) board.minZ = z;
+			if (z > board.maxZ) board.maxZ = z;
+		}
+		
+		// If no cells, set default boundaries
+		if (board.minX === Infinity) {
+			board.minX = 0;
+			board.maxX = 0;
+			board.minZ = 0;
+			board.maxZ = 0;
 		}
 	}
 	

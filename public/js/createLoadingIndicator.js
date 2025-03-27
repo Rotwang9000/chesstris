@@ -133,9 +133,7 @@ export function showErrorMessage(message) {
 			<button onclick="window.location.reload()" style="background: #333; color: #ffcc00; border: 1px solid #ffcc00; padding: 10px 20px; font-size: 16px; cursor: pointer; font-family: 'Times New Roman', serif;">
 				Reload Page
 			</button>
-			<div style="margin-top: 15px;">
-				<a href="minimal.html" style="color: #ffcc00; text-decoration: underline; font-size: 14px;">Try Minimal Version Instead</a>
-			</div>
+
 		</div>
 	`;
 

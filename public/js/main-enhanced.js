@@ -10,7 +10,7 @@ import * as NetworkManagerModule from './utils/networkManager.js';
 import './boardFunctions.js'; // Import the updated board functions
 
 // Make NetworkManager available globally for other modules to access
-window.NetworkManager = NetworkManagerModule;
+window.NetworkManager = NetworkManagerModule.default || NetworkManagerModule;
 
 // Global state
 let isGameStarted = false;
@@ -37,7 +37,7 @@ async function init() {
 		// Make sure NetworkManager is globally available
 		if (!window.NetworkManager) {
 			console.warn('NetworkManager not globally available, assigning it now');
-			window.NetworkManager = NetworkManagerModule;
+			window.NetworkManager = NetworkManagerModule.default || NetworkManagerModule;
 		}
 		
 		// Initialize NetworkStatusManager if available
@@ -74,7 +74,7 @@ async function init() {
 		// DO NOT hide it here to avoid flash of content
 		
 		// Create player list sidebar with Russian theme
-		//createPlayerListSidebar();
+		createPlayerListSidebar();
 		
 		// Initialize the game first
 		console.log('Starting enhanced game initialization...');
@@ -112,7 +112,6 @@ async function init() {
 				<h3 style="color: #ffcc00; font-family: 'Times New Roman', serif;">Error Starting Game</h3>
 				<p>${error.message}</p>
 				<div style="margin-top: 15px;">
-					<a href="minimal.html" style="color: #ffcc00; margin-right: 15px; font-family: 'Times New Roman', serif;">Try Minimal Version</a>
 					<button onclick="window.location.reload()" style="background-color: #333; color: #ffcc00; border: 1px solid #ffcc00; padding: 8px 16px; font-family: 'Times New Roman', serif; cursor: pointer;">Reload</button>
 				</div>
 			`;
@@ -298,16 +297,27 @@ function toggleSidebar() {
  * Set up player list updates
  */
 function setupPlayerListUpdates() {
-	if (NetworkManagerModule.isConnected()) {
+	// Make sure both NetworkManager and window.NetworkManager are available
+	const NM = window.NetworkManager || NetworkManagerModule.default || NetworkManagerModule;
+	
+	if (NM && typeof NM.isConnected === 'function' && NM.isConnected()) {
 		// Listen for player list updates
-		NetworkManagerModule.onMessage('player_list', (data) => {
-			if (data && data.players) {
-				updatePlayerList(data.players);
-			}
-		});
+		if (typeof NM.onMessage === 'function') {
+			NM.onMessage('player_list', (data) => {
+				if (data && data.players) {
+					updatePlayerList(data.players);
+				}
+			});
+		}
 		
 		// Request initial player list
-		NetworkManagerModule.requestPlayerList();
+		if (typeof NM.requestPlayerList === 'function') {
+			NM.requestPlayerList();
+		}
+	} else {
+		console.log('Network not connected yet, will set up player list later');
+		// Try again after a short delay
+		setTimeout(setupPlayerListUpdates, 2000);
 	}
 }
 
@@ -317,7 +327,12 @@ function setupPlayerListUpdates() {
  */
 function updatePlayerList(players) {
 	const playerList = document.getElementById('player-list');
-	if (!playerList) return;
+	if (!playerList) {
+		console.warn('Player list element not found');
+		return;
+	}
+	
+	console.log('Updating player list with players:', players);
 	
 	// Clear current list
 	playerList.innerHTML = '';
@@ -363,7 +378,9 @@ function updatePlayerList(players) {
 			marginBottom: '5px',
 			borderRadius: '3px',
 			backgroundColor: player.id === NetworkManagerModule.getPlayerId() ? 'rgba(255, 204, 0, 0.2)' : 'transparent',
-			border: player.id === NetworkManagerModule.getPlayerId() ? '1px solid #ffcc00' : 'none'
+			border: player.id === NetworkManagerModule.getPlayerId() ? '1px solid #ffcc00' : 'none',
+			cursor: 'pointer',
+			transition: 'background-color 0.2s'
 		});
 		
 		// Add player info with Russian theme
@@ -374,6 +391,41 @@ function updatePlayerList(players) {
 			</div>
 			${player.isComputer ? '<div style="font-size: 11px; color: #ffcc00; font-style: italic;">(Computer)</div>' : ''}
 		`;
+		
+		// Add hover effect to highlight pieces
+		playerItem.addEventListener('mouseenter', () => {
+			// Highlight background
+			playerItem.style.backgroundColor = player.id === NetworkManagerModule.getPlayerId() 
+				? 'rgba(255, 204, 0, 0.4)' 
+				: 'rgba(255, 255, 255, 0.1)';
+			
+			console.log('Highlighting pieces for player:', player.id);
+			
+			// Highlight player's pieces using global window object
+			if (window.gameCore && window.gameCore.highlightPlayerPieces) {
+				window.gameCore.highlightPlayerPieces(player.id);
+			}
+		});
+		
+		playerItem.addEventListener('mouseleave', () => {
+			// Reset background
+			playerItem.style.backgroundColor = player.id === NetworkManagerModule.getPlayerId() 
+				? 'rgba(255, 204, 0, 0.2)' 
+				: 'transparent';
+			
+			console.log('Removing highlights from pieces');
+			
+			// Remove highlights using global window object
+			if (window.gameCore && window.gameCore.removePlayerPiecesHighlight) {
+				window.gameCore.removePlayerPiecesHighlight();
+			}
+			
+			// Restore current player highlight
+			if (window.gameState && window.gameState.currentPlayer && window.gameCore && window.gameCore.highlightCurrentPlayerPieces) {
+				console.log('Restoring highlight for current player:', window.gameState.currentPlayer);
+				window.gameCore.highlightCurrentPlayerPieces(window.gameState.currentPlayer);
+			}
+		});
 		
 		playerList.appendChild(playerItem);
 	});
@@ -390,7 +442,7 @@ async function joinGame(gameId = null) {
 		// First check if NetworkManager is available
 		if (!window.NetworkManager) {
 			console.error('NetworkManager not available, trying to reinitialize');
-			window.NetworkManager = NetworkManagerModule;
+			window.NetworkManager = NetworkManagerModule.default || NetworkManagerModule;
 			
 			// If still not available, show error
 			if (!window.NetworkManager) {
@@ -523,8 +575,18 @@ async function joinGame(gameId = null) {
  */
 async function joinGameAfterConnection(gameId = null) {
 	try {
+		// Make sure we're using the global NetworkManager
+		const NM = window.NetworkManager || NetworkManagerModule.default || NetworkManagerModule;
+		if (!NM) {
+			console.error('NetworkManager not available');
+			showError('Network manager not available. Please refresh the page.');
+			hideLoadingScreen();
+			return false;
+		}
+		
 		// Attempt to join the game
-		const joinResult = await NetworkManagerModule.joinGame(gameId);
+		console.log(`Attempting to join game: ${gameId || 'global game'}`);
+		const joinResult = await NM.joinGame(gameId);
 		if (!joinResult || !joinResult.success) {
 			console.error('Failed to join game:', joinResult);
 			showError('Could not join game. Please try again.');
@@ -536,9 +598,11 @@ async function joinGameAfterConnection(gameId = null) {
 
 		// Store the game ID
 		currentGameId = joinResult.gameId;
+		console.log(`Successfully joined game: ${currentGameId}`);
 
 		// Register for game state updates
-		NetworkManagerModule.onMessage('game_state', (data) => {
+		console.log('Registering for game state updates');
+		NM.onMessage('game_state', (data) => {
 			console.log('Game state message received:', data);
 			if (typeof gameCore !== 'undefined' && gameCore.handleGameStateUpdate) {
 				gameCore.handleGameStateUpdate(data);
@@ -546,7 +610,7 @@ async function joinGameAfterConnection(gameId = null) {
 		});
 
 		// Register for game updates
-		NetworkManagerModule.onMessage('game_update', (data) => {
+		NM.onMessage('game_update', (data) => {
 			console.log('Game update message received:', data);
 			if (typeof gameCore !== 'undefined' && gameCore.handleGameUpdate) {
 				gameCore.handleGameUpdate(data);
@@ -554,22 +618,36 @@ async function joinGameAfterConnection(gameId = null) {
 		});
 
 		// Enable game state polling
-		NetworkManagerModule.startGameStatePolling();
+		console.log('Starting game state polling');
+		NM.startGameStatePolling();
 
 		// Explicitly request initial game state
-		setTimeout(() => {
-			console.log('Requesting initial game state...');
-			if (NetworkManagerModule.getGameState) {
-				NetworkManagerModule.getGameState()
-					.then(state => {
-						console.log('Initial game state received:', state);
-						if (typeof gameCore !== 'undefined' && gameCore.handleGameStateUpdate) {
-							gameCore.handleGameStateUpdate(state);
-						}
-					})
-					.catch(err => console.error('Error fetching initial game state:', err));
+		console.log('Requesting initial game state...');
+		try {
+			const state = await NM.getGameState({ gameId: currentGameId });
+			console.log('Initial game state received:', state);
+			if (typeof gameCore !== 'undefined' && gameCore.handleGameStateUpdate) {
+				gameCore.handleGameStateUpdate(state);
 			}
-		}, 1000);
+		} catch (error) {
+			console.error('Error fetching initial game state:', error);
+			showToastNotification('Error fetching game state. Will try again...');
+			
+			// Retry once more with a delay
+			setTimeout(async () => {
+				try {
+					console.log('Retrying game state request...');
+					const state = await NM.getGameState({ gameId: currentGameId });
+					console.log('Game state received on retry:', state);
+					if (typeof gameCore !== 'undefined' && gameCore.handleGameStateUpdate) {
+						gameCore.handleGameStateUpdate(state);
+					}
+				} catch (retryError) {
+					console.error('Failed to get game state on retry:', retryError);
+					showToastNotification('Could not fetch game state. Try refreshing the page.');
+				}
+			}, 3000);
+		}
 
 		// Update game ID display
 		const gameIdDisplay = document.getElementById('game-id-display');

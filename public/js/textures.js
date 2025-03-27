@@ -257,6 +257,11 @@ function createCloudFallbackTexture() {
 
 // Modify the animateClouds function to not affect the board
 function animateClouds(scene) {
+
+	if(!scene || !scene.children) {
+		console.warn('Scene has no children');
+		return;
+	}
 	// Cloud animation
 	const cloudsGroup = scene.children.find(child => child.name === 'clouds');
 

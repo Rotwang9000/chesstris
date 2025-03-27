@@ -23,19 +23,28 @@ class ChessManager {
 		const pieces = [];
 		const playerColor = game.players[playerId].color;
 		
-		// Determine if this is a horizontal or vertical home zone
-		const isHorizontal = homeZone.width === 8 && homeZone.height === 2;
+		// Log the orientation for debugging
+		console.log(`ChessManager: Initializing chess pieces for player ${playerId} with home zone orientation ${homeZone.orientation}`);
+		
+		// Determine layout based on orientation (not just dimensions)
+		// Horizontal layout for orientation 0 (facing up) and 2 (facing down)
+		// Vertical layout for orientation 1 (facing right) and 3 (facing left)
+		const isHorizontal = homeZone.orientation === 0 || homeZone.orientation === 2;
 		
 		// Initialize pieces based on home zone orientation
 		if (isHorizontal) {
-			// Horizontal home zone (8x2)
+			// Horizontal home zone for orientation 0 or 2
 			// Place pieces in traditional chess order: Rook, Knight, Bishop, Queen, King, Bishop, Knight, Rook
 			const pieceOrder = ['ROOK', 'KNIGHT', 'BISHOP', 'QUEEN', 'KING', 'BISHOP', 'KNIGHT', 'ROOK'];
 			
-			// Place back row pieces (row 0)
+			// For orientation 0 (facing up), pieces are at bottom and pawns above
+			// For orientation 2 (facing down), pieces are at top and pawns below
+			const isBottomOriented = homeZone.orientation === 0;
+			
+			// Place main row pieces
 			for (let i = 0; i < pieceOrder.length; i++) {
 				const x = homeZone.x + i;
-				const z = homeZone.z;
+				const z = isBottomOriented ? homeZone.z : homeZone.z + 1;
 				const pieceType = pieceOrder[i];
 				
 				// Create the chess piece
@@ -45,7 +54,8 @@ class ChessManager {
 					player: playerId,
 					position: { x, z },
 					color: playerColor,
-					hasMoved: false
+					hasMoved: false,
+					orientation: homeZone.orientation
 				};
 				
 				pieces.push(piece);
@@ -56,24 +66,26 @@ class ChessManager {
 					pieceType: pieceType.toLowerCase(),
 					player: playerId,
 					color: playerColor,
-					pieceId: piece.id
+					pieceId: piece.id,
+					orientation: homeZone.orientation
 				};
 				
 				// Create home zone marker
 				const homeZoneObj = {
 					type: 'home',
 					player: playerId,
-					color: playerColor
+					color: playerColor,
+					orientation: homeZone.orientation
 				};
 				
 				// Add both objects to the cell
 				this.boardManager.setCell(game.board, x, z, [homeZoneObj, chessPieceObj]);
 			}
 			
-			// Place pawns in the second row (row 1)
+			// Place pawns in the other row
 			for (let i = 0; i < 8; i++) {
 				const x = homeZone.x + i;
-				const z = homeZone.z + 1;
+				const z = isBottomOriented ? homeZone.z + 1 : homeZone.z;
 				const pieceType = 'PAWN';
 				
 				// Create the pawn
@@ -83,7 +95,8 @@ class ChessManager {
 					player: playerId,
 					position: { x, z },
 					color: playerColor,
-					hasMoved: false
+					hasMoved: false,
+					orientation: homeZone.orientation
 				};
 				
 				pieces.push(piece);
@@ -94,27 +107,33 @@ class ChessManager {
 					pieceType: pieceType.toLowerCase(),
 					player: playerId,
 					color: playerColor,
-					pieceId: piece.id
+					pieceId: piece.id,
+					orientation: homeZone.orientation
 				};
 				
 				// Create home zone marker
 				const homeZoneObj = {
 					type: 'home',
 					player: playerId,
-					color: playerColor
+					color: playerColor,
+					orientation: homeZone.orientation
 				};
 				
 				// Add both objects to the cell
 				this.boardManager.setCell(game.board, x, z, [homeZoneObj, chessPieceObj]);
 			}
 		} else {
-			// Vertical home zone (2x8)
+			// Vertical home zone for orientation 1 or 3
 			// Place pieces in a vertical arrangement
 			const pieceOrder = ['ROOK', 'KNIGHT', 'BISHOP', 'QUEEN', 'KING', 'BISHOP', 'KNIGHT', 'ROOK'];
 			
-			// Place main column pieces (column 0)
+			// For orientation 1 (facing right), pieces are at left and pawns to the right
+			// For orientation 3 (facing left), pieces are at right and pawns to the left
+			const isLeftOriented = homeZone.orientation === 1;
+			
+			// Place main column pieces
 			for (let i = 0; i < pieceOrder.length; i++) {
-				const x = homeZone.x;
+				const x = isLeftOriented ? homeZone.x : homeZone.x + 1;
 				const z = homeZone.z + i;
 				const pieceType = pieceOrder[i];
 				
@@ -125,7 +144,8 @@ class ChessManager {
 					player: playerId,
 					position: { x, z },
 					color: playerColor,
-					hasMoved: false
+					hasMoved: false,
+					orientation: homeZone.orientation
 				};
 				
 				pieces.push(piece);
@@ -136,23 +156,25 @@ class ChessManager {
 					pieceType: pieceType.toLowerCase(),
 					player: playerId,
 					color: playerColor,
-					pieceId: piece.id
+					pieceId: piece.id,
+					orientation: homeZone.orientation
 				};
 				
 				// Create home zone marker
 				const homeZoneObj = {
 					type: 'home',
 					player: playerId,
-					color: playerColor
+					color: playerColor,
+					orientation: homeZone.orientation
 				};
 				
 				// Add both objects to the cell
 				this.boardManager.setCell(game.board, x, z, [homeZoneObj, chessPieceObj]);
 			}
 			
-			// Place pawns in the second column (column 1)
+			// Place pawns in the other column
 			for (let i = 0; i < 8; i++) {
-				const x = homeZone.x + 1;
+				const x = isLeftOriented ? homeZone.x + 1 : homeZone.x;
 				const z = homeZone.z + i;
 				const pieceType = 'PAWN';
 				
@@ -163,7 +185,8 @@ class ChessManager {
 					player: playerId,
 					position: { x, z },
 					color: playerColor,
-					hasMoved: false
+					hasMoved: false,
+					orientation: homeZone.orientation
 				};
 				
 				pieces.push(piece);
@@ -174,14 +197,16 @@ class ChessManager {
 					pieceType: pieceType.toLowerCase(),
 					player: playerId,
 					color: playerColor,
-					pieceId: piece.id
+					pieceId: piece.id,
+					orientation: homeZone.orientation
 				};
 				
 				// Create home zone marker
 				const homeZoneObj = {
 					type: 'home',
 					player: playerId,
-					color: playerColor
+					color: playerColor,
+					orientation: homeZone.orientation
 				};
 				
 				// Add both objects to the cell

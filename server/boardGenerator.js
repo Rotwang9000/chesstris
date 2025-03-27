@@ -17,28 +17,46 @@
  * 
  * This algorithm:
  * 1. Uses a randomized approach with specific constraints
- * 2. Ensures home cells aren't directly in the path of other players' pawns (8 spaces)
- * 3. Arranges for potential pawn clashing after 6 moves (partial clash)
- * 4. Falls back to placement relative to the furthest cell if needed
+ * 2. Ensures home cells have 8 spaces in front of them and 7 on the other 3 sides
+ * 3. Ensures home cells aren't directly in the path of other players' pawns (8 spaces)
+ * 4. Arranges for potential pawn clashing after 7 moves (partial clash) 
+ * 5. Falls back to placement relative to the furthest cell if needed
  * 
  * @param {number} playerIndex - Player index (0-based)
  * @param {Object} gameState - Current game state to check existing positions
- * @param {number} boardWidth - Board width
- * @param {number} boardHeight - Board height
  * @param {number} homeZoneWidth - Home zone width (typically 8 for chess)
  * @param {number} homeZoneHeight - Home zone height (typically 2 for chess)
  * @returns {Object} Position and orientation for the home zone
  */
-function calculateHomePosition(playerIndex, gameState, boardWidth, boardHeight, homeZoneWidth, homeZoneHeight) {
-	// For the first player, place near the center
+function calculateHomePosition(playerIndex, gameState, homeZoneWidth, homeZoneHeight) {
+	// For the first player, place at origin with a random orientation
 	if (playerIndex === 0) {
-		const centerX = Math.floor(boardWidth / 2) - Math.floor(homeZoneWidth / 2);
-		const centerZ = Math.floor(boardHeight / 2) - Math.floor(homeZoneHeight / 2);
+		const randomOrientation = Math.floor(Math.random() * 4); // 0-3
+		
+		// Start at origin (0,0)
+		let x = 0;
+		let z = 0;
+		
+		// Ensure minimum 8 spaces in front of pawns
+		switch (randomOrientation) {
+			case 0: // Facing up - ensure space above
+				z = 8; // Provide space for pawns to move up
+				break;
+			case 1: // Facing right - ensure space to right
+				x = -8; // Move left to provide space for pawns to move right
+				break;
+			case 2: // Facing down - ensure space below
+				z = -8; // Move up to provide space for pawns to move down
+				break;
+			case 3: // Facing left - ensure space to left
+				x = 8; // Provide space for pawns to move left
+				break;
+		}
 		
 		return {
-			x: centerX,
-			z: centerZ,
-			orientation: 0 // First player faces up by default
+			x,
+			z,
+			orientation: randomOrientation
 		};
 	}
 	
@@ -53,36 +71,97 @@ function calculateHomePosition(playerIndex, gameState, boardWidth, boardHeight, 
 	// Track pawn paths for existing players
 	const pawnPaths = calculateExistingPawnPaths(existingHomeZones);
 	
-	// Try to find a valid position with 100 attempts
-	for (let attempt = 0; attempt < 100; attempt++) {
-		// Generate random position
-		const randomOrientation = Math.floor(Math.random() * 4); // 0-3
-		let x = Math.floor(Math.random() * (boardWidth - homeZoneWidth));
-		let z = Math.floor(Math.random() * (boardHeight - homeZoneHeight));
+	// Try to find a valid position with 100 attempts, prioritizing varied orientations
+	// For better variety, prioritize orientations not already used
+	const usedOrientations = existingHomeZones.map(zone => zone.orientation);
+	
+	// The distance at which pawns should clash (preferable)
+	const clashDistance = 7;
+	
+	// Start with closer placement attempts and increase distance gradually
+	for (let distanceIndex = 0; distanceIndex < 5; distanceIndex++) {
+		// Start with a close distance and gradually increase if needed
+		const initialSpread = 15 + (distanceIndex * 5); // Start at 15, then 20, 25, 30, 35
+		const maxAttempts = 30 - (distanceIndex * 5); // More attempts for closer distances
 		
-		// Adjust position based on orientation
-		switch (randomOrientation) {
-			case 0: // Facing up - pawns at bottom
-				// Position is already correct
-				break;
-			case 1: // Facing right - pawns at left
-				// Ensure there's room for pawns on the left
-				x = Math.max(6, x);
-				break;
-			case 2: // Facing down - pawns at top
-				// Ensure there's room for pawns on top
-				z = Math.max(6, z);
-				break;
-			case 3: // Facing left - pawns at right
-				// Ensure there's room for pawns on the right
-				x = Math.min(boardWidth - homeZoneWidth - 6, x);
-				break;
-		}
+		console.log(`Trying home zone placement with distance spread: ${initialSpread}`);
 		
-		// Check if position is valid (not in direct path of other pawns at 8 moves)
-		if (isValidHomePosition(x, z, randomOrientation, homeZoneWidth, homeZoneHeight, pawnPaths, 8)) {
-			// Check if position enables clashing at 6 spaces
-			if (hasPartialPawnClash(x, z, randomOrientation, homeZoneWidth, homeZoneHeight, pawnPaths, 6)) {
+		// Try to find a valid position with multiple attempts at this distance
+		for (let attempt = 0; attempt < maxAttempts; attempt++) {
+			// Generate random position
+			let randomOrientation;
+			
+			// Every other attempt, try to use an orientation that's not already in use
+			if (attempt % 2 === 0 && usedOrientations.length > 0) {
+				// Create array of orientations [0,1,2,3]
+				const allOrientations = [0, 1, 2, 3];
+				// Filter out used orientations
+				const unusedOrientations = allOrientations.filter(o => !usedOrientations.includes(o));
+				
+				if (unusedOrientations.length > 0) {
+					// Choose random unused orientation
+					randomOrientation = unusedOrientations[Math.floor(Math.random() * unusedOrientations.length)];
+				} else {
+					// If all orientations are used, just choose random
+					randomOrientation = Math.floor(Math.random() * 4);
+				}
+			} else {
+				// Standard random orientation
+				randomOrientation = Math.floor(Math.random() * 4);
+			}
+			
+			// Find the average center of existing zones
+			let centerX = 0;
+			let centerZ = 0;
+			
+			if (existingHomeZones.length > 0) {
+				for (const zone of existingHomeZones) {
+					centerX += zone.x;
+					centerZ += zone.z;
+				}
+				centerX /= existingHomeZones.length;
+				centerZ /= existingHomeZones.length;
+			}
+			
+			// Generate position within reasonable range of existing zones
+			// Add randomness to avoid grid-like placement
+			const angle = Math.random() * Math.PI * 2; // Random angle 0-2π
+			
+			// Use the current distance index to determine placement distance
+			const distance = initialSpread + (Math.random() * 10); // Add a small random variation
+			
+			let x = Math.round(centerX + Math.cos(angle) * distance);
+			let z = Math.round(centerZ + Math.sin(angle) * distance);
+			
+			// Adjust position based on orientation to ensure enough space for pawns to move
+			switch (randomOrientation) {
+				case 0: // Facing up - pawns at bottom
+					z += 8; // Ensure space above for pawns
+					break;
+				case 1: // Facing right - pawns at left
+					x -= 8; // Ensure space to right for pawns
+					break;
+				case 2: // Facing down - pawns at top
+					z -= 8; // Ensure space below for pawns
+					break;
+				case 3: // Facing left - pawns at right
+					x += 8; // Ensure space to left for pawns
+					break;
+			}
+			
+			// First check if the position has adequate space
+			if (!hasAdequateSpace(x, z, randomOrientation, homeZoneWidth, homeZoneHeight, existingHomeZones)) {
+				continue;
+			}
+			
+			// Then check if position is valid (not in direct path of other pawns at 8 moves)
+			if (!isValidHomePosition(x, z, randomOrientation, homeZoneWidth, homeZoneHeight, pawnPaths, 8)) {
+				continue;
+			}
+			
+			// Finally check if position enables clashing at 7 spaces (preferred)
+			if (hasPartialPawnClash(x, z, randomOrientation, homeZoneWidth, homeZoneHeight, pawnPaths, clashDistance)) {
+				console.log(`Found valid position at distance ${distance} with orientation ${randomOrientation}`);
 				return {
 					x,
 					z,
@@ -92,8 +171,199 @@ function calculateHomePosition(playerIndex, gameState, boardWidth, boardHeight, 
 		}
 	}
 	
-	// If no valid position found after 100 attempts, place relative to furthest cell
-	return calculateFallbackPosition(existingHomeZones, boardWidth, boardHeight, homeZoneWidth, homeZoneHeight);
+	// If close distances don't work, try with reduced constraints at medium distances
+	console.log("Trying medium distances with reduced constraints (no clash requirement)");
+	for (let distanceIndex = 0; distanceIndex < 3; distanceIndex++) {
+		// Use medium distances (25-35)
+		const initialSpread = 20 + (distanceIndex * 5);
+		const maxAttempts = 20;
+		
+		for (let attempt = 0; attempt < maxAttempts; attempt++) {
+			// Use the same orientation prioritization logic for better variety
+			let randomOrientation;
+			
+			if (attempt % 2 === 0 && usedOrientations.length > 0) {
+				const allOrientations = [0, 1, 2, 3];
+				const unusedOrientations = allOrientations.filter(o => !usedOrientations.includes(o));
+				
+				if (unusedOrientations.length > 0) {
+					randomOrientation = unusedOrientations[Math.floor(Math.random() * unusedOrientations.length)];
+				} else {
+					randomOrientation = Math.floor(Math.random() * 4);
+				}
+			} else {
+				randomOrientation = Math.floor(Math.random() * 4);
+			}
+			
+			// Find the average center of existing zones
+			let centerX = 0;
+			let centerZ = 0;
+			
+			if (existingHomeZones.length > 0) {
+				for (const zone of existingHomeZones) {
+					centerX += zone.x;
+					centerZ += zone.z;
+				}
+				centerX /= existingHomeZones.length;
+				centerZ /= existingHomeZones.length;
+			}
+			
+			// Generate position with medium distance
+			const angle = Math.random() * Math.PI * 2;
+			const distance = initialSpread + (Math.random() * 10);
+			
+			let x = Math.round(centerX + Math.cos(angle) * distance);
+			let z = Math.round(centerZ + Math.sin(angle) * distance);
+			
+			// Adjust position based on orientation to ensure space for pawns
+			switch (randomOrientation) {
+				case 0: // Facing up - pawns at bottom
+					z += 8; // Ensure space above for pawns
+					break;
+				case 1: // Facing right - pawns at left
+					x -= 8; // Ensure space to right for pawns
+					break;
+				case 2: // Facing down - pawns at top
+					z -= 8; // Ensure space below for pawns
+					break;
+				case 3: // Facing left - pawns at right
+					x += 8; // Ensure space to left for pawns
+					break;
+			}
+			
+			// Only check for adequate space and valid position (no clash requirement)
+			if (hasAdequateSpace(x, z, randomOrientation, homeZoneWidth, homeZoneHeight, existingHomeZones) &&
+				isValidHomePosition(x, z, randomOrientation, homeZoneWidth, homeZoneHeight, pawnPaths, 8)) {
+				console.log(`Found position with medium distance ${distance} with orientation ${randomOrientation}`);
+				return {
+					x,
+					z,
+					orientation: randomOrientation
+				};
+			}
+		}
+	}
+	
+	// If no valid position found, place using fallback with adequate space check
+	return calculateFallbackPosition(existingHomeZones, homeZoneWidth, homeZoneHeight);
+}
+
+/**
+ * Check if a potential home zone position has adequate space around it
+ * - 8 spaces in front for pawn movement (minimum requirement)
+ * - 7 spaces on the other three sides
+ * 
+ * @param {number} x - X coordinate
+ * @param {number} z - Z coordinate
+ * @param {number} orientation - Orientation (0-3)
+ * @param {number} width - Home zone width
+ * @param {number} height - Home zone height
+ * @param {Array} existingHomeZones - Array of existing home zones
+ * @returns {boolean} True if position has adequate space
+ */
+function hasAdequateSpace(x, z, orientation, width, height, existingHomeZones) {
+	// Define the space requirements
+	const frontSpace = 8; // Spaces for pawns to move forward (MINIMUM REQUIREMENT)
+	const sideSpace = 7; // Spaces on the other three sides
+	
+	// Log position being checked
+	console.log(`Checking space at (${x}, ${z}) with orientation ${orientation}, dimensions ${width}x${height}`);
+	
+	// No need to check board boundaries in infinite board model
+	// We only need to check for overlap with existing home zones
+	
+	// Check for collisions with existing home zones (including their required space)
+	for (const zone of existingHomeZones) {
+		// We need to check if this new home zone (plus its required space)
+		// overlaps with any existing home zone (plus its required space)
+		
+		// Determine the extended area of this new home zone including its required space
+		let newMinX, newMaxX, newMinZ, newMaxZ;
+		
+		switch (orientation) {
+			case 0: // Facing up
+				newMinX = x - sideSpace;
+				newMaxX = x + width + sideSpace;
+				newMinZ = z - frontSpace;
+				newMaxZ = z + height + sideSpace;
+				break;
+				
+			case 1: // Facing right
+				newMinX = x - sideSpace;
+				newMaxX = x + width + frontSpace;
+				newMinZ = z - sideSpace;
+				newMaxZ = z + height + sideSpace;
+				break;
+				
+			case 2: // Facing down
+				newMinX = x - sideSpace;
+				newMaxX = x + width + sideSpace;
+				newMinZ = z - sideSpace;
+				newMaxZ = z + height + frontSpace;
+				break;
+				
+			case 3: // Facing left
+				newMinX = x - frontSpace;
+				newMaxX = x + width + sideSpace;
+				newMinZ = z - sideSpace;
+				newMaxZ = z + height + sideSpace;
+				break;
+		}
+		
+		// Determine the extended area of the existing home zone including its required space
+		let existingMinX, existingMaxX, existingMinZ, existingMaxZ;
+		
+		switch (zone.orientation) {
+			case 0: // Facing up
+				existingMinX = zone.x - sideSpace;
+				existingMaxX = zone.x + zone.width + sideSpace;
+				existingMinZ = zone.z - frontSpace;
+				existingMaxZ = zone.z + zone.height + sideSpace;
+				break;
+				
+			case 1: // Facing right
+				existingMinX = zone.x - sideSpace;
+				existingMaxX = zone.x + zone.width + frontSpace;
+				existingMinZ = zone.z - sideSpace;
+				existingMaxZ = zone.z + zone.height + sideSpace;
+				break;
+				
+			case 2: // Facing down
+				existingMinX = zone.x - sideSpace;
+				existingMaxX = zone.x + zone.width + sideSpace;
+				existingMinZ = zone.z - sideSpace;
+				existingMaxZ = zone.z + zone.height + frontSpace;
+				break;
+				
+			case 3: // Facing left
+				existingMinX = zone.x - frontSpace;
+				existingMaxX = zone.x + zone.width + sideSpace;
+				existingMinZ = zone.z - sideSpace;
+				existingMaxZ = zone.z + zone.height + sideSpace;
+				break;
+		}
+		
+		// Check for overlap with an increased safety margin
+		const safetyMargin = 4; // Increased from 2 to 4 for more space between zones
+		
+		// Log the bounds for debugging
+		console.log(`New zone bounds: X(${newMinX}-${newMaxX}), Z(${newMinZ}-${newMaxZ})`);
+		console.log(`Existing zone bounds: X(${existingMinX}-${existingMaxX}), Z(${existingMinZ}-${existingMaxZ})`);
+		
+		// Check if there's any overlap between the zones (including safety margin)
+		const hasXOverlap = !(newMaxX + safetyMargin <= existingMinX || newMinX >= existingMaxX + safetyMargin);
+		const hasZOverlap = !(newMaxZ + safetyMargin <= existingMinZ || newMinZ >= existingMaxZ + safetyMargin);
+		
+		// If there's overlap in both X and Z dimensions, the zones overlap
+		if (hasXOverlap && hasZOverlap) {
+			console.log(`Failed space check: overlap with existing home zone at (${zone.x}, ${zone.z})`);
+			console.log(`X overlap: ${hasXOverlap}, Z overlap: ${hasZOverlap}`);
+			return false; // Overlap detected
+		}
+	}
+	
+	console.log(`Space check passed for (${x}, ${z}) with orientation ${orientation}`);
+	return true;
 }
 
 /**
@@ -184,14 +454,14 @@ function isValidHomePosition(x, z, orientation, width, height, pawnPaths, moveDi
 }
 
 /**
- * Check if the position allows for partial pawn clashing at a given distance
+ * Check if the position allows for pawn clashing at a given distance
  * @param {number} x - X coordinate
  * @param {number} z - Z coordinate
  * @param {number} orientation - Orientation (0-3)
  * @param {number} width - Home zone width
  * @param {number} height - Home zone height
  * @param {Array} pawnPaths - Array of existing pawn paths
- * @param {number} clashDistance - Distance at which pawns should clash
+ * @param {number} clashDistance - Distance at which pawns should clash (typically 7)
  * @returns {boolean} True if at least 2 pawns can clash at the specified distance
  */
 function hasPartialPawnClash(x, z, orientation, width, height, pawnPaths, clashDistance) {
@@ -247,21 +517,27 @@ function hasPartialPawnClash(x, z, orientation, width, height, pawnPaths, clashD
 	// Count potential pawn clashes at clashDistance
 	let clashCount = 0;
 	
+	// Track which existing paths provide clashes to ensure they're from different players
+	const clashingPathIndices = new Set();
+	
 	for (const newPath of newPawnPaths) {
 		// Calculate where this pawn would be after moving clashDistance spaces
 		const newPathX = newPath.startX + (newPath.dirX * clashDistance);
 		const newPathZ = newPath.startZ + (newPath.dirZ * clashDistance);
 		
 		// Check existing pawns for clash
-		for (const existingPath of pawnPaths) {
+		for (let i = 0; i < pawnPaths.length; i++) {
+			const existingPath = pawnPaths[i];
 			const existingPathX = existingPath.startX + (existingPath.dirX * clashDistance);
 			const existingPathZ = existingPath.startZ + (existingPath.dirZ * clashDistance);
 			
 			// If positions match, we have a clash
 			if (newPathX === existingPathX && newPathZ === existingPathZ) {
 				clashCount++;
-				// We need at least 2 clashes
-				if (clashCount >= 2) {
+				clashingPathIndices.add(i);
+				
+				// We need at least 2 clashes, preferably from different directions
+				if (clashCount >= 2 && clashingPathIndices.size >= 1) {
 					return true;
 				}
 			}
@@ -273,90 +549,144 @@ function hasPartialPawnClash(x, z, orientation, width, height, pawnPaths, clashD
 }
 
 /**
- * Calculate a fallback position when no valid random position is found
+ * Calculate a fallback position when normal home zone placement fails
  * @param {Array} existingHomeZones - Array of existing home zones
- * @param {number} boardWidth - Board width
- * @param {number} boardHeight - Board height 
  * @param {number} homeZoneWidth - Home zone width
  * @param {number} homeZoneHeight - Home zone height
- * @returns {Object} Position and orientation for the home zone
+ * @returns {Object} Fallback position
  */
-function calculateFallbackPosition(existingHomeZones, boardWidth, boardHeight, homeZoneWidth, homeZoneHeight) {
-	// Find furthest cell from center
-	const centerX = boardWidth / 2;
-	const centerZ = boardHeight / 2;
-	let furthestDistance = 0;
-	let furthestX = centerX;
-	let furthestZ = centerZ;
+function calculateFallbackPosition(existingHomeZones, homeZoneWidth, homeZoneHeight) {
+	console.log("Using fallback position calculation with more aggressive spacing");
 	
-	// Check all home zone cells
-	for (const zone of existingHomeZones) {
-		// Check corners and edges
-		const points = [
-			{ x: zone.x, z: zone.z },
-			{ x: zone.x + zone.width - 1, z: zone.z },
-			{ x: zone.x, z: zone.z + zone.height - 1 },
-			{ x: zone.x + zone.width - 1, z: zone.z + zone.height - 1 }
-		];
+	// Find furthest cell from center of existing home zones
+	let centerX = 0;
+	let centerZ = 0;
+	
+	// If no existing zones, place at origin with random orientation
+	if (existingHomeZones.length === 0) {
+		const randomOrientation = Math.floor(Math.random() * 4);
+		let x = 0;
+		let z = 0;
 		
-		for (const point of points) {
-			const distance = Math.sqrt(
-				Math.pow(point.x - centerX, 2) + 
-				Math.pow(point.z - centerZ, 2)
-			);
-			
-			if (distance > furthestDistance) {
-				furthestDistance = distance;
-				furthestX = point.x;
-				furthestZ = point.z;
+		// Adjust for orientation
+		switch (randomOrientation) {
+			case 0: z += 8; break; // Facing up
+			case 1: x -= 8; break; // Facing right
+			case 2: z -= 8; break; // Facing down
+			case 3: x += 8; break; // Facing left
+		}
+		
+		return { x, z, orientation: randomOrientation };
+	}
+	
+	// Calculate average center of all existing home zones
+	for (const zone of existingHomeZones) {
+		centerX += zone.x;
+		centerZ += zone.z;
+	}
+	centerX /= existingHomeZones.length;
+	centerZ /= existingHomeZones.length;
+	
+	// Try positions at increasing distances in a spiral pattern
+	// Use larger distances than before to ensure better spacing
+	const baseDistances = [40, 50, 60, 70, 80];
+	
+	// Get the used orientations for variety
+	const usedOrientations = existingHomeZones.map(zone => zone.orientation);
+	const allOrientations = [0, 1, 2, 3];
+	const unusedOrientations = allOrientations.filter(o => !usedOrientations.includes(o));
+	
+	// Try each possible orientation in a randomized order
+	const orientationsToTry = [...unusedOrientations];
+	if (orientationsToTry.length === 0) {
+		// If all orientations are used, just use a shuffled array of all orientations
+		orientationsToTry.push(...allOrientations.sort(() => Math.random() - 0.5));
+	} else {
+		// Shuffle the unused orientations
+		orientationsToTry.sort(() => Math.random() - 0.5);
+	}
+	
+	// Try each orientation with different distances
+	for (const orientation of orientationsToTry) {
+		for (const baseDistance of baseDistances) {
+			// Try 8 different angles around the center (more precise placement)
+			for (let angleIndex = 0; angleIndex < 8; angleIndex++) {
+				const angle = (Math.PI / 4) * angleIndex; // 45-degree increments for better coverage
+				
+				// Calculate position at this distance and angle
+				const x = Math.round(centerX + Math.cos(angle) * baseDistance);
+				const z = Math.round(centerZ + Math.sin(angle) * baseDistance);
+				
+				// Adjust for pawn space
+				let adjustedX = x;
+				let adjustedZ = z;
+				
+				switch (orientation) {
+					case 0: adjustedZ += 8; break; // Facing up
+					case 1: adjustedX -= 8; break; // Facing right
+					case 2: adjustedZ -= 8; break; // Facing down
+					case 3: adjustedX += 8; break; // Facing left
+				}
+				
+				// Check if this position works - do a thorough check
+				if (hasAdequateSpace(adjustedX, adjustedZ, orientation, homeZoneWidth, homeZoneHeight, existingHomeZones)) {
+					console.log(`Found fallback position at distance ${baseDistance} with orientation ${orientation}, angle ${angleIndex * 45}°`);
+					
+					// Double-check with direct distance measurements to each existing zone center
+					let isTooClose = false;
+					const minDistanceSquared = 30 * 30; // Minimum 30 units between zone centers
+					
+					for (const zone of existingHomeZones) {
+						// Calculate zone centers
+						const zoneX = zone.x + zone.width / 2;
+						const zoneZ = zone.z + zone.height / 2;
+						const newZoneX = adjustedX + homeZoneWidth / 2;
+						const newZoneZ = adjustedZ + homeZoneHeight / 2;
+						
+						// Calculate squared distance between centers (faster than using Math.sqrt)
+						const dx = newZoneX - zoneX;
+						const dz = newZoneZ - zoneZ;
+						const distanceSquared = dx * dx + dz * dz;
+						
+						console.log(`Distance to zone at (${zone.x}, ${zone.z}): ${Math.sqrt(distanceSquared)}`);
+						
+						if (distanceSquared < minDistanceSquared) {
+							isTooClose = true;
+							console.log(`Too close to existing zone: ${Math.sqrt(distanceSquared)} units`);
+							break;
+						}
+					}
+					
+					if (!isTooClose) {
+						return {
+							x: adjustedX,
+							z: adjustedZ,
+							orientation
+						};
+					}
+				}
 			}
 		}
 	}
 	
-	// Calculate placement 6 spaces out from furthest cell, facing center
-	const angle = Math.atan2(centerZ - furthestZ, centerX - furthestX);
+	// If all else fails, use completely random position very far from existing zones
+	const randomOrientation = Math.floor(Math.random() * 4);
+	const randomAngle = Math.random() * Math.PI * 2;
+	const randomDistance = 100 + Math.random() * 50; // 100-150 units away (increased for safety)
 	
-	// Convert angle to orientation (0-3)
-	// 0: facing up, 1: facing right, 2: facing down, 3: facing left
-	let orientation = Math.round(angle / (Math.PI / 2)) % 4;
-	if (orientation < 0) orientation += 4;
+	let x = Math.round(centerX + Math.cos(randomAngle) * randomDistance);
+	let z = Math.round(centerZ + Math.sin(randomAngle) * randomDistance);
 	
-	// Calculate position 6 spaces away from furthest cell
-	const offsetX = Math.round(6 * Math.cos(angle));
-	const offsetZ = Math.round(6 * Math.sin(angle));
-	
-	let x = furthestX + offsetX;
-	let z = furthestZ + offsetZ;
-	
-	// Adjust position based on orientation to ensure pawns face the center
-	switch (orientation) {
-		case 0: // Facing up - pawns at bottom
-			x = x - Math.floor(homeZoneWidth / 2);
-			z = z - homeZoneHeight;
-			break;
-		case 1: // Facing right - pawns at left
-			x = x - homeZoneWidth;
-			z = z - Math.floor(homeZoneHeight / 2);
-			break;
-		case 2: // Facing down - pawns at top
-			x = x - Math.floor(homeZoneWidth / 2);
-			z = z;
-			break;
-		case 3: // Facing left - pawns at right
-			x = x;
-			z = z - Math.floor(homeZoneHeight / 2);
-			break;
+	// Adjust for pawn space based on orientation
+	switch (randomOrientation) {
+		case 0: z += 8; break; // Facing up
+		case 1: x -= 8; break; // Facing right
+		case 2: z -= 8; break; // Facing down
+		case 3: x += 8; break; // Facing left
 	}
 	
-	// Ensure coordinates are within board boundaries
-	x = Math.max(0, Math.min(boardWidth - homeZoneWidth, Math.round(x)));
-	z = Math.max(0, Math.min(boardHeight - homeZoneHeight, Math.round(z)));
-	
-	return {
-		x,
-		z,
-		orientation
-	};
+	console.log(`Selected final fallback position at (${x}, ${z}) with orientation ${randomOrientation}, distance ${randomDistance}`);
+	return { x, z, orientation: randomOrientation };
 }
 
 /**
@@ -366,19 +696,31 @@ function calculateFallbackPosition(existingHomeZones, boardWidth, boardHeight, h
  * 1. Calculates the position and orientation for each player's home zone
  * 2. Creates the home zone cells in the game state
  * 3. Updates the gameState.homeZones object with zone information
- * 4. Places a board centre marker for reliable positioning reference
+ * 4. Places a board centre marker for reliable client-side reference
  * 
  * @param {Object} gameState - Game state object to update
- * @param {number} boardWidth - Board width
- * @param {number} boardHeight - Board height
  * @param {Object} players - Player data keyed by player ID
  * @returns {Object} Updated game state
  */
-function generateHomeZones(gameState, boardWidth, boardHeight, players) {
+function generateHomeZones(gameState, players) {
 	// Default to at least 2 players if none are provided
 	const playerCount = players ? Object.keys(players).length : 2;
-	const homeZoneWidth = 8; // Standard chess width
-	const homeZoneHeight = 2; // Standard chess height
+	const standardWidth = 8; // Standard chess width
+	const standardHeight = 2; // Standard chess height
+	
+	// Initialise or preserve the board center if it already exists
+	if (gameState.board && gameState.board.centreMarker) {
+		console.log(`Preserving existing board centre at (${gameState.board.centreMarker.x}, ${gameState.board.centreMarker.z})`);
+	} else {
+		// Set an initial origin point (will be updated after all home zones are placed)
+		if (!gameState.board) {
+			gameState.board = {
+				cells: {}
+			};
+		}
+		gameState.board.centreMarker = { x: 0, z: 0 };
+		console.log("Initialising board centre at origin (0, 0)");
+	}
 	
 	// Generate home zones with controlled pawn clashing
 	const homeZones = {};
@@ -389,24 +731,36 @@ function generateHomeZones(gameState, boardWidth, boardHeight, players) {
 		const homePosition = calculateHomePosition(
 			index,
 			gameState,
-			boardWidth,
-			boardHeight,
-			homeZoneWidth,
-			homeZoneHeight
+			standardWidth,
+			standardHeight
 		);
 		
-		// Store home zone information
+		// Determine the actual width and height based on orientation
+		// For vertical orientations (1,3), swap width and height
+		let zoneWidth, zoneHeight;
+		
+		if (homePosition.orientation === 1 || homePosition.orientation === 3) {
+			// Vertical layout - swap dimensions
+			zoneWidth = standardHeight;
+			zoneHeight = standardWidth;
+		} else {
+			// Horizontal layout - standard dimensions
+			zoneWidth = standardWidth;
+			zoneHeight = standardHeight;
+		}
+		
+		// Store home zone information with correct dimensions
 		homeZones[playerId] = {
 			x: homePosition.x,
 			z: homePosition.z,
-			width: homeZoneWidth,
-			height: homeZoneHeight,
+			width: zoneWidth,
+			height: zoneHeight,
 			orientation: homePosition.orientation
 		};
 		
-		// Create home zone cells on the board
-		for (let dz = 0; dz < homeZoneHeight; dz++) {
-			for (let dx = 0; dx < homeZoneWidth; dx++) {
+		// Create home zone cells on the board with the correct dimensions
+		for (let dz = 0; dz < zoneHeight; dz++) {
+			for (let dx = 0; dx < zoneWidth; dx++) {
 				const x = homePosition.x + dx;
 				const z = homePosition.z + dz;
 				
@@ -430,17 +784,61 @@ function generateHomeZones(gameState, boardWidth, boardHeight, players) {
 	// Store home zones in game state
 	gameState.homeZones = homeZones;
 	
-	// Add a board centre marker that clients can use for consistent positioning
-	const centreX = Math.floor(boardWidth / 2);
-	const centreZ = Math.floor(boardHeight / 2);
+	// Calculate the board centre as the average of all home zone centres
+	// This makes it more stable than using just the corner positions
+	const homeZoneCount = Object.keys(homeZones).length;
+	let centreX = 0;
+	let centreZ = 0;
+	
+	if (homeZoneCount > 0) {
+		// Calculate center based on home zone centers, not corners
+		for (const playerId in homeZones) {
+			const zone = homeZones[playerId];
+			// Use center of zone, not corner
+			centreX += zone.x + zone.width / 2;
+			centreZ += zone.z + zone.height / 2;
+		}
+		centreX = Math.floor(centreX / homeZoneCount);
+		centreZ = Math.floor(centreZ / homeZoneCount);
+		
+		console.log(`Calculated board centre at (${centreX}, ${centreZ}) from ${homeZoneCount} home zones`);
+	} else {
+		// If no home zones (unlikely), keep the default centre at (0,0)
+		centreX = 0;
+		centreZ = 0;
+		console.log("No home zones to calculate centre from, using (0,0)");
+	}
+	
+	// Store the calculated centre point
 	const centreKey = `${centreX},${centreZ}`;
+	
+	// Check if the centre key overlaps with any existing cells
+	// If so, adjust it slightly to avoid overlap
+	if (gameState.board.cells[centreKey]) {
+		console.log(`Centre marker would overlap with existing cell at ${centreKey}`);
+		// Try nearby positions
+		for (let dx = -1; dx <= 1; dx++) {
+			for (let dz = -1; dz <= 1; dz++) {
+				if (dx === 0 && dz === 0) continue; // Skip the original position
+				
+				const adjustedKey = `${centreX + dx},${centreZ + dz}`;
+				if (!gameState.board.cells[adjustedKey]) {
+					centreX += dx;
+					centreZ += dz;
+					console.log(`Adjusted centre marker to (${centreX}, ${centreZ})`);
+					break;
+				}
+			}
+		}
+	}
 	
 	// Create or update the centre marker cell, preserving any existing content
 	// This special cell should be kept and never removed - it's our anchor point
-	gameState.board.cells[centreKey] = gameState.board.cells[centreKey] || {};
+	const adjustedCentreKey = `${centreX},${centreZ}`;
+	gameState.board.cells[adjustedCentreKey] = gameState.board.cells[adjustedCentreKey] || {};
 	
 	// Attach a special marker that will be recognisable and preserved
-	gameState.board.cells[centreKey].specialMarker = {
+	gameState.board.cells[adjustedCentreKey].specialMarker = {
 		type: 'boardCentre',
 		isCentreMarker: true,
 		centreX,
@@ -452,6 +850,8 @@ function generateHomeZones(gameState, boardWidth, boardHeight, players) {
 		x: centreX,
 		z: centreZ
 	};
+	
+	console.log(`Board centre marker placed at (${centreX}, ${centreZ})`);
 	
 	return gameState;
 }
@@ -524,6 +924,8 @@ function createInitialChessPieces(gameState, playerId) {
 			zDir = 1;
 	}
 	
+	console.log(`Creating initial chess pieces for player ${playerId} with orientation ${homeZone.orientation}`);
+
 	// Create pieces based on orientation
 	if (homeZone.orientation === 0 || homeZone.orientation === 2) {
 		// Horizontal layout (orientation 0 or 2)

@@ -12,11 +12,16 @@ const THREE = (typeof window !== 'undefined' && window.THREE) ? window.THREE : T
 
 // Ensure THREE is available
 if (!THREE) {
-	console.error('THREE.js not available. Game will not function correctly.');
+  console.error('THREE.js not available. Game will not function correctly.');
 }
 
 // Export THREE getter function for modules that need it
 export function getTHREE() {
+	// Ensure THREE is available
+	if (!THREE) {
+		console.error('THREE.js not available. Game will not function correctly.');
+	}
+	
 	return THREE;
 }
 
@@ -30,20 +35,21 @@ export function getGameState() {
 
 // Import other modules
 import * as NetworkManager from './utils/networkManager.js';
-import { createFallbackTextures, animateClouds } from './textures.js';
-import { createFallbackModels } from './models.js';
+import { animateClouds } from './textures.js';
+
 import { showToastMessage } from './showToastMessage.js';
 import { createNetworkStatusDisplay,  } from './createNetworkStatusDisplay.js';
 import * as sceneModule from './scene.js';
 import { boardFunctions } from './boardFunctions.js';
 import { createLoadingIndicator, hideAllLoadingElements, showErrorMessage, updateGameIdDisplay, updateGameStatusDisplay, updateNetworkStatus } from './createLoadingIndicator.js';
-import { moveTetrominoHorizontal, moveTetrominoVertical, rotateTetromino, hardDropTetromino, createTetrominoBlock } from './tetromino.js';
-import { resetCameraForGameplay, setupCamera } from './setupCamera.js';
+import { moveTetrominoY, moveTetrominoX, moveTetrominoForwardBack, createTetrominoBlock, showPlacementEffect, updateCenterPosition, tetrominoModule } from './tetromino.js';
+import { resetCameraForGameplay } from './setupCamera.js';
 import { showTutorialMessage } from './createLoadingIndicator.js';
-import { preserveCentreMarker, updateCellPreservingMarker } from './centreBoardMarker.js';
+import { preserveCentreMarker, updateCellPreservingMarker, findBoardCentreMarker, createCentreMarker } from './centreBoardMarker.js';
 import { updatePlayerBar, createPlayerBar } from './updatePlayerBar.js';
 import { updateChessPieces } from './updateChessPieces.js';
 import chessPieceCreator from './chessPieceCreator.js';
+import { setChessPiecesGroup, highlightPlayerPieces, removePlayerPiecesHighlight, highlightCurrentPlayerPieces } from './pieceHighlightManager.js';
 
 // Core game state
 let gameState = {
@@ -56,7 +62,7 @@ let gameState = {
 	phase: 'unknown',
 	localPlayerId: null,
 	currentPlayer: generateRandomPlayerId(), // Use random player ID
-	debugMode: false,  // Set to true to enable detailed console logging
+	debugMode: false,  // Disable debug mode now that issues are fixed
 	activeTetromino: null,
 	tetrominoList: [],
 	hoveredCell: { x: -1, y: -1, z: -1 },
@@ -79,7 +85,10 @@ let gameState = {
 	fpsHistory: [],
 	// Player tracking
 	hoveredPlayer: null,
-	error: null
+	error: null,
+	currentTetromino: null,
+	boardCenter: { x: 0, y: 0, z: 0 },
+	isProcessingHardDrop: false
 };
 
 /**
@@ -125,7 +134,7 @@ const textures = {
 };
 
 // Set initial tetromino fall height 
-const TETROMINO_START_HEIGHT = 4; // Starting height above the board
+const TETROMINO_START_HEIGHT = 7; // Starting height above the board
 
 // UI controls for game flow
 let uiButtons = {};
@@ -146,6 +155,9 @@ export function initGame(container) {
 		// Initialize game state
 		console.log("Initializing game state...");
 		resetGameState(gameState);
+		
+		// Expose highlight functions globally for player list sidebar
+		exposeHighlightFunctionsGlobally();
 
 		// Validate container parameter
 		if (!container) {
@@ -222,7 +234,7 @@ export function initGame(container) {
 		
 		// Add renderer to container
 		containerElement.appendChild(renderer.domElement);
-		
+
 		// Check if renderer is successfully attached
 		if (!containerElement.contains(renderer.domElement)) {
 			console.error("Renderer canvas was not successfully attached to container");
@@ -287,6 +299,10 @@ export function initGame(container) {
 			
 			console.log("Showing tutorial message...");
 			showTutorialMessage(window.startShaktrisGame);
+			// Reset camera position based on received data 
+			console.log("Resetting camera based on received game data");
+			resetCameraForGameplay(renderer, camera, controls, gameState, scene, true, false);
+
 		}, 500);
 		
 		// Start game loop
@@ -348,6 +364,9 @@ function initializeScene() {
 		chessPiecesGroup = new THREE.Group();
 		chessPiecesGroup.name = 'chessPieces';
 		scene.add(chessPiecesGroup);
+		
+		// Initialize the chess pieces group in the highlight manager
+		setChessPiecesGroup(chessPiecesGroup);
 	}
 	
 	// Initialize raycaster for interactions
@@ -398,7 +417,7 @@ function setupEventSystem() {
 			
 			// Update chess pieces if we have them
 			if (e.detail.chessPieces && boardGroup) {
-				updateChessPieces(chessPiecesGroup, camera, gameState);
+				updateBoardVisuals();
 			}
 			
 			// Update current tetromino if available
@@ -418,42 +437,36 @@ function setupEventSystem() {
  * Reset game state to initial values
  */
 export function resetGameState(gameState) {
-	console.log('Resetting game state...');
+	// Reset core game properties
+	gameState.turnPhase = 'tetris';
+	gameState.inProgress = false;
+	gameState.paused = false;
+	gameState.score = 0;
+	gameState.level = 1;
 	
-	// Initialize game state
-	gameState = {
-		board: { 
-			cells: {},  // Object mapping coordinates to cell data
-			minX: 0,
-			maxX: 15,
-			minZ: 0,
-			maxZ: 15,
-			centreMarker: { x: 7, z: 7 }
-		},
-		selectedPiece: null, // Currently selected chess piece
-		chessPieces: [], // Array of all chess pieces
-		currentTetromino: null, // Current active tetromino
-		ghostPiece: null, // Ghost piece showing where tetromino will land
-		validMoves: [], // Valid moves for selected chess piece
-		score: 0,
-		level: 1,
-		turnPhase: 'tetris', // Start with tetris phase
-		currentPlayer: generateRandomPlayerId(), // Use random player ID
-		localPlayerId: null, // Local player ID (from network)
-		paused: false,
-		gameOver: false,
-		winner: null,
-		lastPlacement: null, // Last tetromino placement
-		lastMove: null, // Last chess move
-		players: {}, // List of players
-		gameStarted: false, // Flag to track if game has been started
-		homeZones: {}, // Store home zones information from server
-		boardSize: 16, // Use a number rather than an object for boardSize
-		boardWidth: 16,
-		boardHeight: 16
+	// Initialize empty board
+	gameState.board = {
+		width: 8,
+		height: 8,
+		depth: 8,
+		cells: {}
 	};
 	
-
+	// Clear any existing tetromino
+	gameState.currentTetromino = null;
+	
+	// Set initial center position
+	gameState.boardCenter = { x: 0, y: 0, z: 0 };
+	
+	// Reset camera position
+	if (gameState.camera) {
+		gameState.camera.position.set(0, 15, 20);
+		gameState.camera.lookAt(0, 0, 0);
+	}
+	
+	tetrominoModule.synchronizeCenterPositions(gameState);
+	
+	console.log('Game state has been reset');
 }
 
 
@@ -461,21 +474,31 @@ export function resetGameState(gameState) {
  * Handle window resize
  */
 export function onWindowResize(camera, renderer, containerElement) {
-	if (!camera || !renderer || !containerElement) return;
-	
-	const width = containerElement.clientWidth || window.innerWidth;
-	const height = containerElement.clientHeight || window.innerHeight;
-	
-	// Enforce minimum height
-	if (height <= 1) {
-		containerElement.style.height = '100%';
-		containerElement.style.minHeight = '100vh';
+	if (!camera || !renderer || !containerElement) {
+		console.error('Missing required parameters for window resize');
+		return;
 	}
 	
-	camera.aspect = width / Math.max(height, 1);
-	camera.updateProjectionMatrix();
-	
-	renderer.setSize(width, Math.max(height, window.innerHeight * 0.9));
+	try {
+		// Update camera aspect ratio
+		if (camera.isPerspectiveCamera) {
+			camera.aspect = containerElement.clientWidth / containerElement.clientHeight;
+			camera.updateProjectionMatrix();
+		}
+		
+		// Update renderer size
+		renderer.setSize(containerElement.clientWidth, containerElement.clientHeight);
+		
+		// Import the tetromino module to synchronize center positions
+		tetrominoModule.synchronizeCenterPositions(gameState);
+		
+		// Force a render
+		renderer.render(gameState.scene, camera);
+		
+		console.log(`Window resized: ${containerElement.clientWidth}x${containerElement.clientHeight}`);
+	} catch (error) {
+		console.error('Error during window resize:', error);
+	}
 }
 
 
@@ -484,11 +507,21 @@ export function onWindowResize(camera, renderer, containerElement) {
  */
 export function startPlayingGame() {
 	console.log('Starting game...');
-	
+	// Reset camera position based on received data 
+	console.log("Resetting camera based on received game data");
+	resetCameraForGameplay(renderer, camera, controls, gameState, scene, true, false);
+
 	try {
 		// Clear any error states first
 		gameState.error = null;
 		
+		// Ensure the current player is set to the local player if available
+		if (gameState.localPlayerId) {
+			console.log(`Setting current player to local player ID: ${gameState.localPlayerId}`);
+			gameState.currentPlayer = gameState.localPlayerId;
+		} else {
+			console.log(`No local player ID available, using current player: ${gameState.currentPlayer}`);
+		}
 		
 		// Initialize phase to tetris phase as default
 		gameState.turnPhase = 'tetris';
@@ -502,9 +535,23 @@ export function startPlayingGame() {
 		// Set the gameStarted flag to true
 		gameState.gameStarted = true;
 		
-		// Start the game
-		startGame();
+		// Initialize the tetris fall time
+		tetrisLastFallTime = Date.now();
 		
+		// Set a height above board for animation effect
+		gameState.currentTetromino.heightAboveBoard = TETROMINO_START_HEIGHT;
+		
+		// Render the current tetromino
+		renderCurrentTetromino();
+		
+		// Update the game status display
+		updateGameStatusDisplay();
+		
+		// Update board visuals to show the current game state
+		updateBoardVisuals();
+		
+		console.log('Game started with tetromino:', gameState.currentTetromino);
+
 	} catch (error) {
 		console.error('Error starting game:', error);
 		showErrorMessage(`Error starting game: ${error.message}`);
@@ -610,14 +657,23 @@ function setupInputHandlers() {
 		mouse = new THREE.Vector2();
 	}
 	
-	// Mouse events
-	containerElement.addEventListener('mousedown', handleMouseDown);
-	containerElement.addEventListener('mousemove', handleMouseMove);
+	// Mouse events - only add these if we're not using OrbitControls
+	// OrbitControls adds its own mouse event handlers
+	if (!controls || !controls.enabled) {
+		console.log("Setting up game-specific mouse handlers");
+		containerElement.addEventListener('mousedown', handleMouseDown);
+		containerElement.addEventListener('mousemove', handleMouseMove);
+		
+		// Add touch support for mobile
+		containerElement.addEventListener('touchstart', handleTouchStart, { passive: false });
+		containerElement.addEventListener('touchmove', handleTouchMove, { passive: false });
+		containerElement.addEventListener('touchend', handleTouchEnd, { passive: false });
+	} else {
+		console.log("Using OrbitControls for mouse handling - game-specific handlers not added");
+	}
 	
-	// Add touch support for mobile
-	containerElement.addEventListener('touchstart', handleTouchStart, { passive: false });
-	containerElement.addEventListener('touchmove', handleTouchMove, { passive: false });
-	containerElement.addEventListener('touchend', handleTouchEnd, { passive: false });
+	// Add a diagnostic message to help debug
+	console.log("Input handler setup complete. Controls status:", controls ? "available" : "not available");
 }
 
 /**
@@ -625,59 +681,158 @@ function setupInputHandlers() {
  * @param {KeyboardEvent} event - Keyboard event
  */
 function handleKeyDown(event) {
-	// Only handle keyboard if we're in tetris phase
-	if (gameState.turnPhase !== 'tetris' || !gameState.currentTetromino) {
+	// Check if we have a tetromino to manipulate, we'll need this for most commands
+	if (!gameState.currentTetromino) {
+		// Check for spacebar in empty state to start tetris phase
+		if (event.key === ' ' && gameState.turnPhase === 'chess') {
+			event.preventDefault();
+			handleTetrisPhaseClick();
+			return;
+		}
 		return;
 	}
 	
-	// Handle tetromino movement and rotation
+	// Only proceed in the tetris phase
+	if (gameState.turnPhase !== 'tetris') {
+		return;
+	}
+	
+	// Flag to track if we need to re-render
 	let moved = false;
 	
+	
+	// Handle key based on its code
 	switch (event.key) {
 		case 'ArrowLeft':
-			// Move tetromino left
-			console.log('Move left');
-			if (moveTetrominoHorizontal(-1)) moved = true;
+			// Move tetromino left along X-axis
+			console.log('Move left (X-axis)');
+			if (tetrominoModule.moveTetrominoX(-1, gameState)) {
+				renderCurrentTetromino();
+			}
+			moved = true;
 			break;
 		case 'ArrowRight':
-			// Move tetromino right
-			console.log('Move right');
-			if (moveTetrominoHorizontal(1)) moved = true;
+			// Move tetromino right along X-axis
+			console.log('Move right (X-axis)');
+			if (tetrominoModule.moveTetrominoX(1, gameState)) {
+				renderCurrentTetromino();
+			}
+			moved = true;
 			break;
 		case 'ArrowDown':
-			// Move tetromino down
-			console.log('Move down');
-			if (moveTetrominoVertical(1)) moved = true;
+			// Move tetromino backward along Z-axis (away from camera)
+			console.log('Move backward (Z-axis)');
+			if (tetrominoModule.moveTetrominoZ(1, gameState)) {
+				renderCurrentTetromino();
+			}
+			moved = true;
 			break;
 		case 'ArrowUp':
-			// Move tetromino up
-			console.log('Move up');
-			if (moveTetrominoVertical(-1)) moved = true;
+			// Move tetromino forward along Z-axis (toward camera) 
+			console.log('Move forward (Z-axis)');
+			if (tetrominoModule.moveTetrominoZ(-1, gameState)) {
+				renderCurrentTetromino();
+			}
+			moved = true;
 			break;
+
 		case 'z':
 		case 'Z':
 			// Rotate tetromino counterclockwise
 			console.log('Rotate CCW');
-			if (rotateTetromino(-1)) moved = true;
+			if (tetrominoModule.rotateTetromino(-1, gameState)) {
+				renderCurrentTetromino();
+			}
+			moved = true;
 			break;
 		case 'x':
 		case 'X':
 			// Rotate tetromino clockwise
 			console.log('Rotate CW');
-			if (rotateTetromino(1)) moved = true;
+			if (tetrominoModule.rotateTetromino(1, gameState)) {
+				renderCurrentTetromino();
+			}
+			moved = true;
 			break;
+
 		case ' ':
 			// Hard drop tetromino
-			console.log('Hard drop');
-			hardDropTetromino();
+			console.log('Hard drop (Y-axis)');
+			event.preventDefault(); // Prevent page scrolling
+			
+			// Prevent multiple processing of the same keypress
+			if (gameState.isProcessingHardDrop) {
+				console.log('Already processing a hard drop, ignoring');
+				return;
+			}
+			
+			gameState.isProcessingHardDrop = true;
+			
+			// First use hardDropTetromino to drop the piece
+			if (tetrominoModule.hardDropTetromino(gameState)) {
+				// Ensure the current tetromino is rendered in its new position
+				renderCurrentTetromino();
+				
+				// Force a render update to show the dropped tetromino
+				if (renderer && scene && camera) {
+					renderer.render(scene, camera);
+				}
+				
+				// Then attempt to place it with a short delay to ensure the drop animation is visible
+				setTimeout(() => {
+					if (typeof tetrominoModule.enhancedPlaceTetromino === 'function') {
+						tetrominoModule.enhancedPlaceTetromino(gameState)
+							.then(result => {
+								// If placement failed, we already transitioned to chess phase in enhancedPlaceTetromino
+								// If successful, we continue the game flow
+								if (result === true) {
+									console.log('Tetromino placed successfully');
+									// Make sure to update the board visuals
+									if (typeof gameState.updateBoardVisuals === 'function') {
+										gameState.updateBoardVisuals();
+									}
+								} else {
+									console.log('Tetromino placement failed, now in chess phase');
+									// Force a scene update after phase change
+									if (renderer && scene && camera) {
+										renderer.render(scene, camera);
+									}
+								}
+								
+								// Reset the processing flag
+								gameState.isProcessingHardDrop = false;
+							})
+							.catch(err => {
+								console.error('Error during tetromino placement:', err);
+								// Ensure we still transition to chess phase on error
+								gameState.turnPhase = 'chess';
+								updateGameStatusDisplay();
+								// Force a scene update after phase change
+								if (renderer && scene && camera) {
+									renderer.render(scene, camera);
+								}
+								
+								// Reset the processing flag
+								gameState.isProcessingHardDrop = false;
+							});
+					} else {
+						// Fallback to legacy placement if the function isn't exported
+						legacy_placeTetromino();
+						
+						// Reset the processing flag
+						gameState.isProcessingHardDrop = false;
+					}
+				}, 100); // Short delay to ensure drop animation is visible
+			} else {
+				console.log('Hard drop failed, no valid position found');
+				gameState.isProcessingHardDrop = false;
+			}
+			
 			moved = true;
 			break;
 	}
 	
-	// If tetromino moved, re-render it
-	if (moved && gameState.currentTetromino) {
-		renderTetromino(gameState.currentTetromino);
-	}
+	// If tetromino moved, this will trigger a re-render after imports are resolved
 }
 
 /**
@@ -828,149 +983,193 @@ function performRaycast() {
 let tetrisLastFallTime = Date.now();
 
 /**
- * Start the game loop with performance optimizations
+ * Main render function
  */
-function startGameLoop() {
-	console.log('Starting enhanced game loop with performance optimizations...');
-	
-	// Reset the fall time whenever we start the game loop
-	tetrisLastFallTime = Date.now();
-	
-	// Last time for calculating delta time
-	let lastTime = performance.now();
-	
-	// Throttle values for different update functions
-	const LOD_UPDATE_INTERVAL = gameState.performanceMode ? 3000 : 2000; // ms between LOD updates
-	const GAME_LOGIC_INTERVAL = gameState.performanceMode ? 1000 : 500; // ms between game logic updates
-	
-	// Track when we last ran various updates
-	let lastLODUpdate = 0;
-	let lastGameLogicUpdate = 0;
-	let lastUiUpdate = 0; // For tracking UI updates
-	let lastControlsUpdate = 0; // For tracking controls updates
-	
-	// Track FPS for performance monitoring
-	let frameCount = 0;
-	let lastFpsUpdate = performance.now();
-	
-	// Frame limiting
-	const TARGET_FRAMERATE = gameState.performanceMode ? 20 : 60; // Higher framerate for smoother controls
-	const FRAME_TIME = 1000 / TARGET_FRAMERATE;
-	let lastFrameTime = 0;
-	
-	// Flag to track if clouds are in camera view (initialized here, used in animate)
-	let cloudsInView = true;
-	
-	// Ensure controls are initialized with damping enabled
-	if (controls) {
-		controls.enableDamping = true;
-		controls.dampingFactor = 0.1; // Make camera movement smoother
-		controls.update();
-		console.log("Ensuring OrbitControls are properly configured in game loop");
-	}
-	
-	/**
-	 * Main render function
-	 */
-	function animate(time) {
-		// Set up the next animation frame
-		animationFrameId = requestAnimationFrame(animate);
+function animate(time) {
+	// Set up the next animation frame
+	animationFrameId = requestAnimationFrame(animate);
 
-		try {
-			// Calculate time delta for smooth animations
-			const delta = (time - lastTime) / 1000;
-			lastTime = time;
-			
-			// Skip if delta is too large (likely due to tab being inactive)
-			if (delta > 1) {
-				console.log("Skipping large delta frame:", delta);
-				return;
+	try {
+		// Calculate time delta for smooth animations
+		const delta = (time - lastTime) / 1000;
+		lastTime = time;
+		
+		// Skip if delta is too large (likely due to tab being inactive)
+		if (delta > 1) {
+			console.log("Skipping large delta frame:", delta);
+			return;
+		}
+		
+		// Update game logic elements if not paused
+		if (!gameState.paused) {
+			// Only update controls every frame for smooth camera movement
+			if (controls) {
+				controls.update();
 			}
 			
-			// Update game logic elements if not paused
-			if (!gameState.paused) {
-				// Always update controls every frame for smooth camera movement
+			// PERFORMANCE OPTIMIZATION: Only perform expensive operations like model rendering
+			// on certain frames to reduce requestAnimationFrame violations
+			
+			// Use a frame counter to skip heavy operations on some frames
+			const frameSkip = 3; // Only do heavy operations every 3 frames
+			const isHeavyOperationFrame = frameCount % frameSkip === 0;
+			
+			// Calculate time since last controls update
+			const timeSinceControlsUpdate = time - lastControlsUpdate;
+			
+			// Update controls more frequently for responsive UI
+			if (timeSinceControlsUpdate > 16) { // ~60fps
 				if (controls) {
 					controls.update();
 				}
-				
-				// Calculate time since last controls update
-				const timeSinceControlsUpdate = time - lastControlsUpdate;
-				
-				// Update controls more frequently for responsive UI
-				if (timeSinceControlsUpdate > 16) { // ~60fps
-					if (controls) {
-						controls.update();
-					}
-					lastControlsUpdate = time;
-				}
-				
-				// Update animated clouds - ensure clouds array exists and contains valid objects
-				if (clouds && Array.isArray(clouds)) {
-					for (let i = 0; i < clouds.length; i++) {
-						if (clouds[i]) {
-							clouds[i].rotation.y += 0.001 * delta;
-						}
+				lastControlsUpdate = time;
+			}
+			
+			// Only animate clouds on heavy operation frames
+			if (isHeavyOperationFrame && clouds && Array.isArray(clouds)) {
+				for (let i = 0; i < clouds.length; i++) {
+					if (clouds[i]) {
+						clouds[i].rotation.y += 0.001 * delta * frameSkip; // Compensate for skipped frames
 					}
 				}
-				
-				// Process pending animations
-				if (animationQueue && animationQueue.length > 0) {
-					processAnimationQueue();
+			}
+			
+			// Process pending animations - this is lightweight so can run every frame
+			if (animationQueue && animationQueue.length > 0) {
+				processAnimationQueue();
+			}
+			
+			// Update player bar periodically 
+			const UI_UPDATE_INTERVAL = 2000; // Update UI every 2 seconds (reduced frequency)
+			const timeSinceUiUpdate = time - lastUiUpdate;
+			if (timeSinceUiUpdate > UI_UPDATE_INTERVAL) {
+				// Update player bar
+				if (typeof updatePlayerBar === 'function') {
+					try {
+						updatePlayerBar(gameState);
+					} catch (playerBarError) {
+						console.error('Error updating player bar:', playerBarError);
+					}
 				}
-			}
-			
-			// Handle TWEEN animations if available
-			if (window.TWEEN) {
-				window.TWEEN.update();
-			}
-			
-			// Update FPS counter
-			frameCount++;
-			const timeSinceFpsUpdate = time - lastFpsUpdate;
-			if (timeSinceFpsUpdate > 1000) { // Every second
-				const fps = Math.round((frameCount * 1000) / timeSinceFpsUpdate);
-				frameCount = 0;
-				lastFpsUpdate = time;
 				
-				// Monitor performance - but don't apply drastic measures too early
-				if (time > 10000) { // Only after 10 seconds of runtime
-					monitorPerformance(fps);
+				// Update chess pieces
+				if (typeof updateChessPieces === 'function' && chessPiecesGroup) {
+					try {
+						updateBoardVisuals();
+					} catch (chessPiecesError) {
+						console.error('Error updating chess pieces:', chessPiecesError);
+					}
 				}
-			}
-			
-			// Render the scene only if all required elements exist and are properly initialized
-			if (renderer && scene && camera) {
-				// Check if any objects in the scene have been removed incorrectly
 				
+				lastUiUpdate = time;
+			}
+		}
+		
+		// Handle TWEEN animations if available - lightweight, can run every frame
+		if (window.TWEEN) {
+			window.TWEEN.update();
+		}
+		
+		// Update FPS counter
+		frameCount++;
+		const timeSinceFpsUpdate = time - lastFpsUpdate;
+		if (timeSinceFpsUpdate > 1000) { // Every second
+			const fps = Math.round((frameCount * 1000) / timeSinceFpsUpdate);
+			frameCount = 0;
+			lastFpsUpdate = time;
+			
+			// Monitor performance - but don't apply drastic measures too early
+			if (time > 10000) { // Only after 10 seconds of runtime
+				monitorPerformance(fps);
+			}
+		}
+		
+		// Render the scene only if all required elements exist and are properly initialized
+		if (renderer && scene && camera) {
+			// PERFORMANCE OPTIMIZATION: Only run scene validation occasionally
+			// This is expensive and doesn't need to run every single frame
+			const SCENE_VALIDATION_INTERVAL = 5000; // ms between validations (5 seconds)
+			const now = Date.now();
+			if (!lastSceneValidation || now - lastSceneValidation > SCENE_VALIDATION_INTERVAL) {
 				// Proactively check and fix scene hierarchy before rendering
 				// This helps prevent errors before they occur
 				if (scene) {
 					try {
+						// Add a diagnostic check to count objects in the scene
+						if (gameState.debugMode) {
+							let objectCount = 0;
+							let nullChildrenCount = 0;
+							let undefinedVisibleCount = 0;
+							
+							const countObjects = (obj) => {
+								if (!obj) return;
+								objectCount++;
+								
+								// Check for common error conditions
+								if (obj.visible === undefined || obj.visible === null) {
+									undefinedVisibleCount++;
+								}
+								
+								if (obj.children) {
+									// Check for null children
+									const nullChildren = obj.children.filter(c => c === null || c === undefined).length;
+									if (nullChildren > 0) {
+										nullChildrenCount += nullChildren;
+										console.warn(`Object "${obj.name || 'unnamed'}" has ${nullChildren} null children`);
+									}
+									
+									obj.children.forEach(child => {
+										if (child !== null && child !== undefined) {
+											countObjects(child);
+										}
+									});
+								}
+							};
+							
+							countObjects(scene);
+							// console.log(`Scene contains ${objectCount} objects, ${nullChildrenCount} null children, ${undefinedVisibleCount} with undefined visible property`);
+						}
+						
 						// Check for problematic objects in the scene graph before rendering
 						// This recursive function ensures the scene is in a valid state
 						const validateSceneGraph = function(object) {
+							// Skip validation for null or undefined objects
 							if (!object) return;
 							
-							// Ensure object.visible is defined (often source of errors)
-							if (object.visible === undefined || object.visible === null) {
-								console.warn('Fixed undefined visible property on object', object.name || 'unnamed');
-								object.visible = true;
-							}
-							
-							// Make sure matrices are initialized
-							if (object.matrixAutoUpdate && (!object.matrix || object.matrix.elements.some(e => Number.isNaN(e)))) {
-								console.warn('Fixed invalid matrix on object', object.name || 'unnamed');
-								object.updateMatrix();
-							}
-							
-							// Recursively check children
-							if (object.children) {
-								// Make a copy of the children array to avoid modification during iteration
-								const children = [...object.children];
-								for (let i = 0; i < children.length; i++) {
-									validateSceneGraph(children[i]);
+							try {
+								// Ensure object.visible is defined (often source of errors)
+								if (object.visible === undefined || object.visible === null) {
+									console.warn('Fixed undefined visible property on object', object.name || 'unnamed');
+									object.visible = true;
 								}
+								
+								// Make sure matrices are initialized
+								if (object.matrixAutoUpdate && (!object.matrix || object.matrix.elements.some(e => Number.isNaN(e)))) {
+									console.warn('Fixed invalid matrix on object', object.name || 'unnamed');
+									object.updateMatrix();
+								}
+								
+								// Recursively check children
+								if (object.children) {
+									// Make a copy of the children array to avoid modification during iteration
+									const children = [...object.children];
+
+									// Remove null children, which can cause render errors
+									const hasNullChildren = children.some(child => child === null || child === undefined);
+									if (hasNullChildren) {
+										console.warn('Removing null children from object', object.name || 'unnamed');
+										object.children = object.children.filter(child => child !== null && child !== undefined);
+									}
+
+									// Now validate remaining children
+									for (let i = 0; i < children.length; i++) {
+										if (children[i] !== null && children[i] !== undefined) {
+											validateSceneGraph(children[i]);
+										}
+									}
+								}
+							} catch (validateObjectError) {
+								console.error('Error validating object in scene graph:', validateObjectError);
 							}
 						};
 						
@@ -980,27 +1179,38 @@ function startGameLoop() {
 						console.error('Error during scene validation:', validateError);
 					}
 				}
-
-				try {
-					// Safe render call
-					renderer.render(scene, camera);
-				} catch (renderError) {
-					console.error('Error during render:', renderError);
-				}
-			} else {
-				console.warn('Skipping render - missing required components:', 
-					{renderer: !!renderer, scene: !!scene, camera: !!camera});
+				lastSceneValidation = now;
 			}
-		} catch (error) {
-			console.error('Error in animation loop:', error);
-			// Don't crash the animation loop due to rendering errors
+
+			try {
+				// PERFORMANCE OPTIMIZATION: Only check specific groups occasionally
+				if (!lastGroupCheck || now - lastGroupCheck > SCENE_VALIDATION_INTERVAL) {
+					// Check specific object groups before rendering
+					if (chessPiecesGroup) {
+						// ... existing code ...
+					}
+					lastGroupCheck = now;
+				}
+				
+				// Safe render call - this must happen every frame
+				renderer.render(scene, camera);
+			} catch (renderError) {
+				console.error('Error during render:', renderError);
+				// ... existing code ...
+			}
+		} else {
+			console.warn('Skipping render - missing required components:', 
+				{renderer: !!renderer, scene: !!scene, camera: !!camera});
 		}
+	} catch (error) {
+		console.error('Error in animation loop:', error);
+		// Don't crash the animation loop due to rendering errors
 	}
-	
-	// Start animation loop
-	lastFrameTime = performance.now();
-	animate();
 }
+
+// Add variables to track validation timings
+let lastSceneValidation = null;
+let lastGroupCheck = null;
 
 /**
  * Update game logic
@@ -1013,8 +1223,8 @@ function updateGameLogic(deltaTime) {
 		const FALL_INTERVAL = 1000; // Standard fall interval
 		
 		if ((now - tetrisLastFallTime) > FALL_INTERVAL) {
-			// Try to move tetromino down (along Z-axis which is our "vertical" on the board)
-			if (moveTetrominoVertical(1)) {
+			// Try to move tetromino down (along Y-axis which is our "vertical" on the board)
+			if (tetrominoModule.moveTetrominoY(1, gameState)) {
 				// Successfully moved down, update rendering
 				renderCurrentTetromino();
 			} else {
@@ -1152,7 +1362,7 @@ function handleGameUpdate(data) {
 	// Update chess pieces if included
 	if (data.chessPieces) {
 		gameState.chessPieces = data.chessPieces;
-		updateChessPieces(chessPiecesGroup, camera, gameState);
+		updateBoardVisuals();
 	}
 	
 	// Handle tetromino placements
@@ -1231,11 +1441,11 @@ export function handleGameStateUpdate(data) {
 			console.log('Chess pieces sample:', chessPieces.slice(0, 2));
 			gameState.chessPieces = chessPieces;
 			// Force update of chess pieces
-			updateChessPieces(chessPiecesGroup, camera, gameState);
+			updateBoardVisuals();
 		} else {
 			console.log('No chess pieces in direct array - will extract from cells');
 			// Update chess pieces from board cells
-			updateChessPieces(chessPiecesGroup, camera, gameState);
+			updateBoardVisuals();
 		}
 		
 		// Check for home zones
@@ -1256,12 +1466,31 @@ export function handleGameStateUpdate(data) {
 			// Update player bar to show all connected players
 			createPlayerBar(gameState);
 			updatePlayerBar(gameState);
+			
+			// Also update the player list in the sidebar if NetworkManager is available
+			if (window.NetworkManager && window.NetworkManager.updatePlayerList) {
+				console.log('Updating player list in sidebar');
+				// Convert to format expected by the sidebar
+				const playerList = Object.keys(players).map(id => ({
+					id: id,
+					name: players[id].name || id,
+					isComputer: players[id].isComputer || false
+				}));
+				
+				// Send player list update event
+				window.NetworkManager.triggerEvent('player_list', { players: playerList });
+			}
 		}
 		
 		// Update current player and turn phase
 		const currentPlayer = gameData.currentPlayer || data.currentPlayer;
 		if (currentPlayer) {
 			gameState.currentPlayer = currentPlayer;
+			
+			// Highlight current player's pieces in red
+			if (gameState.turnPhase === 'chess' && chessPiecesGroup) {
+				highlightCurrentPlayerPieces(currentPlayer);
+			}
 		}
 		
 		// Handle turn phase updates
@@ -1272,17 +1501,20 @@ export function handleGameStateUpdate(data) {
 			// If we entered chess phase, make sure pieces are visible
 			if (turnPhase === 'chess' && gameState.chessPieces && gameState.chessPieces.length > 0) {
 				console.log("Entered chess phase - ensuring pieces are visible");
-				updateChessPieces(chessPiecesGroup, camera, gameState);
+				updateBoardVisuals();
+				
+				// Highlight current player's pieces in red when entering chess phase
+				if (gameState.currentPlayer) {
+					
+					highlightCurrentPlayerPieces(gameState.currentPlayer);
+				}
 			}
 		}
 		
 		// Update game status display
 		updateGameStatusDisplay();
 		
-		// Reset camera position based on received data 
-		console.log("Resetting camera based on received game data");
-		resetCameraForGameplay(renderer, camera, controls, gameState, scene, true, true);
-		
+
 		// Force a final render pass to ensure visibility
 		if (renderer && scene && camera) {
 			console.log("Forcing a render pass to ensure visibility");
@@ -1432,64 +1664,66 @@ function updateBoardState(boardData) {
  * Update board visuals based on the current game state
  */
 function updateBoardVisuals() {
-	console.log('Updating board visuals');
-	
 	try {
-		// Ensure boardGroup exists
-		if (!boardGroup) {
-			console.warn('boardGroup is not initialized, creating a new one');
-			boardGroup = new THREE.Group();
-			boardGroup.name = 'boardGroup';
+		console.log("Updating board visuals...");
+		const startTime = performance.now();
+		
+		// ----- BOARD CELLS HANDLING -----
+		// Check if we need to create the board group from scratch
+		let boardGroupExists = !!gameState.boardGroup;
+		
+		if (!boardGroupExists) {
+			// Create a new group for the board if it doesn't exist
+			gameState.boardGroup = new THREE.Group();
+			gameState.boardGroup.name = 'board';
 			
-			// Only add to scene if scene exists
-			if (scene) {
-				scene.add(boardGroup);
-			} else {
-				console.error('Cannot add boardGroup to scene - scene is undefined');
+			// Add the board group to the scene
+			if (gameState.scene) {
+				gameState.scene.add(gameState.boardGroup);
 			}
+			
+			console.log("Created new board group");
 		}
 		
-		// Ensure we have a valid board
-		if (!gameState.board) {
-			console.warn('No board found in game state, creating empty board');
-			gameState.board = { cells: {} };
+		// Use the efficient rendering function that reuses existing cells
+		const boardStats = boardFunctions.renderBoard(gameState, gameState.boardGroup, sceneModule.createFloatingIsland, THREE);
+		
+		// ----- CHESS PIECES HANDLING -----
+		// Create or ensure chess pieces group exists
+		if (!chessPiecesGroup) {
+			chessPiecesGroup = new THREE.Group();
+			chessPiecesGroup.name = 'chessPieces';
+			gameState.scene.add(chessPiecesGroup);
+			console.log("Created new chess pieces group");
 		}
 		
-		// Create board cells if they don't exist
-		if (boardGroup.children.length === 0) {
+		// Delegate chess piece updating to the dedicated function in updateChessPieces.js
+		// This handles all extraction, positioning, and rendering of chess pieces
+		if (typeof updateChessPieces === 'function') {
 			try {
-				sceneModule.createBoard(boardGroup, gameState);
-			} catch (err) {
-				console.error('Error creating board cells:', err);
+				updateChessPieces(chessPiecesGroup, camera, gameState);
+			} catch (chessPiecesError) {
+				console.error('Error updating chess pieces:', chessPiecesError);
 			}
+		} else {
+			console.warn('updateChessPieces function not available');
 		}
 		
-		// Update chess pieces for current state
-		try {
-			updateChessPieces(chessPiecesGroup, camera, gameState);
-		} catch (err) {
-			console.warn('Error updating chess pieces:', err);
+		// Sync center positions for tetromino if that module is loaded
+		if (typeof tetrominoModule.synchronizeCenterPositions === 'function') {
+			tetrominoModule.synchronizeCenterPositions(gameState);
 		}
 		
-		// Update tetromino for current state if in tetris phase
-		if (gameState.turnPhase === 'tetris' && gameState.currentTetromino) {
-			try {
-				renderCurrentTetromino();
-			} catch (err) {
-				console.warn('Error rendering tetromino:', err);
-			}
+		// Force a render update to ensure all changes are visible
+		if (gameState.renderer && gameState.scene && gameState.camera) {
+			gameState.renderer.render(gameState.scene, gameState.camera);
 		}
 		
-		// Force a render if all required components exist
-		if (renderer && scene && camera) {
-			try {
-				renderer.render(scene, camera);
-			} catch (err) {
-				console.warn('Error during render in updateBoardVisuals:', err);
-			}
-		}
+		// Report performance
+		const endTime = performance.now();
+		console.log(`Board/chess visual update completed in ${(endTime - startTime).toFixed(2)}ms`);
 	} catch (error) {
-		console.error('Unexpected error in updateBoardVisuals:', error);
+		console.error("Error in updateBoardVisuals:", error);
 	}
 }
 
@@ -1757,7 +1991,7 @@ function applyThreeJsOptimizations() {
 	
 	// Reduce cloud count
 	if (typeof animateClouds === 'function') {
-		animateClouds(true); // Call with optimization flag
+		animateClouds(scene); // Call with optimization flag
 	}
 	
 	// Force a full garbage collection if possible
@@ -1776,21 +2010,30 @@ function applyThreeJsOptimizations() {
  * Render the current tetromino on the board
  */
 function renderCurrentTetromino() {
-	// If no tetromino exists in game state, return
 	if (!gameState.currentTetromino) return;
-	
-	// Clear existing tetromino group
-	while (tetrominoGroup.children.length > 0) {
-		tetrominoGroup.remove(tetrominoGroup.children[0]);
+
+	// Remove previous tetromino mesh if it exists
+	if (gameState.currentTetromino.mesh && gameState.scene) {
+		gameState.scene.remove(gameState.currentTetromino.mesh);
 	}
+
+	// Create the current tetromino
+	gameState.currentTetromino.mesh = tetrominoModule.createTetrominoMesh(gameState.currentTetromino, gameState);
 	
-	// Use the boardFunctions module to render the tetromino
-	boardFunctions.renderTetromino(
-		gameState,
-		gameState.currentTetromino,
-		tetrominoGroup,
-		createTetrominoBlock
-	);
+	if (gameState.scene && gameState.currentTetromino.mesh) {
+		gameState.scene.add(gameState.currentTetromino.mesh);
+		
+		// Synchronize center positions to ensure alignment between cells and pieces
+		if (typeof tetrominoModule.synchronizeCenterPositions === 'function') {
+			tetrominoModule.synchronizeCenterPositions(gameState);
+		}
+	}
+
+	//Render the tetromino
+	boardFunctions.renderTetromino(gameState, gameState.currentTetromino, tetrominoGroup, createTetrominoBlock);
+
+	// Update the board visuals
+	updateBoardVisuals();
 }
 
 
@@ -1865,7 +2108,9 @@ function startGame(justLooking = false) {
 	tetrominoGroup = sceneResult._tetrominoGroup;
 	chessPiecesGroup = sceneResult._chessPiecesGroup;
 	clouds = sceneResult._clouds;
-	
+	// Setup raycaster for mouse interactions
+	raycaster = new THREE.Raycaster();
+	mouse = new THREE.Vector2();
 	// Set default viewing position
 	resetCameraForGameplay(
 		renderer,
@@ -1874,14 +2119,11 @@ function startGame(justLooking = false) {
 		gameState,
 		scene,
 		true,
-		true
+		false
 	);
 	
 	// The groups are already added to the scene in setupScene, no need to add them again
 	
-	// Setup raycaster for mouse interactions
-	raycaster = new THREE.Raycaster();
-	mouse = new THREE.Vector2();
 
 	// Initialize input handlers only after scene is set up
 	console.log("Setting up input handlers...");
@@ -2061,12 +2303,24 @@ function initializeOrbitControls(camera, domElement) {
 	let orbitControls = null;
 	
 	try {
+		// Log available paths to help diagnose issues
+		console.log("Checking for OrbitControls in:", {
+			"THREE.OrbitControls": typeof THREE.OrbitControls,
+			"global OrbitControls": typeof OrbitControls,
+			"THREE_MODULE.OrbitControls": THREE_MODULE ? typeof THREE_MODULE.OrbitControls : "module not available"
+		});
+		
 		// Check if OrbitControls is available from THREE
 		if (typeof THREE.OrbitControls === 'function') {
 			orbitControls = new THREE.OrbitControls(camera, domElement);
 			console.log("Using THREE.OrbitControls");
 		} 
 		// Check if it's available as a global
+		else if (typeof window.OrbitControls === 'function') {
+			orbitControls = new window.OrbitControls(camera, domElement);
+			console.log("Using window.OrbitControls");
+		}
+		// Check as a global variable
 		else if (typeof OrbitControls === 'function') {
 			orbitControls = new OrbitControls(camera, domElement);
 			console.log("Using global OrbitControls");
@@ -2078,66 +2332,727 @@ function initializeOrbitControls(camera, domElement) {
 		} 
 		else {
 			console.error("OrbitControls not found in any expected location");
+			// Create a temporary message to notify the user
+			const errorMsg = document.createElement('div');
+			errorMsg.style.position = 'fixed';
+			errorMsg.style.top = '10px';
+			errorMsg.style.left = '10px';
+			errorMsg.style.background = 'rgba(255,0,0,0.7)';
+			errorMsg.style.color = 'white';
+			errorMsg.style.padding = '10px';
+			errorMsg.style.borderRadius = '5px';
+			errorMsg.style.zIndex = '9999';
+			errorMsg.textContent = 'Camera controls unavailable - OrbitControls not loaded';
+			document.body.appendChild(errorMsg);
 			return null;
 		}
 		
-		// Configure controls for smooth movement
-		orbitControls.enableDamping = true;
-		orbitControls.dampingFactor = 0.15;
-		orbitControls.screenSpacePanning = true;
-		orbitControls.minDistance = 10;
-		orbitControls.maxDistance = 80;
-		orbitControls.maxPolarAngle = Math.PI / 2 - 0.1; // Prevent going below horizon
-		orbitControls.target.set(8, 0, 8); // Look at center of board
+		if (!orbitControls) {
+			console.error("Failed to initialize OrbitControls");
+			return null;
+		}
 		
-		// Set up controls to handle touch events properly
-		orbitControls.touches = {
-			ONE: THREE.TOUCH ? THREE.TOUCH.ROTATE : 0,
-			TWO: THREE.TOUCH ? THREE.TOUCH.DOLLY_PAN : 1
-		};
-		
-		// Enable smoother rotating/panning
-		orbitControls.rotateSpeed = 0.7;
-		orbitControls.panSpeed = 0.8;
-		orbitControls.zoomSpeed = 1.0;
-		
-		// Ensure first update is called
-		orbitControls.update();
-		
-		console.log("OrbitControls initialized successfully");
-		
-		// Add a visible indicator in the corner to show controls are active
-		const controlIndicator = document.createElement('div');
-		controlIndicator.style.position = 'fixed';
-		controlIndicator.style.bottom = '10px';
-		controlIndicator.style.right = '10px';
-		controlIndicator.style.background = 'rgba(0,0,0,0.5)';
-		controlIndicator.style.color = '#ffcc00';
-		controlIndicator.style.padding = '5px 10px';
-		controlIndicator.style.borderRadius = '3px';
-		controlIndicator.style.fontSize = '12px';
-		controlIndicator.style.zIndex = '9999';
-		controlIndicator.textContent = 'Camera Controls Active';
-		document.body.appendChild(controlIndicator);
-		
-		// Add some help text
-		const helpText = document.createElement('div');
-		helpText.style.position = 'fixed';
-		helpText.style.bottom = '40px';
-		helpText.style.right = '10px';
-		helpText.style.background = 'rgba(0,0,0,0.5)';
-		helpText.style.color = '#ffffff';
-		helpText.style.padding = '5px 10px';
-		helpText.style.borderRadius = '3px';
-		helpText.style.fontSize = '12px';
-		helpText.style.zIndex = '9999';
-		helpText.style.maxWidth = '200px';
-		helpText.innerHTML = 'Mouse: Left click + drag to rotate<br>Right click + drag to pan<br>Scroll to zoom';
-		document.body.appendChild(helpText);
+		// Configure the controls
+		configureOrbitControls(orbitControls);
 		
 		return orbitControls;
 	} catch (error) {
 		console.error("Error initializing OrbitControls:", error);
 		return null;
 	}
+}
+
+/**
+ * Configure orbit controls with proper settings
+ * @param {Object} controls - The OrbitControls object to configure
+ */
+function configureOrbitControls(controls) {
+	if (!controls) return;
+	
+	// Configure controls for smooth movement
+	controls.enableDamping = true;
+	controls.dampingFactor = 0.15;
+	controls.screenSpacePanning = true;
+	controls.minDistance = 10;
+	controls.maxDistance = 80;
+	controls.maxPolarAngle = Math.PI / 2 - 0.1; // Prevent going below horizon
+	controls.target.set(8, 0, 8); // Look at center of board
+	
+	// Make sure these critical properties are set to enable interaction
+	controls.enabled = true;
+	controls.enableRotate = true;
+	controls.enablePan = true;
+	controls.enableZoom = true;
+	
+	// Set up controls to handle touch events properly
+	controls.touches = {
+		ONE: THREE.TOUCH ? THREE.TOUCH.ROTATE : 0,
+		TWO: THREE.TOUCH ? THREE.TOUCH.DOLLY_PAN : 1
+	};
+	
+	// Enable smoother rotating/panning
+	controls.rotateSpeed = 0.7;
+	controls.panSpeed = 0.8;
+	controls.zoomSpeed = 1.0;
+	
+	// Ensure first update is called
+	controls.update();
+	
+	console.log("OrbitControls configured successfully");
+	
+	// Add a visible indicator in the corner to show controls are active
+	const existingIndicator = document.getElementById('controls-indicator');
+	if (existingIndicator) {
+		// Remove existing indicator to avoid duplicates
+		existingIndicator.parentNode.removeChild(existingIndicator);
+	}
+	
+	const controlIndicator = document.createElement('div');
+	controlIndicator.id = 'controls-indicator';
+	controlIndicator.style.position = 'fixed';
+	controlIndicator.style.bottom = '10px';
+	controlIndicator.style.right = '10px';
+	controlIndicator.style.background = 'rgba(0,0,0,0.7)';
+	controlIndicator.style.color = '#ffcc00';
+	controlIndicator.style.padding = '8px 12px';
+	controlIndicator.style.borderRadius = '5px';
+	controlIndicator.style.fontSize = '14px';
+	controlIndicator.style.zIndex = '9999';
+	controlIndicator.style.fontWeight = 'bold';
+	controlIndicator.style.boxShadow = '0 0 10px rgba(0,0,0,0.5)';
+	controlIndicator.style.border = '1px solid #ffcc00';
+	controlIndicator.textContent = '🎮 Camera Controls Active';
+	document.body.appendChild(controlIndicator);
+	
+	// Add some help text with improved styling
+	const existingHelpText = document.getElementById('controls-help');
+	if (existingHelpText) {
+		// Remove existing help text to avoid duplicates
+		existingHelpText.parentNode.removeChild(existingHelpText);
+	}
+	
+	const helpText = document.createElement('div');
+	helpText.id = 'controls-help';
+	helpText.style.position = 'fixed';
+	helpText.style.bottom = '60px';
+	helpText.style.right = '10px';
+	helpText.style.background = 'rgba(0,0,0,0.7)';
+	helpText.style.color = '#ffffff';
+	helpText.style.padding = '10px 15px';
+	helpText.style.borderRadius = '5px';
+	helpText.style.fontSize = '13px';
+	helpText.style.zIndex = '9999';
+	helpText.style.maxWidth = '250px';
+	helpText.style.lineHeight = '1.5';
+	helpText.style.boxShadow = '0 0 10px rgba(0,0,0,0.5)';
+	helpText.style.border = '1px solid #555';
+	helpText.innerHTML = '🖱️ <b>Mouse controls:</b><br>' + 
+						 '• Left click + drag: Rotate camera<br>' + 
+						 '• Right click + drag: Pan camera<br>' + 
+						 '• Scroll wheel: Zoom in/out';
+	document.body.appendChild(helpText);
+}
+
+/**
+ * Start the game loop with performance optimizations
+ */
+function startGameLoop() {
+	console.log('Starting enhanced game loop with performance optimizations...');
+	
+	// Reset the fall time whenever we start the game loop
+	tetrisLastFallTime = Date.now();
+	
+	// Last time for calculating delta time
+	let lastTime = performance.now();
+	
+	// Throttle values for different update functions
+	const LOD_UPDATE_INTERVAL = gameState.performanceMode ? 3000 : 2000; // ms between LOD updates
+	const GAME_LOGIC_INTERVAL = gameState.performanceMode ? 1000 : 500; // ms between game logic updates
+	
+	// Track when we last ran various updates
+	let lastLODUpdate = 0;
+	let lastGameLogicUpdate = 0;
+	let lastUiUpdate = 0; // For tracking UI updates
+	let lastControlsUpdate = 0; // For tracking controls updates
+	
+	// Track FPS for performance monitoring
+	let frameCount = 0;
+	let lastFpsUpdate = performance.now();
+	let frameSkip = 0; // Skip frames for heavy operations
+	
+	// Frame limiting
+	const TARGET_FRAMERATE = gameState.performanceMode ? 20 : 60; // Higher framerate for smoother controls
+	const FRAME_TIME = 1000 / TARGET_FRAMERATE;
+	let lastFrameTime = 0;
+	
+	// Add variables to track validation timings
+	let lastSceneValidation = null;
+	let lastGroupCheck = null;
+	
+	// Flag to track if clouds are in camera view (initialized here, used in animate)
+	let cloudsInView = true;
+	
+	// Ensure controls are initialized with damping enabled
+	if (controls) {
+		controls.enableDamping = true;
+		controls.dampingFactor = 0.1; // Make camera movement smoother
+		controls.update();
+		console.log("Ensuring OrbitControls are properly configured in game loop");
+	}
+	
+	/**
+	 * Main render function
+	 */
+	function animate(time) {
+		// Set up the next animation frame
+		animationFrameId = requestAnimationFrame(animate);
+
+		try {
+			// Calculate time delta for smooth animations
+			const delta = (time - lastTime) / 1000;
+			lastTime = time;
+			
+			// Skip if delta is too large (likely due to tab being inactive)
+			if (delta > 1) {
+				console.log("Skipping large delta frame:", delta);
+				return;
+			}
+			
+			// Update frame counter for skipping heavy operations
+			frameCount++;
+			frameSkip = (frameSkip + 1) % 3; // Skip every 3rd frame for heavy operations
+			const isHeavyOperationFrame = frameSkip === 0;
+			
+			// Update game logic elements if not paused
+			if (!gameState.paused) {
+				// Always update controls every frame for smooth camera movement
+				if (controls) {
+					controls.update();
+				}
+				
+				// Calculate time since last controls update
+				const timeSinceControlsUpdate = time - lastControlsUpdate;
+				
+				// Update controls more frequently for responsive UI
+				if (timeSinceControlsUpdate > 16) { // ~60fps
+					if (controls) {
+						controls.update();
+					}
+					lastControlsUpdate = time;
+				}
+				
+				// Update animated clouds - ensure clouds array exists and contains valid objects
+				// Only update on heavy operation frames to reduce load
+				if (isHeavyOperationFrame && clouds && Array.isArray(clouds)) {
+					for (let i = 0; i < clouds.length; i++) {
+						if (clouds[i]) {
+							clouds[i].rotation.y += 0.001 * delta * 3; // Multiply by 3 since we're updating every 3rd frame
+						}
+					}
+				}
+				
+				// Process pending animations
+				if (animationQueue && animationQueue.length > 0) {
+					processAnimationQueue();
+				}
+				
+				// Update player bar periodically 
+				const UI_UPDATE_INTERVAL = 2000; // Update UI every 2 seconds (reduced frequency)
+				const timeSinceUiUpdate = time - lastUiUpdate;
+				if (timeSinceUiUpdate > UI_UPDATE_INTERVAL) {
+					// Update player bar
+					if (typeof updatePlayerBar === 'function') {
+						try {
+							updatePlayerBar(gameState);
+						} catch (playerBarError) {
+							console.error('Error updating player bar:', playerBarError);
+						}
+					}
+					
+					// Update chess pieces
+					if (typeof updateChessPieces === 'function' && chessPiecesGroup) {
+						try {
+							updateBoardVisuals();
+						} catch (chessPiecesError) {
+							console.error('Error updating chess pieces:', chessPiecesError);
+						}
+					}
+					
+					lastUiUpdate = time;
+				}
+			}
+			
+			// Handle TWEEN animations if available
+			if (window.TWEEN) {
+				window.TWEEN.update();
+			}
+			
+			// Update FPS counter
+			const timeSinceFpsUpdate = time - lastFpsUpdate;
+			if (timeSinceFpsUpdate > 1000) { // Every second
+				const fps = Math.round((frameCount * 1000) / timeSinceFpsUpdate);
+				frameCount = 0;
+				lastFpsUpdate = time;
+				
+				// Only log FPS in debug mode to reduce console spam
+				if (gameState.debugMode) {
+					console.log(`FPS: ${fps}`);
+				}
+				
+				// Monitor performance - but don't apply drastic measures too early
+				if (time > 10000) { // Only after 10 seconds of runtime
+					monitorPerformance(fps);
+				}
+			}
+			
+			// Only update LOD and game logic on heavy operation frames
+			if (isHeavyOperationFrame) {
+				// Update animated clouds
+				if (time - lastLODUpdate > LOD_UPDATE_INTERVAL) {
+					lastLODUpdate = time;
+					// Update clouds
+					if (typeof animateClouds === 'function') {
+						animateClouds(scene);
+					}
+				}
+				
+				// Update game logic
+				if (time - lastGameLogicUpdate > GAME_LOGIC_INTERVAL) {
+					lastGameLogicUpdate = time;
+					updateGameLogic(delta);
+				}
+			}
+			
+			// Render the scene only if all required elements exist and are properly initialized
+			if (renderer && scene && camera) {
+				// PERFORMANCE OPTIMIZATION: Only run scene validation occasionally
+				// This is expensive and doesn't need to run every single frame
+				const SCENE_VALIDATION_INTERVAL = 5000; // ms between validations (5 seconds)
+				const now = Date.now();
+				if (!lastSceneValidation || now - lastSceneValidation > SCENE_VALIDATION_INTERVAL) {
+					// Proactively check and fix scene hierarchy before rendering
+					// This helps prevent errors before they occur
+					if (scene) {
+						try {
+							// Add a diagnostic check to count objects in the scene
+							if (gameState.debugMode) {
+								let objectCount = 0;
+								let nullChildrenCount = 0;
+								let undefinedVisibleCount = 0;
+								
+								const countObjects = (obj) => {
+									if (!obj) return;
+									objectCount++;
+									
+									// Check for common error conditions
+									if (obj.visible === undefined || obj.visible === null) {
+										undefinedVisibleCount++;
+									}
+									
+									if (obj.children) {
+										// Check for null children
+										const nullChildren = obj.children.filter(c => c === null || c === undefined).length;
+										if (nullChildren > 0) {
+											nullChildrenCount += nullChildren;
+											console.warn(`Object "${obj.name || 'unnamed'}" has ${nullChildren} null children`);
+										}
+										
+										obj.children.forEach(child => {
+											if (child !== null && child !== undefined) {
+												countObjects(child);
+											}
+										});
+									}
+								};
+								
+								countObjects(scene);
+								// console.log(`Scene contains ${objectCount} objects, ${nullChildrenCount} null children, ${undefinedVisibleCount} with undefined visible property`);
+							}
+							
+							// Check for problematic objects in the scene graph before rendering
+							// This recursive function ensures the scene is in a valid state
+							const validateSceneGraph = function(object) {
+								// Skip validation for null or undefined objects
+								if (!object) return;
+								
+								try {
+									// Ensure object.visible is defined (often source of errors)
+									if (object.visible === undefined || object.visible === null) {
+										console.warn('Fixed undefined visible property on object', object.name || 'unnamed');
+										object.visible = true;
+									}
+									
+									// Make sure matrices are initialized
+									if (object.matrixAutoUpdate && (!object.matrix || object.matrix.elements.some(e => Number.isNaN(e)))) {
+										console.warn('Fixed invalid matrix on object', object.name || 'unnamed');
+										object.updateMatrix();
+									}
+									
+									// Recursively check children
+									if (object.children) {
+										// Make a copy of the children array to avoid modification during iteration
+										const children = [...object.children];
+
+										// Remove null children, which can cause render errors
+										const hasNullChildren = children.some(child => child === null || child === undefined);
+										if (hasNullChildren) {
+											console.warn('Removing null children from object', object.name || 'unnamed');
+											object.children = object.children.filter(child => child !== null && child !== undefined);
+										}
+
+										// Now validate remaining children
+										for (let i = 0; i < children.length; i++) {
+											if (children[i] !== null && children[i] !== undefined) {
+												validateSceneGraph(children[i]);
+											}
+										}
+									}
+								} catch (validateObjectError) {
+									console.error('Error validating object in scene graph:', validateObjectError);
+								}
+							};
+							
+							// Run validation before render
+							validateSceneGraph(scene);
+						} catch (validateError) {
+							console.error('Error during scene validation:', validateError);
+						}
+					}
+					lastSceneValidation = now;
+				}
+
+				try {
+					// PERFORMANCE OPTIMIZATION: Only check specific groups occasionally
+					if (!lastGroupCheck || now - lastGroupCheck > SCENE_VALIDATION_INTERVAL) {
+						// Check specific object groups before rendering
+						if (chessPiecesGroup) {
+							// ... existing code ...
+						}
+						lastGroupCheck = now;
+					}
+					
+					// Safe render call - this must happen every frame
+					renderer.render(scene, camera);
+				} catch (renderError) {
+					console.error('Error during render:', renderError);
+					// ... existing code ...
+				}
+			} else {
+				console.warn('Skipping render - missing required components:', 
+					{renderer: !!renderer, scene: !!scene, camera: !!camera});
+			}
+		} catch (error) {
+			console.error('Error in animation loop:', error);
+			// Don't crash the animation loop due to rendering errors
+		}
+	}
+	
+	// Start the game loop
+	animationFrameId = requestAnimationFrame(animate);
+}
+
+// Expose highlight functions to global scope for player list sidebar
+export function exposeHighlightFunctionsGlobally() {
+	console.log("Exposing highlight functions and game state to global scope");
+	window.gameCore = window.gameCore || {};
+	window.gameCore.highlightPlayerPieces = highlightPlayerPieces;
+	window.gameCore.removePlayerPiecesHighlight = removePlayerPiecesHighlight;
+	window.gameCore.highlightCurrentPlayerPieces = highlightCurrentPlayerPieces;
+	
+	// Also expose gameState
+	window.gameState = gameState;
+}
+
+// Define the legacy_placeTetromino function
+function legacy_placeTetromino() {
+	console.log('Placing tetromino on board using legacy function');
+	if (!gameState.currentTetromino) return;
+	
+	try {
+		// Ensure the scene is included in the gameState
+		if (!gameState.scene && typeof scene !== 'undefined') {
+			gameState.scene = scene;
+		}
+		
+		// Import the enhancedPlaceTetromino function for server validation
+		if (typeof tetrominoModule.enhancedPlaceTetromino === 'function') {
+			console.log('Using enhanced placement with server validation');
+			tetrominoModule.enhancedPlaceTetromino(gameState)
+				.then(result => {
+					console.log('Tetromino placement completed with result:', result);
+				})
+				.catch(err => {
+					console.error('Error during tetromino placement:', err);
+					
+					// Even if there's an error, we should switch phases and clean up
+					gameState.currentTetromino = null;
+					gameState.turnPhase = 'chess';
+					updateGameStatusDisplay();
+				});
+		} else {
+			console.warn('Enhanced placement function not available, using direct placement');
+			// Fallback to direct placement if the function isn't exported
+			boardFunctions.placeTetromino(
+				gameState,
+				(x, z) => showPlacementEffect(x, z, gameState),
+				updateGameStatusDisplay,
+				updateBoardVisuals
+			);
+		}
+	} catch (error) {
+		console.error('Error placing tetromino:', error);
+		
+		// Even if there's an error, we should switch phases and clean up
+		
+		gameState.currentTetromino = null;
+		gameState.turnPhase = 'chess';
+		updateGameStatusDisplay();
+	}
+}
+
+/**
+/**
+ * Updates the board center position and synchronizes all related game elements
+ * @param {Object} newCenter - The new board center coordinates {x, z}
+ * @returns {boolean} - Whether the update was successful
+ */
+export function updateBoardCenter(newCenter) {
+	console.log('Updating board center to:', newCenter);
+	
+	try {
+		// Try to import centreBoardMarker functions if not already available
+		let createCentreMarker, findBoardCentreMarker;
+		try {
+			// Dynamic import for centreBoardMarker functions
+			const centreBoardMarker = require('./centreBoardMarker.js');
+			createCentreMarker = centreBoardMarker.createCentreMarker;
+			findBoardCentreMarker = centreBoardMarker.findBoardCentreMarker;
+		} catch (e) {
+			console.warn('Failed to import centreBoardMarker module, using direct updates');
+		}
+		
+		// Ensure gameState exists
+		if (!gameState) {
+			console.error('No gameState available for board center update');
+			return false;
+		}
+		
+		// If newCenter is not provided, try to find the current centre marker
+		if (!newCenter) {
+			if (typeof findBoardCentreMarker === 'function') {
+				newCenter = findBoardCentreMarker(gameState);
+				console.log('Found existing board centre marker:', newCenter);
+			} else {
+				// Fallback to existing or default center
+				newCenter = gameState.board?.centreMarker || { x: 15, z: 15 };
+				console.log('Using existing or default board centre:', newCenter);
+			}
+		}
+		
+		// Update the centre marker in the board data
+		if (typeof createCentreMarker === 'function') {
+			createCentreMarker(gameState, newCenter.x, newCenter.z);
+			console.log('Updated board centre marker using centreBoardMarker module');
+		} else {
+			// Direct update if module not available
+			if (!gameState.board) gameState.board = { cells: {} };
+			gameState.board.centreMarker = { x: newCenter.x, z: newCenter.z };
+			console.log('Updated board centre marker directly');
+		}
+		
+		// Update the boardCenter property in gameState
+		gameState.boardCenter = {
+			x: newCenter.x,
+			y: 0,
+			z: newCenter.z
+		};
+		
+		// Synchronize the board center with all game elements
+		if (typeof tetrominoModule.synchronizeCenterPositions === 'function') {
+			tetrominoModule.synchronizeCenterPositions(gameState);
+			console.log('Synchronized tetromino positions with new board centre');
+		}
+		
+		// If there's a current tetromino, update its visualization
+		if (gameState.currentTetromino && tetrominoModule.renderTetromino) {
+			tetrominoModule.renderTetromino(gameState);
+			console.log('Re-rendered current tetromino with new board centre');
+		}
+		
+		// If there's a board visualization function, update it
+		if (typeof updateBoardVisuals === 'function') {
+			updateBoardVisuals();
+			console.log('Updated board visualizations');
+		}
+		
+		// Force a render update if the scene and renderer are available
+		if (gameState.scene && renderer && camera) {
+			renderer.render(gameState.scene, camera);
+			console.log('Forced render update with new board centre');
+		}
+		
+		return true;
+	} catch (error) {
+		console.error('Error updating board center:', error);
+		return false;
+	}
+}
+
+/**
+ * Handle network errors during tetromino placement
+ * @param {Object} error - The error object
+ * @param {Object} gameState - The current game state
+ * @returns {Promise<boolean>} - Promise that resolves to true if reconnection was successful
+ */
+export function handleNetworkErrorDuringPlacement(error, gameState) {
+	console.error('Network error during tetromino placement:', error);
+	
+	// Show a message to the user
+	if (typeof showToastMessage === 'function') {
+		showToastMessage('Connection lost. Attempting to reconnect...');
+	}
+	
+	// Update network status display if available
+	if (typeof updateNetworkStatus === 'function') {
+		updateNetworkStatus('disconnected');
+	}
+	
+	// Use 5 maximum attempts with backoff strategy
+	return NetworkManager.ensureConnected(null, 5)
+		.then(connected => {
+			if (connected) {
+				console.log('Successfully reconnected to server');
+				
+				// Update status
+				if (typeof updateNetworkStatus === 'function') {
+					updateNetworkStatus('connected');
+				}
+				
+				if (typeof showToastMessage === 'function') {
+					showToastMessage('Reconnected successfully. You can continue playing.');
+				}
+				
+				return true;
+			} else {
+				console.error('Failed to reconnect after multiple attempts');
+				
+				// Show error message
+				if (typeof showToastMessage === 'function') {
+					showToastMessage('Failed to reconnect. Please refresh the page and try again.');
+				}
+				
+				// If there's a current tetromino, reject it with an explosion
+				if (gameState && gameState.currentTetromino) {
+					// Use imported function if available 
+					const { explosionX, explosionZ } = getTetrominoPositionForExplosion(gameState);
+					
+					// Find the cleanupTetrominoAndTransitionToChess function
+					let cleanupFunction;
+					try {
+						// Try to import from tetromino.js if not already available
+						const tetrominoModule = require('./tetromino.js');
+						cleanupFunction = tetrominoModule.cleanupTetrominoAndTransitionToChess;
+					} catch (e) {
+						console.warn('Could not import cleanupTetrominoAndTransitionToChess function');
+					}
+					
+					// Call the cleanup function if available
+					if (typeof cleanupFunction === 'function') {
+						cleanupFunction(
+							gameState,
+							'Connection lost. Please refresh the page and try again.',
+							explosionX,
+							explosionZ
+						);
+					} else {
+						// Fallback: just clear the current tetromino
+						gameState.currentTetromino = null;
+						gameState.turnPhase = 'chess';
+						if (typeof updateGameStatusDisplay === 'function') {
+							updateGameStatusDisplay();
+						}
+					}
+				}
+				
+				return false;
+			}
+		})
+		.catch(error => {
+			console.error('Error during reconnection process:', error);
+			
+			// Show error message
+			if (typeof showToastMessage === 'function') {
+				showToastMessage('Error during reconnection. Please refresh the page.');
+			}
+			
+			// If there's a current tetromino, reject it
+			if (gameState && gameState.currentTetromino) {
+				const { explosionX, explosionZ } = getTetrominoPositionForExplosion(gameState);
+				
+				// Find and call cleanup function
+				try {
+					const tetrominoModule = require('./tetromino.js');
+					if (typeof tetrominoModule.cleanupTetrominoAndTransitionToChess === 'function') {
+						tetrominoModule.cleanupTetrominoAndTransitionToChess(
+							gameState,
+							'Connection error. Please refresh the page.',
+							explosionX,
+							explosionZ
+						);
+					}
+				} catch (e) {
+					// Fallback cleanup
+					gameState.currentTetromino = null;
+					gameState.turnPhase = 'chess';
+					if (typeof updateGameStatusDisplay === 'function') {
+						updateGameStatusDisplay();
+					}
+				}
+			}
+			
+			return false;
+		});
+}
+
+/**
+ * Get the tetromino position for explosion effects
+ * @param {Object} gameState - The current game state
+ * @returns {Object} - The position {explosionX, explosionZ}
+ */
+function getTetrominoPositionForExplosion(gameState) {
+	let explosionX, explosionZ;
+	
+	if (gameState && gameState.currentTetromino) {
+		explosionX = gameState.currentTetromino.position.x;
+		explosionZ = gameState.currentTetromino.position.z;
+	} else {
+		// Default to board centre if no current tetromino
+		const boardCenter = gameState?.boardCenter || gameState?.board?.centreMarker || { x: 15, z: 15 };
+		explosionX = boardCenter.x;
+		explosionZ = boardCenter.z;
+	}
+	
+	return { explosionX, explosionZ };
+}
+
+// Expose module functions globally
+if (typeof window !== 'undefined') {
+	window.enhancedGameCore = {
+		getTHREE,
+		getGameState,
+		initGame,
+		resetGameState,
+		onWindowResize,
+		startPlayingGame,
+		updateRenderSize,
+		setupNetworkEvents,
+		handleGameStateUpdate,
+		handleTetrisPhaseClick,
+		handleChessPhaseClick,
+		cleanupThreeJsResources,
+		onPageUnload,
+		exposeHighlightFunctionsGlobally,
+		updateBoardCenter,
+		handleNetworkErrorDuringPlacement
+	};
 }
