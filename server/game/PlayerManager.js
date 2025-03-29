@@ -13,6 +13,37 @@ class PlayerManager {
 	}
 	
 	/**
+	 * Validates and sanitizes a player name
+	 * @param {any} playerName - The player name to validate
+	 * @param {number} defaultNumber - A number to use in the default name if needed
+	 * @returns {string} A valid player name
+	 */
+	validatePlayerName(playerName, defaultNumber = 1) {
+		// Check if name is null/undefined or not a string
+		if (!playerName || typeof playerName !== 'string') {
+			return `Player ${defaultNumber}`;
+		}
+		
+		// Convert to string if somehow not a string
+		let name = String(playerName);
+		
+		// Trim whitespace
+		name = name.trim();
+		
+		// If empty after trimming, use default
+		if (name.length === 0) {
+			return `Player ${defaultNumber}`;
+		}
+		
+		// Limit to 32 characters
+		if (name.length > 32) {
+			name = name.substring(0, 32);
+		}
+		
+		return name;
+	}
+	
+	/**
 	 * Register a new player in the game
 	 * @param {Object} game - The game object
 	 * @param {string} playerId - The player's ID
@@ -41,10 +72,13 @@ class PlayerManager {
 				};
 			}
 			
+			// Validate player name
+			const validatedName = this.validatePlayerName(playerName, playerCount + 1);
+			
 			// Create a new player
 			const player = {
 				id: playerId,
-				name: playerName || `Player ${playerCount + 1}`,
+				name: validatedName,
 				isObserver,
 				color: generateRandomColor(),
 				balance: PLAYER_SETTINGS.INITIAL_BALANCE || 100,
@@ -93,9 +127,9 @@ class PlayerManager {
 				// Generate initial tetrominos for the player
 				player.availableTetrominos = this.tetrominoManager.generateTetrominos(game, playerId);
 				
-				log(`Player ${playerName} (${playerId}) joined the game with home zone at (${homeZone.x}, ${homeZone.z})`);
+				log(`Player ${validatedName} (${playerId}) joined the game with home zone at (${homeZone.x}, ${homeZone.z})`);
 			} else {
-				log(`Observer ${playerName} (${playerId}) joined the game`);
+				log(`Observer ${validatedName} (${playerId}) joined the game`);
 			}
 			
 			return {

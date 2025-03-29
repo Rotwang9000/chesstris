@@ -1,5 +1,7 @@
-import { getTHREE } from './enhanced-gameCore';
-import * as NetworkManager from './utils/networkManager';
+import { getTHREE } from './enhanced-gameCore.js';
+import NetworkManager from './utils/networkManager.js';
+import { findBoardCentreMarker } from './centreBoardMarker.js';
+import { boardFunctions } from './boardFunctions.js';
 
 /**
  * Set up camera with proper position and controls
@@ -98,262 +100,7 @@ export function resetCameraForGameplay(renderer, camera, controls, gameState, sc
 		}
 	}
 
-	// Default camera position - looking at the center of the board
-	// Position further back for better board visibility
-	let targetPosition = {
-		x: 20, 
-		y: 25, 
-		z: 20
-	};
-
-	let lookAt = {
-		x: 8, // Center of the board
-		y: 0, 
-		z: 8  // Center of the board
-	};
-
-	// Get player ID
-	const playerId = typeof NetworkManager !== 'undefined' && NetworkManager.getPlayerId ? 
-		NetworkManager.getPlayerId() : null;
-	
-	// First priority: Try to find the player's king
-	if (playerId && gameState && gameState.chessPieces && gameState.chessPieces.length > 0) {
-		// Find all pieces belonging to the player
-		const playerPieces = gameState.chessPieces.filter(
-			piece => String(piece.player) === String(playerId)
-		);
-		
-		if (playerPieces.length > 0) {
-			// Find the king, or use any piece if king not found
-			const kingPiece = playerPieces.find(piece => 
-				piece.type === 'KING' || piece.type === 'king'
-			) || playerPieces[0];
-			
-			if (kingPiece && kingPiece.position) {
-				console.log('Positioning camera based on player king:', kingPiece);
-				
-				// Get king position and orientation
-				const position = kingPiece.position;
-				const orientation = kingPiece.orientation || 0;
-				
-				// Calculate camera offset based on orientation
-				let offsetX = 0;
-				let offsetZ = 0;
-				
-				switch(orientation) {
-					case 0: // Facing positive Z
-						offsetX = 0;
-						offsetZ = -15;
-						break;
-					case 1: // Facing negative X
-						offsetX = 15;
-						offsetZ = 0;
-						break;
-					case 2: // Facing negative Z
-						offsetX = 0;
-						offsetZ = 15;
-						break;
-					case 3: // Facing positive X
-						offsetX = -15;
-						offsetZ = 0;
-						break;
-					default:
-						offsetX = 0;
-						offsetZ = -15;
-				}
-				
-				// Set target position and look at based on king
-				targetPosition = {
-					x: position.x + offsetX,
-					y: 25, // Higher elevation for better view
-					z: position.z + offsetZ
-				};
-				
-				lookAt = {
-					x: position.x,
-					y: 0,
-					z: position.z
-				};
-				
-				console.log('Camera will move to king-based position:', targetPosition, 'looking at:', lookAt);
-			}
-		}
-	}
-	
-	// Second priority: If no king found, try home zones
-	if ((targetPosition.x === 20 && targetPosition.z === 20) && // Only if default position wasn't changed
-		playerId && gameState && gameState.homeZones && Object.keys(gameState.homeZones).length > 0) {
-		// Find the player's home zone
-		let homeZone = null;
-		for (const [id, zone] of Object.entries(gameState.homeZones)) {
-			if (id === playerId || id.includes(playerId)) {
-				homeZone = zone;
-				break;
-			}
-		}
-
-		// If no home zone found, use the first one as fallback
-		if (!homeZone && Object.values(gameState.homeZones).length > 0) {
-			homeZone = Object.values(gameState.homeZones)[0];
-		}
-
-		// If home zone found, position camera based on it
-		if (homeZone) {
-			console.log('Positioning camera based on home zone!:', homeZone);
-
-			// Use cell coordinates directly as they match the board grid
-			const homeX = homeZone.x !== undefined ? homeZone.x : 0;
-			const homeZ = homeZone.z !== undefined ? homeZone.z : 0;
-			const homeWidth = homeZone.width || 2;
-			const homeHeight = homeZone.height || 2;
-
-			// Calculate center of home zone
-			const centerX = homeX + homeWidth / 2;
-			const centerZ = homeZ + homeHeight / 2;
-
-			// Position camera diagonally from home zone for better view
-			targetPosition = {
-				x: centerX - 12, 
-				y: 20, 
-				z: centerZ + 12
-			};
-
-			// Look at center of home zone
-			lookAt = {
-				x: centerX,
-				y: 0,
-				z: centerZ
-			};
-
-			console.log('Camera will move to home zone-based position:', targetPosition, 'looking at:', lookAt);
-		}
-	}
-
-	// Set camera position immediately or animate
-	if (!animate || forceImmediate) {
-		// Directly set camera position and look at target
-		camera.position.set(targetPosition.x, targetPosition.y, targetPosition.z);
-		controls.target.set(lookAt.x, lookAt.y, lookAt.z);
-		
-		// Update controls
-		controls.update();
-		
-		console.log('Camera position set immediately to:', targetPosition);
-		
-		// Force a render
-		if (renderer && scene) {
-			renderer.render(scene, camera);
-		}
-		return;
-	}
-
-	// Get current position for animation
-	const startPosition = {
-		x: camera.position.x,
-		y: camera.position.y,
-		z: camera.position.z
-	};
-
-	// Get current look-at
-	const startLookAt = {
-		x: controls.target.x,
-		y: controls.target.y,
-		z: controls.target.z
-	};
-
-	// Animation duration
-	const duration = 2000; // 2 seconds
-	const startTime = Date.now();
-
-	// Animate camera movement
-	function animateCamera() {
-		const elapsed = Date.now() - startTime;
-		const progress = Math.min(elapsed / duration, 1);
-
-		// Ease function (cubic)
-		const ease = 1 - Math.pow(1 - progress, 3);
-
-		// Update camera position
-		camera.position.x = startPosition.x + (targetPosition.x - startPosition.x) * ease;
-		camera.position.y = startPosition.y + (targetPosition.y - startPosition.y) * ease;
-		camera.position.z = startPosition.z + (targetPosition.z - startPosition.z) * ease;
-
-		// Update controls target
-		controls.target.x = startLookAt.x + (lookAt.x - startLookAt.x) * ease;
-		controls.target.y = startLookAt.y + (lookAt.y - startLookAt.y) * ease;
-		controls.target.z = startLookAt.z + (lookAt.z - startLookAt.z) * ease;
-
-		// Update controls
-		controls.update();
-
-		// Force renderer update
-		if (renderer && scene) {
-			renderer.render(scene, camera);
-		}
-
-		// Continue animation if not done
-		if (progress < 1) {
-			requestAnimationFrame(animateCamera);
-		} else {
-			console.log('Camera animation completed');
-		}
-	}
-
-	// Start animation
-	animateCamera();
-}
-
-/**
- * Position camera based on home zone data
- */
-export function resetCameraBasedOnHomeZone(camera, controls, gameState, renderer, scene) {
-	if (!camera || !controls) return;
-
-	// Default position in case we can't find home zone
-	let targetPosition = { x: 5, y: 15, z: 25 };
-	let lookAt = { x: 5, y: 0, z: 12 };
-
-	// Try to find the player's home zone
-	if (gameState.homeZones && Object.keys(gameState.homeZones).length > 0) {
-		// Get player ID if possible
-		const playerId = NetworkManager.getPlayerId ? NetworkManager.getPlayerId() : null;
-		let homeZone = null;
-
-		if (playerId) {
-			// Look for player's home zone
-			for (const [id, zone] of Object.entries(gameState.homeZones)) {
-				if (id === playerId || id.includes(playerId)) {
-					homeZone = zone;
-					break;
-				}
-			}
-		}
-
-		// If no matching zone found, use first one
-		if (!homeZone) {
-			homeZone = Object.values(gameState.homeZones)[0];
-		}
-
-		if (homeZone) {
-			// Position camera at angle to home zone
-			targetPosition = {
-				x: homeZone.x - 5,
-				y: 15,
-				z: homeZone.z + 10
-			};
-
-			lookAt = {
-				x: homeZone.x + (homeZone.width ? homeZone.width / 2 : 2),
-				y: 0,
-				z: homeZone.z + (homeZone.height ? homeZone.height / 2 : 2)
-			};
-
-			console.log('Positioning camera based on home zone:', homeZone);
-		}
-	}
-
-	// Animate camera movement
-	animateCamera(camera, controls, targetPosition, lookAt, renderer, scene);
+	moveToPlayerZone(camera, controls, gameState, renderer, scene, animate, forceImmediate);
 }
 
 /**
@@ -362,7 +109,7 @@ export function resetCameraBasedOnHomeZone(camera, controls, gameState, renderer
 export function positionCameraDefault() {
 	if (!camera || !controls) return;
 
-	const targetPosition = { x: 8, y: 20, z: 25 };
+	const targetPosition = { x: 8, y: 40, z: 25 };
 	const lookAt = { x: 0, y: 0, z: 0 };
 
 	// Animate camera movement
@@ -428,7 +175,7 @@ export function animateCamera(camera, controls, targetPosition, lookAt, renderer
 /**
  * Move the camera to view a player's home zone
  */
-export function moveToPlayerZone(camera, controls, gameState, renderer, scene) {
+export function moveToPlayerZone(camera, controls, gameState, renderer, scene, animate = true, forceImmediate = false) {
 	// If no local player ID, do nothing
 	if (!gameState.localPlayerId) return;
 
@@ -437,16 +184,18 @@ export function moveToPlayerZone(camera, controls, gameState, renderer, scene) {
 		piece => String(piece.player) === String(gameState.localPlayerId)
 	);
 
-	// If no pieces, use center of board
-	if (!playerPieces.length) {
-		resetCameraForGameplay(renderer, camera, controls, gameState, scene);
-		return;
-	}
+	// // If no pieces, use center of board
+	// if (!playerPieces.length) {
+	// 	resetCameraForGameplay(renderer, camera, controls, gameState, scene);
+	// 	return;
+	// }
 
 	// Find the king, or any piece if king not found
-	const kingPiece = playerPieces.find(piece => piece.type === 'KING' || piece.type === 'king'
-	) || playerPieces[0];
-
+	const kingPiece = boardFunctions.getPlayersKing(gameState, gameState.localPlayerId, true);
+	if(!kingPiece){
+		console.warn('No king found for player ' + gameState.localPlayerId);
+		return;
+	}
 	// Get the position
 	const position = kingPiece.position;
 
@@ -455,60 +204,222 @@ export function moveToPlayerZone(camera, controls, gameState, renderer, scene) {
 		// Get king orientation to determine camera offset direction
 		const orientation = kingPiece.orientation || 0;
 		
-		// Calculate the camera offset based on orientation
-		// Position camera behind the king, looking forward
+		// Calculate proper 45-degree angle offsets
+		const distance = 16; // Distance from king
+		const horizontalOffset = distance; // 45-degree angle
+		const verticalOffset = distance * Math.sin(Math.PI/4); // 45-degree angle
+		
+		// Position camera behind the king based on orientation
 		let offsetX = 0;
 		let offsetZ = 0;
 		
-		// Default offset values create a camera position behind the king
-		// This creates a 45-degree angle looking at the board from player's perspective
+		// This creates a desk-view angle looking at a chessboard
 		switch(orientation) {
-			case 0: // Facing positive Z
+			case 0: // Facing positive Z (up) - camera should be below looking up
 				offsetX = 0;
-				offsetZ = -15; // Camera behind, looking forward
+				offsetZ = -horizontalOffset;
 				break;
-			case 1: // Facing negative X
-				offsetX = 15; // Camera to the right
+			case 1: // Facing negative X (right) - camera should be to left looking right
+				offsetX = -horizontalOffset;
 				offsetZ = 0;
 				break;
-			case 2: // Facing negative Z
+			case 2: // Facing negative Z (down) - camera should be above looking down
 				offsetX = 0;
-				offsetZ = 15; // Camera in front, looking back
+				offsetZ = horizontalOffset;
 				break;
-			case 3: // Facing positive X
-				offsetX = -15; // Camera to the left
+			case 3: // Facing positive X (left) - camera should be to right looking left
+				offsetX = horizontalOffset;
 				offsetZ = 0;
 				break;
 			default:
-				// Default case if orientation is unknown
 				offsetX = 0;
-				offsetZ = -15;
+				offsetZ = -horizontalOffset;
 		}
-		
-		// Calculate final camera position with height for better view
-		const cameraHeight = 25;
 		
 		console.log('Moving camera to view king at position:', position, 
 			'orientation:', orientation, 
-			'with offsets:', { x: offsetX, z: offsetZ, y: cameraHeight });
+			'with offsets:', { x: offsetX, z: offsetZ, y: verticalOffset });
 		
-		// Set camera target to king position
-		controls.target.set(position.x, 0, position.z);
+		// Target position for the camera
+		const targetPosition = {
+			x: position.x + offsetX,
+			y: verticalOffset,
+			z: position.z + offsetZ
+		};
 		
-		// Position camera at offset from king with height
-		camera.position.set(
-			position.x + offsetX, 
-			cameraHeight, 
-			position.z + offsetZ
-		);
+		// Target look position (king's position)
+		const targetLookAt = {
+			x: position.x,
+			y: 0,
+			z: position.z
+		};
+		
+		if (animate && !forceImmediate) {
+			// Perform flying animation to target position
+			flyToPosition(camera, controls, targetPosition, targetLookAt, renderer, scene);
+		} else {
+			// Set look target to the king's position
+			controls.target.set(targetLookAt.x, targetLookAt.y, targetLookAt.z);
+			
+			// Position camera directly
+			camera.position.set(
+				targetPosition.x,
+				targetPosition.y,
+				targetPosition.z
+			);
 
-		// Update controls
-		controls.update();
-		
-		// Force a render
-		if (renderer && scene) {
-			renderer.render(scene, camera);
+			// Update controls
+			controls.update();
+			
+			// Force a render
+			if (renderer && scene) {
+				renderer.render(scene, camera);
+			}
 		}
 	}
 }
 
+/**
+ * Animate camera with a flying effect to target position
+ * @param {THREE.Camera} camera - The camera to animate
+ * @param {THREE.OrbitControls} controls - The orbit controls
+ * @param {Object} targetPosition - Target camera position {x, y, z}
+ * @param {Object} targetLookAt - Target look-at position {x, y, z}
+ * @param {THREE.WebGLRenderer} renderer - The renderer
+ * @param {THREE.Scene} scene - The scene
+ */
+export function flyToPosition(camera, controls, targetPosition, targetLookAt, renderer, scene) {
+	// Get current position
+	const startPosition = {
+		x: camera.position.x,
+		y: camera.position.y,
+		z: camera.position.z
+	};
+
+	// Get current look-at
+	const startLookAt = controls.target.clone();
+
+	// Animation duration
+	const duration = 2000; // 2 seconds
+	const startTime = Date.now();
+	
+	// Calculate midpoint for arc (higher altitude for flying effect)
+	const midPosition = {
+		x: (startPosition.x + targetPosition.x) / 2,
+		y: Math.max(startPosition.y, targetPosition.y) + 15, // Extra height for arc
+		z: (startPosition.z + targetPosition.z) / 2
+	};
+
+	// Animate camera movement
+	function animate() {
+		const elapsed = Date.now() - startTime;
+		const progress = Math.min(elapsed / duration, 1);
+
+		// Ease function (cubic)
+		const ease = 1 - Math.pow(1 - progress, 3);
+		
+		// For smooth arc movement, we'll use quadratic Bezier curve
+		// First half of animation - go up and towards target
+		if (progress < 0.5) {
+			const subProgress = progress * 2; // Scale to 0-1 for first half
+			const subEase = 1 - Math.pow(1 - subProgress, 3);
+			
+			// Move from start towards midpoint (going up)
+			camera.position.x = startPosition.x + (midPosition.x - startPosition.x) * subEase;
+			camera.position.y = startPosition.y + (midPosition.y - startPosition.y) * subEase;
+			camera.position.z = startPosition.z + (midPosition.z - startPosition.z) * subEase;
+		} 
+		// Second half - come down to target
+		else {
+			const subProgress = (progress - 0.5) * 2; // Scale to 0-1 for second half
+			const subEase = 1 - Math.pow(1 - subProgress, 3);
+			
+			// Move from midpoint to target (coming down)
+			camera.position.x = midPosition.x + (targetPosition.x - midPosition.x) * subEase;
+			camera.position.y = midPosition.y + (targetPosition.y - midPosition.y) * subEase;
+			camera.position.z = midPosition.z + (targetPosition.z - midPosition.z) * subEase;
+		}
+
+		// Update controls target (smoother transition for look-at point)
+		controls.target.x = startLookAt.x + (targetLookAt.x - startLookAt.x) * ease;
+		controls.target.y = startLookAt.y + (targetLookAt.y - startLookAt.y) * ease;
+		controls.target.z = startLookAt.z + (targetLookAt.z - startLookAt.z) * ease;
+
+		// Update controls
+		controls.update();
+
+		// Force renderer update
+		if (renderer && scene) {
+			renderer.render(scene, camera);
+		}
+
+		// Continue animation if not done
+		if (progress < 1) {
+			requestAnimationFrame(animate);
+		}
+	}
+
+	// Start animation
+	animate();
+}
+
+/**
+ * Calculate camera position adjusted for board center
+ * @param {Object} gameState - The current game state
+ * @param {Object} position - The raw position object (usually king position)
+ * @param {Object} offset - The offset to apply {x, z}
+ * @returns {Object} The adjusted position
+ */
+export function calculateCameraPositionWithBoardCenter(gameState, position, offset) {
+	// Get board center
+	let boardCenter = findBoardCentreMarker(gameState);
+	
+	// Calculate the position's offset from board center
+	const relativePosition = {
+		x: position.x - boardCenter.x,
+		z: position.z - boardCenter.z
+	};
+	
+	// Apply camera offset in the local coordinate system
+	const result = {
+		x: position.x + offset.x,
+		y: position.y || 0,
+		z: position.z + offset.z
+	};
+	
+	console.log('Camera position calculation:', {
+		originalPosition: position,
+		boardCenter: boardCenter,
+		relativePosition: relativePosition,
+		offset: offset,
+		result: result
+	});
+	
+	return result;
+}
+
+/**
+ * Calculate adjusted camera position without centering issues
+ * @param {Object} gameState - The current game state
+ * @param {Object} position - The raw position object (usually king position)
+ * @param {Object} offset - The offset to apply {x, z}
+ * @returns {Object} The adjusted position
+ */
+export function calculateCameraPositionNoCenter(gameState, position, offset) {
+	if (!position) return { x: 0, y: 0, z: 0 };
+	
+	// Just apply the offset directly - simplest approach
+	const result = {
+		x: position.x + offset.x,
+		y: position.y || 0,
+		z: position.z + offset.z
+	};
+	
+	console.log('Simple camera position calculation:', {
+		originalPosition: position,
+		offset: offset,
+		result: result
+	});
+	
+	return result;
+}

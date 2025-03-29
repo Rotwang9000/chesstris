@@ -3,7 +3,7 @@ import { createFewClouds } from './createFewClouds.js';
 import { onWindowResize, getTHREE } from './enhanced-gameCore.js';
 import { boardFunctions } from './boardFunctions.js';
 import chessPieceCreator from './chessPieceCreator.js';
-import { findBoardCentreMarker, createCentreMarker } from './centreBoardMarker.js';
+import { findBoardCentreMarker, createCentreMarker, toRelativePosition, translatePosition } from './centreBoardMarker.js';
 
 export function setupScene(containerElement, scene, camera, renderer, controls, boardGroup, tetrominoGroup, chessPiecesGroup, clouds, gameState) {
 	console.log('Setting up enhanced 3D scene with beautiful sky...');
@@ -111,6 +111,7 @@ export function setupScene(containerElement, scene, camera, renderer, controls, 
 	tetrominoGroup = new THREE.Group();
 	tetrominoGroup.name = 'tetrominos';
 	scene.add(tetrominoGroup);
+	gameState.tetrominoGroup = tetrominoGroup;
 	
 	// Create chess pieces group
 	chessPiecesGroup = new THREE.Group();
@@ -456,23 +457,24 @@ function createRoundedBoxGeometry(width, height, depth, radius, segments) {
 	return geometry;
 }
 /**
- * Create a single floating cube cell at the given position
- * @param {number} x - X position
- * @param {number} z - Z position
- * @param {THREE.Material} material - Material to use for the cell
- * @param {THREE.Group} boardGroup - The board group to add the cell to
+ * Create a floating cube cell for the board
+ * @param {number} x - X-coordinate in the board
+ * @param {number} z - Z-coordinate in the board
+ * @param {THREE.Material} material - Material for the cell
+ * @param {THREE.Group} boardGroup - Group to add the cell to
  * @param {number} centerX - X-coordinate of the board centre
  * @param {number} centerZ - Z-coordinate of the board centre
  * @returns {THREE.Mesh} The created cell
  */
-export function createFloatingCube(x, z, material, boardGroup, centerX = 0, centerZ = 0) {
+export function createFloatingCube(x, z, material, boardGroup) {
 	try {
 		// Create a cube for the cell
 		const cellGeometry = new THREE.BoxGeometry(0.9, 0.9, 0.9);
 		const cellMesh = new THREE.Mesh(cellGeometry, material);
 
-		// Position the cell relative to the board centre
-		cellMesh.position.set(x - centerX, 0, z - centerZ);
+	
+		// Position the cell using relative coordinates
+		cellMesh.position.set(x, 0, z);
 
 		// Ensure no rotation at all - critical to prevent board from becoming tilted
 		cellMesh.rotation.set(0, 0, 0);
@@ -619,8 +621,6 @@ export function createBoard(boardGroup, gameState) {
 			boardGroup.remove(boardGroup.children[0]);
 		}
 
-		// Get board dimensions from game state
-		const boardSize = gameState?.boardSize || 16;
 
 		// Create materials for cells - use more natural colors
 		const whiteMaterial = new THREE.MeshStandardMaterial({
@@ -652,7 +652,7 @@ export function createBoard(boardGroup, gameState) {
 			gameState.board.cells &&
 			Object.keys(gameState.board.cells).length > 0;
 
-		console.log(`Creating board with size ${boardSize}. Has board data: ${hasBoardData} (${hasBoardData ? Object.keys(gameState.board.cells).length : 0} cells)`);
+		console.log(`Creating board. Has board data: ${hasBoardData} (${hasBoardData ? Object.keys(gameState.board.cells).length : 0} cells)`);
 
 		// ONLY create cells where there's data
 		if (hasBoardData) {
@@ -664,31 +664,53 @@ export function createBoard(boardGroup, gameState) {
 				const [x, z] = key.split(',').map(Number);
 				const cell = gameState.board.cells[key];
 
-				// Only create a cell if there's content
-				if (cell !== null && cell !== undefined) {
-					const material = (x + z) % 2 === 0 ? whiteMaterial : darkMaterial;
-					// Use relative position to center marker
-					createFloatingCube(x, z, material, boardGroup, centerX, centerZ);
-					createdCellCount++;
-				}
+				// Skip empty cells
+				if (cell === null || cell === undefined) continue;
+
+
+
+
+				// Determine if white or dark cell for checkerboard pattern
+				const isWhite = (x + z) % 2 === 0;
+				const material = isWhite ? whiteMaterial : darkMaterial;
+
+				// Get relative position using the translation function
+				const relativePos = translatePosition({x, z}, gameState, false);
+
+				// Create the floating island at relative position
+				const island = createFloatingIsland(
+					relativePos.x,
+					relativePos.z,
+					material
+				);
+
+				createFloatingCube(relativePos.x, relativePos.z, material, boardGroup);
+
+
+				// Save the absolute position in the userData
+				island.userData = {
+					type: 'cell',
+					position: { x, z },
+					data: cell,
+					isWhite: isWhite
+				};
+
+				// Add the island to the board group
+				boardGroup.add(island);
+				createdCellCount++;
 			}
 
-			console.log(`Created ${createdCellCount} board cells based on data`);
+			console.log(`Created ${createdCellCount} cells for the board`);
 		} else {
-			// If no board data, create a default checkerboard grid for testing
-			console.warn("No board data available, creating default test board");
-			for (let z = 0; z < boardSize; z++) {
-				for (let x = 0; x < boardSize; x++) {
-					// Create a sparse test board
-					if ((x + z) % 3 === 0) {
-						const material = (x + z) % 2 === 0 ? whiteMaterial : darkMaterial;
-						// Use relative position to center marker
-						createFloatingCube(x, z, material, boardGroup, centerX, centerZ);
-					}
-				}
-			}
+			console.log('No board data available, skipping board creation');
 		}
+
+		// Position the board group at the origin
+		boardGroup.position.set(0, 0, 0);
+
+		return boardGroup;
 	} catch (error) {
-		console.error("Error in createBoard:", error);
+		console.error('Error creating board:', error);
+		return null;
 	}
 }

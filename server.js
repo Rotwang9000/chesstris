@@ -52,6 +52,37 @@ const MIN_COMPUTER_MOVE_TIME = 10000; // 10 seconds minimum as per requirements
 // Initialize global game on startup
 initializeGlobalGame();
 
+/**
+ * Validates a player name to ensure it's a string with maximum length of 32 characters
+ * @param {any} playerName - Name to validate
+ * @returns {string} - A valid player name
+ */
+function validatePlayerName(playerName) {
+	// If name is not provided, null, or undefined
+	if (!playerName) {
+		return null;
+	}
+	
+	// If name is not a string, try to convert it
+	if (typeof playerName !== 'string') {
+		try {
+			playerName = String(playerName);
+		} catch (e) {
+			return null;
+		}
+	}
+	
+	// Trim whitespace
+	playerName = playerName.trim();
+	
+	// Truncate to max length
+	if (playerName.length > 32) {
+		playerName = playerName.substring(0, 32);
+	}
+	
+	return playerName;
+}
+
 // Middleware
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -78,8 +109,9 @@ app.get('/js/*', (req, res) => {
 	const url = req.url;
 	const file = (path.join(__dirname, 'public', url));
 	if (!fs.existsSync(file) && fs.existsSync(file + '.js')) {
-		res.sendFile(file + '.js');
-	}
+		//redirect to the .js file
+		res.redirect(url + '.js');
+	} 
 });
 
 // Catch-all route that will serve the React app in production, but public/index.html in development
@@ -119,13 +151,20 @@ io.on('connection', (socket) => {
 	socket.emit('player_id', playerId);
 	
 	// Handle player joining a game
-	socket.on('join_game', (gameId, playerName, callback) => {
+	socket.on('join_game', (data, callback) => {
 		try {
 			const player = players.get(playerId);
 			
-			// Update player name if provided
-			if (playerName) {
-				player.name = playerName;
+			// Extract gameId and playerName from the data object
+			let gameId = data?.gameId;
+			const playerName = data?.playerName;
+			
+			// Validate the player name
+			const validPlayerName = validatePlayerName(playerName);
+			
+			// Update player name if provided and valid
+			if (validPlayerName) {
+				player.name = validPlayerName;
 			}
 			
 			// If no game ID provided or null, use the global game
@@ -205,7 +244,14 @@ io.on('connection', (socket) => {
 			// Send game state to the new player
 			socket.emit('game_update', game.state);
 			
-			if (callback) callback({ success: true, gameId: gameId });
+			// Send success response with game data
+			if (callback) callback({ 
+				success: true, 
+				gameId: gameId,
+				playerId: playerId,
+				playerName: player.name,
+				gameState: game.state
+			});
 			
 			console.log(`Player ${playerId} joined game ${gameId}`);
 		} catch (error) {
@@ -846,8 +892,6 @@ io.on('connection', (socket) => {
 			
 			// Create a new game using the GameManager
 			const newGame = gameManager.createGame({
-				width: game.state.boardSize || BOARD_SETTINGS.DEFAULT_WIDTH,
-				height: game.state.boardSize || BOARD_SETTINGS.DEFAULT_HEIGHT,
 				maxPlayers: game.players.length,
 				homeZoneDistance: BOARD_SETTINGS.HOME_ZONE_DISTANCE
 			});
@@ -1038,8 +1082,6 @@ function createNewGame(gameId = null, settings = {}) {
 	
 	// Use the GameManager to create the game with proper board and home zones
 	const newGameResult = gameManager.createGame({
-		width: settings.boardSize || BOARD_SETTINGS.DEFAULT_WIDTH,
-		height: settings.boardSize || BOARD_SETTINGS.DEFAULT_HEIGHT,
 		maxPlayers: settings.maxPlayers || 2048,
 		homeZoneDistance: BOARD_SETTINGS.HOME_ZONE_DISTANCE,
 		gameId: id  // Ensure we pass the exact gameId to the GameManager
@@ -1072,7 +1114,6 @@ function createNewGame(gameId = null, settings = {}) {
 			gameMode: settings.gameMode || 'standard',
 			difficulty: settings.difficulty || 'normal',
 			startLevel: settings.startLevel || 1,
-			boardSize: Math.max(gameObj.board.width, gameObj.board.height), // Use the new sparse board properties
 			renderMode: settings.renderMode || '3d',
 			currentPlayer: 1,
 			turnPhase: 'tetris',
@@ -1090,10 +1131,13 @@ function createNewGame(gameId = null, settings = {}) {
 	if (id === GLOBAL_GAME_ID) {
 		const computerId = `ai-opponent-${uuidv4().substring(0, 8)}`;
 		
+		// Generate a proper AI name and validate it
+		const aiName = validatePlayerName(`AI Opponent (Orange)`);
+		
 		// Add AI player to the game
 		computerPlayers.set(computerId, {
 			id: computerId,
-			name: `AI Opponent (Orange)`,
+			name: aiName,
 			gameId: id,
 			isComputer: true,
 			difficulty: COMPUTER_DIFFICULTY.MEDIUM,
@@ -1107,7 +1151,7 @@ function createNewGame(gameId = null, settings = {}) {
 		gameManager.registerPlayer(
 			id,
 			computerId,
-			`AI Opponent (Orange)`,
+			aiName,
 			false
 		);
 		
@@ -1174,10 +1218,13 @@ function addComputerPlayer(gameId, difficulty = COMPUTER_DIFFICULTY.MEDIUM) {
 			minMoveInterval = 10000;
 	}
 	
+	// Generate a proper computer name and validate it
+	const computerName = validatePlayerName(`Computer_${computerId.substring(9, 13)}`);
+	
 	// Add computer player to the game
 	computerPlayers.set(computerId, {
 		id: computerId,
-		name: `Computer_${computerId.substring(9, 13)}`,
+		name: computerName,
 		gameId: gameId,
 		isComputer: true,
 		difficulty: validDifficulty,
@@ -1193,7 +1240,7 @@ function addComputerPlayer(gameId, difficulty = COMPUTER_DIFFICULTY.MEDIUM) {
 	// Notify all players in the game
 	io.to(gameId).emit('player_joined', {
 		playerId: computerId,
-		playerName: `Computer_${computerId.substring(9, 13)}`,
+		playerName: computerName,
 		gameId: gameId,
 		isComputer: true,
 		difficulty: validDifficulty,
@@ -1774,7 +1821,6 @@ function initializeGlobalGame() {
 		maxPlayers: 2048, // Allow up to 2048 players as per requirements
 		gameMode: 'standard',
 		difficulty: 'normal',
-		boardSize: 30
 	});
 	
 	console.log(`Global game created with ID: ${GLOBAL_GAME_ID}`);

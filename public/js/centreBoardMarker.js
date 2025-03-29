@@ -312,11 +312,94 @@ export function updateCellPreservingMarker(currentCell, newValue, marker) {
 	return newValue;
 }
 
+/**
+ * Convert absolute board coordinates to coordinates relative to the reference point
+ * 
+ * @param {Object} position - Position with x, z or x, y, z coordinates
+ * @param {Object} referencePoint - The reference point {x, z} to calculate relative to
+ * @returns {Object} Position relative to reference point
+ */
+export function toRelativePosition(position, referencePoint) {
+	const result = {};
+	
+	if (position.x !== undefined && referencePoint.x !== undefined) {
+		result.x = position.x - referencePoint.x;
+	}
+	
+	// Handle either z or y coordinates depending on what's available
+	if (position.z !== undefined && referencePoint.z !== undefined) {
+		result.z = position.z - referencePoint.z;
+	} else if (position.y !== undefined && referencePoint.z !== undefined) {
+		result.y = position.y - referencePoint.z;
+	}
+	
+	// Copy any additional properties like y-height if they exist
+	if (position.y !== undefined && !result.y) {
+		result.y = position.y;
+	}
+	
+	return result;
+}
+
+/**
+ * Convert relative coordinates to absolute board coordinates
+ * 
+ * @param {Object} relPosition - Relative position with x, z or x, y, z coordinates
+ * @param {Object} referencePoint - The reference point {x, z} to calculate absolute from
+ * @returns {Object} Absolute position
+ */
+export function toAbsolutePosition(relPosition, referencePoint) {
+	const result = {};
+	
+	if (relPosition.x !== undefined && referencePoint.x !== undefined) {
+		result.x = relPosition.x + referencePoint.x;
+	}
+	
+	// Handle either z or y coordinates depending on what's available
+	if (relPosition.z !== undefined && referencePoint.z !== undefined) {
+		result.z = relPosition.z + referencePoint.z;
+	} else if (relPosition.y !== undefined && referencePoint.z !== undefined) {
+		// Map y to z if there's no z but the reference has z
+		result.z = relPosition.y + referencePoint.z;
+	}
+	
+	// Copy any additional properties like y-height if they exist
+	if (relPosition.y !== undefined && !result.y) {
+		result.y = relPosition.y;
+	}
+	
+	return result;
+}
+
+/**
+ * Translate a position using the reference point from the game state
+ * 
+ * @param {Object} position - Position with x, z or x, y, z coordinates
+ * @param {Object} gameState - The game state containing a reference point
+ * @param {boolean} toAbsolute - True to convert from relative to absolute, false for opposite
+ * @returns {Object} Translated position
+ */
+export function translatePosition(position, gameState, toAbsolute = true) {
+	const referencePoint = findBoardCentreMarker(gameState);
+	
+	if (!referencePoint) {
+		console.warn('No reference point found for translation, returning original position');
+		return position;
+	}
+	
+	return toAbsolute ? 
+		toAbsolutePosition(position, referencePoint) : 
+		toRelativePosition(position, referencePoint);
+}
+
 // Export everything as a module
 export default {
 	findBoardCentreMarker,
 	createCentreMarker,
 	preserveCentreMarker,
 	createCentreMarkerMaterial,
-	updateCellPreservingMarker
+	updateCellPreservingMarker,
+	toRelativePosition,
+	toAbsolutePosition,
+	translatePosition
 }; 

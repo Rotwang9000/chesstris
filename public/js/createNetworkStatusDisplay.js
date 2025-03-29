@@ -1,13 +1,10 @@
 import { updateNetworkStatus } from './createLoadingIndicator.js';
-import * as NetworkManagerModule from './utils/networkManager.js';
+import * as NetworkManager from './utils/networkManager.js';
 
 /**
  * Create a network status display
  */
 export function createNetworkStatusDisplay() {
-	// Ensure we have the correct NetworkManager instance
-	const NetworkManager = window.NetworkManager || NetworkManagerModule.default || NetworkManagerModule;
-	
 	// Create the network status element with Russian-style design
 	const networkStatusElement = document.createElement('div');
 	networkStatusElement.id = 'network-status';

@@ -68,7 +68,7 @@ export function createLoadingIndicator() {
 
 	// Create loading text
 	const loadingText = document.createElement('div');
-	loadingText.textContent = 'Preparing Chesstris Board...';
+	loadingText.textContent = 'Preparing Shaktris World...';
 	Object.assign(loadingText.style, {
 		fontSize: '24px',
 		marginBottom: '10px',
@@ -93,7 +93,16 @@ export function createLoadingIndicator() {
 	document.body.appendChild(loadingIndicator);
 
 	return loadingIndicator;
-}/**
+}
+export function hideError() {
+	const errorElement = document.getElementById('error-message');
+	if (errorElement) {
+		errorElement.style.display = 'none';
+	}
+}
+
+
+/**
  * Show error message in a styled overlay
  * @param {string} message - Error message to display
  */

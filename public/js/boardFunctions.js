@@ -1,259 +1,11 @@
 import * as sceneModule from './scene';
 
 // Import the centre marker module functions
-import { findBoardCentreMarker, createCentreMarker } from './centreBoardMarker.js';
+import { findBoardCentreMarker, createCentreMarker, toRelativePosition, toAbsolutePosition, translatePosition } from './centreBoardMarker.js';
 
 // Import the chess piece creator functionality
 import { createChessPiece as createChessPieceFromCreator } from './chessPieceCreator.js';
-
-/**
- * Updated functions for working with the sparse board structure
- * These functions accept parameters rather than relying on global variables
- */
-
-/**
- * Check if a tetromino position is valid (no collisions)
- * @param {Object} gameState - The current game state
- * @param {Array} shape - 2D array representing tetromino shape
- * @param {Object} position - Position {x, z}
- * @returns {boolean} - Whether the position is valid
- */
-function isValidTetrominoPosition(gameState, shape, position) {
-	// Check each block of the tetromino
-	for (let z = 0; z < shape.length; z++) {
-		for (let x = 0; x < shape[z].length; x++) {
-			if (shape[z][x] === 1) {
-				// Calculate block position
-				const blockX = position.x + x;
-				const blockZ = position.z + z;
-				
-				// Check if out of bounds - use board boundaries if available
-				const minX = gameState.boardBounds?.minX || 0;
-				const maxX = gameState.boardBounds?.maxX || 32;
-				const minZ = gameState.boardBounds?.minZ || 0;
-				const maxZ = gameState.boardBounds?.maxZ || 32;
-				
-				if (blockX < minX || blockX > maxX || 
-					blockZ < minZ || blockZ > maxZ) {
-					console.log(`Tetromino out of bounds at (${blockX}, ${blockZ})`);
-					return false;
-				}
-				
-				// Check for collision with existing board content using sparse structure
-				if (gameState.board && gameState.board.cells) {
-					const key = `${blockX},${blockZ}`;
-					const cell = gameState.board.cells[key];
-					
-					if (cell !== undefined && cell !== null) {
-						console.log(`Collision detected at (${blockX}, ${blockZ}) with:`, cell);
-						return false;
-					}
-				}
-			}
-		}
-	}
-	
-	return true;
-}
-
-/**
- * Place the current tetromino on the board
- * @param {Object} gameState - The current game state
- * @param {Function} showPlacementEffect - Function to show placement effect
- * @param {Function} updateGameStatusDisplay - Function to update game status
- * @param {Function} updateBoardVisuals - Function to update board visuals
- */
-function placeTetromino(gameState, showPlacementEffect, updateGameStatusDisplay, updateBoardVisuals) {
-	if (!gameState.currentTetromino) return;
-	
-	const shape = gameState.currentTetromino.shape;
-	const posX = gameState.currentTetromino.position.x;
-	const posZ = gameState.currentTetromino.position.z;
-	const player = gameState.currentPlayer;
-	
-	console.log(`Placing tetromino at (${posX}, ${posZ})`);
-	
-	// If we don't have a board object yet, create one
-	if (!gameState.board) {
-		gameState.board = {
-			cells: {},
-			minX: 0,
-			maxX: 32,
-			minZ: 0,
-			maxZ: 32,
-			width: 33,
-			height: 33
-		};
-	}
-	
-	// If we don't have a cells object yet, create one
-	if (!gameState.board.cells) {
-		gameState.board.cells = {};
-	}
-	
-	// Place each block of the tetromino on the board
-	for (let z = 0; z < shape.length; z++) {
-		for (let x = 0; x < shape[z].length; x++) {
-			if (shape[z][x] === 1) {
-				const boardX = posX + x;
-				const boardZ = posZ + z;
-				
-				// Set the cell in the sparse structure
-				const key = `${boardX},${boardZ}`;
-				gameState.board.cells[key] = {
-					type: 'tetromino',
-					player: player
-				};
-				
-				// Update board boundaries
-				if (boardX < gameState.board.minX) gameState.board.minX = boardX;
-				if (boardX > gameState.board.maxX) gameState.board.maxX = boardX;
-				if (boardZ < gameState.board.minZ) gameState.board.minZ = boardZ;
-				if (boardZ > gameState.board.maxZ) gameState.board.maxZ = boardZ;
-				
-				// Update board dimensions
-				gameState.board.width = gameState.board.maxX - gameState.board.minX + 1;
-				gameState.board.height = gameState.board.maxZ - gameState.board.minZ + 1;
-				
-				// Log the placement
-				console.log(`Placed block at (${boardX}, ${boardZ})`);
-			}
-		}
-	}
-	
-	// Display the placed tetromino with a nice effect
-	if (typeof showPlacementEffect === 'function') {
-		showPlacementEffect(posX, posZ, gameState);
-	}
-	
-	// Switch to chess phase
-	gameState.turnPhase = 'chess';
-	if (typeof updateGameStatusDisplay === 'function') {
-		updateGameStatusDisplay();
-	}
-	
-	// Clear the current tetromino
-	gameState.currentTetromino = null;
-	
-	// Update the board visuals
-	if (typeof updateBoardVisuals === 'function') {
-		updateBoardVisuals();
-	}
-}
-
-/**
- * Improved version of isTetrominoAdjacentToExistingCells that better handles edge cases
- * @param {Object} gameState - The current game state
- * @param {Array} shape - 2D array representing tetromino shape
- * @param {number} posX - X position
- * @param {number} posZ - Z position
- * @returns {boolean} - Whether the tetromino is adjacent to existing cells
- */
-function isTetrominoAdjacentToExistingCells(gameState, shape, posX, posZ) {
-	// First check if the board is completely empty
-	const hasCells = gameState.board && 
-		gameState.board.cells && 
-		Object.keys(gameState.board.cells).length > 0;
-	
-	// If the board is completely empty, allow placement anywhere
-	if (!hasCells) {
-		console.log('Board is empty, allowing first piece placement');
-		return true;
-	}
-	
-	// For the very first piece on the board, we need to handle the special case
-	const occupiedCells = Object.keys(gameState.board.cells || {}).filter(key => {
-		const cell = gameState.board.cells[key];
-		return cell !== null && cell !== undefined;
-	});
-	
-	if (occupiedCells.length === 0) {
-		console.log('No occupied cells on board, allowing first piece placement');
-		return true;
-	}
-	
-	// For each block in the tetromino, check if it's adjacent to an existing cell
-	for (let z = 0; z < shape.length; z++) {
-		for (let x = 0; x < shape[z].length; x++) {
-			if (shape[z][x] === 1) {
-				const blockX = posX + x;
-				const blockZ = posZ + z;
-				
-				// Check all 8 adjacent positions
-				const directions = [
-					{ dx: -1, dz: 0 },  // Left
-					{ dx: 1, dz: 0 },   // Right
-					{ dx: 0, dz: -1 },  // Up
-					{ dx: 0, dz: 1 },   // Down
-					{ dx: -1, dz: -1 }, // Top-left
-					{ dx: 1, dz: -1 },  // Top-right
-					{ dx: -1, dz: 1 },  // Bottom-left
-					{ dx: 1, dz: 1 }    // Bottom-right
-				];
-				
-				for (const dir of directions) {
-					const adjX = blockX + dir.dx;
-					const adjZ = blockZ + dir.dz;
-					const key = `${adjX},${adjZ}`;
-					
-					// Check if the adjacent cell contains a block
-					if (gameState.board && gameState.board.cells && 
-						gameState.board.cells[key] !== undefined && 
-						gameState.board.cells[key] !== null) {
-						console.log(`Found adjacent cell at (${adjX}, ${adjZ})`);
-						return true;
-					}
-				}
-			}
-		}
-	}
-	
-	// Debug logging
-	console.log('No adjacent existing cells found for tetromino at position:', { posX, posZ });
-	
-	// No adjacent existing cells found
-	return false;
-}
-
-/**
- * Check collision between tetromino and board or boundary
- * @param {Object} gameState - The current game state
- * @param {Array} shape - Tetromino shape
- * @param {number} posX - X position
- * @param {number} posZ - Z position
- * @returns {boolean} - Whether there is a collision
- */
-function checkTetrominoCollision(gameState, shape, posX, posZ) {
-	// For each block in the tetromino
-	for (let z = 0; z < shape.length; z++) {
-		for (let x = 0; x < shape[z].length; x++) {
-			if (shape[z][x] === 1) {
-				const boardX = posX + x;
-				const boardZ = posZ + z;
-				
-				// Check board boundaries
-				const minX = gameState.boardBounds?.minX || 0;
-				const maxX = gameState.boardBounds?.maxX || 32;
-				const minZ = gameState.boardBounds?.minZ || 0;
-				const maxZ = gameState.boardBounds?.maxZ || 32;
-				
-				if (boardX < minX || boardX > maxX || boardZ < minZ || boardZ > maxZ) {
-					return true; // Out of bounds
-				}
-				
-				// Check if the position is already occupied
-				const key = `${boardX},${boardZ}`;
-				if (gameState.board && gameState.board.cells && 
-					gameState.board.cells[key] !== undefined && 
-					gameState.board.cells[key] !== null) {
-					return true; // Collision
-				}
-			}
-		}
-	}
-	
-	return false; // No collision
-}
+import { isTetrominoAdjacentToExistingCells, renderTetromino, initializeNextTetromino } from './tetromino.js';
 
 /**
  * Update board cell incrementally (for animations or live updates)
@@ -441,14 +193,12 @@ function createBoardCells(gameState, boardGroup, createFloatingIsland, THREE) {
 		}
 	}
 	
-	// Create base grid of cells
-	const boardSize = gameState.boardSize || 30;
 	
 	// Get board boundaries from state
 	const minX = gameState.boardBounds?.minX || 0;
-	const maxX = gameState.boardBounds?.maxX || boardSize - 1;
+	const maxX = gameState.boardBounds?.maxX || 2048;
 	const minZ = gameState.boardBounds?.minZ || 0;
-	const maxZ = gameState.boardBounds?.maxZ || boardSize - 1;
+	const maxZ = gameState.boardBounds?.maxZ || 2048;
 	
 	// Create basic materials
 	const whiteMaterial = new THREE.MeshStandardMaterial({ 
@@ -780,7 +530,7 @@ function createBoardCells(gameState, boardGroup, createFloatingIsland, THREE) {
 function renderBoard(gameState, boardGroup, createFloatingIsland, THREE) {
 	// Start timing for performance measurement
 	const startTime = performance.now();
-	console.log("Rendering board with efficient cell reuse...");
+	// console.log("Rendering board with efficient cell reuse...");
 	
 	// Get board boundaries
 	const minX = gameState.boardBounds?.minX || 0;
@@ -855,10 +605,10 @@ function renderBoard(gameState, boardGroup, createFloatingIsland, THREE) {
 				existingCell.userData.processed = true;
 				cellsReused++;
 				
-				// Position the cell relative to the center marker
-				// This is CRITICAL for alignment with chess pieces
-				existingCell.position.x = x - centerX;
-				existingCell.position.z = z - centerZ;
+				// Position the cell relative to the center marker using translation functions
+				const relativePosition = translatePosition({x, z}, gameState, false);
+				existingCell.position.x = relativePosition.x;
+				existingCell.position.z = relativePosition.z;
 			} else {
 				// Create a new cell
 				try {
@@ -932,10 +682,13 @@ function renderBoard(gameState, boardGroup, createFloatingIsland, THREE) {
 						});
 					}
 					
+					// Get relative position from the center marker using translation functions
+					const relativePosition = translatePosition({x, z}, gameState, false);
+					
 					// Create the cell mesh
 					const newCell = createFloatingIsland(
-						x - centerX,   // Position relative to the center marker
-						z - centerZ, 
+						relativePosition.x,   // Position relative to the center marker
+						relativePosition.z, 
 						material, 
 						boardGroup,
 						centerX,
@@ -1062,292 +815,6 @@ function findPlayerKingPosition(gameState) {
 }
 
 /**
- * Get default starting position for a player when no king is found
- * @param {Object} gameState - The current game state
- * @param {string|number} playerId - The player ID
- * @returns {Object} - A default position {x, z} based on player ID
- */
-function getDefaultPlayerPosition(gameState, playerId) {
-	// Get board size from gameState
-	const boardWidth = gameState.boardWidth || gameState.boardSize || 16;
-	const boardHeight = gameState.boardHeight || gameState.boardSize || 16;
-	
-	// Set default board boundaries if not available
-	const minX = gameState.boardBounds?.minX || 0;
-	const maxX = gameState.boardBounds?.maxX || boardWidth - 1;
-	const minZ = gameState.boardBounds?.minZ || 0;
-	const maxZ = gameState.boardBounds?.maxZ || boardHeight - 1;
-	
-	// Calculate center of the board
-	const centerX = Math.floor((minX + maxX) / 2);
-	const centerZ = Math.floor((minZ + maxZ) / 2);
-	
-	// Determine player position based on player ID
-	if (playerId === 1 || playerId === "1" || playerId === "player1") {
-		// Player 1 starts at the bottom of the board
-		return {
-			x: centerX - 4,
-			z: maxZ - 3
-		};
-	} else if (playerId === 2 || playerId === "2" || playerId === "player2") {
-		// Player 2 starts at the top of the board
-		return {
-			x: centerX + 4,
-			z: minZ + 3
-		};
-	} else if (typeof playerId === 'string' && playerId.startsWith('player')) {
-		// For player3, player4, etc.
-		const playerNum = parseInt(playerId.replace('player', ''), 10);
-		if (!isNaN(playerNum)) {
-			// Position players around the center with some offset
-			const angle = (playerNum * Math.PI / 2) % (2 * Math.PI);
-			const distance = 5; // Distance from center
-			return {
-				x: centerX + Math.floor(Math.cos(angle) * distance),
-				z: centerZ + Math.floor(Math.sin(angle) * distance)
-			};
-		}
-	}
-	
-	// Default to board center for unknown players
-	console.log(`Using center position for unknown player ${playerId}`);
-	return {
-		x: centerX,
-		z: centerZ
-	};
-}
-
-/**
- * Create a random tetromino for gameplay, positioned near the player's king
- * @param {Object} gameState - The current game state
- * @returns {Object} Tetromino object
- */
-function createRandomTetromino(gameState) {
-	// Tetromino types and shapes
-	const tetrominoTypes = [
-		{ 
-			// I - long piece
-			type: 'I',
-			shape: [
-				[0, 0, 0, 0],
-				[1, 1, 1, 1],
-				[0, 0, 0, 0],
-				[0, 0, 0, 0]
-			]
-		},
-		{ 
-			// J - L facing left
-			type: 'J',
-			shape: [
-				[1, 0, 0],
-				[1, 1, 1],
-				[0, 0, 0]
-			]
-		},
-		{ 
-			// L - L facing right
-			type: 'L',
-			shape: [
-				[0, 0, 1],
-				[1, 1, 1],
-				[0, 0, 0]
-			]
-		},
-		{ 
-			// O - square
-			type: 'O',
-			shape: [
-				[1, 1],
-				[1, 1]
-			]
-		},
-		{ 
-			// S - S shape
-			type: 'S',
-			shape: [
-				[0, 1, 1],
-				[1, 1, 0],
-				[0, 0, 0]
-			]
-		},
-		{ 
-			// T - T shape
-			type: 'T',
-			shape: [
-				[0, 1, 0],
-				[1, 1, 1],
-				[0, 0, 0]
-			]
-		},
-		{ 
-			// Z - Z shape
-			type: 'Z',
-			shape: [
-				[1, 1, 0],
-				[0, 1, 1],
-				[0, 0, 0]
-			]
-		}
-	];
-	
-	// Pick a random type
-	const randomIndex = Math.floor(Math.random() * tetrominoTypes.length);
-	const selectedType = tetrominoTypes[randomIndex];
-	
-	// Try to find the king's position
-	const kingPos = findPlayerKingPosition(gameState);
-	
-	// Default position parameters
-	let startX, startZ;
-	
-	if (kingPos) {
-		// Position the tetromino above the king in the XZ plane
-		startX = kingPos.x - Math.floor(selectedType.shape[0].length / 2);
-		startZ = kingPos.z - 2 - selectedType.shape.length; // Position a few cells away from the king
-		
-		console.log(`Positioning tetromino near king at (${kingPos.x}, ${kingPos.z})`);
-	} else {
-		// Fallback to board center if no king found
-		const minX = gameState.boardBounds?.minX || 0;
-		const maxX = gameState.boardBounds?.maxX || 20;
-		const minZ = gameState.boardBounds?.minZ || 0;
-		const maxZ = gameState.boardBounds?.maxZ || 20;
-		
-		// Calculate center position
-		const centerX = Math.floor((minX + maxX) / 2);
-		const centerZ = Math.floor((minZ + maxZ) / 2);
-		
-		// Calculate starting position
-		startX = centerX - Math.floor(selectedType.shape[0].length / 2);
-		startZ = minZ + Math.floor((maxZ - minZ) / 3);
-		
-		console.log(`Using board center for tetromino positioning. Board bounds: [${minX},${maxX}] × [${minZ},${maxZ}]`);
-	}
-	
-	// Ensure the tetromino is within board bounds
-	const minX = gameState.boardBounds?.minX || 0;
-	const maxX = gameState.boardBounds?.maxX || 20;
-	const minZ = gameState.boardBounds?.minZ || 0;
-	const maxZ = gameState.boardBounds?.maxZ || 20;
-	
-	startX = Math.max(minX, Math.min(maxX - selectedType.shape[0].length, startX));
-	startZ = Math.max(minZ, Math.min(maxZ - selectedType.shape.length, startZ));
-	
-	console.log(`Created ${selectedType.type} tetromino at position (${startX}, ${startZ}) with height 5 units above board`);
-	
-	// Create the tetromino object with a height above the board
-	return {
-		type: selectedType.type,
-		shape: selectedType.shape,
-		position: { x: startX, z: startZ },
-		player: gameState.currentPlayer || 'unknown_player',
-		heightAboveBoard: 5, // Start 5 units above the board for Y-axis falling animation
-		fallSpeed: 1 // Units to fall per step
-	};
-}
-
-/**
- * Render the current tetromino on the board
- * @param {Object} gameState - The current game state
- * @param {Object} tetromino - Tetromino to render
- * @param {Object} tetrominoGroup - THREE.js group for tetromino pieces
- * @param {Function} createTetrominoBlock - Function to create tetromino blocks
- */
-function renderTetromino(gameState, tetromino, tetrominoGroup, createTetrominoBlock) {
-	if (!tetromino || !tetromino.shape) return;
-	
-	// Clear existing tetromino group
-	while (tetrominoGroup.children.length > 0) {
-		tetrominoGroup.remove(tetrominoGroup.children[0]);
-	}
-	
-	// Get board center for correct positioning
-	const minX = gameState.boardBounds?.minX || 0;
-	const maxX = gameState.boardBounds?.maxX || 20;
-	const minZ = gameState.boardBounds?.minZ || 0;
-	const maxZ = gameState.boardBounds?.maxZ || 20;
-	
-	// Calculate board center (where 0,0 should be rendered)
-	const centerX = (minX + maxX) / 2;
-	const centerZ = (minZ + maxZ) / 2;
-	
-	// Create a container group for proper positioning
-	const container = new THREE.Group();
-	tetrominoGroup.add(container);
-	
-	// Move the container to offset from board center
-	container.position.set(-centerX, 0, -centerZ);
-	
-	// Log placement for debugging
-	console.log(`Rendering tetromino of type ${tetromino.type} at (${tetromino.position.x}, ${tetromino.position.z}) with height ${tetromino.heightAboveBoard}`);
-	
-	// Iterate through the tetromino shape
-	for (let z = 0; z < tetromino.shape.length; z++) {
-		for (let x = 0; x < tetromino.shape[z].length; x++) {
-			if (tetromino.shape[z][x] === 1) {
-				// Calculate block position
-				const blockX = tetromino.position.x + x;
-				const blockZ = tetromino.position.z + z;
-				
-				// Create a tetromino block with height above board
-				const block = createTetrominoBlock(
-					blockX, 
-					blockZ, 
-					tetromino.player, 
-					false, 
-					tetromino.heightAboveBoard || 0
-				);
-				
-				// Add the block to the container
-				if (block) {
-					container.add(block);
-				}
-				
-				// Also create ghost piece position if the tetromino is above the board
-				if (tetromino.heightAboveBoard > 0) {
-					// Find the lowest valid position
-					let ghostZ = blockZ;
-					let validPosition = true;
-					
-					// Keep moving down until we hit something
-					while (validPosition) {
-						ghostZ++;
-						
-						// Check if out of bounds
-						if (ghostZ > maxZ) {
-							ghostZ--;
-							break;
-						}
-						
-						// Check if there's a collision with an existing block
-						const key = `${blockX},${ghostZ}`;
-						if (gameState.board && gameState.board.cells && 
-							gameState.board.cells[key] !== undefined && 
-							gameState.board.cells[key] !== null) {
-							ghostZ--;
-							break;
-						}
-					}
-					
-					// Create ghost block at the lowest valid position
-					if (ghostZ > blockZ) {
-						const ghostBlock = createTetrominoBlock(blockX, ghostZ, tetromino.player, true, 0);
-						
-						// Add the ghost block to the container
-						if (ghostBlock) {
-							container.add(ghostBlock);
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// Log the number of blocks in the group
-	console.log(`Tetromino rendered with ${tetrominoGroup.children.length} blocks and ${container.children.length} in container`);
-}
-
-/**
  * Handle click on Tetris phase button
  * @param {Object} gameState - The current game state
  * @param {Function} updateGameStatusDisplay - Function to update game status
@@ -1360,7 +827,7 @@ function handleTetrisPhaseClick(gameState, updateGameStatusDisplay, updateBoardV
 	
 	// Create a new tetromino if none exists
 	if (!gameState.currentTetromino) {
-		gameState.currentTetromino = createRandomTetromino(gameState);
+		gameState.currentTetromino = initializeNextTetromino(gameState);
 		console.log("Created new tetromino:", gameState.currentTetromino);
 	}
 	
@@ -1467,9 +934,9 @@ function createChessPiece(gameState, x, z, pieceType, playerIdent, ourPlayerIden
 			throw new Error("Chess piece creator failed to return a piece");
 		}
 		
-		// Position the piece group relative to the board center
-		// This is critical for correct positioning on the cells
-		pieceGroup.position.set(x - centerX, 0, z - centerZ);
+		// Position the piece group relative to the board center using translation functions
+		const relativePosition = translatePosition({x, z}, gameState, false);
+		pieceGroup.position.set(relativePosition.x, 0, relativePosition.z);
 		
 		// Store metadata for identification if not already set by the creator
 		if (!pieceGroup.userData || !pieceGroup.userData.type) {
@@ -1520,8 +987,9 @@ function createChessPiece(gameState, x, z, pieceType, playerIdent, ourPlayerIden
 		fallbackMesh.position.y = 0.4; // Raise above the board
 		fallbackGroup.add(fallbackMesh);
 		
-		// Position the error mesh using the board center
-		fallbackGroup.position.set(x - centerX, 0, z - centerZ);
+		// Position the error mesh using translation functions
+		const fallbackPosition = translatePosition({x, z}, gameState, false);
+		fallbackGroup.position.set(fallbackPosition.x, 0, fallbackPosition.z);
 		fallbackGroup.visible = true;
 		
 		return fallbackGroup;
@@ -2424,6 +1892,31 @@ function getPiecesForPlayer(gameState, playerId) {
 	return playerPieces;
 }
 
+function getPieceForPlayer(gameState, playerId, pieceType) {
+	const playerPieces = getPiecesForPlayer(gameState, playerId);
+	return playerPieces.filter(piece => piece.type.toLowerCase() === pieceType.toLowerCase());
+}
+
+function getPlayersKing(gameState, playerId, realCoordinates = false){
+	const arrKing = getPieceForPlayer(gameState, playerId, 'king');
+	if (arrKing.length === 0) {
+		console.warn('No king found for player ' + playerId);
+		return null;
+	}
+	
+	const king = arrKing[0];
+	
+	if (realCoordinates) {
+		// Use the translation function to convert to relative position
+		const relativeKing = { ...king }; // Clone the king object to avoid modifying the original
+		relativeKing.position = translatePosition(king.position, gameState, false); // Convert to relative position
+		return relativeKing;
+	} else {
+		return king; // Return the king with absolute coordinates
+	}
+}
+
+
 /**
  * Clear the current piece selection
  * @param {Object} gameState - The current game state
@@ -2487,6 +1980,7 @@ function analyzePossibleMoves(gameState, playerId) {
 		piecesWithoutMoves: piecesWithoutMoves.length,
 		totalPossibleMoves: allMoves.length,
 		possibleCaptures: captureMoves.length,
+		hasMoves: allMoves.length > 0,
 		allMoves,
 		captureMoves,
 		movablePieces: piecesWithMoves,
@@ -2507,14 +2001,12 @@ function canCaptureOpponentPiece(gameState, playerId) {
 
 // Export all functions as a module
 export const boardFunctions = {
-	isValidTetrominoPosition,
-	placeTetromino,
+
 	isTetrominoAdjacentToExistingCells,
-	checkTetrominoCollision,
+
 	updateBoardCell,
 	extractCellContent,
 	createBoardCells,
-	createRandomTetromino,
 	renderTetromino,
 	handleTetrisPhaseClick,
 	createChessPiece,
@@ -2533,7 +2025,14 @@ export const boardFunctions = {
 	clearSelection,
 	analyzePossibleMoves,
 	canCaptureOpponentPiece,
-	debugAdjacencyCheck
+	debugAdjacencyCheck,
+	getPieceForPlayer,
+	getPlayersKing,
+	
+	// Re-export translation functions for convenience
+	toRelativePosition,
+	toAbsolutePosition,
+	translatePosition
 };
 
 

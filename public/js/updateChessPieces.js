@@ -1,9 +1,9 @@
-import { boardFunctions } from './boardFunctions';
-import { findBoardCentreMarker } from './centreBoardMarker';
-import chessPieceCreator from './chessPieceCreator';
-import { getTHREE } from './enhanced-gameCore';
-import { highlightSinglePiece, setChessPiecesGroup } from './pieceHighlightManager';
-import { createCentreMarker } from './centreBoardMarker';
+import { boardFunctions } from './boardFunctions.js';
+import { findBoardCentreMarker } from './centreBoardMarker.js';
+import chessPieceCreator from './chessPieceCreator.js';
+import { getTHREE } from './enhanced-gameCore.js';
+import { highlightSinglePiece, setChessPiecesGroup } from './pieceHighlightManager.js';
+import { createCentreMarker } from './centreBoardMarker.js';
 
 
 // Add a timer to track when chess pieces were last updated

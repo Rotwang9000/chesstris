@@ -26,8 +26,8 @@ const mockGameState = {
 };
 
 // Test creating a tetromino
-const tetromino = boardFunctions.createRandomTetromino(mockGameState);
-console.log('Created tetromino:', tetromino);
+// const tetromino = boardFunctions.createRandomTetromino(mockGameState);
+// console.log('Created tetromino:', tetromino);
 
 // Test finding king position
 const kingPos = boardFunctions.findPlayerKingPosition(mockGameState);
