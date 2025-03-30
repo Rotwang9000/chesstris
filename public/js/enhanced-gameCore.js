@@ -25,6 +25,9 @@ export function getTHREE() {
 	return THREE;
 }
 
+// Import the gameState singleton
+import gameState, { reset, update, initialise } from './utils/gameState.js';
+
 /**
  * Get the current game state
  * @returns {Object} - Current game state
@@ -50,49 +53,6 @@ import { updateUnifiedPlayerBar, createUnifiedPlayerBar } from './unifiedPlayerB
 import { updateChessPieces } from './updateChessPieces.js';
 import chessPieceCreator from './chessPieceCreator.js';
 import { setChessPiecesGroup, highlightPlayerPieces, removePlayerPiecesHighlight, highlightCurrentPlayerPieces } from './pieceHighlightManager.js';
-
-// Core game state
-let gameState = {
-	lastGameTime: 0,
-	players: {},
-	chessPieces: [],
-	board: { cells: {} },
-	selectedPiece: null,
-	phase: 'unknown',
-	localPlayerId: null,
-	currentPlayer: generateRandomPlayerId(), // Use random player ID
-	debugMode: false,  // Disable debug mode now that issues are fixed
-	activeTetromino: null,
-	tetrominoList: [],
-	hoveredCell: { x: -1, y: -1, z: -1 },
-	gameOver: false,
-	inMultiplayerMode: false,
-	showChessControls: false,
-	canPlaceTetromino: true,
-	selectedTetrominoIndex: -1,
-	// Russian theme flags
-	autoRotateCamera: true,
-	hasSnow: true,
-	showTetrisGhost: true,
-	isPaused: false,
-	// Camera positioning
-	pendingCameraReset: null,
-	fpsHistory: [],
-	// Player tracking
-	hoveredPlayer: null,
-	error: null,
-	currentTetromino: null,
-	boardCenter: { x: 0, y: 0, z: 0 },
-	isProcessingHardDrop: false
-};
-
-/**
- * Generate a random player ID
- * @returns {string} Random player ID
- */
-function generateRandomPlayerId() {
-	return 'player_' + Math.random().toString(36).substring(2, 10);
-}
 
 // Cached DOM elements
 let containerElement, gameContainer;
@@ -128,8 +88,7 @@ const textures = {
 	skybox: null
 };
 
-// Set initial tetromino fall height 
-export const TETROMINO_START_HEIGHT = 7; // Starting height above the board
+// TETROMINO_START_HEIGHT is now in the gameState object
 
 // UI controls for game flow
 let uiButtons = {};
@@ -161,12 +120,15 @@ export function initGame(container) {
 
 		// Initialize game state
 		console.log("Initializing game state...");
-		resetGameState(gameState);
+		reset();
 		
 		// Ensure debug mode is preserved across resets if in dev mode
 		if (isDevMode) {
 			gameState.debugMode = true;
 		}
+		
+		// Expose the gameState singleton on the window object for backward compatibility
+		window.gameState = gameState;
 		
 		// Expose highlight functions globally for player list sidebar
 		exposeHighlightFunctionsGlobally();
@@ -374,6 +336,7 @@ function initializeScene() {
 	
 	// Initialize the tetromino group
 	gameState.tetrominoGroup = tetrominoGroup;
+	gameState.scene = scene;
 	
 	if (!chessPiecesGroup) {
 		chessPiecesGroup = new THREE.Group();
@@ -535,42 +498,29 @@ function setupEventSystem() {
 /**
  * Reset game state to initial values
  */
-export function resetGameState(gameState) {
-	// Save debug mode value to restore it later
-	const wasDebugMode = gameState.debugMode;
-	
-	// Reset core game properties
-	gameState.turnPhase = 'tetris';
-	gameState.inProgress = false;
-	gameState.paused = false;
-	gameState.score = 0;
-	gameState.level = 1;
-	
-	// Initialize empty board
-	gameState.board = {
-
-		cells: {}
-	};
-	
-	// Clear any existing tetromino
-	gameState.currentTetromino = null;
-	
-	// Set initial center position
-	gameState.boardCenter = { x: 0, y: 0, z: 0 };
-	
-	// Reset camera position
-	if (gameState.camera) {
-		gameState.camera.position.set(0, 15, 20);
-		gameState.camera.lookAt(0, 0, 0);
-	}
-	
-	// Restore debug mode if it was enabled before reset
-	gameState.debugMode = wasDebugMode;
-	
-	
-	console.log('Game state has been reset');
+export function resetGameState(gameStateObj) {
+	// Call the imported reset function from the singleton
+	reset();
 }
 
+
+/**
+ * Update the game state with new data
+ * @param {Object} data - The new game state data
+ */
+function updateGameState(data, tetrominoGroup) {
+	// Verify we have valid data
+	if (!data) return;
+	
+	// Update our game state with the new data using the imported update function
+	update(data);
+	
+	// Update the tetromino group
+	gameState.tetrominoGroup = tetrominoGroup;
+	gameState.scene = scene;
+	
+	console.log("Game state updated:", gameState);
+}
 
 /**
  * Handle window resize
@@ -641,7 +591,7 @@ export function startPlayingGame() {
 		tetrisLastFallTime = Date.now();
 		
 		// Set a height above board for animation effect
-		gameState.currentTetromino.heightAboveBoard = TETROMINO_START_HEIGHT;
+		gameState.currentTetromino.heightAboveBoard = gameState.TETROMINO_START_HEIGHT;
 		
 		// Render the current tetromino
 		renderCurrentTetromino();
@@ -674,50 +624,6 @@ function requestGameState() {
 		window.dispatchEvent(new CustomEvent('requestgamestate'));
 	}
 }
-
-/**
- * Update the game state with new data
- * @param {Object} data - The new game state data
- */
-function updateGameState(data, tetrominoGroup) {
-	// Verify we have valid data
-	if (!data) return;
-	
-	// Create a deep copy of the data to avoid reference issues
-	const newData = JSON.parse(JSON.stringify(data));
-	
-	// Update our game state with the new data
-	gameState = {...gameState, ...newData};
-	
-	// Make sure gameStarted flag is set if we have board data and the boardGroup exists
-	if (gameState.board && gameState.board.cells && Object.keys(gameState.board.cells).length > 0) {
-		gameState.gameStarted = true;
-		
-		// Hide any tutorial or start screens that might still be visible
-		const tutorialElement = document.getElementById('tutorial-message');
-		if (tutorialElement) {
-			tutorialElement.parentNode.removeChild(tutorialElement);
-		}
-		
-		// Remove the "Waiting for game data" message container if it exists
-		const waitingContainer = document.getElementById('waiting-container');
-		if (waitingContainer) {
-			waitingContainer.parentNode.removeChild(waitingContainer);
-		}
-		
-		// Set initial turn phase to 'tetris' if not already set
-		if (!gameState.turnPhase) {
-			gameState.turnPhase = 'tetris';
-		}
-	}
-	
-	// Update the tetromino group
-	gameState.tetrominoGroup = tetrominoGroup;
-	
-	console.log("Game state updated:", gameState);
-}
-
-
 
 /**
  * Update render size when container resizes
@@ -822,38 +728,127 @@ function handleKeyDown(event) {
 	// Flag to track if we need to re-render
 	let moved = false;
 	
+	// Get orientation from current player's king
+	let orientation = gameState.orientation; // Default fallback
+	
+	// Get the current player's king to determine orientation using boardFunctions helper
+	const currentPlayer = gameState.currentPlayer;
+	const kingPiece = boardFunctions.getPlayersKing(gameState, currentPlayer, false);
+	
+	if (kingPiece && kingPiece.orientation !== undefined) {
+		orientation = kingPiece.orientation;
+		console.log(`Using king's orientation: ${orientation}`);
+	} else {
+		console.log(`No king found or no orientation, using default: ${orientation}`);
+	}
+	
+	/*
+	 * Orientation-based movement system:
+	 * 
+	 * The player is always viewing the board from behind their king.
+	 * Arrow keys should move tetrominos in the direction relative to this viewpoint:
+	 * 
+	 * - Up Arrow: Move tetromino away from the player's viewpoint
+	 * - Down Arrow: Move tetromino toward the player's viewpoint
+	 * - Left Arrow: Move tetromino to the left from the player's viewpoint
+	 * - Right Arrow: Move tetromino to the right from the player's viewpoint
+	 * 
+	 * The four orientation cases (0, 1, 2, 3) correspond to the king's facing direction:
+	 * 0: Facing up (positive Z, or North)
+	 * 1: Facing right (positive X, or East)
+	 * 2: Facing down (negative Z, or South)
+	 * 3: Facing left (negative X, or West)
+	 * 
+	 * Note: We've completely reversed all directions to fix the backward movement issue.
+	 */
 	
 	// Handle key based on its code
 	switch (event.key) {
 		case 'ArrowLeft':
-			// Move tetromino left along X-axis
-			console.log('Move left (X-axis)');
-			if (tetrominoModule.moveTetrominoX(-1, gameState)) {
-				renderCurrentTetromino();
+			console.log('Move left relative to player view');
+			// Apply movement based on orientation (player viewing from behind king)
+			switch (orientation) {
+				case 0: // Facing up
+					tetrominoModule.moveTetrominoX(1);
+					break;
+				case 1: // Facing right
+					tetrominoModule.moveTetrominoZ(-1);
+					break;
+				case 2: // Facing down
+					tetrominoModule.moveTetrominoX(-1);
+					break;
+				case 3: // Facing left
+					tetrominoModule.moveTetrominoZ(1);
+					break;
+				default:
+					// Default to standard movement
+					tetrominoModule.moveTetrominoX(1);
 			}
 			moved = true;
 			break;
 		case 'ArrowRight':
-			// Move tetromino right along X-axis
-			console.log('Move right (X-axis)');
-			if (tetrominoModule.moveTetrominoX(1, gameState)) {
-				renderCurrentTetromino();
+			console.log('Move right relative to player view');
+			// Apply movement based on orientation (player viewing from behind king)
+			switch (orientation) {
+				case 0: // Facing up
+					tetrominoModule.moveTetrominoX(-1);
+					break;
+				case 1: // Facing right
+					tetrominoModule.moveTetrominoZ(1);
+					break;
+				case 2: // Facing down
+					tetrominoModule.moveTetrominoX(1);
+					break;
+				case 3: // Facing left
+					tetrominoModule.moveTetrominoZ(-1);
+					break;
+				default:
+					// Default to standard movement
+					tetrominoModule.moveTetrominoX(-1);
 			}
 			moved = true;
 			break;
 		case 'ArrowDown':
-			// Move tetromino backward along Z-axis (away from camera)
-			console.log('Move backward (Z-axis)');
-			if (tetrominoModule.moveTetrominoZ(1, gameState)) {
-				renderCurrentTetromino();
+			console.log('Move toward player view');
+			// Apply movement based on orientation (player viewing from behind king)
+			switch (orientation) {
+				case 0: // Facing up
+					tetrominoModule.moveTetrominoZ(-1);
+					break;
+				case 1: // Facing right
+					tetrominoModule.moveTetrominoX(-1);
+					break;
+				case 2: // Facing down
+					tetrominoModule.moveTetrominoZ(1);
+					break;
+				case 3: // Facing left
+					tetrominoModule.moveTetrominoX(1);
+					break;
+				default:
+					// Default to standard movement
+					tetrominoModule.moveTetrominoZ(-1);
 			}
 			moved = true;
 			break;
 		case 'ArrowUp':
-			// Move tetromino forward along Z-axis (toward camera) 
-			console.log('Move forward (Z-axis)');
-			if (tetrominoModule.moveTetrominoZ(-1, gameState)) {
-				renderCurrentTetromino();
+			console.log('Move away from player view');
+			// Apply movement based on orientation (player viewing from behind king)
+			switch (orientation) {
+				case 0: // Facing up
+					tetrominoModule.moveTetrominoZ(1);
+					break;
+				case 1: // Facing right
+					tetrominoModule.moveTetrominoX(1);
+					break;
+				case 2: // Facing down
+					tetrominoModule.moveTetrominoZ(-1);
+					break;
+				case 3: // Facing left
+					tetrominoModule.moveTetrominoX(-1);
+					break;
+				default:
+					// Default to standard movement
+					tetrominoModule.moveTetrominoZ(1);
 			}
 			moved = true;
 			break;
@@ -862,18 +857,14 @@ function handleKeyDown(event) {
 		case 'Z':
 			// Rotate tetromino counterclockwise
 			console.log('Rotate CCW');
-			if (tetrominoModule.rotateTetromino(-1, gameState)) {
-				renderCurrentTetromino();
-			}
+			tetrominoModule.rotateTetromino(-1);
 			moved = true;
 			break;
 		case 'x':
 		case 'X':
 			// Rotate tetromino clockwise
 			console.log('Rotate CW');
-			if (tetrominoModule.rotateTetromino(1, gameState)) {
-				renderCurrentTetromino();
-			}
+			tetrominoModule.rotateTetromino(1);
 			moved = true;
 			break;
 
@@ -881,75 +872,7 @@ function handleKeyDown(event) {
 			// Hard drop tetromino
 			console.log('Hard drop (Y-axis)');
 			event.preventDefault(); // Prevent page scrolling
-			
-			// Prevent multiple processing of the same keypress
-			if (gameState.isProcessingHardDrop) {
-				console.log('Already processing a hard drop, ignoring');
-				return;
-			}
-			
-			gameState.isProcessingHardDrop = true;
-			
-			// First use hardDropTetromino to drop the piece
-			if (tetrominoModule.hardDropTetromino(gameState)) {
-				// Ensure the current tetromino is rendered in its new position
-				renderCurrentTetromino();
-				
-				// Force a render update to show the dropped tetromino
-				if (renderer && scene && camera) {
-					renderer.render(scene, camera);
-				}
-				
-				// Then attempt to place it with a short delay to ensure the drop animation is visible
-				setTimeout(() => {
-					if (typeof tetrominoModule.enhancedPlaceTetromino === 'function') {
-						tetrominoModule.enhancedPlaceTetromino(gameState)
-							.then(result => {
-								// If placement failed, we already transitioned to chess phase in enhancedPlaceTetromino
-								// If successful, we continue the game flow
-								if (result === true) {
-									console.log('Tetromino placed successfully');
-									// Make sure to update the board visuals
-									if (typeof gameState.updateBoardVisuals === 'function') {
-										gameState.updateBoardVisuals();
-									}
-								} else {
-									console.log('Tetromino placement failed, now in chess phase');
-									// Force a scene update after phase change
-									if (renderer && scene && camera) {
-										renderer.render(scene, camera);
-									}
-								}
-								
-								// Reset the processing flag
-								gameState.isProcessingHardDrop = false;
-							})
-							.catch(err => {
-								console.error('Error during tetromino placement:', err);
-								// Ensure we still transition to chess phase on error
-								gameState.turnPhase = 'chess';
-								updateGameStatusDisplay();
-								// Force a scene update after phase change
-								if (renderer && scene && camera) {
-									renderer.render(scene, camera);
-								}
-								
-								// Reset the processing flag
-								gameState.isProcessingHardDrop = false;
-							});
-					} else {
-						// Fallback to legacy placement if the function isn't exported
-						legacy_placeTetromino();
-						
-						// Reset the processing flag
-						gameState.isProcessingHardDrop = false;
-					}
-				}, 100); // Short delay to ensure drop animation is visible
-			} else {
-				console.log('Hard drop failed, no valid position found');
-				gameState.isProcessingHardDrop = false;
-			}
-			
+			tetrominoModule.hardDropTetromino();
 			moved = true;
 			break;
 	}
@@ -1355,12 +1278,32 @@ function updateGameLogic(deltaTime) {
 		
 		if ((now - tetrisLastFallTime) > FALL_INTERVAL) {
 			// Try to move tetromino down (along Y-axis which is our "vertical" on the board)
-			if (tetrominoModule.moveTetrominoY(1, gameState)) {
+			if (tetrominoModule.moveTetrominoY(-1, true)) {
 				// Successfully moved down, update rendering
 				renderCurrentTetromino();
 			} else {
 				// Couldn't move down, place the tetromino
-				legacy_placeTetromino();
+				tetrominoModule.enhancedPlaceTetromino(gameState)
+					.then(result => {
+						console.log('Auto tetromino placement completed with result:', result);
+						
+						// If server validated the placement, check if there are valid chess moves
+						if (result === true) {
+							const canMakeChessMove = boardFunctions.analyzePossibleMoves(gameState, gameState.currentPlayer);
+							
+							// If no valid chess moves, skip to next tetromino turn
+							if (!canMakeChessMove.hasMoves) {
+								console.log('No valid chess moves available, skipping to next tetromino turn');
+								boardFunctions.handleTetrisPhaseClick(gameState, updateGameStatusDisplay, updateBoardVisuals, gameState.tetrominoGroup, createTetrominoBlock);
+							} else {
+								console.log('Valid chess moves available, continuing to chess phase');
+							}
+						}
+					})
+					.catch(err => {
+						console.error('Error during auto tetromino placement:', err);
+						// The error is already handled in enhancedPlaceTetromino
+					});
 			}
 			
 			tetrisLastFallTime = now;
@@ -2287,33 +2230,6 @@ function startGame(justLooking = false) {
 	hideAllLoadingElements();
 }
 
-/**
- * Skip the current player's move
- */
-function skipCurrentMove() {
-	// If not in a game or not our turn, do nothing
-	if (!gameState.gameStarted || String(gameState.currentPlayer) !== String(gameState.localPlayerId)) {
-		return;
-	}
-	
-	// Confirm with the user
-	if (confirm('Are you sure you want to skip your turn?')) {
-		// Notify server
-		if (typeof NetworkManager !== 'undefined' && NetworkManager.sendAction) {
-			NetworkManager.sendAction({
-				type: 'skipTurn',
-				player: gameState.localPlayerId
-			});
-		}
-		
-		// Local state update - will be overridden by server update
-		const nextPlayerId = getNextPlayer();
-		gameState.currentPlayer = nextPlayerId;
-		
-		// Update UI
-		updateGameStatusDisplay();
-	}
-}
 
 /**
  * Clean up Three.js resources
@@ -2547,33 +2463,8 @@ function configureOrbitControls(controls) {
 	// Start updating camera information
 	startCameraInfoUpdates(camera, controls);
 	
-	// Add some help text with improved styling
-	const existingHelpText = document.getElementById('controls-help');
-	if (existingHelpText) {
-		// Remove existing help text to avoid duplicates
-		existingHelpText.parentNode.removeChild(existingHelpText);
-	}
-	
-	const helpText = document.createElement('div');
-	helpText.id = 'controls-help';
-	helpText.style.position = 'fixed';
-	helpText.style.bottom = '60px';
-	helpText.style.right = '10px';
-	helpText.style.background = 'rgba(0,0,0,0.7)';
-	helpText.style.color = '#ffffff';
-	helpText.style.padding = '10px 15px';
-	helpText.style.borderRadius = '5px';
-	helpText.style.fontSize = '13px';
-	helpText.style.zIndex = '9999';
-	helpText.style.maxWidth = '250px';
-	helpText.style.lineHeight = '1.5';
-	helpText.style.boxShadow = '0 0 10px rgba(0,0,0,0.5)';
-	helpText.style.border = '1px solid #555';
-	helpText.innerHTML = '🖱️ <b>Mouse controls:</b><br>' + 
-						 '• Left click + drag: Rotate camera<br>' + 
-						 '• Right click + drag: Pan camera<br>' + 
-						 '• Scroll wheel: Zoom in/out';
-	document.body.appendChild(helpText);
+	// Control help text is now in the unified player sidebar
+	// This avoids duplicate UI elements with the same information
 }
 
 /**
@@ -2951,110 +2842,6 @@ export function exposeHighlightFunctionsGlobally() {
 	window.gameState = gameState;
 }
 
-// Define the legacy_placeTetromino function
-function legacy_placeTetromino() {
-	console.log('Placing tetromino on board using improved placement sequence');
-	if (!gameState.currentTetromino){
-		console.log('No tetromino to place');
-		return;
-	} 
-	
-	try {
-		// Ensure the scene is included in the gameState
-		if (!gameState.scene && typeof scene !== 'undefined') {
-			gameState.scene = scene;
-		}
-		hideError();
-
-		// Store position for potential animations
-		const tetrominoX = gameState.currentTetromino.position.x;
-		const tetrominoZ = gameState.currentTetromino.position.z;
-
-		// First, check if placement is valid locally (adjacent to existing cells)
-		const isAdjacent = tetrominoModule.isTetrominoAdjacentToExistingCells(
-			gameState, 
-			gameState.currentTetromino.shape,
-			tetrominoX,
-			tetrominoZ
-		);
-
-		if (!isAdjacent) {
-			console.log('Local validation: Tetromino must be adjacent to existing cells');
-			
-			// Show explosion animation and transition to chess phase
-			tetrominoModule.showExplosionAnimation(tetrominoX, tetrominoZ, gameState);
-			
-			// Clean up tetromino and transition to chess phase
-			tetrominoModule.cleanupTetrominoAndTransitionToChess(
-				gameState,
-				'Tetromino must be adjacent to existing cells',
-				tetrominoX,
-				tetrominoZ
-			);
-			
-			return;
-		}
-
-		// If placement seems valid locally, show placement effect
-		tetrominoModule.showPlacementEffect(tetrominoX, tetrominoZ, gameState);
-		
-		// Start sending move to server and handle the result
-		tetrominoModule.enhancedPlaceTetromino(gameState)
-			.then(result => {
-				console.log('Server tetromino placement completed with result:', result);
-				
-				// If server validated the placement, check if there are valid chess moves
-				if (result) {
-					// Check if there are any valid chess moves for the current player
-					const canMakeChessMove = boardFunctions.analyzePossibleMoves(gameState, gameState.currentPlayer);
-					
-					// If no valid chess moves, skip to next tetromino turn
-					if (!canMakeChessMove.hasMoves) {
-						console.log('No valid chess moves available, skipping to next tetromino turn');
-						
-						// Skip to next player's turn and set to tetromino phase
-						if (typeof advanceTurn === 'function') {
-							advanceTurn();
-							gameState.turnPhase = 'tetromino';
-							updateGameStatusDisplay();
-						}
-					}
-				}
-			})
-			.catch(err => {
-				console.error('Error during tetromino placement:', err);
-				
-				// Even if there's an error, we should ensure transition to chess phase
-				if (gameState.turnPhase !== 'chess') {
-					gameState.currentTetromino = null;
-					gameState.turnPhase = 'chess';
-					updateGameStatusDisplay();
-				}
-			});
-		
-	} catch (error) {
-		console.error('Error placing tetromino:', error);
-		
-		// Even if there's an error, we should switch phases and clean up
-		if (gameState.currentTetromino) {
-			const tetrominoX = gameState.currentTetromino.position.x;
-			const tetrominoZ = gameState.currentTetromino.position.z;
-			
-			tetrominoModule.cleanupTetrominoAndTransitionToChess(
-				gameState,
-				'Error placing tetromino: ' + (error.message || 'Unknown error'),
-				tetrominoX,
-				tetrominoZ
-			);
-		} else {
-			gameState.currentTetromino = null;
-			gameState.turnPhase = 'chess';
-			updateGameStatusDisplay();
-		}
-	}
-}
-
-/**
 /**
  * Updates the board center position and synchronizes all related game elements
  * @param {Object} newCenter - The new board center coordinates {x, z}

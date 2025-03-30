@@ -1,4 +1,3 @@
-// import * as THREE from './utils/three.module.js';
 import { createFewClouds } from './createFewClouds.js';
 import { onWindowResize, getTHREE } from './enhanced-gameCore.js';
 import { boardFunctions } from './boardFunctions.js';
@@ -100,7 +99,7 @@ export function setupScene(containerElement, scene, camera, renderer, controls, 
 	try {
 		createBoard(boardGroup, gameState);
 		console.log("Board created successfully", boardGroup);
-		boardFunctions.createBoardCells(gameState, boardGroup, createFloatingIsland, THREE);
+		// boardFunctions.createBoardCells(gameState, boardGroup, createFloatingIsland, THREE);
 	} catch (err) {
 		console.error("Error creating initial board:", err);
 		// Continue with setup, we'll try again when we get data
@@ -112,6 +111,7 @@ export function setupScene(containerElement, scene, camera, renderer, controls, 
 	tetrominoGroup.name = 'tetrominos';
 	scene.add(tetrominoGroup);
 	gameState.tetrominoGroup = tetrominoGroup;
+	gameState.scene = scene;
 	
 	// Create chess pieces group
 	chessPiecesGroup = new THREE.Group();
@@ -291,15 +291,13 @@ export function createFloatingIsland(x, z, material, heightVariation = 0.7, hasC
 	// Create island base
 	const islandGroup = new THREE.Group();
 
-	// Create top surface with rounded corners
-	const topGeometry = createRoundedBoxGeometry(0.9, 0.9, 0.9, 0.1, 4);
-	const topSurface = new THREE.Mesh(topGeometry, material);
-	topSurface.position.y = 0.5;
-	topSurface.castShadow = true;
-	topSurface.receiveShadow = true;
-
+	// Create top surface with rounded corners only if this is a content-bearing island
 	if (hasContent) {
-		// Add to island group
+		const topGeometry = createRoundedBoxGeometry(0.9, 0.9, 0.9, 0.1, 4);
+		const topSurface = new THREE.Mesh(topGeometry, material);
+		topSurface.position.y = 0.5;
+		topSurface.castShadow = true;
+		topSurface.receiveShadow = true;
 		islandGroup.add(topSurface);
 	}
 
@@ -315,82 +313,89 @@ export function createFloatingIsland(x, z, material, heightVariation = 0.7, hasC
 	bottomSurface.position.y = -actualHeight * 0.5;
 	bottomSurface.rotation.x = Math.PI; // Flip it
 	bottomSurface.castShadow = true;
+	
+	// Add the bottom to the island group if not a content-bearing island
+	if (!hasContent) {
+		islandGroup.add(bottomSurface);
+	}
 
-	// islandGroup.add(bottomSurface);
-
-	// Add small rocks and details to make each island unique
-	const rockCount = Math.floor(Math.abs(Math.sin(posHash * 3.7) * 3) + 1);
+	// Add small rocks and details to make each island unique - more of them for decoration
+	const rockCount = Math.floor(Math.abs(Math.sin(posHash * 3.7) * 5) + 3); // More rocks
 
 	for (let i = 0; i < rockCount; i++) {
 		const rockGeometry = new THREE.SphereGeometry(
-			0.1 + Math.abs(Math.sin(posHash * (i + 1) * 5.3)) * 0.15, // Size
+			0.15 + Math.abs(Math.sin(posHash * (i + 1) * 5.3)) * 0.2, // Larger size
 			5, 4
 		);
-
+		
 		const rockMaterial = bottomMaterial.clone();
 		rockMaterial.color.multiplyScalar(0.9 + Math.sin(i) * 0.2);
-		//make them fluffier like little clouds
-		rockMaterial.wireframe = true;
-		rockMaterial.opacity = 0.3;
+		rockMaterial.opacity = 0.5 + Math.random() * 0.3;
 		rockMaterial.transparent = true;
-		rockMaterial.side = THREE.DoubleSide;
-	
-
+		
+		// Make wireframe for decorative islands
+		if (!hasContent) {
+			rockMaterial.wireframe = Math.random() > 0.5; // 50% chance of wireframe
+		}
+		
 		const rock = new THREE.Mesh(rockGeometry, rockMaterial);
-
-		// Position on the surface
+		
+		// Position the rocks to create a more natural cluster
 		const angle = Math.sin(posHash * (i + 7.1)) * Math.PI * 2;
-		const radius = 0.25 + Math.abs(Math.sin(posHash * (i + 3.3))) * 0.2;
-
+		const radius = 0.3 + Math.abs(Math.sin(posHash * (i + 3.3))) * 0.2;
+		
 		rock.position.x = Math.cos(angle) * radius;
 		rock.position.z = Math.sin(angle) * radius;
-		rock.position.y = 0.1 + Math.sin(posHash * i) * 0.05;
-
-		// Random rotation
-		rock.rotation.x = Math.sin(posHash * (i + 1.5)) * 0.5;
-		rock.rotation.y = Math.sin(posHash * (i + 2.5)) * Math.PI;
-		rock.rotation.z = Math.sin(posHash * (i + 3.5)) * 0.5;
-
-		rock.castShadow = true;
+		rock.position.y = -0.1 - Math.random() * 0.2;
+		
+		// Random rotation for interest
+		rock.rotation.x = Math.random() * Math.PI;
+		rock.rotation.y = Math.random() * Math.PI;
+		rock.rotation.z = Math.random() * Math.PI;
+		
 		islandGroup.add(rock);
 	}
 
-	// Add grass or flowers on some islands
-	if (Math.abs(Math.sin(posHash * 7.3)) > 0.7) {
+	// Add very small bits of grass/greenery on some of the islands
+	if (Math.abs(Math.sin(posHash * 7.3)) > 0.6) {
 		const grassColor = new THREE.Color(
-			0.1 + Math.abs(Math.sin(posHash * 8.7)) * 0.2,
-			0.6 + Math.abs(Math.sin(posHash * 9.3)) * 0.3,
-			0.1 + Math.abs(Math.sin(posHash * 10.1)) * 0.1
+			0.2 + Math.abs(Math.sin(posHash * 8.7)) * 0.1,
+			0.7 + Math.abs(Math.sin(posHash * 9.3)) * 0.2,
+			0.2 + Math.abs(Math.sin(posHash * 10.1)) * 0.1
 		);
 
 		const grassMaterial = new THREE.MeshStandardMaterial({
 			color: grassColor,
 			roughness: 1.0,
-			metalness: 0.0
+			metalness: 0.0,
+			transparent: true,
+			opacity: 0.8
 		});
 
-		const grassCount = Math.floor(Math.abs(Math.sin(posHash * 11.3) * 5) + 3);
+		// Fewer bits of grass, just for accents
+		const grassCount = 2 + Math.floor(Math.abs(Math.sin(posHash * 11.3) * 3));
 
 		for (let i = 0; i < grassCount; i++) {
+			// Smaller, more subtle grass bits
 			const grassGeometry = new THREE.ConeGeometry(
-				0.03 + Math.abs(Math.sin(posHash * (i + 13.1))) * 0.02,
-				0.2 + Math.abs(Math.sin(posHash * (i + 14.7))) * 0.1,
+				0.02 + Math.random() * 0.02,
+				0.1 + Math.random() * 0.1,
 				3
 			);
 
 			const grass = new THREE.Mesh(grassGeometry, grassMaterial);
 
-			// Position randomly on the surface
+			// Random positions on the island
 			const angle = Math.sin(posHash * (i + 17.9)) * Math.PI * 2;
-			const radius = 0.3 + Math.abs(Math.sin(posHash * (i + 18.3))) * 0.1;
+			const radius = 0.2 + Math.random() * 0.3;
 
 			grass.position.x = Math.cos(angle) * radius;
 			grass.position.z = Math.sin(angle) * radius;
-			grass.position.y = 0.1;
+			grass.position.y = -0.1 - Math.random() * 0.3;
 
 			// Random tilt
-			grass.rotation.x = Math.sin(posHash * (i + 19.5)) * 0.3;
-			grass.rotation.z = Math.sin(posHash * (i + 20.5)) * 0.3;
+			grass.rotation.x = Math.random() * 0.5;
+			grass.rotation.z = Math.random() * 0.5;
 
 			islandGroup.add(grass);
 		}
@@ -410,11 +415,10 @@ export function createFloatingIsland(x, z, material, heightVariation = 0.7, hasC
 
 	// Store cell info for raycasting
 	islandGroup.userData = {
-		type: 'cell',
+		type: 'decorative',  // Change type to mark these as decorative only
 		position: { x, z },
 		isWhite: (x + z) % 2 === 0
 	};
-
 
 	// Return a reference for animation
 	return islandGroup;
@@ -472,7 +476,7 @@ export function createFloatingCube(x, z, material, boardGroup) {
 		const cellGeometry = new THREE.BoxGeometry(0.9, 0.9, 0.9);
 		const cellMesh = new THREE.Mesh(cellGeometry, material);
 
-	
+
 		// Position the cell using relative coordinates
 		cellMesh.position.set(x, 0, z);
 
@@ -667,9 +671,6 @@ export function createBoard(boardGroup, gameState) {
 				// Skip empty cells
 				if (cell === null || cell === undefined) continue;
 
-
-
-
 				// Determine if white or dark cell for checkerboard pattern
 				const isWhite = (x + z) % 2 === 0;
 				const material = isWhite ? whiteMaterial : darkMaterial;
@@ -677,27 +678,52 @@ export function createBoard(boardGroup, gameState) {
 				// Get relative position using the translation function
 				const relativePos = translatePosition({x, z}, gameState, false);
 
-				// Create the floating island at relative position
-				const island = createFloatingIsland(
-					relativePos.x,
-					relativePos.z,
-					material
+				// Create the floating cube for the actual game board
+				//const cellMesh = createFloatingCube(relativePos.x, relativePos.z, material, boardGroup);
+
+				// Create the floating island below the cube for decoration only
+				// Use varied white/very light green materials for the islands
+				const cloudColor = new THREE.Color(
+					0.95 + Math.abs(Math.sin(x * 0.3 + z * 0.7) * 0.05),  // Almost white
+					0.97 + Math.abs(Math.sin(x * 0.5 + z * 0.3) * 0.03),  // Very slight green tint
+					0.95 + Math.abs(Math.sin(x * 0.7 + z * 0.5) * 0.05)   // Almost white
 				);
+				
+				const islandMaterial = new THREE.MeshStandardMaterial({
+					color: cloudColor,
+					roughness: 1.0,
+					metalness: 0.0,
+					transparent: true,
+					opacity: 0.6  // More transparent
+				});
 
-				createFloatingCube(relativePos.x, relativePos.z, material, boardGroup);
+				// // Only create clouds for some cells to reduce visual clutter
+				// if (Math.random() > 0.4) {  // 60% chance to create a cloud
+				// 	// Create decorative island with larger offsets for more spacing
+				// 	const island = createFloatingIsland(
+				// 		relativePos.x + (Math.random() * 0.5 - 0.25),  // Larger random X offset
+				// 		relativePos.z + (Math.random() * 0.5 - 0.25),  // Larger random Z offset
+				// 		islandMaterial,
+				// 		0.4 + (Math.random() * 0.2),  // Lower height variation
+				// 		false  // No content on island
+				// 	);
 
+				// 	// Position island further below the cube
+				// 	island.position.y -= 2.0 + (Math.random() * 1.0);  // More distance below
 
-				// Save the absolute position in the userData
-				island.userData = {
-					type: 'cell',
-					position: { x, z },
-					data: cell,
-					isWhite: isWhite
-				};
+				// 	// Randomize the scale to add variety
+				// 	const scale = 0.7 + Math.random() * 0.4;  // Smaller scale
+				// 	island.scale.set(scale, scale, scale);
 
-				// Add the island to the board group
-				boardGroup.add(island);
-				createdCellCount++;
+				// 	// Add the island to the board group
+				// 	boardGroup.add(island);
+				// }
+
+				// Save the absolute position in the userData (now on cellMesh instead of island)
+				if (cellMesh) {
+					cellMesh.userData.data = cell;
+					createdCellCount++;
+				}
 			}
 
 			console.log(`Created ${createdCellCount} cells for the board`);

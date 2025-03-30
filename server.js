@@ -924,7 +924,6 @@ io.on('connection', (socket) => {
 				board: freshGame.board,
 				homeZones: freshGame.homeZones,
 				chessPieces: chessPieces,
-				currentPlayer: 1,
 				turnPhase: 'tetris',
 				status: 'playing',
 				startTime: Date.now()
@@ -1115,7 +1114,6 @@ function createNewGame(gameId = null, settings = {}) {
 			difficulty: settings.difficulty || 'normal',
 			startLevel: settings.startLevel || 1,
 			renderMode: settings.renderMode || '3d',
-			currentPlayer: 1,
 			turnPhase: 'tetris',
 			status: 'waiting'
 		},

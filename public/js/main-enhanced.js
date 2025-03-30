@@ -11,6 +11,7 @@ import * as NetworkStatusManager from './utils/networkStatusManager.js';
 import { createNetworkStatusDisplay } from './createNetworkStatusDisplay.js';
 import { createUnifiedPlayerBar, updateUnifiedPlayerBar } from './unifiedPlayerBar.js';
 import './boardFunctions.js'; // Import the updated board functions
+import gameState from './utils/gameState.js';
 
 
 // Global state
@@ -415,8 +416,8 @@ async function joinGameAfterConnection(gameId = null) {
 				// Update player bar if the update affects player state
 				if (data && (data.players || data.currentPlayer)) {
 					// Get current game state 
-					if (window.gameState) {
-						updateUnifiedPlayerBar(window.gameState);
+					if (gameState) {
+						updateUnifiedPlayerBar(gameState);
 					}
 				}
 			}
@@ -549,11 +550,11 @@ function setupPlayerListUpdates() {
 				NetworkManager.onMessage('player_list', (data) => {
 					if (data && data.players) {
 						// Update the game state with players
-						if (window.gameState) {
-							window.gameState.players = Object.assign({}, window.gameState.players || {}, data.players);
+						if (gameState) {
+							gameState.players = Object.assign({}, gameState.players || {}, data.players);
 							
 							// Update the unified player bar with the updated game state
-							updateUnifiedPlayerBar(window.gameState);
+							updateUnifiedPlayerBar(gameState);
 						} else {
 							// If no game state yet, create a minimal one for the player bar
 							const minimalState = {

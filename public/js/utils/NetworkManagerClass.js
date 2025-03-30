@@ -564,14 +564,36 @@ export default class NetworkManager {
 	sendMessage(eventType, data) {
 		if (!this.isConnected()) {
 			console.error(`NetworkManager: Cannot send message ${eventType}, not connected`);
-			return Promise.reject(new Error('Not connected'));
+			return Promise.reject({
+				message: 'Not connected to server',
+				reason: 'network_error'
+			});
 		}
 		
 		return new Promise((resolve, reject) => {
 			this.state.socket.emit(eventType, data, (response) => {
 				if (response && response.error) {
 					console.error(`NetworkManager: Error sending message ${eventType}:`, response.error);
-					reject(response.error);
+					
+					// Check if this is a validation error or a network error
+					const isValidationError = response.error.includes('Invalid') || 
+											 response.error.includes('invalid') ||
+											 response.error.includes('not allowed') ||
+											 response.error.includes('rejected');
+					
+					if (isValidationError) {
+						reject({
+							message: response.error,
+							reason: 'validation_error',
+							details: response
+						});
+					} else {
+						reject({
+							message: response.error,
+							reason: 'network_error',
+							details: response
+						});
+					}
 				} else {
 					resolve(response);
 				}
@@ -587,12 +609,18 @@ export default class NetworkManager {
 	async submitTetrominoPlacement(tetromino) {
 		if (!this.isConnected()) {
 			console.error('NetworkManager: Cannot submit tetromino placement, not connected');
-			return Promise.reject(new Error('Not connected'));
+			return Promise.reject({
+				message: 'Not connected to server',
+				reason: 'network_error'
+			});
 		}
 		
 		if (!this.state.gameId) {
 			console.error('NetworkManager: Cannot submit tetromino placement, not in a game');
-			return Promise.reject(new Error('Not in a game'));
+			return Promise.reject({
+				message: 'Not in a game',
+				reason: 'network_error'
+			});
 		}
 		
 		console.log('NetworkManager: Submitting tetromino placement:', tetromino);
@@ -610,8 +638,28 @@ export default class NetworkManager {
 			console.log('NetworkManager: Tetromino placement successful:', response);
 			return response;
 		} catch (error) {
+			// Check if this is a validation error (placement rule violation) or a network error
+			if (error.message && (
+				error.message.includes('Invalid placement') ||
+				error.message.includes('invalid position') ||
+				error.message.includes('placement not allowed') ||
+				error.message.includes('placement rejected')
+			)) {
+				console.error('NetworkManager: Tetromino placement validation failed:', error.message);
+				// Mark this explicitly as a validation error, not a network error
+				return Promise.reject({
+					message: error.message,
+					reason: 'validation_error',
+					error: error
+				});
+			}
+			
 			console.error('NetworkManager: Tetromino placement failed:', error);
-			throw error;
+			return Promise.reject({
+				message: error.message || 'Network error during placement',
+				reason: 'network_error',
+				error: error
+			});
 		}
 	}
 

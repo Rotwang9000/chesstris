@@ -814,6 +814,7 @@ function findPlayerKingPosition(gameState) {
 	return getDefaultPlayerPosition(gameState, currentPlayer);
 }
 
+
 /**
  * Handle click on Tetris phase button
  * @param {Object} gameState - The current game state
@@ -1900,7 +1901,7 @@ function getPieceForPlayer(gameState, playerId, pieceType) {
 function getPlayersKing(gameState, playerId, realCoordinates = false){
 	const arrKing = getPieceForPlayer(gameState, playerId, 'king');
 	if (arrKing.length === 0) {
-		console.warn('No king found for player ' + playerId);
+		console.warn('No king found for player ' + playerId, gameState);
 		return null;
 	}
 	

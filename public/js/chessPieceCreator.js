@@ -146,7 +146,7 @@ const PIECE_TYPE_MAP = {
 /**
  * Register a custom model for a specific chess piece type
  * 
- * @param {number|string} player - Player identifier (number or 'self'/'other')
+ * @param {string} player - Player identifier
  * @param {number|string} pieceType - Type of piece (e.g., 'KING', 'QUEEN', or 1-6)
  * @param {THREE.Object3D} modelObject - The 3D model to use for this piece
  */
@@ -172,7 +172,7 @@ export function registerCustomModel(player, pieceType, modelObject) {
  * @param {number} x - X coordinate on the board
  * @param {number} z - Z coordinate on the board
  * @param {string|number} pieceType - Type of piece (PAWN, ROOK, etc. or numeric 1-6)
- * @param {number|string} player - Player identifier (1 or 2)
+ * @param {string} player - Player identifier
  * @param {Object} options - Optional parameters including orientation, color, and isLocalPlayer
  * @returns {Object} THREE.Group containing the piece
  */
@@ -185,13 +185,12 @@ export function createChessPiece(gameState, x, z, pieceType, player, options = {
 		
 	const pieceTypeName = PIECE_TYPE_MAP[pieceTypeNum] || 'PAWN';
 	
-	// Convert player ID to number if it's a string
-	const playerNum = parseInt(player, 10) || 1;
+	// Player is an identifier string, not a number
 	
 	// Determine if this is the local player (either from options or gameState)
 	const isLocalPlayer = options.isLocalPlayer !== undefined 
 		? options.isLocalPlayer 
-		: (gameState.localPlayerId === playerNum || gameState.myPlayerId === playerNum);
+		: (gameState.localPlayerId === player || gameState.myPlayerId === player);
 	
 	// Use provided custom color if available, otherwise default
 	const customColor = options.color;
@@ -201,7 +200,7 @@ export function createChessPiece(gameState, x, z, pieceType, player, options = {
 	
 	// Only log during debug mode to reduce console spam
 	if (gameState.debugMode) {
-		console.log(`Creating chess piece at (${x}, ${z}) of type ${pieceTypeName} for player ${playerNum} (${isLocalPlayer ? 'local' : 'opponent'})`);
+		console.log(`Creating chess piece at (${x}, ${z}) of type ${pieceTypeName} for player ${player} (${isLocalPlayer ? 'local' : 'opponent'})`);
 	}
 	
 	try {
@@ -336,7 +335,7 @@ export function createChessPiece(gameState, x, z, pieceType, player, options = {
 			type: 'chess',
 			pieceType: pieceTypeName,
 			pieceTypeNum: pieceTypeNum,
-			player: playerNum,
+			player: player,
 			position: { x, z },
 			originalPosition: { x, z },
 			color: customColor
@@ -369,7 +368,7 @@ export function createChessPiece(gameState, x, z, pieceType, player, options = {
 			type: 'chess',
 			pieceType: pieceTypeName,
 			pieceTypeNum: pieceTypeNum,
-			player: playerNum,
+			player: player,
 			position: { x, z },
 			isErrorFallback: true,
 			color: customColor
@@ -989,7 +988,7 @@ export function loadCustomModels(modelLoader, modelPaths) {
 /**
  * Get a chess piece mesh based on piece type and player
  * @param {string} type - The type of chess piece (pawn, rook, knight, bishop, queen, king)
- * @param {number|string} player - Player identifier, 'self' for local player or 'other' for opponents
+ * @param {string} player - Player identifier
  * @param {boolean} isLocalPlayer - Whether this is the local player's piece
  * @returns {THREE.Group} The chess piece mesh
  */
@@ -1000,15 +999,11 @@ export function getChessPiece(type, player, isLocalPlayer = false) {
 		return null;
 	}
 	
-	// Convert player to a number if it's a string number
-	const playerNum = parseInt(player);
-	
 	// Determine if this is the local player's piece
-	// The parameter 'player' can now be a number or 'self'/'other'
 	let materialKey;
 	if (player === 'self' || player === 'other') {
 		materialKey = player;
-	} else if (isLocalPlayer || playerNum === 1) {
+	} else if (isLocalPlayer) {
 		materialKey = 'self';
 	} else {
 		materialKey = 'other';

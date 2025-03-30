@@ -1,5 +1,6 @@
 import { handleTetrisPhaseClick, handleChessPhaseClick, resetGameState, startPlayingGame } from './enhanced-gameCore';
 import * as sceneModule from './scene';
+import gameState from './utils/gameState.js';
 
 /**
  * Create a loading indicator with Russian-themed styling
@@ -254,7 +255,7 @@ export function updateGameStatusDisplay(gameState) {
 	let statusHTML = '';
 	
 	// Check if we have game state
-	if (!window.gameState) {
+	if (!gameState) {
 		statusHTML = '<div>Game ready to start</div>';
 		statusContainer.innerHTML = statusHTML;
 		return;

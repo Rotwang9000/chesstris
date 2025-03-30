@@ -4,6 +4,8 @@ import { showToastMessage } from './showToastMessage';
 import NetworkManager from './utils/networkManager.js';
 import { boardFunctions } from './boardFunctions.js';
 import { toRelativePosition, toAbsolutePosition, translatePosition } from './centreBoardMarker.js';
+// Import the gameState singleton at the top of the file
+import gameState from './utils/gameState.js';
 
 /**
  * Shaktris 3D Coordinate System
@@ -114,555 +116,99 @@ const objectPool = {
  * @param {number} dir - Direction (-1 for left, 1 for right)
  * @returns {boolean} - Whether the move was successful
  */
-export function moveTetrominoX(dir, gameState) {
+export function moveTetrominoHorizontal(dir, isXAxis = true) {
+	// Multiple safety checks to prevent lockups
+	if (!gameState) return false;
 	if (!gameState.currentTetromino) return false;
-
-	// Make a copy of the current position
-	const newPos = {
-		x: gameState.currentTetromino.position.x + dir,
-		z: gameState.currentTetromino.position.z
-	};
-
-	// Check if the move would be valid - pass gameState as first parameter
-	if (isValidTetrominoPosition(gameState, gameState.currentTetromino.shape, newPos)) {
+	
+	// Prevent movement if we're in the chess phase
+	if (gameState.turnPhase !== 'tetris') return false;
+	
+	// Prevent movement during hard drop processing
+	if (gameState.isProcessingHardDrop) return false;
+	
+	// Prevent multiple simultaneously movements 
+	if (gameState.isMovingTetromino) return false;
+	gameState.isMovingTetromino = true;
+	
+	try {
+		// Make a copy of the current position
+		const newPos = {
+			x: isXAxis ? gameState.currentTetromino.position.x + dir : gameState.currentTetromino.position.x,
+			z: isXAxis ? gameState.currentTetromino.position.z : gameState.currentTetromino.position.z + dir
+		};
+		
+		// If we're at or near board level (heightAboveBoard <= 1), check adjacent cells
+		// to prevent movement of pieces that should be exploding
+		if (gameState.currentTetromino.heightAboveBoard <= 1) {
+			// Check if the tetromino is adjacent to any existing cells at the new position
+			const isAdjacent = boardFunctions.isTetrominoAdjacentToExistingCells(
+				gameState,
+				gameState.currentTetromino.shape,
+				newPos.x,
+				newPos.z
+			);
+			
+			// If not adjacent at the new position and at or near ground level, don't allow movement
+			// This prevents moving pieces that should be exploding
+			if (!isAdjacent) {
+				console.log(`Horizontal move rejected - tetromino at Y=${gameState.currentTetromino.heightAboveBoard} is not adjacent to any cells at new position`);
+				
+				// Trigger cleanup if we're at board level
+				if (gameState.currentTetromino.heightAboveBoard <= 1) {
+					// Use setTimeout to avoid race conditions
+					setTimeout(() => {
+						const explosionX = gameState.currentTetromino.position.x;
+						const explosionZ = gameState.currentTetromino.position.z;
+						cleanupTetrominoAndTransitionToChess(
+							gameState,
+							'Tetromino must connect to existing cells',
+							explosionX,
+							explosionZ
+						);
+					}, 0);
+				}
+				
+				return false;
+			}
+		}
+		
 		// Update position
 		gameState.currentTetromino.position = newPos;
 		
-		// Re-render tetromino with updated position
-		if (gameState.tetrominoGroup) {
-			renderTetromino(gameState);
-		}
-		
-		return true;
-	}
-
-	return false;
-}
-/**
- * Move the current tetromino along Z-axis (forward/backward)
- * @param {number} dir - Direction (-1 for forward/toward camera, 1 for backward/away from camera)
- * @returns {boolean} - Whether the move was successful
- */
-export function moveTetrominoZ(dir, gameState) {
-	if (!gameState.currentTetromino) return false;
-
-	// If moving up in Y-axis, simply adjust the heightAboveBoard property
-	if (dir < 0 && gameState.currentTetromino.heightAboveBoard < 10) {
-		gameState.currentTetromino.heightAboveBoard += 1;
-		console.log(`Moving tetromino up in Y-axis, heightAboveBoard=${gameState.currentTetromino.heightAboveBoard}`);
-		
-		// Re-render tetromino with updated height
-		if (gameState.tetrominoGroup) {
-			renderTetromino(gameState);
-		}
-		
-		return true;
-	}
-	
-	// If moving down in Y-axis, check if we're still above the board
-	if (dir > 0) {
-		if (gameState.currentTetromino.heightAboveBoard > 0) {
-			// Still above board, just decrease height
-			gameState.currentTetromino.heightAboveBoard -= 1;
-			console.log(`Moving tetromino down in Y-axis, heightAboveBoard=${gameState.currentTetromino.heightAboveBoard}`);
+		// If we have a shape group, move it directly rather than re-rendering
+		if (gameState.currentTetrominoShapeGroup) {
+			// Get absolute position
+			const absPos = translatePosition(newPos, gameState, true);
 			
-			// Re-render tetromino with updated height
-			if (gameState.tetrominoGroup) {
-				renderTetromino(gameState);
-			}
-			
-			return true;
+			// Update the position of the shape group
+			gameState.currentTetrominoShapeGroup.position.x = absPos.x;
+			gameState.currentTetrominoShapeGroup.position.z = absPos.z;
 		} else {
-			// At board level, check if we can move in Z direction
-			const newPos = {
-				x: gameState.currentTetromino.position.x,
-				z: gameState.currentTetromino.position.z + 1 // Increase Z (away from camera) when moving down
-			};
-			
-			console.log(`Tetromino at board level, checking movement from z=${gameState.currentTetromino.position.z} to z=${newPos.z}`);
-			
-			// Check if the move would be valid
-			if (isValidTetrominoPosition(gameState, gameState.currentTetromino.shape, newPos)) {
-				// Update position
-				gameState.currentTetromino.position = newPos;
-				
-				// Re-render tetromino with updated position
-				if (gameState.tetrominoGroup) {
-					renderTetromino(gameState);
-				}
-				
-				return true;
-			}
-		}
-	}
-
-	return false;
-}
-/**
- * Move the current tetromino along Y-axis (up/down from the sky)
- * @param {number} dir - Direction (-1 for up, 1 for down)
- * @returns {boolean} - Whether the move was successful
- */
-export function moveTetrominoY(dir, gameState) {
-	if (!gameState.currentTetromino) return false;
-
-	// Moving up in Y-axis (increasing height above board)
-	if (dir < 0 && gameState.currentTetromino.heightAboveBoard < 10) {
-		gameState.currentTetromino.heightAboveBoard += 1;
-		console.log(`Moving tetromino up in Y-axis, heightAboveBoard=${gameState.currentTetromino.heightAboveBoard}`);
-		
-		// Re-render tetromino with updated height
-		if (gameState.tetrominoGroup) {
+			// Fall back to re-rendering if needed
 			renderTetromino(gameState);
 		}
 		
 		return true;
+	} catch (error) {
+		console.error('Error in moveTetrominoHorizontal:', error);
+		return false;
+	} finally {
+		// Always make sure to reset the moving flag
+		gameState.isMovingTetromino = false;
 	}
-	
-	// Moving down in Y-axis (decreasing height above board)
-	if (dir > 0) {
-		if (gameState.currentTetromino.heightAboveBoard > 0) {
-			// Still above board, just decrease height
-			gameState.currentTetromino.heightAboveBoard -= 1;
-			console.log(`Moving tetromino down in Y-axis, heightAboveBoard=${gameState.currentTetromino.heightAboveBoard}`);
-			
-			// Re-render tetromino with updated height
-			if (gameState.tetrominoGroup) {
-				renderTetromino(gameState);
-			}
-			
-			return true;
-		} else {
-			// Already at board level, can't move down in Y anymore
-			return false;
-		}
-	}
-
-	return false;
 }
+
+
 /**
  * Move the current tetromino forward/backward along Z-axis on the board
  * @param {number} dir - Direction (-1 for forward/toward camera, 1 for backward/away from camera)
  * @returns {boolean} - Whether the move was successful
  */
 export function moveTetrominoForwardBack(dir, gameState) {
-	if (!gameState.currentTetromino) return false;
-	
-	// Only allow Z movement when the piece is at board level
-	if (gameState.currentTetromino.heightAboveBoard > 0) {
-		return false;
-	}
-
-	// Make a copy of the current position
-	const newPos = {
-		x: gameState.currentTetromino.position.x,
-		z: gameState.currentTetromino.position.z + dir
-	};
-	
-	// Check if the move would be valid
-	if (isValidTetrominoPosition(gameState, gameState.currentTetromino.shape, newPos)) {
-		// Update position
-		gameState.currentTetromino.position = newPos;
-		
-		// Re-render tetromino with updated position
-		if (gameState.tetrominoGroup) {
-			renderTetromino(gameState);
-		}
-		
-		return true;
-	}
-
-	return false;
+	return moveTetrominoHorizontal(dir, false);
 }
-/**
- * Rotate the current tetromino
- * @param {number} dir - Direction (1 for clockwise, -1 for counterclockwise)
- * @returns {boolean} - Whether the rotation was successful
- */
-export function rotateTetromino(dir, gameState) {
-	if (!gameState.currentTetromino) return false;
 
-	// Make a copy of the current shape
-	const currentShape = gameState.currentTetromino.shape;
-	const size = currentShape.length;
-
-	// Create a new rotated shape
-	const newShape = [];
-	for (let i = 0; i < size; i++) {
-		newShape.push(new Array(size).fill(0));
-	}
-
-	// Rotate the shape matrix
-	for (let z = 0; z < size; z++) {
-		for (let x = 0; x < size; x++) {
-			if (dir === 1) { // Clockwise
-				newShape[x][size - 1 - z] = currentShape[z][x];
-			} else { // Counterclockwise
-				newShape[size - 1 - x][z] = currentShape[z][x];
-			}
-		}
-	}
-
-	// Check if the rotated position is valid - pass gameState as first parameter
-	if (isValidTetrominoPosition(gameState, newShape, gameState.currentTetromino.position)) {
-		// Update shape
-		gameState.currentTetromino.shape = newShape;
-		
-		// Re-render tetromino with updated shape
-		if (gameState.tetrominoGroup) {
-			renderTetromino(gameState);
-		}
-		
-		return true;
-	}
-
-	return false;
-}
-/**
- * Hard drop the current tetromino to the lowest valid position
- * @returns {boolean} - Whether the tetromino is ready for placement
- */
-export function hardDropTetromino(gameState) {
-	if (!gameState.currentTetromino) return false;
-
-	// First, immediately drop to the board level
-	gameState.currentTetromino.heightAboveBoard = 0;
-	
-	// Re-render tetromino at board level
-	if (gameState.tetrominoGroup) {
-		renderTetromino(gameState);
-	}
-
-	// Then keep moving on the board along Z-axis until we hit something
-	let moved = true;
-	while (moved) {
-		moved = moveTetrominoForwardBack(1, gameState);
-		// Note: moveTetrominoForwardBack already re-renders the tetromino
-	}
-
-	// Play drop animation
-	showDropAnimation(gameState);
-
-	// Return true to indicate the tetromino is ready to be placed
-	// This avoids directly calling the placement function here
-	// as it may be called elsewhere (like in legacy_placeTetromino)
-	console.log('Tetromino is ready for placement');
-	return true;
-}
-/**
- * Clean up tetromino state and transition to chess phase
- * @param {Object} gameState - The current game state
- * @param {string} message - Message to show in toast notification
- * @param {number} x - X position for explosion
- * @param {number} z - Z position for explosion
- * @returns {Promise} Promise that resolves after the transition completes
- */
-export function cleanupTetrominoAndTransitionToChess(gameState, message, x, z) {
-	console.log('Cleaning up tetromino and transitioning to chess phase:', message);
-	
-	// Show message
-	if (message) {
-		showToastMessage(message);
-	}
-	
-	// Show explosion effect
-	if (typeof x === 'number' && typeof z === 'number') {
-		showExplosionAnimation(x, z, gameState);
-	}
-	
-	// Clear the current tetromino reference
-	gameState.currentTetromino = null;
-	
-	// Clear existing tetromino group
-	if (gameState.tetrominoGroup) {
-		console.log('Clearing tetromino group children:', gameState.tetrominoGroup.children?.length || 0);
-		
-		if (gameState.tetrominoGroup.children && gameState.tetrominoGroup.children.length > 0) {
-			// Clone the array to avoid issues during removal
-			const children = [...gameState.tetrominoGroup.children];
-			for (const child of children) {
-				// Properly dispose of geometry and materials to prevent memory leaks
-				if (child.geometry) child.geometry.dispose();
-				if (child.material) {
-					if (Array.isArray(child.material)) {
-						child.material.forEach(m => m.dispose());
-					} else {
-						child.material.dispose();
-					}
-				}
-				gameState.tetrominoGroup.remove(child);
-			}
-		}
-		
-		// Verify cleanup
-		console.log('Tetromino group cleaned, remaining children:', gameState.tetrominoGroup.children?.length || 0);
-	}
-	
-	// Make sure tetromino group is reset
-	if (gameState.scene && gameState.tetrominoGroup && gameState.scene.children.includes(gameState.tetrominoGroup)) {
-		try {
-			gameState.scene.remove(gameState.tetrominoGroup);
-			console.log('Removed tetromino group from scene');
-		} catch (e) {
-			console.warn('Error removing tetromino group from scene:', e);
-		}
-	}
-	
-	// Create a fresh tetromino group
-	const THREE = getTHREE();
-	gameState.tetrominoGroup = new THREE.Group();
-	gameState.scene.add(gameState.tetrominoGroup);
-	
-	// Switch to chess phase
-	gameState.turnPhase = 'chess';
-	updateGameStatusDisplay();
-	
-	// Attempt to access renderer and camera from various possible sources
-	let renderer = gameState.renderer;
-	let camera = gameState.camera;
-	
-	// Check global variables as a fallback
-	if (!renderer && typeof window !== 'undefined') {
-		renderer = window.renderer || null;
-	}
-	
-	if (!camera && typeof window !== 'undefined') {
-		camera = window.camera || null;
-	}
-	
-	// Force a render update if we have the required components
-	if (renderer && camera && gameState.scene) {
-		console.log('Forcing render update after cleanup');
-		renderer.render(gameState.scene, camera);
-	} else {
-		console.warn('Cannot force render - missing renderer, camera, or scene');
-	}
-	
-	// Try the renderScene function as a fallback
-	if (typeof gameState.renderScene === 'function') {
-		console.log('Calling renderScene function');
-		gameState.renderScene();
-	}
-	
-	// Add a delayed re-render for safety
-	setTimeout(() => {
-		if (typeof gameState.renderScene === 'function') {
-			console.log('Delayed re-render triggered');
-			gameState.renderScene();
-		} else if (renderer && camera && gameState.scene) {
-			console.log('Delayed direct render triggered');
-			renderer.render(gameState.scene, camera);
-		}
-	}, 50);
-	
-	console.log('Successfully transitioned to chess phase', gameState.turnPhase);
-	
-	// Return a timeout promise that resolves after the transition
-	return new Promise(resolve => setTimeout(resolve, 100));
-}
-/**
- * Enhanced version of tetromino placement with server integration
- * @param {Object} gameState - The current game state
- * @returns {Promise<boolean>} Promise that resolves to true if placement succeeded, false otherwise
- */
-export function enhancedPlaceTetromino(gameState) {
-	if (!gameState.currentTetromino) {
-		console.log('No current tetromino to place');
-		return Promise.resolve(false);
-	}
-
-	try {
-		// Clone the current tetromino for sending to server
-		const tetrominoData = {
-			type: gameState.currentTetromino.type,
-			shape: gameState.currentTetromino.shape,
-			position: { ...gameState.currentTetromino.position },
-			player: gameState.currentPlayer
-		};
-
-		// Store position for potential explosion effect
-		const explosionX = gameState.currentTetromino.position.x;
-		const explosionZ = gameState.currentTetromino.position.z;
-
-		console.log('Attempting to place tetromino:', tetrominoData);
-
-		// Check if we can place the tetromino
-		// Check if adjacent to existing cells
-		const isAdjacent = boardFunctions.isTetrominoAdjacentToExistingCells(
-			gameState, 
-			gameState.currentTetromino.shape,
-			gameState.currentTetromino.position.x,
-			gameState.currentTetromino.position.z
-		);
-
-		if (!isAdjacent) {
-			console.log('Tetromino must be adjacent to existing cells');
-			
-			// Use the cleanup function and wait for it to complete
-			return cleanupTetrominoAndTransitionToChess(
-				gameState,
-				'Tetromino must be adjacent to existing cells',
-				explosionX,
-				explosionZ
-			).then(() => false);
-		}
-
-		// First check if network is connected
-		if (!NetworkManager.isConnected()) {
-			console.error('Network is not connected. Attempting to reconnect...');
-			
-			// Import the enhanced-gameCore functions if needed
-			let handleNetworkError;
-			try {
-				// Try to import via the global object first
-				if (typeof window !== 'undefined' && window.enhancedGameCore && window.enhancedGameCore.handleNetworkErrorDuringPlacement) {
-					handleNetworkError = window.enhancedGameCore.handleNetworkErrorDuringPlacement;
-				} else {
-					// Try dynamic import
-					const enhancedGameCore = require('./enhanced-gameCore.js');
-					handleNetworkError = enhancedGameCore.handleNetworkErrorDuringPlacement;
-				}
-			} catch (e) {
-				console.warn('Could not import handleNetworkErrorDuringPlacement, using fallback');
-			}
-			
-			// Use the imported function if available
-			if (typeof handleNetworkError === 'function') {
-				return handleNetworkError(new Error('Not connected to server'), gameState)
-					.then(reconnected => {
-						if (reconnected) {
-							// Try again with new connection
-							console.log('Reconnected to server, retrying tetromino placement');
-							return enhancedPlaceTetromino(gameState);
-						} else {
-							return false;
-						}
-					});
-			} 
-			
-			// Fallback if the import failed
-			return cleanupTetrominoAndTransitionToChess(
-				gameState,
-				'Network connection lost. Please check your connection and try again.',
-				explosionX,
-				explosionZ
-			).then(() => false);
-		}
-
-		// Send tetromino placement to server and return the promise
-		return sendTetrominoPlacementToServer(tetrominoData)
-			.then(response => {
-				if (response && response.success) {
-					console.log('Server accepted tetromino placement');
-					
-					// Successfully placed tetromino, add it to the board locally
-					if (typeof boardFunctions.placeTetromino === 'function') {
-						boardFunctions.placeTetromino(
-							gameState, 
-							(x, z) => showPlacementEffect(x, z, gameState),
-							updateGameStatusDisplay,
-							() => gameState.updateBoardVisuals && gameState.updateBoardVisuals()
-						);
-					}
-					return true;
-				} else {
-					console.error('Server rejected tetromino placement:', response);
-					
-					// Check if this was a network error
-					if (response.reason === 'network_error') {
-						// Import the enhanced-gameCore functions if needed
-						let handleNetworkError;
-						try {
-							// Try to import via the global object first
-							if (typeof window !== 'undefined' && window.enhancedGameCore && window.enhancedGameCore.handleNetworkErrorDuringPlacement) {
-								handleNetworkError = window.enhancedGameCore.handleNetworkErrorDuringPlacement;
-							} else {
-								// Try dynamic import
-								const enhancedGameCore = require('./enhanced-gameCore.js');
-								handleNetworkError = enhancedGameCore.handleNetworkErrorDuringPlacement;
-							}
-						} catch (e) {
-							console.warn('Could not import handleNetworkErrorDuringPlacement, using fallback');
-						}
-						
-						// Use the imported function if available
-						if (typeof handleNetworkError === 'function') {
-							return handleNetworkError(response.error || new Error(response.message), gameState);
-						}
-					}
-					
-					// Show rejection message with details if available
-					const reason = response.details?.reason || response.reason || 'Unknown reason';
-					const message = response.message || response.details?.message || 'Server rejected placement';
-					
-					// Customize message based on reason type
-					let displayMessage = '';
-					if (response.reason === 'validation_error') {
-						displayMessage = `Invalid tetromino placement: ${message}`;
-					} else {
-						displayMessage = `Tetromino placement rejected: ${message}`;
-					}
-					
-					// Use the cleanup function and wait for it to complete
-					return cleanupTetrominoAndTransitionToChess(
-						gameState,
-						displayMessage,
-						explosionX,
-						explosionZ
-					).then(() => false);
-				}
-			})
-			.catch(error => {
-				console.error('Error placing tetromino:', error);
-				
-				// Import the enhanced-gameCore functions if needed
-				let handleNetworkError;
-				try {
-					// Try to import via the global object first
-					if (typeof window !== 'undefined' && window.enhancedGameCore && window.enhancedGameCore.handleNetworkErrorDuringPlacement) {
-						handleNetworkError = window.enhancedGameCore.handleNetworkErrorDuringPlacement;
-					} else {
-						// Try dynamic import
-						const enhancedGameCore = require('./enhanced-gameCore.js');
-						handleNetworkError = enhancedGameCore.handleNetworkErrorDuringPlacement;
-					}
-				} catch (e) {
-					console.warn('Could not import handleNetworkErrorDuringPlacement, using fallback');
-				}
-				
-				// Use the imported function if available
-				if (typeof handleNetworkError === 'function') {
-					return handleNetworkError(error, gameState);
-				}
-				
-				// Fallback if import failed
-				return cleanupTetrominoAndTransitionToChess(
-					gameState,
-					'Error placing tetromino: ' + (error.message || 'Network error'),
-					explosionX, 
-					explosionZ
-				).then(() => false);
-			});
-
-	} catch (error) {
-		console.error('Error placing tetromino:', error);
-		
-		// Use the cleanup function - position might be null if error occurred earlier
-		let explosionX, explosionZ;
-		if (gameState.currentTetromino) {
-			explosionX = gameState.currentTetromino.position.x;
-			explosionZ = gameState.currentTetromino.position.z;
-		}
-		
-		// Use the cleanup function and wait for it to complete
-		return cleanupTetrominoAndTransitionToChess(
-			gameState,
-			'Error placing tetromino: ' + (error.message || 'Unknown error'),
-			explosionX,
-			explosionZ
-		).then(() => false);
-	}
-}
 /**
  * Show drop animation for hard drops
  */
@@ -1255,7 +801,7 @@ export function createTetrominoBlock(x, z, playerType, isGhost = false, heightAb
 	// Get a mesh from object pool
 	const block = objectPool.getTetrominoBlock();
 	
-	// Determine positions - use original coordinates as the board reference point is handled elsewhere
+	// Determine the real coordinates of the block on the board
 	const absPos = translatePosition({x, z}, gameState, true);
 	let absoluteX = absPos.x;
 	let absoluteZ = absPos.z;
@@ -1375,7 +921,7 @@ export function determineInitialTetrominoPosition(gameState) {
 		kingPosition = { x: kingPiece.position.x, z: kingPiece.position.z };
 		kingOrientation = kingPiece.orientation !== undefined ? kingPiece.orientation : 0;
 	} else {
-		console.warn('Tetromino: No king found for player ' + currentPlayer + ', No king, no tetromino');
+		console.log('Tetromino: No king found for player ' + currentPlayer + ', No king, no tetromino', gameState);
 		return null;
 	}
 	
@@ -1389,13 +935,13 @@ export function determineInitialTetrominoPosition(gameState) {
 			kingDirection = { x: 0, z: -1 };
 			break;
 		case 1: // Facing right
-			kingDirection = { x: 1, z: 0 };
+			kingDirection = { x: -1, z: 0 };
 			break;
 		case 2: // Facing down
 			kingDirection = { x: 0, z: 1 };
 			break;
 		case 3: // Facing left
-			kingDirection = { x: -1, z: 0 };
+			kingDirection = { x: 1, z: 0 };
 			break;
 		default:
 			kingDirection = { x: 0, z: -1 }; // Default to facing up
@@ -1464,6 +1010,13 @@ export function initializeNewTetromino(gameState, type) {
 	// Get the initial position based on king
 	const initialPosition = determineInitialTetrominoPosition(gameState);
 	
+	console.log('Initial tetromino position', initialPosition);
+
+	if(!initialPosition) {
+		console.log('Tetromino: No initial position found, returning null');
+		return null;
+	}
+
 	// Determine shape based on type
 	let shape;
 	switch (type) {
@@ -1554,45 +1107,107 @@ export function renderTetromino(gameState) {
 			gameState.tetrominoGroup.remove(child);
 		}
 		
-		
 		const tetromino = gameState.currentTetromino;
 		const shape = tetromino.shape;
 		const heightAboveBoard = tetromino.heightAboveBoard || 0;
 		
 		// Log current state for debugging
-		console.log(`Rendering tetromino at absolute position (${tetromino.position.x}, ${tetromino.position.z}), height: ${heightAboveBoard}`);
+		console.log(`Rendering tetromino at board position (${tetromino.position.x}, ${tetromino.position.z}), height: ${heightAboveBoard}`);
 		
-		// Position the tetromino group at 0,0,0 (THREE.js scene origin)
-		gameState.tetrominoGroup.position.set(0, 0, 0);
+		// Get absolute world position for the tetromino origin
+		// All operations use relative coordinates but render with absolute
+		const absPos = translatePosition(tetromino.position, gameState, true);
+		console.log(`Translated to absolute position: (${absPos.x}, ${absPos.z})`);
+		
+		// Create a single THREE.Group for the entire tetromino shape
+		const THREE = getTHREE();
+		const shapeGroup = new THREE.Group();
+		
+		// Position the shape group at the absolute position
+		shapeGroup.position.set(absPos.x, heightAboveBoard, absPos.z);
+		
+		// Get material color based on tetromino type
+		let color = 0xcccccc; // Default gray
+		
+		// Try to use the centralized player color function first
+		if (boardFunctions && boardFunctions.getPlayerColor) {
+			try {
+				color = boardFunctions.getPlayerColor(tetromino.type, gameState, true);
+			} catch (err) {
+				console.warn('Error using centralized color function, falling back to defaults:', err);
+			}
+		}
+		
+		// Fallback to traditional coloring if needed
+		if (color === 0xcccccc) {
+			// Map tetromino shape letters to colors
+			switch (tetromino.type) {
+				case 'I': color = 0x00ffff; break; // Cyan
+				case 'J': color = 0x0000ff; break; // Blue
+				case 'L': color = 0xff8000; break; // Orange
+				case 'O': color = 0xffff00; break; // Yellow
+				case 'S': color = 0x00ff00; break; // Green
+				case 'T': color = 0x800080; break; // Purple
+				case 'Z': color = 0xff0000; break; // Red
+				default: color = 0x888888; break; // Gray for unknown types
+			}
+		}
 		
 		// Create blocks for each cell of the tetromino
 		for (let z = 0; z < shape.length; z++) {
 			for (let x = 0; x < shape[z].length; x++) {
 				if (shape[z][x] === 1) {
-					// Calculate the absolute position of the block on the board
-					const relativePos = {
-						x: tetromino.position.x + x,
-						z: tetromino.position.z + z
+					// Get block from object pool
+					const block = objectPool.getTetrominoBlock();
+					
+					// Update material properties
+					if (block.material) {
+						block.material.color.setHex(color);
+						block.material.transparent = false;
+						block.material.opacity = 1.0;
+						block.material.wireframe = false;
+						block.material.emissive = block.material.color;
+						block.material.emissiveIntensity = 0.2;
+						block.material.needsUpdate = true;
+					}
+					
+					// Position each block RELATIVE to the shape group origin
+					// This is the key change - blocks are positioned relative to the shape
+					block.position.set(x, 0, z);
+					
+					// Apply other properties
+					block.castShadow = true;
+					block.receiveShadow = true;
+					
+					// Store user data for identification
+					block.userData = {
+						type: 'tetrominoBlock',
+						playerType: tetromino.type,
+						relativePosition: { x, z },
+						heightAboveBoard: heightAboveBoard,
+						pooledObject: true
 					};
 					
-					// Create tetromino block using the relative position
-					const block = createTetrominoBlock(
-						relativePos.x,
-						relativePos.z,
-						tetromino.type, 
-						false, 
-						heightAboveBoard,
-						gameState
-					);
-					
-					gameState.tetrominoGroup.add(block);
+					// Add block to the shape group
+					shapeGroup.add(block);
 				}
 			}
 		}
 		
+		// Add the entire shape group to the tetromino group
+		gameState.tetrominoGroup.add(shapeGroup);
+		
+		// Store the shape group reference for easy access
+		gameState.currentTetrominoShapeGroup = shapeGroup;
+		
 		// If we should show ghost piece
 		if (gameState.showTetrisGhost && heightAboveBoard === 0) {
 			renderGhostPiece(gameState, tetromino);
+		}
+		
+		// Force a scene update if renderer and camera are available
+		if (window.renderer && window.scene && window.camera) {
+			window.renderer.render(window.scene, window.camera);
 		}
 		
 		return true;
@@ -1632,35 +1247,83 @@ function renderGhostPiece(gameState, tetromino) {
 	
 	// Only show ghost if it's different from current position
 	if (ghostPos.z > tetromino.position.z) {
-		const shape = tetromino.shape;
+		// Get absolute world position for the ghost tetromino origin
+		const absPos = translatePosition(ghostPos, gameState, true);
+		
+		// Create a shape group for the ghost
+		const THREE = getTHREE();
+		const ghostGroup = new THREE.Group();
+		
+		// Position the ghost group at the absolute position
+		ghostGroup.position.set(absPos.x, 0.1, absPos.z); // Small Y offset for ghost
+		
+		// Get material color based on tetromino type
+		let color = 0xcccccc; // Default gray
+		if (boardFunctions && boardFunctions.getPlayerColor) {
+			try {
+				color = boardFunctions.getPlayerColor(tetromino.type, gameState, true);
+			} catch (err) {
+				console.warn('Error using centralized color function for ghost:', err);
+			}
+		}
+		
+		// Fallback
+		if (color === 0xcccccc) {
+			// Map tetromino shape letters to colors
+			switch (tetromino.type) {
+				case 'I': color = 0x00ffff; break; // Cyan
+				case 'J': color = 0x0000ff; break; // Blue
+				case 'L': color = 0xff8000; break; // Orange
+				case 'O': color = 0xffff00; break; // Yellow
+				case 'S': color = 0x00ff00; break; // Green
+				case 'T': color = 0x800080; break; // Purple
+				case 'Z': color = 0xff0000; break; // Red
+				default: color = 0x888888; break; // Gray
+			}
+		}
 		
 		// Create ghost blocks
-		for (let z = 0; z < shape.length; z++) {
-			for (let x = 0; x < shape[z].length; x++) {
-				if (shape[z][x] === 1) {
-					// Calculate absolute position on board
-					const absoluteBlockPos = {
-						x: ghostPos.x + x,
-						z: ghostPos.z + z
+		for (let z = 0; z < tetromino.shape.length; z++) {
+			for (let x = 0; x < tetromino.shape[z].length; x++) {
+				if (tetromino.shape[z][x] === 1) {
+					// Get block from object pool
+					const block = objectPool.getTetrominoBlock();
+					
+					// Set ghost material properties
+					if (block.material) {
+						block.material.color.setHex(color);
+						block.material.transparent = true;
+						block.material.opacity = 0.3;
+						block.material.wireframe = true;
+						block.material.emissive = { r: 0, g: 0, b: 0 };
+						block.material.emissiveIntensity = 0;
+						block.material.needsUpdate = true;
+					}
+					
+					// Position relative to ghost group
+					block.position.set(x, 0, z);
+					
+					// Disable shadows for ghost
+					block.castShadow = false;
+					block.receiveShadow = false;
+					
+					// Store user data
+					block.userData = {
+						type: 'ghostBlock',
+						playerType: tetromino.type,
+						relativePosition: { x, z },
+						heightAboveBoard: 0,
+						pooledObject: true
 					};
 					
-					// Convert to relative position using translation function
-					const relativePos = translatePosition(absoluteBlockPos, gameState, false);
-					
-					// Create ghost block with relative position
-					const ghostBlock = createTetrominoBlock(
-						relativePos.x,
-						relativePos.z,
-						tetromino.type, 
-						true, // isGhost = true
-						0,    // heightAboveBoard = 0 for ghost
-						gameState
-					);
-					
-					gameState.tetrominoGroup.add(ghostBlock);
+					// Add to ghost group
+					ghostGroup.add(block);
 				}
 			}
 		}
+		
+		// Add ghost group to tetromino group
+		gameState.tetrominoGroup.add(ghostGroup);
 	}
 }
 
@@ -2160,6 +1823,12 @@ function updateNextPieceHint(gameState) {
 		hintElement.style.color = '#FFA500'; // Orange 
 		hintElement.style.opacity = '0.7';
 	}
+	const nextTetrominoDisplay = document.getElementById('next-tetromino-display');
+	if (nextTetrominoDisplay) {
+		nextTetrominoDisplay.removeEventListener('click', handleNextPieceClick);
+		nextTetrominoDisplay.addEventListener('click', handleNextPieceClick);
+	}
+
 }
 
 /**
@@ -2167,8 +1836,8 @@ function updateNextPieceHint(gameState) {
  * @param {Event} event - The click event
  */
 function handleNextPieceClick(event) {
-	// Get gameState from the caller or context
-	let gameState = event.currentTarget.gameState;
+	// Use the imported gameState singleton instead of getting it from event
+	// let gameState = event.currentTarget.gameState;
 	
 	if (!gameState) {
 		console.error('No gameState available for next piece click handler');
@@ -2177,19 +1846,42 @@ function handleNextPieceClick(event) {
 	
 	// Only proceed if we're in chess phase
 	if (gameState.turnPhase !== 'chess') {
-		console.log('Already in tetris phase, ignoring click', gameState.turnPhase);
+		console.log('Already in tetris phase, changing to chess phase', gameState.turnPhase);
 		// Add a small shake animation to indicate it's not clickable now
+		//alert user to tell them to move their chess piece, with a nice animation
+		const alertElement = document.createElement('div');
+		alertElement.textContent = 'Move your chess piece first';
+		alertElement.style.position = 'fixed';
+		alertElement.style.top = '50%';
+		alertElement.style.left = '50%';
+		alertElement.style.transform = 'translate(-50%, -50%)';
+		alertElement.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
+		alertElement.style.color = 'white';
+		alertElement.style.padding = '10px';
+		alertElement.style.borderRadius = '5px';
+		alertElement.style.zIndex = '1000';
+		alertElement.style.fontFamily = 'Arial, sans-serif';
+		alertElement.style.fontSize = '20px';
+		alertElement.style.animation = 'shake 0.5s ease-in-out';
+		alertElement.style.animationIterationCount = 'infinite';
+		alertElement.style.animationDuration = '0.5s';
+		alertElement.style.animationTimingFunction = 'ease-in-out';
+		alertElement.style.animationDelay = '0s';
+		alertElement.style.animationDirection = 'alternate';
+		document.body.appendChild(alertElement);
+		setTimeout(() => {
+			alertElement.remove();
+		}, 2500);
+		gameState.turnPhase = 'chess';
+		updateGameStatusDisplay();
+		console.log('Changed to chess phase', gameState.turnPhase);
+		//update clickHandler on the next piece display
 		const nextTetrominoDisplay = document.getElementById('next-tetromino-display');
 		if (nextTetrominoDisplay) {
-			nextTetrominoDisplay.style.transition = 'transform 0.1s ease-in-out';
-			nextTetrominoDisplay.style.transform = 'translateX(3px)';
-			setTimeout(() => {
-				nextTetrominoDisplay.style.transform = 'translateX(-3px)';
-				setTimeout(() => {
-					nextTetrominoDisplay.style.transform = 'translateX(0)';
-				}, 100);
-			}, 100);
+			nextTetrominoDisplay.removeEventListener('click', handleNextPieceClick);
+			nextTetrominoDisplay.addEventListener('click', handleNextPieceClick);
 		}
+
 		return;
 	}
 	
@@ -2217,9 +1909,7 @@ function handleNextPieceClick(event) {
 	gameState.turnPhase = 'tetris';
 	
 	// 2. Update game status display if function exists
-	if (typeof updateGameStatusDisplay === 'function') {
-		updateGameStatusDisplay();
-	}
+	updateGameStatusDisplay();
 	
 	// 3. Update the hint text
 	updateNextPieceHint(gameState);
@@ -2227,13 +1917,17 @@ function handleNextPieceClick(event) {
 	// 4. Initialize the next tetromino from the bag
 	gameState.currentTetromino = initializeNextTetromino(gameState);
 	
+	if(!gameState.currentTetromino) {
+		console.log('Tetromino: No current tetromino found, returning');
+		return;
+	}
+
 	// 5. Render the new tetromino
 	renderTetromino(gameState);
 	
 	// 6. If there's a function to handle turn phase changes, call it
-	if (typeof gameState.handleTurnPhaseChange === 'function') {
-		gameState.handleTurnPhaseChange('tetris');
-	}
+	gameState.handleTurnPhaseChange('tetris');
+	
 	
 	// 7. Force a render update if needed
 	if (gameState.renderer && gameState.camera && gameState.scene) {
@@ -2285,3 +1979,545 @@ export const tetrominoModule = {
 	showDropAnimation,
 	sendTetrominoPlacementToServer,
 };
+
+/**
+ * Movement queue system
+ * 
+ * This system handles all tetromino movements in an orderly queue to prevent
+ * race conditions and ensure proper validation and rendering.
+ */
+
+/**
+ * Movement operation types
+ */
+const MOVEMENT_TYPES = {
+	MOVE_X: 'moveX',
+	MOVE_Z: 'moveZ',
+	MOVE_Y: 'moveY',
+	ROTATE: 'rotate',
+	HARD_DROP: 'hardDrop',
+	PLACE: 'place',
+	EXPLODE: 'explode', 
+	CLEANUP: 'cleanup'
+};
+
+/**
+ * Add a movement operation to the queue
+ * @param {string} type - Type of movement (use MOVEMENT_TYPES constants)
+ * @param {Object} params - Parameters for the movement
+ */
+export function queueTetrominoMovement(type, params = {}) {
+	// Don't queue operations if no tetromino exists
+	if (!gameState.currentTetromino && type !== MOVEMENT_TYPES.CLEANUP) {
+		console.log(`Cannot queue ${type} operation - no tetromino exists`);
+		return false;
+	}
+	
+	// Don't queue operations if we're not in tetris phase
+	if (gameState.turnPhase !== 'tetris' && type !== MOVEMENT_TYPES.CLEANUP) {
+		console.log(`Cannot queue ${type} operation - not in tetris phase`);
+		return false;
+	}
+	
+	// Add operation to queue
+	gameState.tetrominoMovementQueue.push({
+		type,
+		params,
+		timestamp: Date.now()
+	});
+	
+	console.log(`Queued ${type} operation`, params);
+	
+	// Start processing the queue if it's not already being processed
+	if (!gameState.isProcessingMovementQueue) {
+		// Use setTimeout to make it async and avoid blocking
+		setTimeout(processTetrominoMovementQueue, 0);
+	}
+	
+	return true;
+}
+
+/**
+ * Process the tetromino movement queue
+ */
+function processTetrominoMovementQueue() {
+	// Check if we're already processing or queue is empty
+	if (gameState.isProcessingMovementQueue || gameState.tetrominoMovementQueue.length === 0) {
+		return;
+	}
+	
+	// Set processing flag
+	gameState.isProcessingMovementQueue = true;
+	
+	try {
+		// Process all operations in the queue
+		while (gameState.tetrominoMovementQueue.length > 0) {
+			// Get the next operation
+			const operation = gameState.tetrominoMovementQueue.shift();
+			
+			// Skip if no tetromino exists (except for cleanup operations)
+			if (!gameState.currentTetromino && operation.type !== MOVEMENT_TYPES.CLEANUP) {
+				console.log(`Skipping ${operation.type} operation - no tetromino exists`);
+				continue;
+			}
+			
+			// Skip if we're not in tetris phase (except for cleanup operations)
+			if (gameState.turnPhase !== 'tetris' && operation.type !== MOVEMENT_TYPES.CLEANUP) {
+				console.log(`Skipping ${operation.type} operation - not in tetris phase`);
+				continue;
+			}
+			
+			console.log(`Processing ${operation.type} operation`, operation.params);
+			
+			// Process the operation
+			switch (operation.type) {
+				case MOVEMENT_TYPES.MOVE_X:
+					processHorizontalMove(true, operation.params.dir);
+					break;
+					
+				case MOVEMENT_TYPES.MOVE_Z:
+					processHorizontalMove(false, operation.params.dir);
+					break;
+					
+				case MOVEMENT_TYPES.MOVE_Y:
+					processVerticalMove(operation.params.height, operation.params.isRelative);
+					break;
+					
+				case MOVEMENT_TYPES.ROTATE:
+					processRotate(operation.params.dir);
+					break;
+					
+				case MOVEMENT_TYPES.HARD_DROP:
+					processHardDrop();
+					break;
+					
+				case MOVEMENT_TYPES.PLACE:
+					processPlaceTetromino();
+					break;
+					
+				case MOVEMENT_TYPES.EXPLODE:
+					processExplosion(operation.params.x, operation.params.z, operation.params.message);
+					break;
+					
+				case MOVEMENT_TYPES.CLEANUP:
+					processCleanup(operation.params.message);
+					break;
+					
+				default:
+					console.warn(`Unknown operation type: ${operation.type}`);
+			}
+		}
+		
+		// After processing, render the tetromino if it still exists
+		if (gameState.currentTetromino && gameState.pendingRender) {
+			renderTetromino(gameState);
+			gameState.pendingRender = false;
+		}
+	} catch (error) {
+		console.error('Error processing movement queue:', error);
+	} finally {
+		// Clear the processing flag
+		gameState.isProcessingMovementQueue = false;
+	}
+}
+
+/**
+ * Process horizontal movement (X or Z axis)
+ * @param {boolean} isXAxis - Whether to move along X axis (true) or Z axis (false)
+ * @param {number} dir - Direction to move (-1 or 1)
+ */
+function processHorizontalMove(isXAxis, dir) {
+	// Skip if no tetromino
+	if (!gameState.currentTetromino) return;
+	
+	// Calculate new position
+	const newPos = {
+		x: isXAxis ? gameState.currentTetromino.position.x + dir : gameState.currentTetromino.position.x,
+		z: isXAxis ? gameState.currentTetromino.position.z : gameState.currentTetromino.position.z + dir
+	};
+	
+	// Check if we're at or near board level (heightAboveBoard <= 1)
+	if (gameState.currentTetromino.heightAboveBoard <= 1) {
+		// Check if the tetromino would be adjacent to existing cells at the new position
+		const isAdjacent = boardFunctions.isTetrominoAdjacentToExistingCells(
+			gameState,
+			gameState.currentTetromino.shape,
+			newPos.x,
+			newPos.z
+		);
+		
+		// If not adjacent and at board level, queue an explosion
+		if (!isAdjacent) {
+			console.log(`Horizontal move rejected - tetromino not adjacent at new position`);
+			
+			// Queue explosion instead
+			queueTetrominoMovement(MOVEMENT_TYPES.EXPLODE, {
+				x: gameState.currentTetromino.position.x,
+				z: gameState.currentTetromino.position.z,
+				message: 'Tetromino must connect to existing cells'
+			});
+			
+			return;
+		}
+	}
+	
+	// Update position
+	gameState.currentTetromino.position = newPos;
+	
+	// Mark render as pending
+	gameState.pendingRender = true;
+}
+
+/**
+ * Process vertical movement (Y axis)
+ * @param {number} height - Target height
+ * @param {boolean} isRelative - Whether height is relative to current height
+ */
+function processVerticalMove(height, isRelative) {
+	// Skip if no tetromino
+	if (!gameState.currentTetromino) return;
+	
+	// Calculate target height
+	let targetHeight = height;
+	if (isRelative) {
+		targetHeight = gameState.currentTetromino.heightAboveBoard + height;
+	}
+	
+	// Cap maximum height
+	if (targetHeight > gameState.TETROMINO_START_HEIGHT) {
+		targetHeight = gameState.TETROMINO_START_HEIGHT;
+	}
+	
+	// Check if we're trying to go to or below board level
+	if (targetHeight <= 1) {
+		// Check for collisions with cells below
+		const shape = gameState.currentTetromino.shape;
+		const posX = gameState.currentTetromino.position.x;
+		const posZ = gameState.currentTetromino.position.z;
+		
+		// Check each cell for collisions
+		for (let z = 0; z < shape.length; z++) {
+			for (let x = 0; x < shape[z].length; x++) {
+				if (shape[z][x] === 1) {
+					// Check if position is occupied
+					const boardX = posX + x;
+					const boardZ = posZ + z;
+					const key = `${boardX},${boardZ}`;
+					
+					if (gameState.board && gameState.board.cells && 
+						gameState.board.cells[key] !== undefined && 
+						gameState.board.cells[key] !== null) {
+						console.log(`Vertical move rejected - collision at (${boardX}, ${boardZ})`);
+						return;
+					}
+				}
+			}
+		}
+		
+		// Check adjacency when at board level
+		if (targetHeight <= 1) {
+			const isAdjacent = boardFunctions.isTetrominoAdjacentToExistingCells(
+				gameState,
+				shape,
+				posX,
+				posZ
+			);
+			
+			// If not adjacent and trying to land, queue an explosion
+			if (!isAdjacent) {
+				console.log(`Vertical move rejected - tetromino not adjacent at landing position`);
+				
+				// Set height to 0 first so explosion happens at board level
+				gameState.currentTetromino.heightAboveBoard = 0;
+				
+				// Queue explosion
+				queueTetrominoMovement(MOVEMENT_TYPES.EXPLODE, {
+					x: posX,
+					z: posZ,
+					message: 'Tetromino must connect to existing cells'
+				});
+				
+				return;
+			}
+		}
+	}
+	
+	// Update height
+	gameState.currentTetromino.heightAboveBoard = targetHeight;
+	
+	// Mark render as pending
+	gameState.pendingRender = true;
+}
+
+/**
+ * Process rotation
+ * @param {number} dir - Direction (1 for clockwise, -1 for counterclockwise)
+ */
+function processRotate(dir) {
+	// Skip if no tetromino
+	if (!gameState.currentTetromino) return;
+	
+	// Make a copy of the current shape
+	const currentShape = gameState.currentTetromino.shape;
+	const size = currentShape.length;
+	
+	// Create a new rotated shape
+	const newShape = [];
+	for (let i = 0; i < size; i++) {
+		newShape.push(new Array(size).fill(0));
+	}
+	
+	// Rotate the shape matrix
+	for (let z = 0; z < size; z++) {
+		for (let x = 0; x < size; x++) {
+			if (dir === 1) { // Clockwise
+				newShape[x][size - 1 - z] = currentShape[z][x];
+			} else { // Counterclockwise
+				newShape[size - 1 - x][z] = currentShape[z][x];
+			}
+		}
+	}
+	
+	// Check adjacency if at board level
+	if (gameState.currentTetromino.heightAboveBoard <= 1) {
+		const isAdjacent = boardFunctions.isTetrominoAdjacentToExistingCells(
+			gameState,
+			newShape,
+			gameState.currentTetromino.position.x,
+			gameState.currentTetromino.position.z
+		);
+		
+		// If not adjacent at board level, reject rotation
+		if (!isAdjacent) {
+			console.log(`Rotation rejected - would not be adjacent after rotation`);
+			
+			// Queue explosion if at board level
+			if (gameState.currentTetromino.heightAboveBoard === 0) {
+				queueTetrominoMovement(MOVEMENT_TYPES.EXPLODE, {
+					x: gameState.currentTetromino.position.x,
+					z: gameState.currentTetromino.position.z,
+					message: 'Tetromino must connect to existing cells'
+				});
+			}
+			
+			return;
+		}
+	}
+	
+	// Update shape
+	gameState.currentTetromino.shape = newShape;
+	
+	// Mark render as pending
+	gameState.pendingRender = true;
+}
+
+/**
+ * Process hard drop
+ */
+function processHardDrop() {
+	// Skip if no tetromino
+	if (!gameState.currentTetromino) return;
+	
+	// First drop to board level
+	gameState.currentTetromino.heightAboveBoard = 0;
+	
+	// Check adjacency
+	const isAdjacent = boardFunctions.isTetrominoAdjacentToExistingCells(
+		gameState,
+		gameState.currentTetromino.shape,
+		gameState.currentTetromino.position.x,
+		gameState.currentTetromino.position.z
+	);
+	
+	// If not adjacent, queue explosion
+	if (!isAdjacent) {
+		console.log(`Hard drop rejected - tetromino not adjacent at landing position`);
+		
+		// Queue explosion
+		queueTetrominoMovement(MOVEMENT_TYPES.EXPLODE, {
+			x: gameState.currentTetromino.position.x,
+			z: gameState.currentTetromino.position.z,
+			message: 'Tetromino must connect to existing cells'
+		});
+		
+		return;
+	}
+	
+	// Move forward a bit (Z+)
+	const stepsToMove = 10;
+	for (let i = 0; i < stepsToMove; i++) {
+		// Update position
+		gameState.currentTetromino.position.z += 1;
+		
+		// Check adjacency after movement
+		const stillAdjacent = boardFunctions.isTetrominoAdjacentToExistingCells(
+			gameState,
+			gameState.currentTetromino.shape,
+			gameState.currentTetromino.position.x,
+			gameState.currentTetromino.position.z
+		);
+		
+		// If lost adjacency, revert the last move and stop
+		if (!stillAdjacent) {
+			console.log(`Hard drop stopped - lost adjacency at step ${i+1}`);
+			gameState.currentTetromino.position.z -= 1;
+			break;
+		}
+	}
+	
+	// Show drop animation
+	showDropAnimation(gameState);
+	
+	// Mark render as pending
+	gameState.pendingRender = true;
+	
+	// Queue placement
+	queueTetrominoMovement(MOVEMENT_TYPES.PLACE, {});
+}
+
+/**
+ * Process tetromino placement
+ */
+function processPlaceTetromino() {
+	// Skip if no tetromino
+	if (!gameState.currentTetromino) return;
+	
+	// Place the tetromino on the board
+	const shape = gameState.currentTetromino.shape;
+	const posX = gameState.currentTetromino.position.x;
+	const posZ = gameState.currentTetromino.position.z;
+	const player = gameState.currentPlayer;
+	
+	console.log(`Placing tetromino at (${posX}, ${posZ})`);
+	
+	// Ensure board structure exists
+	if (!gameState.board) {
+		gameState.board = {
+			cells: {},
+			minX: 0,
+			maxX: 32,
+			minZ: 0,
+			maxZ: 32,
+			width: 33,
+			height: 33
+		};
+	}
+	
+	if (!gameState.board.cells) {
+		gameState.board.cells = {};
+	}
+	
+	// Place each block on the board
+	for (let z = 0; z < shape.length; z++) {
+		for (let x = 0; x < shape[z].length; x++) {
+			if (shape[z][x] === 1) {
+				const boardX = posX + x;
+				const boardZ = posZ + z;
+				
+				// Set the cell
+				const key = `${boardX},${boardZ}`;
+				gameState.board.cells[key] = {
+					type: 'tetromino',
+					player: player
+				};
+				
+				console.log(`Placed block at (${boardX}, ${boardZ})`);
+			}
+		}
+	}
+	
+	// Display placement effect
+	showPlacementEffect(posX, posZ, gameState);
+	
+	// Switch to chess phase
+	gameState.turnPhase = 'chess';
+	
+	// Update game status display
+	if (typeof window.updateGameStatusDisplay === 'function') {
+		window.updateGameStatusDisplay();
+	}
+	
+	// Clear current tetromino
+	gameState.currentTetromino = null;
+	
+	// Update the board visuals
+	if (typeof window.updateBoardVisuals === 'function') {
+		window.updateBoardVisuals();
+	}
+}
+
+/**
+ * Process explosion
+ * @param {number} x - X position for explosion
+ * @param {number} z - Z position for explosion
+ * @param {string} message - Message to display
+ */
+function processExplosion(x, z, message) {
+	// Show explosion
+	showExplosionAnimation(x, z, gameState);
+	
+	// Queue cleanup
+	queueTetrominoMovement(MOVEMENT_TYPES.CLEANUP, {
+		message: message || 'Tetromino exploded'
+	});
+}
+
+/**
+ * Process cleanup
+ * @param {string} message - Message to display
+ */
+function processCleanup(message) {
+	// Show message
+	if (message && typeof showToastMessage === 'function') {
+		showToastMessage(message);
+	}
+	
+	// Remove the current tetromino
+	if (gameState.currentTetrominoShapeGroup) {
+		if (gameState.tetrominoGroup) {
+			gameState.tetrominoGroup.remove(gameState.currentTetrominoShapeGroup);
+		}
+		gameState.currentTetrominoShapeGroup = null;
+	}
+	
+	// Clear current tetromino
+	gameState.currentTetromino = null;
+	
+	// Switch to chess phase
+	gameState.turnPhase = 'chess';
+	
+	// Update game status display
+	if (typeof window.updateGameStatusDisplay === 'function') {
+		window.updateGameStatusDisplay();
+	}
+}
+
+// Update the existing functions to use the queue system:
+
+export function moveTetrominoX(dir) {
+	return queueTetrominoMovement(MOVEMENT_TYPES.MOVE_X, { dir });
+}
+
+export function moveTetrominoZ(dir) {
+	return queueTetrominoMovement(MOVEMENT_TYPES.MOVE_Z, { dir });
+}
+
+export function moveTetrominoY(height, isRelative = true) {
+	return queueTetrominoMovement(MOVEMENT_TYPES.MOVE_Y, { height, isRelative });
+}
+
+export function rotateTetromino(dir) {
+	return queueTetrominoMovement(MOVEMENT_TYPES.ROTATE, { dir });
+}
+
+export function hardDropTetromino() {
+	return queueTetrominoMovement(MOVEMENT_TYPES.HARD_DROP, {});
+}
+
+export function cleanupTetrominoAndTransitionToChess(gameState, message, x, z) {
+	return queueTetrominoMovement(MOVEMENT_TYPES.EXPLODE, { x, z, message });
+}
+
+export function enhancedPlaceTetromino() {
+	return queueTetrominoMovement(MOVEMENT_TYPES.PLACE, {});
+}

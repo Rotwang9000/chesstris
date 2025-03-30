@@ -721,14 +721,6 @@ export function updateUnifiedPlayerBar(gameState) {
 		});
 		playerContainer.appendChild(waitingMessage);
 	}
-	
-	// Update Game ID when a game ID is available
-	const urlParams = new URLSearchParams(window.location.search);
-	const gameId = urlParams.get('game');
-	const gameIdInput = document.getElementById('sidebar-game-id-display');
-	if (gameIdInput && gameId) {
-		gameIdInput.value = gameId;
-	}
 }
 
 /**
