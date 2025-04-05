@@ -606,7 +606,7 @@ function renderBoard(gameState, boardGroup, createFloatingIsland, THREE) {
 				cellsReused++;
 				
 				// Position the cell relative to the center marker using translation functions
-				const relativePosition = translatePosition({x, z}, gameState, false);
+				const relativePosition = {x, z};
 				existingCell.position.x = relativePosition.x;
 				existingCell.position.z = relativePosition.z;
 			} else {
@@ -683,10 +683,10 @@ function renderBoard(gameState, boardGroup, createFloatingIsland, THREE) {
 					}
 					
 					// Get relative position from the center marker using translation functions
-					const relativePosition = translatePosition({x, z}, gameState, false);
+					// const relativePosition = {x, z};
 					
 					// Create the cell mesh
-					const newCell = createFloatingIsland(
+					/*const newCell = createFloatingIsland(
 						relativePosition.x,   // Position relative to the center marker
 						relativePosition.z, 
 						material, 
@@ -706,7 +706,7 @@ function renderBoard(gameState, boardGroup, createFloatingIsland, THREE) {
 					// Add to board group
 					if (!boardGroup.children.includes(newCell)) {
 						boardGroup.add(newCell);
-					}
+					}*/
 					
 					cellsCreated++;
 				} catch (error) {
@@ -824,6 +824,8 @@ function findPlayerKingPosition(gameState) {
  * @param {Function} createTetrominoBlock - Function to create tetromino blocks
  */
 function handleTetrisPhaseClick(gameState, updateGameStatusDisplay, updateBoardVisuals, tetrominoGroup, createTetrominoBlock) {
+	console.log("Debug: Changed to TETRIS phase");
+
 	gameState.turnPhase = 'tetris';
 	
 	// Create a new tetromino if none exists
@@ -845,7 +847,6 @@ function handleTetrisPhaseClick(gameState, updateGameStatusDisplay, updateBoardV
 	// Render the tetromino
 	renderTetromino(gameState, gameState.currentTetromino, tetrominoGroup, createTetrominoBlock);
 	
-	console.log("Debug: Switched to TETRIS phase");
 }
 
 /**
@@ -936,8 +937,8 @@ function createChessPiece(gameState, x, z, pieceType, playerIdent, ourPlayerIden
 		}
 		
 		// Position the piece group relative to the board center using translation functions
-		const relativePosition = translatePosition({x, z}, gameState, false);
-		pieceGroup.position.set(relativePosition.x, 0, relativePosition.z);
+		const absPos = translatePosition({x, z}, gameState, true);
+		pieceGroup.position.set(absPos.x, 0, absPos.z);
 		
 		// Store metadata for identification if not already set by the creator
 		if (!pieceGroup.userData || !pieceGroup.userData.type) {
@@ -989,8 +990,8 @@ function createChessPiece(gameState, x, z, pieceType, playerIdent, ourPlayerIden
 		fallbackGroup.add(fallbackMesh);
 		
 		// Position the error mesh using translation functions
-		const fallbackPosition = translatePosition({x, z}, gameState, false);
-		fallbackGroup.position.set(fallbackPosition.x, 0, fallbackPosition.z);
+		const absPos = translatePosition({x, z}, gameState, true);
+		fallbackGroup.position.set(absPos.x, 0, absPos.z);
 		fallbackGroup.visible = true;
 		
 		return fallbackGroup;
@@ -1898,7 +1899,7 @@ function getPieceForPlayer(gameState, playerId, pieceType) {
 	return playerPieces.filter(piece => piece.type.toLowerCase() === pieceType.toLowerCase());
 }
 
-function getPlayersKing(gameState, playerId, realCoordinates = false){
+function getPlayersKing(gameState, playerId, absoluteCoordinates = false){
 	const arrKing = getPieceForPlayer(gameState, playerId, 'king');
 	if (arrKing.length === 0) {
 		console.warn('No king found for player ' + playerId, gameState);
@@ -1907,13 +1908,13 @@ function getPlayersKing(gameState, playerId, realCoordinates = false){
 	
 	const king = arrKing[0];
 	
-	if (realCoordinates) {
-		// Use the translation function to convert to relative position
-		const relativeKing = { ...king }; // Clone the king object to avoid modifying the original
-		relativeKing.position = translatePosition(king.position, gameState, false); // Convert to relative position
-		return relativeKing;
+	if (absoluteCoordinates) {
+		// Use the translation function to convert to absolute position
+		const absoluteKing = { ...king }; // Clone the king object to avoid modifying the original
+		absoluteKing.position = translatePosition(king.position, gameState, true); // Convert to absolute position
+		return absoluteKing;
 	} else {
-		return king; // Return the king with absolute coordinates
+		return king; // Return the king with relative coordinates
 	}
 }
 
@@ -2000,6 +2001,522 @@ function canCaptureOpponentPiece(gameState, playerId) {
 	return analysis.possibleCaptures > 0;
 }
 
+/**
+ * Synchronizes the visual board with an updated state, handling animations for moved/removed cells
+ * @param {Object} gameState - The current game state
+ * @param {Object} newBoardState - The new board state to sync with
+ * @param {Object} boardGroup - THREE.js group containing board elements
+ * @param {Object} chessPiecesGroup - THREE.js group containing chess pieces
+ * @param {Object} THREE - THREE.js library
+ * @param {Function} animateRemoval - Function to animate cell removal
+ * @param {Function} animateMovement - Function to animate cell movement
+ * @returns {Object} Stats about the synchronization operation
+ */
+function synchronizeBoardState(
+	gameState, 
+	newBoardState, 
+	boardGroup, 
+	chessPiecesGroup, 
+	THREE, 
+	animateRemoval, 
+	animateMovement
+) {
+	console.log("Synchronizing board state with updates...");
+	const startTime = performance.now();
+	
+	// Clone current state for comparison
+	const currentCells = { ...gameState.board.cells };
+	const currentPieces = [...(gameState.chessPieces || [])];
+	
+	// Track changes for statistics and debugging
+	const stats = {
+		cellsAdded: 0,
+		cellsRemoved: 0,
+		cellsMoved: 0,
+		piecesAdded: 0,
+		piecesRemoved: 0,
+		piecesMoved: 0
+	};
+	
+	// First, extract chess pieces from the new board state
+	const newPieces = extractChessPiecesFromCells(newBoardState);
+	
+	// Create a map of current pieces by ID for quick lookup
+	const currentPiecesMap = {};
+	currentPieces.forEach(piece => {
+		// Generate a consistent ID if one doesn't exist
+		const pieceId = piece.id || `${piece.player}-${piece.type}-${piece.position.x}-${piece.position.z}`;
+		currentPiecesMap[pieceId] = piece;
+	});
+	
+	// Create a map of new pieces by ID
+	const newPiecesMap = {};
+	newPieces.forEach(piece => {
+		const pieceId = piece.id || `${piece.player}-${piece.type}-${piece.position.x}-${piece.position.z}`;
+		piece.id = pieceId; // Ensure ID is set
+		newPiecesMap[pieceId] = piece;
+	});
+	
+	// Process chess pieces - first find pieces that were removed or moved
+	for (const pieceId in currentPiecesMap) {
+		const currentPiece = currentPiecesMap[pieceId];
+		const newPiece = newPiecesMap[pieceId];
+		
+		if (!newPiece) {
+			// Piece was removed
+			console.log(`Piece removed: ${pieceId}`);
+			stats.piecesRemoved++;
+			
+			// Find the visual representation in the chess pieces group
+			const pieceObject = chessPiecesGroup.children.find(obj => 
+				obj.userData && obj.userData.id === pieceId
+			);
+			
+			if (pieceObject) {
+				if (typeof animateRemoval === 'function') {
+					// Animate removal if in visual range
+					const isInVisualRange = isPositionInVisualRange(
+						currentPiece.position.x, 
+						currentPiece.position.z, 
+						gameState
+					);
+					
+					if (isInVisualRange) {
+						animateRemoval(pieceObject, () => {
+							// Remove after animation completes
+							chessPiecesGroup.remove(pieceObject);
+							disposeObject3D(pieceObject);
+						});
+					} else {
+						// Remove immediately if not in visual range
+						chessPiecesGroup.remove(pieceObject);
+						disposeObject3D(pieceObject);
+					}
+				} else {
+					// No animation function, remove immediately
+					chessPiecesGroup.remove(pieceObject);
+					disposeObject3D(pieceObject);
+				}
+			}
+		} else if (
+			currentPiece.position.x !== newPiece.position.x || 
+			currentPiece.position.z !== newPiece.position.z
+		) {
+			// Piece moved
+			console.log(`Piece moved: ${pieceId} from (${currentPiece.position.x}, ${currentPiece.position.z}) to (${newPiece.position.x}, ${newPiece.position.z})`);
+			stats.piecesMoved++;
+			
+			// Find the visual representation
+			const pieceObject = chessPiecesGroup.children.find(obj => 
+				obj.userData && obj.userData.id === pieceId
+			);
+			
+			if (pieceObject) {
+				const isInVisualRange = isPositionInVisualRange(
+					currentPiece.position.x, 
+					currentPiece.position.z, 
+					gameState
+				) || isPositionInVisualRange(
+					newPiece.position.x, 
+					newPiece.position.z, 
+					gameState
+				);
+				
+				// Get absolute positions for animation
+				const startPos = translatePosition(
+					currentPiece.position, 
+					gameState, 
+					true
+				);
+				
+				const endPos = translatePosition(
+					newPiece.position, 
+					gameState, 
+					true
+				);
+				
+				if (typeof animateMovement === 'function' && isInVisualRange) {
+					// Animate movement
+					animateMovement(
+						pieceObject,
+						startPos,
+						endPos,
+						() => {
+							// Update metadata after animation
+							pieceObject.userData.position = { ...newPiece.position };
+						}
+					);
+				} else {
+					// No animation, update position immediately
+					pieceObject.position.set(endPos.x, pieceObject.position.y, endPos.z);
+					pieceObject.userData.position = { ...newPiece.position };
+				}
+			}
+		}
+	}
+	
+	// Add new pieces that didn't exist before
+	for (const pieceId in newPiecesMap) {
+		if (!currentPiecesMap[pieceId]) {
+			const newPiece = newPiecesMap[pieceId];
+			console.log(`New piece added: ${pieceId} at (${newPiece.position.x}, ${newPiece.position.z})`);
+			stats.piecesAdded++;
+			
+			// Create visual representation for the new piece
+			const pieceObject = createChessPiece(
+				gameState,
+				newPiece.position.x,
+				newPiece.position.z,
+				newPiece.type,
+				newPiece.player,
+				gameState.myPlayerId,
+				newPiece.orientation,
+				THREE
+			);
+			
+			if (pieceObject) {
+				// Set the ID in userData
+				pieceObject.userData.id = pieceId;
+				
+				// Add to the chess pieces group
+				chessPiecesGroup.add(pieceObject);
+				
+				// Animate appearance if in visual range
+				const isInVisualRange = isPositionInVisualRange(
+					newPiece.position.x, 
+					newPiece.position.z, 
+					gameState
+				);
+				
+				if (isInVisualRange && typeof animateMovement === 'function') {
+					// Simple scale-up animation for new pieces
+					pieceObject.scale.set(0.01, 0.01, 0.01);
+					animateMovement(
+						pieceObject,
+						null, // No position change
+						null,
+						null,
+						{
+							duration: 0.5,
+							scaleFrom: { x: 0.01, y: 0.01, z: 0.01 },
+							scaleTo: { x: 1, y: 1, z: 1 }
+						}
+					);
+				}
+			}
+		}
+	}
+	
+	// Now synchronize the board cells
+	const currentCellsMap = {};
+	for (const key in currentCells) {
+		const [x, z] = key.split(',').map(Number);
+		const cell = currentCells[key];
+		
+		// Generate a cell identity using its content
+		// This is a simplified approach - a real implementation may need a more robust ID system
+		let cellId;
+		
+		if (Array.isArray(cell)) {
+			// Handle array format
+			const contentTypes = cell.map(item => item.type).join('-');
+			cellId = `cell-${contentTypes}-${key}`;
+		} else if (typeof cell === 'object' && cell !== null) {
+			// Handle object format
+			cellId = `cell-${cell.type || 'unknown'}-${key}`;
+		} else {
+			// Handle primitive format
+			cellId = `cell-${cell}-${key}`;
+		}
+		
+		currentCellsMap[key] = {
+			position: { x, z },
+			content: cell,
+			id: cellId
+		};
+	}
+	
+	// Create a map of new cells
+	const newCellsMap = {};
+	for (const key in newBoardState.cells) {
+		const [x, z] = key.split(',').map(Number);
+		const cell = newBoardState.cells[key];
+		
+		// Skip empty cells
+		if (cell === null || cell === undefined) continue;
+		
+		// Generate cell identity
+		let cellId;
+		if (Array.isArray(cell)) {
+			const contentTypes = cell.map(item => item.type).join('-');
+			cellId = `cell-${contentTypes}-${key}`;
+		} else if (typeof cell === 'object' && cell !== null) {
+			cellId = `cell-${cell.type || 'unknown'}-${key}`;
+		} else {
+			cellId = `cell-${cell}-${key}`;
+		}
+		
+		newCellsMap[key] = {
+			position: { x, z },
+			content: cell,
+			id: cellId
+		};
+	}
+	
+	// Detect cells that were removed
+	for (const key in currentCellsMap) {
+		if (!newCellsMap[key]) {
+			// Cell was removed at this position
+			const cellInfo = currentCellsMap[key];
+			console.log(`Cell removed at position ${key}`);
+			stats.cellsRemoved++;
+			
+			// Find corresponding visual cell
+			const cellObject = boardGroup.children.find(obj => 
+				obj.userData && 
+				obj.userData.type === 'cell' && 
+				obj.userData.position && 
+				obj.userData.position.x === cellInfo.position.x && 
+				obj.userData.position.z === cellInfo.position.z
+			);
+			
+			if (cellObject) {
+				const isInVisualRange = isPositionInVisualRange(
+					cellInfo.position.x, 
+					cellInfo.position.z, 
+					gameState
+				);
+				
+				if (typeof animateRemoval === 'function' && isInVisualRange) {
+					// Animate removal
+					animateRemoval(cellObject, () => {
+						boardGroup.remove(cellObject);
+						disposeObject3D(cellObject);
+					});
+				} else {
+					// Remove immediately
+					boardGroup.remove(cellObject);
+					disposeObject3D(cellObject);
+				}
+			}
+		}
+	}
+	
+	// Process cells that need to be added or moved
+	for (const key in newCellsMap) {
+		const newCellInfo = newCellsMap[key];
+		
+		// Check if this is a new cell or an existing one
+		if (!currentCellsMap[key]) {
+			// New cell
+			console.log(`New cell added at position ${key}`);
+			stats.cellsAdded++;
+			
+			// Create new visual cell
+			// Actual cell creation would depend on your specific implementation
+			// This would normally call a createCell function
+		} else {
+			// Cell exists at this position - check if content changed significantly
+			const currentCellInfo = currentCellsMap[key];
+			
+			// Simple comparison - in a real implementation, you'd want deeper comparison
+			// to detect changes in cell properties
+			const contentChanged = JSON.stringify(currentCellInfo.content) !== 
+				JSON.stringify(newCellInfo.content);
+			
+			if (contentChanged) {
+				console.log(`Cell content changed at position ${key}`);
+				
+				// Update cell visual representation
+				const cellObject = boardGroup.children.find(obj => 
+					obj.userData && 
+					obj.userData.type === 'cell' && 
+					obj.userData.position && 
+					obj.userData.position.x === newCellInfo.position.x && 
+					obj.userData.position.z === newCellInfo.position.z
+				);
+				
+				if (cellObject) {
+					// Update cell material or other visual properties based on new content
+					// This would depend on your specific implementation
+				}
+			}
+		}
+	}
+	
+	// Find cells that may have moved to new positions (matching cell IDs at different positions)
+	const cellsByIdMap = {};
+	
+	for (const key in currentCellsMap) {
+		const cellInfo = currentCellsMap[key];
+		if (!cellsByIdMap[cellInfo.id]) {
+			cellsByIdMap[cellInfo.id] = [];
+		}
+		cellsByIdMap[cellInfo.id].push({
+			key,
+			info: cellInfo,
+			state: 'current'
+		});
+	}
+	
+	for (const key in newCellsMap) {
+		const cellInfo = newCellsMap[key];
+		if (!cellsByIdMap[cellInfo.id]) {
+			cellsByIdMap[cellInfo.id] = [];
+		}
+		cellsByIdMap[cellInfo.id].push({
+			key,
+			info: cellInfo,
+			state: 'new'
+		});
+	}
+	
+	// Check for cells that have the same ID but different positions (moved cells)
+	for (const id in cellsByIdMap) {
+		const cells = cellsByIdMap[id];
+		
+		if (cells.length === 2 && 
+			cells[0].state !== cells[1].state && 
+			cells[0].key !== cells[1].key) {
+			
+			// This cell has moved positions
+			const currentCell = cells.find(c => c.state === 'current').info;
+			const newCell = cells.find(c => c.state === 'new').info;
+			
+			console.log(`Cell moved: ${id} from ${cells.find(c => c.state === 'current').key} to ${cells.find(c => c.state === 'new').key}`);
+			stats.cellsMoved++;
+			
+			// Find the visual representation
+			const cellObject = boardGroup.children.find(obj => 
+				obj.userData && 
+				obj.userData.type === 'cell' && 
+				obj.userData.position && 
+				obj.userData.position.x === currentCell.position.x && 
+				obj.userData.position.z === currentCell.position.z
+			);
+			
+			if (cellObject) {
+				const isInVisualRange = isPositionInVisualRange(
+					currentCell.position.x, 
+					currentCell.position.z, 
+					gameState
+				) || isPositionInVisualRange(
+					newCell.position.x, 
+					newCell.position.z, 
+					gameState
+				);
+				
+				// Get absolute positions for animation
+				const startPos = translatePosition(
+					currentCell.position, 
+					gameState, 
+					true
+				);
+				
+				const endPos = translatePosition(
+					newCell.position, 
+					gameState, 
+					true
+				);
+				
+				if (typeof animateMovement === 'function' && isInVisualRange) {
+					// Animate movement
+					animateMovement(
+						cellObject,
+						startPos,
+						endPos,
+						() => {
+							// Update metadata after animation
+							cellObject.userData.position = { 
+								x: newCell.position.x, 
+								z: newCell.position.z 
+							};
+						}
+					);
+				} else {
+					// No animation, update position immediately
+					cellObject.position.x = endPos.x;
+					cellObject.position.z = endPos.z;
+					cellObject.userData.position = { 
+						x: newCell.position.x, 
+						z: newCell.position.z 
+					};
+				}
+			}
+		}
+	}
+	
+	// Update the gameState with the new board and chess pieces
+	gameState.board.cells = { ...newBoardState.cells };
+	gameState.chessPieces = [...newPieces];
+	
+	const endTime = performance.now();
+	console.log(`Board sync completed in ${(endTime - startTime).toFixed(2)}ms`);
+	console.log(`Stats: ${stats.cellsAdded} cells added, ${stats.cellsRemoved} removed, ${stats.cellsMoved} moved`);
+	console.log(`Pieces: ${stats.piecesAdded} added, ${stats.piecesRemoved} removed, ${stats.piecesMoved} moved`);
+	
+	return stats;
+}
+
+/**
+ * Helper function to check if a position is within the visual range
+ * @param {number} x - X coordinate to check
+ * @param {number} z - Z coordinate to check
+ * @param {Object} gameState - Current game state
+ * @returns {boolean} Whether position is in visual range
+ */
+function isPositionInVisualRange(x, z, gameState) {
+	// This is a simplified implementation
+	// In a real scenario, you'd check against camera frustum or visible area
+	
+	// Get board center for reference
+	const centreMark = findBoardCentreMarker(gameState);
+	const centerX = centreMark.x;
+	const centerZ = centreMark.z;
+	
+	// Define visible range (adjust based on your game's view distance)
+	const visualRangeX = 20;
+	const visualRangeZ = 20;
+	
+	// Check if position is within range of center
+	return Math.abs(x - centerX) <= visualRangeX && 
+		Math.abs(z - centerZ) <= visualRangeZ;
+}
+
+/**
+ * Helper function to properly dispose THREE.js objects
+ * @param {Object} object - THREE.js object to dispose
+ */
+function disposeObject3D(object) {
+	if (!object) return;
+	
+	// Recursively dispose of child objects
+	if (object.children && object.children.length > 0) {
+		// Create a copy of the children array to avoid modification during iteration
+		const children = object.children.slice();
+		children.forEach(child => {
+			disposeObject3D(child);
+		});
+	}
+	
+	// Dispose of geometries and materials
+	if (object.geometry) {
+		object.geometry.dispose();
+	}
+	
+	if (object.material) {
+		if (Array.isArray(object.material)) {
+			object.material.forEach(material => {
+				if (material.map) material.map.dispose();
+				material.dispose();
+			});
+		} else {
+			if (object.material.map) object.material.map.dispose();
+			object.material.dispose();
+		}
+	}
+}
+
 // Export all functions as a module
 export const boardFunctions = {
 
@@ -2029,6 +2546,9 @@ export const boardFunctions = {
 	debugAdjacencyCheck,
 	getPieceForPlayer,
 	getPlayersKing,
+	synchronizeBoardState,
+	isPositionInVisualRange,
+	disposeObject3D,
 	
 	// Re-export translation functions for convenience
 	toRelativePosition,

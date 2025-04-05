@@ -3249,59 +3249,6 @@ function cleanupGhostPiece() {
 	}
 }
 
-/**
- * Update path to king visualization with tetromino color
- * @param {Object} gameState - The current game state
- */
-export function updatePathVisualization(gameState) {
-	if (!gameState || !gameState.currentTetromino || !gameState.currentPlayer) {
-		return;
-	}
-
-	const tetromino = gameState.currentTetromino;
-	const shape = tetromino.shape;
-	const posX = Math.round(tetromino.position.x);
-	const posZ = Math.round(tetromino.position.z);
-
-	// First, we'll simulate placing the tetromino on the board to check connectivity
-	const simulatedBoard = JSON.parse(JSON.stringify(gameState.board || { cells: {} }));
-	if (!simulatedBoard.cells) simulatedBoard.cells = {};
-	
-	// Add the tetromino cells to the simulated board
-	for (let z = 0; z < shape.length; z++) {
-		for (let x = 0; x < shape[z].length; x++) {
-			if (shape[z][x] === 1) {
-				const boardX = posX + x;
-				const boardZ = posZ + z;
-				const key = `${boardX},${boardZ}`;
-				simulatedBoard.cells[key] = {
-					type: 'tetromino',
-					player: gameState.currentPlayer
-				};
-			}
-		}
-	}
-
-	// Find any valid path from any cell of the tetromino
-	let bestPath = null;
-	
-	for (let z = 0; z < shape.length; z++) {
-		for (let x = 0; x < shape[z].length; x++) {
-			if (shape[z][x] === 1) {
-				// Create a temporary gameState for path checking
-				const tempGameState = { ...gameState, board: simulatedBoard };
-				
-				const path = hasPathToKing(tempGameState, posX + x, posZ + z, gameState.currentPlayer);
-				if (path && (!bestPath || path.length < bestPath.length)) {
-					bestPath = path;
-				}
-			}
-		}
-	}
-
-	// Update the visualization
-	highlightPathToKing(gameState, bestPath, getTetrominoColor(tetromino.type, gameState));
-}
 
 /**
  * Get tetromino color based on type and game state

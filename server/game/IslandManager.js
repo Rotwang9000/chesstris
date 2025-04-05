@@ -56,12 +56,16 @@ class IslandManager {
 				return true;
 			}
 			
-			// Check adjacent cells (in XZ plane)
+			// Check all adjacent cells including diagonals (in XZ plane)
 			const adjacentCells = [
-				{ x: x - 1, z },  // left
-				{ x: x + 1, z },  // right
-				{ x, z: z - 1 },  // up
-				{ x, z: z + 1 }   // down
+				{ x: x - 1, z },        // left
+				{ x: x + 1, z },        // right
+				{ x, z: z - 1 },        // up
+				{ x, z: z + 1 },        // down
+				{ x: x - 1, z: z - 1 }, // top-left
+				{ x: x + 1, z: z - 1 }, // top-right
+				{ x: x - 1, z: z + 1 }, // bottom-left
+				{ x: x + 1, z: z + 1 }  // bottom-right
 			];
 			
 			for (const cell of adjacentCells) {
@@ -160,12 +164,16 @@ class IslandManager {
 		while (queue.length > 0) {
 			const { x, z } = queue.shift();
 			
-			// Check adjacent cells (in XZ plane)
+			// Check all adjacent cells including diagonals (in XZ plane)
 			const adjacentCells = [
-				{ x: x - 1, z },  // left
-				{ x: x + 1, z },  // right
-				{ x, z: z - 1 },  // up
-				{ x, z: z + 1 }   // down
+				{ x: x - 1, z },        // left
+				{ x: x + 1, z },        // right
+				{ x, z: z - 1 },        // up
+				{ x, z: z + 1 },        // down
+				{ x: x - 1, z: z - 1 }, // top-left
+				{ x: x + 1, z: z - 1 }, // top-right
+				{ x: x - 1, z: z + 1 }, // bottom-left
+				{ x: x + 1, z: z + 1 }  // bottom-right
 			];
 			
 			for (const cell of adjacentCells) {

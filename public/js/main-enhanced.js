@@ -12,6 +12,7 @@ import { createNetworkStatusDisplay } from './createNetworkStatusDisplay.js';
 import { createUnifiedPlayerBar, updateUnifiedPlayerBar } from './unifiedPlayerBar.js';
 import './boardFunctions.js'; // Import the updated board functions
 import gameState from './utils/gameState.js';
+import * as tetrominoModule from './tetromino.js'; // Import tetromino module for socket events
 
 
 // Global state
@@ -365,125 +366,72 @@ async function joinGame(gameId = null) {
 }
 
 /**
- * Join game after connection is established
+ * Join a game after connection is established
+ * @param {string} gameId - Optional specific game ID to join
  */
 async function joinGameAfterConnection(gameId = null) {
 	try {
-		// Use NetworkManager directly from import
-		if (!NetworkManager) {
-			console.error('NetworkManager not available');
-			showError('Network manager not available. Please refresh the page.');
-			hideLoadingScreen();
-			return false;
+		// Hide any previous errors
+		hideError();
+		
+		// Set up network events
+		gameCore.setupNetworkEvents();
+		
+		// Set up tetromino-specific socket event listeners
+		if (typeof tetrominoModule !== 'undefined' && tetrominoModule.initializeTetrominoSocketListeners) {
+			tetrominoModule.initializeTetrominoSocketListeners();
 		}
 		
-		// Attempt to join the game
-		console.log(`Attempting to join game: ${gameId || 'global game'}`);
-		const joinResult = await NetworkManager.joinGame(gameId);
-		if (!joinResult || !joinResult.success) {
-			console.error('Failed to join game:', joinResult);
-			showError('Could not join game. Please try again.');
+		// Join game
+		console.log('Joining game:', gameId || 'any available game');
+		const result = await NetworkManager.joinGame(gameId);
+		
+		// Update current game ID for reconnection
+		if (result && result.gameId) {
+			currentGameId = result.gameId;
+			console.log('Successfully joined game:', currentGameId);
+			
+			// Update local player ID if provided
+			if (result.playerId) {
+				gameState.localPlayerId = result.playerId;
+				console.log('Local player ID set to:', gameState.localPlayerId);
+			}
+			
+			// Update window title with game ID
+			document.title = `Shaktris - Game ${currentGameId}`;
+			
+			// Show in URL but don't reload page
+			const url = new URL(window.location);
+			url.searchParams.set('gameId', currentGameId);
+			window.history.pushState({}, '', url);
+			
+			// Set up player list updates
+			setupPlayerListUpdates();
 			
 			// Hide loading screen
-			document.getElementById('loading').style.display = 'none';
-			return false;
-		}
-
-		// Store the game ID
-		currentGameId = joinResult.gameId;
-		console.log(`Successfully joined game: ${currentGameId}`);
-
-		// Register for game state updates
-		console.log('Registering for game state updates');
-		NetworkManager.onMessage('game_state', (data) => {
-			console.log('Game state message received:', data);
-			if (typeof gameCore !== 'undefined' && gameCore.handleGameStateUpdate) {
-				gameCore.handleGameStateUpdate(data);
-				
-				// Also update the unified player bar if we have one
-				if (data && data.players) {
-					updateUnifiedPlayerBar(data);
-				}
-			}
-		});
-
-		// Register for game updates
-		NetworkManager.onMessage('game_update', (data) => {
-			console.log('Game update message received:', data);
-			if (typeof gameCore !== 'undefined' && gameCore.handleGameUpdate) {
-				gameCore.handleGameUpdate(data);
-				
-				// Update player bar if the update affects player state
-				if (data && (data.players || data.currentPlayer)) {
-					// Get current game state 
-					if (gameState) {
-						updateUnifiedPlayerBar(gameState);
-					}
-				}
-			}
-		});
-
-		// Enable game state polling
-		console.log('Starting game state polling');
-		NetworkManager.startGameStatePolling();
-
-		// Explicitly request initial game state
-		console.log('Requesting initial game state...');
-		try {
-			const state = await NetworkManager.getGameState({ gameId: currentGameId });
-			console.log('Initial game state received:', state);
-			if (typeof gameCore !== 'undefined' && gameCore.handleGameStateUpdate) {
-				gameCore.handleGameStateUpdate(state);
-				
-				// Initialize the player bar with the initial state
-				createUnifiedPlayerBar(state);
-			}
-		} catch (error) {
-			console.error('Error fetching initial game state:', error);
-			showToastNotification('Error fetching game state. Will try again...');
+			hideLoadingScreen();
 			
-			// Retry once more with a delay
-			setTimeout(async () => {
-				try {
-					console.log('Retrying game state request...');
-					const state = await NetworkManager.getGameState({ gameId: currentGameId });
-					console.log('Game state received on retry:', state);
-					if (typeof gameCore !== 'undefined' && gameCore.handleGameStateUpdate) {
-						gameCore.handleGameStateUpdate(state);
-						
-						// Initialize the player bar with the retry state
-						createUnifiedPlayerBar(state);
-					}
-				} catch (retryError) {
-					console.error('Failed to get game state on retry:', retryError);
-					showToastNotification('Could not fetch game state. Try refreshing the page.');
-				}
-			}, 3000);
+			// Hide instructions if game has started
+			const instructionsElement = document.getElementById('game-instructions');
+			if (instructionsElement) {
+				instructionsElement.style.display = 'none';
+			}
+			
+			// Start the game
+			if (gameCore.startPlayingGame) {
+				gameCore.startPlayingGame();
+			}
+			
+			// Update player bar - delayed to ensure it gets the right data
+			setTimeout(() => {
+				updateUnifiedPlayerBar(gameState);
+			}, 1000);
+		} else {
+			throw new Error('Failed to join game');
 		}
-
-		// Update game ID display
-		const gameIdDisplay = document.getElementById('game-id-display');
-		if (gameIdDisplay) {
-			gameIdDisplay.value = currentGameId;
-		}
-
-		// Hide loading screen
-		document.getElementById('loading').style.display = 'none';
-		
-		// Show success message
-		showToastNotification('Connected to game server!');
-		
-		// Set up player list updates
-		setupPlayerListUpdates();
-		
-		return true;
 	} catch (error) {
 		console.error('Error joining game after connection:', error);
-		showError('Error joining game. Will retry in background.');
-		
-		// Hide loading screen
-		document.getElementById('loading').style.display = 'none';
-		return false;
+		showError(`Failed to join game: ${error.message || 'Unknown error'}`);
 	}
 }
 

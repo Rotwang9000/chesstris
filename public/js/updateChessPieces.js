@@ -1,9 +1,8 @@
 import { boardFunctions } from './boardFunctions.js';
-import { findBoardCentreMarker } from './centreBoardMarker.js';
 import chessPieceCreator from './chessPieceCreator.js';
 import { getTHREE } from './enhanced-gameCore.js';
 import { highlightSinglePiece, setChessPiecesGroup } from './pieceHighlightManager.js';
-import { createCentreMarker } from './centreBoardMarker.js';
+import { translatePosition } from './centreBoardMarker.js';
 
 
 // Add a timer to track when chess pieces were last updated
@@ -24,6 +23,13 @@ let errorCount = 0;
 let lastChessPiecesHash = ''; // Hash of the last processed pieces
 let lastUpdateReason = ''; // Reason for the last update
 let forcedUpdateCounter = 0; // Force update every N intervals regardless of changes
+let lastForcedUpdate = 0; // Timestamp of the last forced update
+
+// Constants for forced update timing
+const FORCED_UPDATE_INTERVAL = 60000; // Force an update once per minute (60000ms)
+const MOVES_BETWEEN_FORCED_UPDATES = 1; // Force an update after each complete move
+let movesSinceLastForcedUpdate = 0; // Counter for moves since last forced update
+let lastKnownMoveCount = 0; // Track the last move count to detect new moves
 
 export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 	// Rate-limit updates to reduce performance impact
@@ -43,19 +49,38 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 		}).sort().join('|');
 	}
 	
-	// Force update every 10 intervals (about 2.5 seconds) even without changes
-	// This ensures we handle any external changes that our hash doesn't detect
-	const forcedUpdate = (++forcedUpdateCounter >= 10);
+	// Check if a move has occurred since last update (if moveCount is available in gameState)
+	const currentMoveCount = gameState.moveCount || 0;
+	if (currentMoveCount > lastKnownMoveCount) {
+		movesSinceLastForcedUpdate += (currentMoveCount - lastKnownMoveCount);
+		lastKnownMoveCount = currentMoveCount;
+	}
+	
+	// Force update criteria:
+	// 1. After a certain time interval (once per minute)
+	// 2. After a complete move has occurred
+	// 3. When explicitly requested via _forceUpdate flag
+	const timeBasedForceUpdate = (now - lastForcedUpdate >= FORCED_UPDATE_INTERVAL);
+	const moveBasedForceUpdate = (movesSinceLastForcedUpdate >= MOVES_BETWEEN_FORCED_UPDATES);
+	const explicitForceUpdate = gameState._forceUpdate === true;
+	const forcedUpdate = timeBasedForceUpdate || moveBasedForceUpdate || explicitForceUpdate;
 	
 	// Skip update if the pieces haven't changed and this isn't a forced update
 	if (currentHash === lastChessPiecesHash && !forcedUpdate) {
 		return;
 	}
 	
-	// Reset force counter on actual updates
+	// Reset force counters on actual updates
 	if (forcedUpdate) {
-		forcedUpdateCounter = 0;
-		lastUpdateReason = 'forced periodic update';
+		if (explicitForceUpdate) {
+			lastUpdateReason = 'explicit forced update';
+		} else if (timeBasedForceUpdate) {
+			lastUpdateReason = 'forced minute update';
+		} else {
+			lastUpdateReason = 'forced move-based update';
+		}
+		lastForcedUpdate = now;
+		movesSinceLastForcedUpdate = 0;
 	} else if (currentHash !== lastChessPiecesHash) {
 		lastUpdateReason = 'chess pieces changed';
 		// Update our hash
@@ -174,22 +199,6 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 		// The board cells are positioned directly at their coordinates without any group offset
 		chessPiecesGroup.position.set(0, 0, 0);
 
-		// Find the board centre marker for accurate positioning - CRITICAL for alignment with cells
-		const centreMark = findBoardCentreMarker(gameState);
-
-		// Always ensure we have a valid centre marker
-		if (!centreMark && gameState.board) {
-			console.error('Centre marker not found! Creating a new one');
-			// Use the createCentreMarker function to properly initialize it
-			createCentreMarker(gameState);
-		}
-
-		// Use the centre marker or fall back to reasonable defaults
-		const centreX = centreMark?.x ?? 4;
-		const centreZ = centreMark?.z ?? 4;
-
-		console.log(`Using board centre at (${centreX}, ${centreZ}) for chess piece positioning`);
-
 		chessPieces.forEach(piece => {
 			try {
 				// Skip invalid pieces
@@ -249,8 +258,9 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 						};
 						
 						// Calculate position relative to centre marker - CRITICAL for alignment
-						const adjustX = x - centreX;
-						const adjustZ = z - centreZ;
+						const absPos = translatePosition({x, z}, gameState, true);
+						const adjustX = absPos.x;
+						const adjustZ = absPos.z;
 						
 						pieceMesh.position.set(adjustX, 0, adjustZ);
 						chessPiecesGroup.add(pieceMesh);
@@ -258,8 +268,9 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 						piecesCreated++;
 					} else {
 						// Just update position if needed
-						const adjustX = x - centreX;
-						const adjustZ = z - centreZ;
+						const absPos = translatePosition({x, z}, gameState, true);
+						const adjustX = absPos.x;
+						const adjustZ = absPos.z;
 						
 						if (existingPiece.position.x !== adjustX || existingPiece.position.z !== adjustZ) {
 							existingPiece.position.set(adjustX, 0, adjustZ);
@@ -353,8 +364,9 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 				// Position piece correctly relative to the center of the board
 				if (pieceMesh) {
 					// CRITICAL FIX: Use relative positioning with the center marker
-					const adjustX = x - centreX;
-					const adjustZ = z - centreZ;
+					const absPos = translatePosition({x, z}, gameState, true);
+					const adjustX = absPos.x;
+					const adjustZ = absPos.z;
 					
 					pieceMesh.position.x = adjustX;
 					pieceMesh.position.z = adjustZ;

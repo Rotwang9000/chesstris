@@ -110,20 +110,12 @@ function calculateHomePosition(playerIndex, gameState, homeZoneWidth, homeZoneHe
 				randomOrientation = Math.floor(Math.random() * 4);
 			}
 			
-			// Find the average center of existing zones
-			let centerX = 0;
-			let centerZ = 0;
+			// Always use (0,0) as the reference point rather than averaging existing zones
+			// This ensures consistency in home zone placement
+			const centerX = 0;
+			const centerZ = 0;
 			
-			if (existingHomeZones.length > 0) {
-				for (const zone of existingHomeZones) {
-					centerX += zone.x;
-					centerZ += zone.z;
-				}
-				centerX /= existingHomeZones.length;
-				centerZ /= existingHomeZones.length;
-			}
-			
-			// Generate position within reasonable range of existing zones
+			// Generate position within reasonable range of origin point
 			// Add randomness to avoid grid-like placement
 			const angle = Math.random() * Math.PI * 2; // Random angle 0-2π
 			
@@ -195,18 +187,9 @@ function calculateHomePosition(playerIndex, gameState, homeZoneWidth, homeZoneHe
 				randomOrientation = Math.floor(Math.random() * 4);
 			}
 			
-			// Find the average center of existing zones
-			let centerX = 0;
-			let centerZ = 0;
-			
-			if (existingHomeZones.length > 0) {
-				for (const zone of existingHomeZones) {
-					centerX += zone.x;
-					centerZ += zone.z;
-				}
-				centerX /= existingHomeZones.length;
-				centerZ /= existingHomeZones.length;
-			}
+			// Always use (0,0) as the reference point
+			const centerX = 0;
+			const centerZ = 0;
 			
 			// Generate position with medium distance
 			const angle = Math.random() * Math.PI * 2;
@@ -244,7 +227,7 @@ function calculateHomePosition(playerIndex, gameState, homeZoneWidth, homeZoneHe
 		}
 	}
 	
-	// If no valid position found, place using fallback with adequate space check
+	// If no valid position found, use fallback method
 	return calculateFallbackPosition(existingHomeZones, homeZoneWidth, homeZoneHeight);
 }
 
@@ -558,9 +541,9 @@ function hasPartialPawnClash(x, z, orientation, width, height, pawnPaths, clashD
 function calculateFallbackPosition(existingHomeZones, homeZoneWidth, homeZoneHeight) {
 	console.log("Using fallback position calculation with more aggressive spacing");
 	
-	// Find furthest cell from center of existing home zones
-	let centerX = 0;
-	let centerZ = 0;
+	// Always use (0,0) as the reference point for consistent positioning
+	const centerX = 0;
+	const centerZ = 0;
 	
 	// If no existing zones, place at origin with random orientation
 	if (existingHomeZones.length === 0) {
@@ -578,14 +561,6 @@ function calculateFallbackPosition(existingHomeZones, homeZoneWidth, homeZoneHei
 		
 		return { x, z, orientation: randomOrientation };
 	}
-	
-	// Calculate average center of all existing home zones
-	for (const zone of existingHomeZones) {
-		centerX += zone.x;
-		centerZ += zone.z;
-	}
-	centerX /= existingHomeZones.length;
-	centerZ /= existingHomeZones.length;
 	
 	// Try positions at increasing distances in a spiral pattern
 	// Use larger distances than before to ensure better spacing
@@ -696,7 +671,7 @@ function calculateFallbackPosition(existingHomeZones, homeZoneWidth, homeZoneHei
  * 1. Calculates the position and orientation for each player's home zone
  * 2. Creates the home zone cells in the game state
  * 3. Updates the gameState.homeZones object with zone information
- * 4. Places a board centre marker for reliable client-side reference
+ * 4. Places a board centre marker at (0,0,0) for reliable client-side reference
  * 
  * @param {Object} gameState - Game state object to update
  * @param {Object} players - Player data keyed by player ID
@@ -708,19 +683,16 @@ function generateHomeZones(gameState, players) {
 	const standardWidth = 8; // Standard chess width
 	const standardHeight = 2; // Standard chess height
 	
-	// Initialise or preserve the board center if it already exists
-	if (gameState.board && gameState.board.centreMarker) {
-		console.log(`Preserving existing board centre at (${gameState.board.centreMarker.x}, ${gameState.board.centreMarker.z})`);
-	} else {
-		// Set an initial origin point (will be updated after all home zones are placed)
-		if (!gameState.board) {
-			gameState.board = {
-				cells: {}
-			};
-		}
-		gameState.board.centreMarker = { x: 0, z: 0 };
-		console.log("Initialising board centre at origin (0, 0)");
+	// Always set the board centre to (0,0,0) for consistency
+	if (!gameState.board) {
+		gameState.board = {
+			cells: {}
+		};
 	}
+	
+	// Always set the centre marker to (0,0,0) regardless of what existed before
+	gameState.board.centreMarker = { x: 0, z: 0 };
+	console.log("Setting consistent board centre at origin (0, 0)");
 	
 	// Generate home zones with controlled pawn clashing
 	const homeZones = {};
@@ -784,61 +756,17 @@ function generateHomeZones(gameState, players) {
 	// Store home zones in game state
 	gameState.homeZones = homeZones;
 	
-	// Calculate the board centre as the average of all home zone centres
-	// This makes it more stable than using just the corner positions
-	const homeZoneCount = Object.keys(homeZones).length;
-	let centreX = 0;
-	let centreZ = 0;
-	
-	if (homeZoneCount > 0) {
-		// Calculate center based on home zone centers, not corners
-		for (const playerId in homeZones) {
-			const zone = homeZones[playerId];
-			// Use center of zone, not corner
-			centreX += zone.x + zone.width / 2;
-			centreZ += zone.z + zone.height / 2;
-		}
-		centreX = Math.floor(centreX / homeZoneCount);
-		centreZ = Math.floor(centreZ / homeZoneCount);
-		
-		console.log(`Calculated board centre at (${centreX}, ${centreZ}) from ${homeZoneCount} home zones`);
-	} else {
-		// If no home zones (unlikely), keep the default centre at (0,0)
-		centreX = 0;
-		centreZ = 0;
-		console.log("No home zones to calculate centre from, using (0,0)");
-	}
-	
-	// Store the calculated centre point
+	// Always use (0,0) as the board centre
+	const centreX = 0;
+	const centreZ = 0;
 	const centreKey = `${centreX},${centreZ}`;
 	
-	// Check if the centre key overlaps with any existing cells
-	// If so, adjust it slightly to avoid overlap
-	if (gameState.board.cells[centreKey]) {
-		console.log(`Centre marker would overlap with existing cell at ${centreKey}`);
-		// Try nearby positions
-		for (let dx = -1; dx <= 1; dx++) {
-			for (let dz = -1; dz <= 1; dz++) {
-				if (dx === 0 && dz === 0) continue; // Skip the original position
-				
-				const adjustedKey = `${centreX + dx},${centreZ + dz}`;
-				if (!gameState.board.cells[adjustedKey]) {
-					centreX += dx;
-					centreZ += dz;
-					console.log(`Adjusted centre marker to (${centreX}, ${centreZ})`);
-					break;
-				}
-			}
-		}
-	}
-	
-	// Create or update the centre marker cell, preserving any existing content
-	// This special cell should be kept and never removed - it's our anchor point
-	const adjustedCentreKey = `${centreX},${centreZ}`;
-	gameState.board.cells[adjustedCentreKey] = gameState.board.cells[adjustedCentreKey] || {};
+	// Create or update the centre marker cell
+	// If there's already a cell at (0,0), we'll still mark it as the centre
+	gameState.board.cells[centreKey] = gameState.board.cells[centreKey] || {};
 	
 	// Attach a special marker that will be recognisable and preserved
-	gameState.board.cells[adjustedCentreKey].specialMarker = {
+	gameState.board.cells[centreKey].specialMarker = {
 		type: 'boardCentre',
 		isCentreMarker: true,
 		centreX,
@@ -851,7 +779,7 @@ function generateHomeZones(gameState, players) {
 		z: centreZ
 	};
 	
-	console.log(`Board centre marker placed at (${centreX}, ${centreZ})`);
+	console.log(`Board centre marker placed at fixed position (${centreX}, ${centreZ})`);
 	
 	return gameState;
 }

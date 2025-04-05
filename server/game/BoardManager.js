@@ -355,8 +355,9 @@ class BoardManager {
 		
 		// Check each row (on Z-axis, which is vertical on the board)
 		for (let z = minZ; z <= maxZ; z++) {
-			// Count filled cells in the row
-			let filledCellCount = 0;
+			// We need to track consecutive filled cells, not just total count
+			let maxConsecutive = 0;
+			let currentConsecutive = 0;
 			let skippedHomeCells = 0;
 			
 			// Check cells across the x-axis for this z-coordinate
@@ -366,29 +367,34 @@ class BoardManager {
 				// Check if this cell is in a home zone
 				const isHomeCellSafe = this.isCellInSafeHomeZone(game, x, z);
 				
-				// Count only non-home cells that are filled
-				if (cellContents && cellContents.length > 0) {
-					if (isHomeCellSafe) {
-						skippedHomeCells++;
-					} else {
-						filledCellCount++;
-					}
+				if (isHomeCellSafe) {
+					// Home cells break the consecutive sequence
+					skippedHomeCells++;
+					currentConsecutive = 0;
+				} else if (cellContents && cellContents.length > 0) {
+					// Cell is filled and not a home cell
+					currentConsecutive++;
+					// Update the maximum consecutive count
+					maxConsecutive = Math.max(maxConsecutive, currentConsecutive);
+				} else {
+					// Empty cell breaks the consecutive sequence
+					currentConsecutive = 0;
 				}
 			}
 			
 			// Log the cell counts for debugging
-			if (filledCellCount > 0 || skippedHomeCells > 0) {
-				log(`Row ${z}: ${filledCellCount} filled cells + ${skippedHomeCells} skipped home cells (need ${requiredCellsForClearing} to clear)`);
+			if (maxConsecutive > 0 || skippedHomeCells > 0) {
+				log(`Row ${z}: ${maxConsecutive} max consecutive filled cells + ${skippedHomeCells} skipped home cells (need ${requiredCellsForClearing} to clear)`);
 			}
 			
-			// If the row has at least the required number of filled cells, clear it
-			if (filledCellCount >= requiredCellsForClearing) {
+			// If the row has at least the required number of consecutive filled cells, clear it
+			if (maxConsecutive >= requiredCellsForClearing) {
 				// Clear the row
 				this.clearRow(game, z);
 				clearedRows.push(z);
 				
 				// Log the row clearing
-				log(`Cleared row ${z} with ${filledCellCount} filled cells (skipped ${skippedHomeCells} home cells)`);
+				log(`Cleared row ${z} with ${maxConsecutive} consecutive filled cells (skipped ${skippedHomeCells} home cells)`);
 			}
 		}
 		

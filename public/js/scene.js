@@ -1,8 +1,9 @@
 import { createFewClouds } from './createFewClouds.js';
-import { onWindowResize, getTHREE } from './enhanced-gameCore.js';
-import { boardFunctions } from './boardFunctions.js';
-import chessPieceCreator from './chessPieceCreator.js';
-import { findBoardCentreMarker, createCentreMarker, toRelativePosition, translatePosition } from './centreBoardMarker.js';
+import { onWindowResize, getTHREE, getGameState } from './enhanced-gameCore.js';
+import { translatePosition } from './centreBoardMarker.js';
+
+// Cache of existing islands for reuse
+const floatingIslandCache = {};
 
 export function setupScene(containerElement, scene, camera, renderer, controls, boardGroup, tetrominoGroup, chessPiecesGroup, clouds, gameState) {
 	console.log('Setting up enhanced 3D scene with beautiful sky...');
@@ -277,10 +278,29 @@ export function rebuildScene(containerElement, options = {}) {
  * @param {number} z - Z position
  * @param {THREE.Material} material - Material to use for the island
  * @param {number} [heightVariation=0.7] - Height variation for the island
+ * @param {boolean} [hasContent=false] - Whether the island has content
+ * @returns {THREE.Group} The island group object
  */
 export function createFloatingIsland(x, z, material, heightVariation = 0.7, hasContent = false) {
 	// Calculate a position hash for consistent randomness
 	const posHash = Math.sin(x * 412.531 + z * 123.32) * 1000000;
+	
+	// Create a unique key for this island
+	const islandKey = `${x.toFixed(2)},${z.toFixed(2)}`;
+	
+	// Check if we already have this island in the cache
+	if (floatingIslandCache[islandKey]) {
+		// Island exists, update its animation parameters
+		const existingIsland = floatingIslandCache[islandKey];
+		
+		// Update the bobbing animation by changing the phase
+		const newPhase = Date.now() * 0.0005;
+		existingIsland.userData.lastAnimationTime = Date.now();
+		existingIsland.userData.bobPhase = newPhase;
+		
+		// Return the existing island
+		return existingIsland;
+	}
 
 	// Random factors based on position
 	const actualHeight = typeof heightVariation === 'number' ? heightVariation : 0.7;
@@ -401,11 +421,16 @@ export function createFloatingIsland(x, z, material, heightVariation = 0.7, hasC
 		}
 	}
 
+	// Get the gameState object from the enhanced-gameCore module
+	const gameState = getGameState();
+	
+	const absPos = translatePosition({x, z}, gameState, true);
+
 	// Position with offsets for natural floating appearance
 	islandGroup.position.set(
-		x + xOffset,
-		yOffset + (Math.sin(Date.now() * 0.0005 + posHash) * 0.1), // Slight bobbing animation
-		z + zOffset
+		absPos.x + xOffset,
+		yOffset, // Base Y position without animation
+		absPos.z + zOffset
 	);
 
 	// Add slight random rotation for more natural look
@@ -413,17 +438,59 @@ export function createFloatingIsland(x, z, material, heightVariation = 0.7, hasC
 	islandGroup.rotation.y = (Math.sin(posHash * 28.3)) * 0.05;
 	islandGroup.rotation.z = (Math.sin(posHash * 29.7)) * 0.05;
 
-	// Store cell info for raycasting
+	// Store animation parameters in userData
 	islandGroup.userData = {
-		type: 'decorative',  // Change type to mark these as decorative only
+		type: 'decorative',  // Mark these as decorative only
 		position: { x, z },
-		isWhite: (x + z) % 2 === 0
+		isWhite: (x + z) % 2 === 0,
+		baseY: islandGroup.position.y, // Store the base Y position
+		bobAmplitude: 0.1, // Amplitude of bobbing motion
+		bobFrequency: 0.0005 + Math.random() * 0.0001, // Slightly different for each island
+		bobPhase: Math.random() * Math.PI * 2, // Random starting phase
+		lastAnimationTime: Date.now() // Track when we last animated
 	};
+
+	// Store in cache for future reuse
+	floatingIslandCache[islandKey] = islandGroup;
 
 	// Return a reference for animation
 	return islandGroup;
 }
 
+// Add this new function after createFloatingIsland
+/**
+ * Animate all floating islands in the scene
+ * @param {THREE.Scene} scene - The scene containing islands
+ */
+export function animateFloatingIslands(scene) {
+	if (!scene || !scene.children) return;
+	
+	const now = Date.now();
+	
+	// Find the board group
+	const boardGroup = scene.children.find(child => child.name === 'boardGroup');
+	if (!boardGroup) return;
+	
+	// Animate all islands in the board group
+	boardGroup.children.forEach(child => {
+		if (child.userData && child.userData.type === 'decorative') {
+			// Get animation parameters
+			const { baseY, bobAmplitude, bobFrequency, bobPhase } = child.userData;
+			
+			// Calculate new Y position with bobbing motion
+			if (baseY !== undefined) {
+				child.position.y = baseY + Math.sin(now * bobFrequency + bobPhase) * bobAmplitude;
+				
+				// Apply very subtle rotation changes
+				child.rotation.x += Math.sin(now * 0.0001) * 0.0001;
+				child.rotation.y += Math.sin(now * 0.00015) * 0.0001;
+				
+				// Update last animation time
+				child.userData.lastAnimationTime = now;
+			}
+		}
+	});
+}
 
 /**
  * Create a rounded box geometry for prettier islands
@@ -476,9 +543,13 @@ export function createFloatingCube(x, z, material, boardGroup) {
 		const cellGeometry = new THREE.BoxGeometry(0.9, 0.9, 0.9);
 		const cellMesh = new THREE.Mesh(cellGeometry, material);
 
+		// Get the gameState object from the enhanced-gameCore module
+		const gameState = getGameState();
+		
+		const absPos = translatePosition({x, z}, gameState, true);
 
 		// Position the cell using relative coordinates
-		cellMesh.position.set(x, 0, z);
+		cellMesh.position.set(absPos.x, 0, absPos.z);
 
 		// Ensure no rotation at all - critical to prevent board from becoming tilted
 		cellMesh.rotation.set(0, 0, 0);
@@ -620,11 +691,21 @@ export function createBoard(boardGroup, gameState) {
 	}
 
 	try {
-		// Clear any existing board content
-		while (boardGroup.children.length > 0) {
-			boardGroup.remove(boardGroup.children[0]);
+		// Instead of clearing all children, keep the decorative islands and only remove cells
+		const childrenToRemove = [];
+		
+		// Identify children to remove (keep decorative islands)
+		for (let i = 0; i < boardGroup.children.length; i++) {
+			const child = boardGroup.children[i];
+			if (!child.userData || child.userData.type !== 'decorative') {
+				childrenToRemove.push(child);
+			}
 		}
-
+		
+		// Now remove the non-decorative children (board cells)
+		for (const child of childrenToRemove) {
+			boardGroup.remove(child);
+		}
 
 		// Create materials for cells - use more natural colors
 		const whiteMaterial = new THREE.MeshStandardMaterial({
@@ -639,17 +720,6 @@ export function createBoard(boardGroup, gameState) {
 			metalness: 0.2
 		});
 
-		// Find the board centre marker to position cells properly
-		const centreMark = findBoardCentreMarker(gameState);
-		const centerX = centreMark.x;
-		const centerZ = centreMark.z;
-		console.log(`Using centre marker at (${centerX}, ${centerZ}) for board creation`);
-		
-		// Ensure the marker is properly stored in the game state
-		if (gameState.board) {
-			gameState.board.centreMarker = { x: centerX, z: centerZ };
-		}
-
 		// Check if there's board data
 		const hasBoardData = gameState?.board &&
 			typeof gameState.board === 'object' &&
@@ -658,11 +728,13 @@ export function createBoard(boardGroup, gameState) {
 
 		console.log(`Creating board. Has board data: ${hasBoardData} (${hasBoardData ? Object.keys(gameState.board.cells).length : 0} cells)`);
 
+		// Track count for logging
+		let createdCellCount = 0;
+		let newIslandCount = 0;
+		let reusedIslandCount = 0;
+
 		// ONLY create cells where there's data
 		if (hasBoardData) {
-			// Track count for logging
-			let createdCellCount = 0;
-
 			// Create cells based on actual board data
 			for (const key in gameState.board.cells) {
 				const [x, z] = key.split(',').map(Number);
@@ -674,59 +746,62 @@ export function createBoard(boardGroup, gameState) {
 				// Determine if white or dark cell for checkerboard pattern
 				const isWhite = (x + z) % 2 === 0;
 				const material = isWhite ? whiteMaterial : darkMaterial;
-
-				// Get relative position using the translation function
-				const relativePos = translatePosition({x, z}, gameState, false);
-
+			
 				// Create the floating cube for the actual game board
-				//const cellMesh = createFloatingCube(relativePos.x, relativePos.z, material, boardGroup);
+				const cellMesh = createFloatingCube(x, z, material, boardGroup);
 
-				// Create the floating island below the cube for decoration only
-				// Use varied white/very light green materials for the islands
-				const cloudColor = new THREE.Color(
-					0.95 + Math.abs(Math.sin(x * 0.3 + z * 0.7) * 0.05),  // Almost white
-					0.97 + Math.abs(Math.sin(x * 0.5 + z * 0.3) * 0.03),  // Very slight green tint
-					0.95 + Math.abs(Math.sin(x * 0.7 + z * 0.5) * 0.05)   // Almost white
-				);
+				// Generate a deterministic random value based on coordinates
+				// This ensures the same cells always get islands
+				const deterministicRandom = Math.abs(Math.sin(x * 753.24 + z * 329.41));
 				
-				const islandMaterial = new THREE.MeshStandardMaterial({
-					color: cloudColor,
-					roughness: 1.0,
-					metalness: 0.0,
-					transparent: true,
-					opacity: 0.6  // More transparent
-				});
+				// Only create islands for 40% of cells to avoid clutter (60% threshold)
+				if (deterministicRandom > 0.6) {
+					// Create the floating island below the cube for decoration only
+					// Use varied white/very light green materials for the islands
+					const cloudColor = new THREE.Color(
+						0.95 + Math.abs(Math.sin(x * 0.3 + z * 0.7) * 0.05),  // Almost white
+						0.97 + Math.abs(Math.sin(x * 0.5 + z * 0.3) * 0.03),  // Very slight green tint
+						0.95 + Math.abs(Math.sin(x * 0.7 + z * 0.5) * 0.05)   // Almost white
+					);
+					
+					const islandMaterial = new THREE.MeshStandardMaterial({
+						color: cloudColor,
+						roughness: 1.0,
+						metalness: 0.0,
+						transparent: true,
+						opacity: 0.6  // More transparent
+					});
+					
+					// Calculate offsets deterministically
+					const offsetX = x + (Math.sin(x * 123.45) * 0.25);
+					const offsetZ = z + (Math.sin(z * 456.78) * 0.25);
+					
+					// Create decorative island with deterministic offsets
+					const island = createFloatingIsland(
+						offsetX,  // Deterministic X offset
+						offsetZ,  // Deterministic Z offset
+						islandMaterial,
+						0.4 + (deterministicRandom * 0.2),  // Deterministic height variation
+						false  // No content on island
+					);
+					
+					// Set scale deterministically
+					const scale = 0.7 + deterministicRandom * 0.4;
+					island.scale.set(scale, scale, scale);
+					
+					// Add the island to the board group
+					boardGroup.add(island);
+					newIslandCount++;
+				}
 
-				// // Only create clouds for some cells to reduce visual clutter
-				// if (Math.random() > 0.4) {  // 60% chance to create a cloud
-				// 	// Create decorative island with larger offsets for more spacing
-				// 	const island = createFloatingIsland(
-				// 		relativePos.x + (Math.random() * 0.5 - 0.25),  // Larger random X offset
-				// 		relativePos.z + (Math.random() * 0.5 - 0.25),  // Larger random Z offset
-				// 		islandMaterial,
-				// 		0.4 + (Math.random() * 0.2),  // Lower height variation
-				// 		false  // No content on island
-				// 	);
-
-				// 	// Position island further below the cube
-				// 	island.position.y -= 2.0 + (Math.random() * 1.0);  // More distance below
-
-				// 	// Randomize the scale to add variety
-				// 	const scale = 0.7 + Math.random() * 0.4;  // Smaller scale
-				// 	island.scale.set(scale, scale, scale);
-
-				// 	// Add the island to the board group
-				// 	boardGroup.add(island);
-				// }
-
-				// Save the absolute position in the userData (now on cellMesh instead of island)
+				// Save the absolute position in the userData
 				if (cellMesh) {
 					cellMesh.userData.data = cell;
 					createdCellCount++;
 				}
 			}
 
-			console.log(`Created ${createdCellCount} cells for the board`);
+			console.log(`Created ${createdCellCount} cells for the board with ${reusedIslandCount} reused islands and ${newIslandCount} new islands`);
 		} else {
 			console.log('No board data available, skipping board creation');
 		}

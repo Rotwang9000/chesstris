@@ -234,7 +234,11 @@ export function hasPathToKing(board, startX, startZ, playerId) {
 		{ dx: 1, dz: 0 },  // Right
 		{ dx: -1, dz: 0 }, // Left
 		{ dx: 0, dz: 1 },  // Down
-		{ dx: 0, dz: -1 }  // Up
+		{ dx: 0, dz: -1 }, // Up
+		{ dx: 1, dz: 1 },  // Bottom-right (diagonal)
+		{ dx: -1, dz: 1 }, // Bottom-left (diagonal)
+		{ dx: 1, dz: -1 }, // Top-right (diagonal)
+		{ dx: -1, dz: -1 } // Top-left (diagonal)
 	];
 	
 	// Mark start as visited
@@ -248,7 +252,7 @@ export function hasPathToKing(board, startX, startZ, playerId) {
 			return true;
 		}
 		
-		// Try all four directions
+		// Try all eight directions
 		for (const { dx, dz } of directions) {
 			const newX = x + dx;
 			const newZ = z + dz;

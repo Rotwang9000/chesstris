@@ -66,12 +66,16 @@ class TetrominoManager {
 	 * @returns {Object} Result with hasAdjacent flag and coordinates
 	 */
 	hasAdjacentCell(game, x, z, playerId) {
-		// Check adjacent positions in XZ plane
+		// Check adjacent positions in XZ plane including diagonals
 		const adjacentPositions = [
-			{ x: x - 1, z }, // left
-			{ x: x + 1, z }, // right
-			{ x, z: z - 1 }, // forward
-			{ x, z: z + 1 }  // backward
+			{ x: x - 1, z },        // left
+			{ x: x + 1, z },        // right
+			{ x, z: z - 1 },        // forward
+			{ x, z: z + 1 },        // backward
+			{ x: x - 1, z: z - 1 }, // top-left
+			{ x: x + 1, z: z - 1 }, // top-right
+			{ x: x - 1, z: z + 1 }, // bottom-left
+			{ x: x + 1, z: z + 1 }  // bottom-right
 		];
 		
 		const boardWidth = game.board[0].length;
@@ -182,12 +186,16 @@ class TetrominoManager {
 					const posX = x + j;
 					const posZ = z + i;
 					
-					// Check adjacent cells
+					// Check adjacent cells including diagonals
 					const adjacentPositions = [
-						{ x: posX - 1, z: posZ }, // left
-						{ x: posX + 1, z: posZ }, // right
-						{ x: posX, z: posZ - 1 }, // forward
-						{ x: posX, z: posZ + 1 }  // backward
+						{ x: posX - 1, z: posZ },        // left
+						{ x: posX + 1, z: posZ },        // right
+						{ x: posX, z: posZ - 1 },        // forward
+						{ x: posX, z: posZ + 1 },        // backward
+						{ x: posX - 1, z: posZ - 1 },    // top-left
+						{ x: posX + 1, z: posZ - 1 },    // top-right
+						{ x: posX - 1, z: posZ + 1 },    // bottom-left
+						{ x: posX + 1, z: posZ + 1 }     // bottom-right
 					];
 					
 					for (const pos of adjacentPositions) {
@@ -224,12 +232,16 @@ class TetrominoManager {
 							const posX = x + j;
 							const posZ = z + i;
 							
-							// Check adjacent to home zone cells
+							// Check adjacent to home zone cells including diagonals
 							const adjacentPositions = [
-								{ x: posX - 1, z: posZ },
-								{ x: posX + 1, z: posZ },
-								{ x: posX, z: posZ - 1 },
-								{ x: posX, z: posZ + 1 }
+								{ x: posX - 1, z: posZ },        // left
+								{ x: posX + 1, z: posZ },        // right
+								{ x: posX, z: posZ - 1 },        // forward
+								{ x: posX, z: posZ + 1 },        // backward
+								{ x: posX - 1, z: posZ - 1 },    // top-left
+								{ x: posX + 1, z: posZ - 1 },    // top-right
+								{ x: posX - 1, z: posZ + 1 },    // bottom-left
+								{ x: posX + 1, z: posZ + 1 }     // bottom-right
 							];
 							
 							for (const pos of adjacentPositions) {
