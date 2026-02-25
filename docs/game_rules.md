@@ -30,11 +30,11 @@ Shaktris is a unique multiplayer game that combines elements of chess and Tetris
 
 ### Turn Structure
 
-1. **Asynchronous Turns**: Each player has their own gameplay cycle:
-   - A tetromino piece falls for the player to place
-   - After placing the piece, they can move one of their chess pieces
-   - Players don't need to wait for other players' turns
-2. **Minimum Turn Length**: A minimum 10-second turn length helps human players compete with others, especially computer-controlled opponents.
+1. **Real-time Global World**: All players act in the same world at the same time.
+2. **Server-side Cooldowns**: Actions are real-time but rate-limited server-side to prevent spamming.
+   - Chess move cooldown: ~0.75s
+   - Tetromino placement cooldown: ~1.5s
+3. **Client UX Phases**: The client may show “Tetris” vs “Chess” phases for clarity, but the server is authoritative.
 
 ### Board Expansion
 

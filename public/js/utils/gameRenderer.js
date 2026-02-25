@@ -1126,23 +1126,7 @@ function updateCurrentTetromino(tetromino) {
 			mainBlock.position.y = 0;
 			blockGroup.add(mainBlock);
 			
-			// Add subtle glow effect
-			const glowSphere = new THREE.Mesh(
-				new THREE.SphereGeometry(0.55, 8, 8),
-				new THREE.MeshBasicMaterial({
-					color: tetrominoColor,
-					transparent: true,
-					opacity: 0.15,
-					blending: THREE.AdditiveBlending
-				})
-			);
-			blockGroup.add(glowSphere);
-			
-			// Add particle effects to tetromino
-			if (Math.random() < 0.3) {
-				const particleSystem = createParticleSystem(tetrominoColor);
-				blockGroup.add(particleSystem);
-			}
+			// No glow or particle effects — keep pieces clean and readable
 			
 			// Position the block
 			blockGroup.position.set(x, 0, y);
@@ -1187,10 +1171,9 @@ function createParticleSystem(color) {
 		size: 0.05 + Math.random() * 0.05,
 		transparent: true,
 		opacity: 0.7,
-		blending: THREE.AdditiveBlending
+		blending: THREE.NormalBlending
 	});
-	
-	// Create particle system
+
 	return new THREE.Points(geometry, material);
 }
 

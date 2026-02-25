@@ -1,4 +1,4 @@
-import { handleTetrisPhaseClick, handleChessPhaseClick, resetGameState, startPlayingGame } from './enhanced-gameCore';
+import { handleTetrisPhaseClick, handleChessPhaseClick, resetGameState, startPlayingGame } from './enhanced-gameCore.js';
 import * as sceneModule from './scene';
 import gameState from './utils/gameState.js';
 
@@ -243,6 +243,11 @@ export function createGameStatusDisplay(gameState) {
  * Uses the global gameState object to show the current status
  */
 export function updateGameStatusDisplay(gameState) {
+	// Allow callers to omit the parameter (many modules call `window.updateGameStatusDisplay()`)
+	// while keeping the existing explicit-arg behaviour.
+	const effectiveState = gameState || window.gameState;
+	gameState = effectiveState;
+	
 	// Get status container
 	const statusContainer = document.getElementById('game-status');
 	
@@ -341,8 +346,9 @@ export function updateNetworkStatus(status) {
 /**
  * Show a tutorial message with Russian-themed styling
  * This should appear automatically when the game loads
+ * Features: scrollable content, fixed buttons, game selection options
  */
-export function showTutorialMessage(startGameFunction) {
+export function showTutorialMessage(startGameFunction, options = {}) {
 	// Check if tutorial is already showing
 	if (document.getElementById('tutorial-message')) {
 		console.log('Tutorial already showing, not creating another one');
@@ -351,137 +357,416 @@ export function showTutorialMessage(startGameFunction) {
 
 	console.log('Creating tutorial message overlay');
 
-	// Create tutorial message
+	// Check for previous game key in localStorage
+	const previousGameKey = localStorage.getItem('shaktris_game_key');
+	const playerEmail = localStorage.getItem('shaktris_player_email');
+
+	// Create tutorial message container (full screen overlay)
 	const tutorialElement = document.createElement('div');
 	tutorialElement.id = 'tutorial-message';
 
-	// Style the container with Russian theme
+	// Style the container as a full-screen modal with flexbox
 	Object.assign(tutorialElement.style, {
 		position: 'fixed',
-		top: '50%',
-		left: '50%',
-		transform: 'translate(-50%, -50%)',
-		backgroundColor: 'rgba(0, 0, 0, 0.9)',
+		top: '0',
+		left: '0',
+		width: '100%',
+		height: '100%',
+		backgroundColor: 'rgba(0, 0, 0, 0.85)',
 		color: 'white',
-		padding: '20px',
-		borderRadius: '10px',
-		fontFamily: 'Times New Roman, serif', // Russian-style font
+		fontFamily: 'Times New Roman, serif',
 		fontSize: '16px',
 		zIndex: '1000',
-		maxWidth: '80%',
-		textAlign: 'center',
-		border: '2px solid #ffcc00', // Gold border
-		boxShadow: '0 0 10px rgba(255, 204, 0, 0.5)' // Gold glow
+		display: 'flex',
+		flexDirection: 'column',
+		alignItems: 'center',
+		justifyContent: 'center'
 	});
 
-	// Create the start button - store reference directly
-	const startButton = document.createElement('button');
-	startButton.textContent = 'START PLAYING';
-	startButton.style.padding = '12px 30px';
-	startButton.style.backgroundColor = '#333';
-	startButton.style.color = '#ffcc00';
-	startButton.style.border = '2px solid #ffcc00';
-	startButton.style.borderRadius = '5px';
-	startButton.style.cursor = 'pointer';
-	startButton.style.fontSize = '18px';
-	startButton.style.fontWeight = 'bold';
-	startButton.style.fontFamily = 'Times New Roman, serif';
-	startButton.style.animation = 'pulse 2s infinite';
+	// Create the inner modal box
+	const modalBox = document.createElement('div');
+	Object.assign(modalBox.style, {
+		display: 'flex',
+		flexDirection: 'column',
+		maxWidth: 'min(90%, 600px)',
+		maxHeight: '90vh',
+		backgroundColor: 'rgba(10, 10, 30, 0.98)',
+		borderRadius: '12px',
+		border: '2px solid #ffcc00',
+		boxShadow: '0 0 30px rgba(255, 204, 0, 0.4)',
+		overflow: 'hidden'
+	});
+
+	// Create scrollable content area
+	const scrollContent = document.createElement('div');
+	Object.assign(scrollContent.style, {
+		flex: '1',
+		overflowY: 'auto',
+		padding: '24px',
+		textAlign: 'center'
+	});
+
+	// Create fixed button area at bottom
+	const buttonArea = document.createElement('div');
+	Object.assign(buttonArea.style, {
+		padding: '16px 24px',
+		borderTop: '1px solid rgba(255, 204, 0, 0.3)',
+		backgroundColor: 'rgba(10, 10, 30, 1)',
+		display: 'flex',
+		flexDirection: 'column',
+		gap: '12px'
+	});
 
 	// Add pulse animation style
 	const style = document.createElement('style');
+	style.id = 'tutorial-styles';
 	style.textContent = `
 		@keyframes pulse {
 			0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 204, 0, 0.7); }
-			50% { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(255, 204, 0, 0); }
+			50% { transform: scale(1.02); box-shadow: 0 0 0 8px rgba(255, 204, 0, 0); }
 			100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 204, 0, 0); }
 		}
+		.tutorial-btn {
+			padding: 14px 28px;
+			background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+			color: #ffcc00;
+			border: 2px solid #ffcc00;
+			border-radius: 8px;
+			cursor: pointer;
+			font-size: 16px;
+			font-weight: bold;
+			font-family: 'Times New Roman', serif;
+			transition: all 0.2s ease;
+			width: 100%;
+		}
+		.tutorial-btn:hover {
+			background: linear-gradient(135deg, #2a2a4e 0%, #26315e 100%);
+			transform: translateY(-1px);
+		}
+		.tutorial-btn.primary {
+			font-size: 18px;
+			animation: pulse 2s infinite;
+			background: linear-gradient(135deg, #2a2a1e 0%, #3a3a2e 100%);
+		}
+		.tutorial-btn:disabled {
+			opacity: 0.6;
+			cursor: default;
+			animation: none;
+		}
+		.game-key-input {
+			padding: 12px 16px;
+			background: rgba(255, 255, 255, 0.1);
+			border: 1px solid rgba(255, 204, 0, 0.5);
+			border-radius: 6px;
+			color: #fff;
+			font-size: 14px;
+			font-family: monospace;
+			width: 100%;
+			box-sizing: border-box;
+		}
+		.game-key-input::placeholder {
+			color: rgba(255, 255, 255, 0.5);
+		}
+		.tutorial-divider {
+			display: flex;
+			align-items: center;
+			margin: 12px 0;
+			color: rgba(255, 204, 0, 0.6);
+			font-size: 12px;
+		}
+		.tutorial-divider::before, .tutorial-divider::after {
+			content: '';
+			flex: 1;
+			border-bottom: 1px solid rgba(255, 204, 0, 0.3);
+		}
+		.tutorial-divider span {
+			padding: 0 12px;
+		}
 	`;
-	document.head.appendChild(style);
+	if (!document.getElementById('tutorial-styles')) {
+		document.head.appendChild(style);
+	}
 
-	// Add event listener directly to the button before it's in the DOM
-	startButton.addEventListener('click', function(event) {
-		// Log the click immediately
-		console.log('START PLAYING button clicked - starting game...', event);
+	// Function to close tutorial and start game
+	const startGame = (gameKey = null) => {
+		// Store the game key if provided
+		if (gameKey) {
+			localStorage.setItem('shaktris_game_key', gameKey);
+		}
 		
-		// Disable the button immediately to prevent multiple clicks
-		startButton.disabled = true;
-		startButton.textContent = 'Starting...';
-		startButton.style.cursor = 'default';
-		startButton.style.opacity = '0.7';
-		
-		// Remove the tutorial first
+		// Remove the tutorial
 		if (tutorialElement.parentNode) {
 			tutorialElement.parentNode.removeChild(tutorialElement);
 		}
 		
-		// Find and use the best available start game function
+		// Start the game with the key if provided
 		if (typeof startGameFunction === 'function') {
-			console.log('Starting game using passed function');
-			startGameFunction();
+			console.log('Starting game using passed function', gameKey ? `with key: ${gameKey}` : 'new game');
+			startGameFunction(gameKey);
 		} else if (typeof window.startShaktrisGame === 'function') {
 			console.log('Starting game using global function');
-			window.startShaktrisGame();
+			window.startShaktrisGame(gameKey);
 		} else {
 			console.error('No game start function available!');
 			alert('Error: Could not start the game. Please refresh and try again.');
 		}
-	});
+	};
 
-	// Build the HTML content
-	tutorialElement.innerHTML = `
-		<h2 style="color: #ffcc00; margin-top: 0; font-family: 'Times New Roman', serif;">Welcome to Shaktris</h2>
-		<p>A massively multiplayer game combining Chess and Tetris with Russian-inspired visuals</p>
+	// Build the scrollable content
+	scrollContent.innerHTML = `
+		<h2 style="color: #ffcc00; margin: 0 0 8px 0; font-family: 'Times New Roman', serif; font-size: 28px;">
+			☦ Welcome to Shaktris ☦
+		</h2>
+		<p style="margin: 0 0 20px 0; opacity: 0.8;">A massively multiplayer game combining Chess and Tetris</p>
 		
-		<div style="text-align: left; margin: 15px 0;">
-			<h3 style="color: #ffcc00; font-family: 'Times New Roman', serif;">How to Play:</h3>
-			<ul style="line-height: 1.5;">
-				<li><strong>All Players Play Simultaneously</strong> - There are no turns between players!</li>
-				<li><strong>Player Cycle:</strong> Each player follows their own cycle:
-					<ol>
-						<li>First, place a Tetromino (pieces now fall vertically from above)</li>
-						<li>Then, move one of your chess pieces</li>
-						<li>Repeat - each player plays at their own pace</li>
+		<div style="text-align: left; margin: 0 0 20px 0; padding: 16px; background: rgba(255, 204, 0, 0.05); border-radius: 8px;">
+			<h3 style="color: #ffcc00; margin: 0 0 12px 0; font-size: 16px;">How to Play:</h3>
+			<ul style="line-height: 1.6; margin: 0; padding-left: 20px;">
+				<li><strong>All Players Play Simultaneously</strong> - No waiting for turns!</li>
+				<li><strong>Your Cycle:</strong>
+					<ol style="margin: 4px 0; padding-left: 18px;">
+						<li>Place a Tetromino (falls from above)</li>
+						<li>Move one chess piece</li>
+						<li>Repeat!</li>
 					</ol>
 				</li>
-				<li><strong>Tetris Phase:</strong> Tetris pieces automatically fall from above
-					<ul>
-						<li>Arrow keys: Move tetromino horizontally/vertically on the board</li>
-						<li>Z/X: Rotate tetromino</li>
-						<li>Space: Hard drop tetromino</li>
-						<li>Pieces will explode if they collide with existing blocks!</li>
-					</ul>
+				<li><strong>Tetris Controls:</strong>
+					<span style="color: #ffcc00;">Arrow keys</span> move, 
+					<span style="color: #ffcc00;">Z/X</span> rotate, 
+					<span style="color: #ffcc00;">Space</span> drop
 				</li>
-				<li><strong>Chess Phase:</strong> After placing your tetromino
-					<ul>
-						<li>Click on your piece to select it</li>
-						<li>Green circles show where you can move</li>
-						<li>Click on a green circle to move there</li>
-						<li>After moving, your chess phase ends and you start a new tetris phase</li>
-					</ul>
-				</li>
-				<li><strong>Objective:</strong> Capture opponent kings!</li>
+				<li><strong>Chess:</strong> Click piece → click green circle to move</li>
+				<li><strong>Goal:</strong> Capture opponent kings! 👑</li>
 			</ul>
 		</div>
 		
-		<p style="font-style: italic; margin-top: 10px;">This is a massively multiplayer game where all players play independently at the same time.</p>
-		
-		<div style="text-align: center; margin-top: 20px;">
-			<div style="font-size: 36px; color: #ffcc00; margin-bottom: 10px;">☦</div>
-			<div id="start-button-container"></div>
+		<div style="padding: 12px; background: rgba(255, 204, 0, 0.08); border-radius: 8px; border-left: 3px solid #ffcc00;">
+			<p style="margin: 0; font-style: italic; font-size: 14px; opacity: 0.9;">
+				Tip: Place tetrominos to expand your territory, then use your chess pieces to attack!
+			</p>
 		</div>
 	`;
 
+	// Build the button area
+	let buttonHTML = '';
+	
+	// If player has a previous game key, show rejoin option
+	if (previousGameKey) {
+		buttonHTML += `
+			<button id="rejoin-game-btn" class="tutorial-btn primary">
+				⟲ REJOIN PREVIOUS GAME
+			</button>
+			<div class="tutorial-divider"><span>OR</span></div>
+		`;
+	}
+	
+	buttonHTML += `
+		<button id="new-game-btn" class="tutorial-btn ${!previousGameKey ? 'primary' : ''}">
+			✦ START NEW GAME
+		</button>
+		<div class="tutorial-divider"><span>OR JOIN WITH KEY</span></div>
+		<div style="display: flex; gap: 8px;">
+			<input type="text" id="game-key-input" class="game-key-input" 
+				placeholder="Enter game key..." 
+				style="flex: 1;">
+			<button id="join-key-btn" class="tutorial-btn" style="width: auto; padding: 12px 20px;">
+				JOIN
+			</button>
+		</div>
+		<div class="tutorial-divider"><span>OR SIGN IN WITH EMAIL</span></div>
+		<div id="magic-link-section">
+			<div style="display: flex; gap: 8px;">
+				<input type="email" id="email-input" class="game-key-input" 
+					placeholder="your@email.com" 
+					style="flex: 1;">
+				<button id="magic-link-btn" class="tutorial-btn" style="width: auto; padding: 12px 20px;">
+					✉ SEND LINK
+				</button>
+			</div>
+			<p id="magic-link-status" style="margin: 8px 0 0 0; font-size: 12px; color: #888; display: none;"></p>
+		</div>
+	`;
+	
+	buttonArea.innerHTML = buttonHTML;
+
+	// Assemble the modal
+	modalBox.appendChild(scrollContent);
+	modalBox.appendChild(buttonArea);
+	tutorialElement.appendChild(modalBox);
+
 	// Add the element to the document
 	document.body.appendChild(tutorialElement);
+
+	// Set up button event handlers
+	const newGameBtn = tutorialElement.querySelector('#new-game-btn');
+	const rejoinBtn = tutorialElement.querySelector('#rejoin-game-btn');
+	const joinKeyBtn = tutorialElement.querySelector('#join-key-btn');
+	const gameKeyInput = tutorialElement.querySelector('#game-key-input');
+
+	if (newGameBtn) {
+		newGameBtn.addEventListener('click', () => {
+			newGameBtn.disabled = true;
+			newGameBtn.textContent = 'Starting...';
+			startGame(null); // New game, no key
+		});
+	}
+
+	if (rejoinBtn) {
+		rejoinBtn.addEventListener('click', () => {
+			rejoinBtn.disabled = true;
+			rejoinBtn.textContent = 'Rejoining...';
+			startGame(previousGameKey);
+		});
+	}
+
+	if (joinKeyBtn && gameKeyInput) {
+		const joinWithKey = () => {
+			const key = gameKeyInput.value.trim();
+			if (key) {
+				joinKeyBtn.disabled = true;
+				joinKeyBtn.textContent = '...';
+				startGame(key);
+			} else {
+				gameKeyInput.style.borderColor = '#ff4444';
+				gameKeyInput.focus();
+				setTimeout(() => {
+					gameKeyInput.style.borderColor = 'rgba(255, 204, 0, 0.5)';
+				}, 1000);
+			}
+		};
+		
+		joinKeyBtn.addEventListener('click', joinWithKey);
+		gameKeyInput.addEventListener('keypress', (e) => {
+			if (e.key === 'Enter') joinWithKey();
+		});
+	}
+
+	// Magic link email handler
+	const magicLinkBtn = tutorialElement.querySelector('#magic-link-btn');
+	const emailInput = tutorialElement.querySelector('#email-input');
+	const magicLinkStatus = tutorialElement.querySelector('#magic-link-status');
+
+	if (magicLinkBtn && emailInput) {
+		const requestMagicLink = async () => {
+			const email = emailInput.value.trim();
+			
+			// Validate email
+			const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+			if (!email || !emailRegex.test(email)) {
+				emailInput.style.borderColor = '#ff4444';
+				if (magicLinkStatus) {
+					magicLinkStatus.textContent = 'Please enter a valid email address';
+					magicLinkStatus.style.color = '#ff6666';
+					magicLinkStatus.style.display = 'block';
+				}
+				emailInput.focus();
+				setTimeout(() => {
+					emailInput.style.borderColor = 'rgba(255, 204, 0, 0.5)';
+				}, 2000);
+				return;
+			}
+			
+			// Show loading state
+			magicLinkBtn.disabled = true;
+			magicLinkBtn.textContent = 'Sending...';
+			if (magicLinkStatus) {
+				magicLinkStatus.textContent = 'Sending magic link...';
+				magicLinkStatus.style.color = '#ffcc00';
+				magicLinkStatus.style.display = 'block';
+			}
+			
+			try {
+				const response = await fetch('/api/auth/magic-link', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ 
+						email, 
+						gameKey: gameKeyInput?.value.trim() || null 
+					})
+				});
+				
+				const result = await response.json();
+				
+				if (result.success) {
+					// Store email for later
+					localStorage.setItem('shaktris_player_email', email);
+					
+					if (magicLinkStatus) {
+						if (result.method === 'console') {
+							// Development mode - link was logged to console
+							magicLinkStatus.innerHTML = '✓ Magic link logged to server console!<br><small>(Check server terminal for link)</small>';
+						} else {
+							magicLinkStatus.textContent = '✓ Magic link sent! Check your email.';
+						}
+						magicLinkStatus.style.color = '#66ff66';
+					}
+					magicLinkBtn.textContent = '✓ Sent!';
+					
+					// Keep button disabled but show success
+					setTimeout(() => {
+						magicLinkBtn.disabled = false;
+						magicLinkBtn.textContent = '✉ RESEND';
+					}, 5000);
+				} else {
+					throw new Error(result.error || 'Failed to send magic link');
+				}
+			} catch (error) {
+				console.error('Magic link request failed:', error);
+				if (magicLinkStatus) {
+					magicLinkStatus.textContent = error.message || 'Failed to send. Try again.';
+					magicLinkStatus.style.color = '#ff6666';
+				}
+				magicLinkBtn.disabled = false;
+				magicLinkBtn.textContent = '✉ SEND LINK';
+			}
+		};
+		
+		magicLinkBtn.addEventListener('click', requestMagicLink);
+		emailInput.addEventListener('keypress', (e) => {
+			if (e.key === 'Enter') requestMagicLink();
+		});
+	}
+
+	// Check for auth result from URL (magic link callback)
+	const urlParams = new URLSearchParams(window.location.search);
+	const authResult = urlParams.get('auth');
+	const playerKey = urlParams.get('playerKey');
+	const urlGameKey = urlParams.get('gameKey');
 	
-	// Add the button to the container after the HTML is set
-	const buttonContainer = tutorialElement.querySelector('#start-button-container');
-	if (buttonContainer) {
-		buttonContainer.appendChild(startButton);
-	} else {
-		// Fallback if container not found
-		tutorialElement.appendChild(startButton);
+	if (authResult === 'success' && playerKey) {
+		console.log('Magic link authentication successful');
+		localStorage.setItem('shaktris_player_key', playerKey);
+		if (urlGameKey) {
+			localStorage.setItem('shaktris_game_key', urlGameKey);
+		}
+		// Clean URL
+		const cleanUrl = new URL(window.location.href);
+		cleanUrl.searchParams.delete('auth');
+		cleanUrl.searchParams.delete('playerKey');
+		cleanUrl.searchParams.delete('gameKey');
+		window.history.replaceState({}, '', cleanUrl.toString());
+		
+		// Auto-start the game
+		setTimeout(() => {
+			startGame(urlGameKey || null);
+		}, 500);
+	} else if (authResult === 'failed') {
+		const reason = urlParams.get('reason');
+		let message = 'Login failed.';
+		if (reason === 'expired') message = 'Magic link expired. Please request a new one.';
+		if (reason === 'invalid') message = 'Invalid magic link.';
+		
+		if (magicLinkStatus) {
+			magicLinkStatus.textContent = message;
+			magicLinkStatus.style.color = '#ff6666';
+			magicLinkStatus.style.display = 'block';
+		}
+		
+		// Clean URL
+		const cleanUrl = new URL(window.location.href);
+		cleanUrl.searchParams.delete('auth');
+		cleanUrl.searchParams.delete('reason');
+		window.history.replaceState({}, '', cleanUrl.toString());
 	}
 }
 /**

@@ -64,15 +64,33 @@ const paymentConfig = {
 	}
 };
 
-// Import Solana Web3.js library
-const { 
-	Connection, 
-	PublicKey, 
-	Transaction, 
-	SystemProgram, 
-	LAMPORTS_PER_SOL,
-	sendAndConfirmTransaction 
-} = require('@solana/web3.js');
+// Solana Web3.js library - loaded from CDN or bundled
+// These will be populated when Solana is needed
+let Connection, PublicKey, Transaction, SystemProgram, LAMPORTS_PER_SOL, sendAndConfirmTransaction;
+let solanaLoaded = false;
+
+// Lazy-load Solana library when first needed
+async function ensureSolanaLoaded() {
+	if (solanaLoaded) return true;
+	
+	try {
+		// Try to use global solanaWeb3 if loaded via CDN script tag
+		if (window.solanaWeb3) {
+			({ Connection, PublicKey, Transaction, SystemProgram, LAMPORTS_PER_SOL, sendAndConfirmTransaction } = window.solanaWeb3);
+			solanaLoaded = true;
+			return true;
+		}
+		
+		// Try dynamic import from CDN
+		const solanaModule = await import('https://unpkg.com/@solana/web3.js@latest/lib/index.browser.esm.js');
+		({ Connection, PublicKey, Transaction, SystemProgram, LAMPORTS_PER_SOL, sendAndConfirmTransaction } = solanaModule);
+		solanaLoaded = true;
+		return true;
+	} catch (error) {
+		console.warn('Solana Web3.js library not available. Payment features will be limited.', error);
+		return false;
+	}
+}
 
 // ----- Payment Provider Interfaces -----
 
@@ -115,6 +133,16 @@ class SolanaProvider extends PaymentProvider {
 	
 	async initialize() {
 		try {
+			// Ensure Solana library is loaded
+			const solanaAvailable = await ensureSolanaLoaded();
+			if (!solanaAvailable) {
+				return {
+					success: false,
+					error: 'Solana Web3.js library not available',
+					recoverable: false
+				};
+			}
+			
 			// Check if Phantom or other Solana wallet is installed
 			if (!window.solana && !window.solflare) {
 				// Create QR code for mobile wallet connection or display install instructions

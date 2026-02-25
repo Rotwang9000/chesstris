@@ -3,66 +3,42 @@
 <head>
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<title>Shaktris 2D - Chess + Tetris</title>
-	<meta name="description" content="Shaktris is a unique game that combines elements of chess and Tetris on a dynamically expanding board.">
-	
-	<!-- Favicon -->
-	<link rel="icon" href="../img/favicon.ico">
-	
-	<!-- CSS -->
-	<link rel="stylesheet" href="../css/styles.css">
-	
-	<!-- Set 2D mode flag -->
-	<script>
-		window.is2DMode = true;
-	</script>
+	<title>Shaktris - Legacy 2D (Disabled)</title>
+	<meta name="description" content="Legacy 2D mode has been disabled. Redirecting to the low-spec cute 3D mode.">
+	<meta http-equiv="refresh" content="0; url=/?render=cute">
+	<style>
+		body {
+			margin: 0;
+			font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+			background: #0b0b0b;
+			color: #ffcc00;
+			display: grid;
+			place-items: center;
+			min-height: 100vh;
+			text-align: center;
+			padding: 24px;
+		}
+		.card {
+			max-width: 520px;
+			border: 1px solid rgba(255, 204, 0, 0.4);
+			border-radius: 12px;
+			padding: 18px 20px;
+			background: rgba(0,0,0,0.45);
+		}
+		a { color: #ffcc00; }
+	</style>
 </head>
 <body>
-	<!-- Loading Screen -->
-	<div id="loading-screen" class="screen">
-		<div class="screen-content">
-			<h1>Loading Shaktris 2D...</h1>
-			<div class="loading-spinner"></div>
-		</div>
+	<div class="card">
+		<h2>Legacy 2D mode has been disabled</h2>
+		<p>
+			Shaktris now uses the 3D renderer only. You’ll be redirected to the
+			<strong>low‑spec “cute”</strong> 3D mode.
+		</p>
+		<p>If you aren’t redirected automatically, click <a href="/?render=cute">Continue</a>.</p>
 	</div>
-	
-	<!-- Menu Screen -->
-	<div id="menu-screen" class="screen" style="display: none;">
-		<div class="screen-content">
-			<h1>Shaktris 2D</h1>
-			<p>A unique game combining chess and Tetris</p>
-			<div class="menu-buttons">
-				<button id="play-button">Play</button>
-				<button id="settings-button">Settings</button>
-				<button id="help-button">How to Play</button>
-			</div>
-		</div>
-	</div>
-	
-	<!-- Game Screen -->
-	<div id="game-screen" class="screen" style="display: none;">
-		<div id="game-container"></div>
-		<div id="game-ui">
-			<div id="score-panel">
-				<div>Score: <span id="score">0</span></div>
-				<div>Level: <span id="level">1</span></div>
-				<div>Lines: <span id="lines">0</span></div>
-			</div>
-			<div id="next-piece"></div>
-			<div id="held-piece"></div>
-		</div>
-	</div>
-	
-	<!-- Debug Panel -->
-	<div id="debug-panel" class="debug-panel">
-		<h3>Debug Info</h3>
-		<pre>Initializing...</pre>
-	</div>
-	
-	<!-- Notification Container -->
-	<div id="notification-container" class="notification-container"></div>
-	
-	<!-- JavaScript Modules -->
-	<script type="module" src="../js/main.js"></script>
+	<script>
+		window.location.replace('/?render=cute');
+	</script>
 </body>
 </html> 

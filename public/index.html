@@ -145,6 +145,12 @@
 			color: rgba(255, 255, 255, 0.7);
 			font-size: 12px;
 		}
+
+		/* Low-spec / cute mode: render at lower resolution and scale up crisply */
+		#game-container.render-cute canvas {
+			image-rendering: pixelated;
+			image-rendering: crisp-edges;
+		}
 		
 		.error-message {
 			position: fixed;
@@ -159,6 +165,146 @@
 			font-weight: bold;
 			box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 		}
+		
+		/* Sponsor Ad Container */
+		#sponsor-ad {
+			position: fixed;
+			bottom: 20px;
+			right: 20px;
+			width: 280px;
+			background: linear-gradient(135deg, rgba(20, 20, 30, 0.95) 0%, rgba(40, 35, 50, 0.95) 100%);
+			border: 2px solid #ffcc00;
+			border-radius: 12px;
+			padding: 16px;
+			z-index: 500;
+			display: none;
+			box-shadow: 0 8px 32px rgba(255, 204, 0, 0.3), 0 0 20px rgba(0, 0, 0, 0.5);
+			backdrop-filter: blur(10px);
+			animation: sponsorSlideIn 0.4s ease-out;
+		}
+		
+		@keyframes sponsorSlideIn {
+			from {
+				opacity: 0;
+				transform: translateX(100px);
+			}
+			to {
+				opacity: 1;
+				transform: translateX(0);
+			}
+		}
+		
+		#sponsor-ad .sponsor-header {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			margin-bottom: 12px;
+		}
+		
+		#sponsor-ad .sponsor-badge {
+			font-size: 10px;
+			text-transform: uppercase;
+			letter-spacing: 1px;
+			color: #888;
+			background: rgba(255, 204, 0, 0.1);
+			padding: 3px 8px;
+			border-radius: 4px;
+		}
+		
+		#sponsor-ad .sponsor-close {
+			background: none;
+			border: none;
+			color: #666;
+			font-size: 20px;
+			cursor: pointer;
+			padding: 0;
+			line-height: 1;
+			transition: color 0.2s;
+		}
+		
+		#sponsor-ad .sponsor-close:hover {
+			color: #ffcc00;
+		}
+		
+		#sponsor-name {
+			color: #ffcc00;
+			font-size: 16px;
+			font-weight: bold;
+			margin-bottom: 8px;
+		}
+		
+		#sponsor-image {
+			width: 100%;
+			height: 120px;
+			object-fit: cover;
+			border-radius: 8px;
+			margin-bottom: 10px;
+			border: 1px solid rgba(255, 204, 0, 0.3);
+		}
+		
+		#sponsor-message {
+			color: #ccc;
+			font-size: 13px;
+			line-height: 1.4;
+			margin-bottom: 12px;
+		}
+		
+		#sponsor-link {
+			display: block;
+			width: 100%;
+			padding: 10px 16px;
+			background: linear-gradient(135deg, #ffcc00 0%, #e6b800 100%);
+			color: #000;
+			text-align: center;
+			text-decoration: none;
+			border-radius: 6px;
+			font-weight: bold;
+			font-size: 14px;
+			cursor: pointer;
+			border: none;
+			transition: transform 0.2s, box-shadow 0.2s;
+		}
+		
+		#sponsor-link:hover {
+			transform: translateY(-2px);
+			box-shadow: 0 4px 12px rgba(255, 204, 0, 0.4);
+		}
+		
+		/* Advertise link in game title area */
+		.advertise-link {
+			position: fixed;
+			top: 10px;
+			right: 10px;
+			z-index: 100;
+			color: #888;
+			font-size: 12px;
+			text-decoration: none;
+			padding: 4px 10px;
+			border: 1px solid #444;
+			border-radius: 4px;
+			transition: all 0.2s;
+		}
+		
+		.advertise-link:hover {
+			color: #ffcc00;
+			border-color: #ffcc00;
+		}
+		/* Retro theme overrides */
+		[data-render-profile="retro"] .game-title {
+			color: #00ff41;
+			font-family: 'Courier New', monospace;
+			text-shadow: 0 0 8px #00ff41, 0 0 20px #003300;
+		}
+		[data-render-profile="retro"] .debug-indicator button {
+			background: #000 !important;
+			color: #00ff41 !important;
+			border-color: #00ff41 !important;
+			font-family: 'Courier New', monospace !important;
+		}
+		[data-render-profile="retro"] #session-warning {
+			color: #00aa30 !important;
+			font-family: 'Courier New', monospace !important;
+		}
 	</style>
 </head>
 <body>
@@ -168,6 +314,8 @@
 	<!-- Debug Indicator -->
 	<div class="debug-indicator">
 		<button id="reset-camera-btn" style="margin-left: 10px; padding: 2px 6px; background: #333; color: #ffcc00; border: 1px solid #ffcc00; border-radius: 3px; cursor: pointer; font-family: 'Playfair Display', serif;">Reset Camera</button>
+		<button id="toggle-render-mode-btn" style="margin-left: 10px; padding: 2px 6px; background: #333; color: #ffcc00; border: 1px solid #ffcc00; border-radius: 3px; cursor: pointer; font-family: 'Playfair Display', serif;">Mode: Normal</button>
+		<span id="session-warning" style="margin-left: 12px; font-size: 11px; color: #888; font-family: 'Playfair Display', serif;">Save your player code from the menu before leaving!</span>
 	</div>
 
 	<!-- Loading Screen -->
@@ -185,6 +333,21 @@
 	<!-- Game Container -->
 	<div id="game-container" style="display: none;">
 	</div>
+	
+	<!-- Sponsor Ad Container -->
+	<div id="sponsor-ad">
+		<div class="sponsor-header">
+			<span class="sponsor-badge">Sponsored</span>
+			<button class="sponsor-close" onclick="document.getElementById('sponsor-ad').style.display='none'">&times;</button>
+		</div>
+		<div id="sponsor-name"></div>
+		<img id="sponsor-image" src="" alt="Sponsor ad">
+		<div id="sponsor-message"></div>
+		<button id="sponsor-link">Learn More</button>
+	</div>
+	
+	<!-- Advertise Link -->
+	<a href="/advertise" class="advertise-link">Advertise Here</a>
 	
 	<!-- Core game scripts -->
 	<script src="/socket.io/socket.io.js"></script>

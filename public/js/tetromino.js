@@ -1,11 +1,14 @@
 import { updateGameStatusDisplay } from './createLoadingIndicator';
-import { getTHREE, PLAYER_COLORS } from './enhanced-gameCore';
+import { getTHREE, getPlayerColors } from './gameContext.js';
+const PLAYER_COLORS = getPlayerColors();
 import { showToastMessage } from './showToastMessage';
 import NetworkManager from './utils/networkManager.js';
 import { boardFunctions } from './boardFunctions.js';
 import { toRelativePosition, toAbsolutePosition, translatePosition } from './centreBoardMarker.js';
 // Import the gameState singleton at the top of the file
 import gameState from './utils/gameState.js';
+// Import sponsor utilities
+import { fetchNextSponsor, displaySponsorInfo, onTetrominoPlaced } from '../utils/sponsors.js';
 
 /**
  * Shaktris 3D Coordinate System
@@ -249,8 +252,8 @@ function showDropAnimation(gameState) {
 }
 /**
  * Show explosion animation for tetromino collisions
- * @param {number} x - X position (board coordinates)
- * @param {number} z - Z position (board coordinates)
+ * @param {number} x - X position (board coordinates, relative to player)
+ * @param {number} z - Z position (board coordinates, relative to player)
  * @param {Object} gameState - The current game state
  */
 function showExplosionAnimation(x, z, gameState) {
@@ -279,12 +282,15 @@ function showExplosionAnimation(x, z, gameState) {
 	const particleCount = 40; // Increased particle count
 	const particles = [];
 	
-	// Calculate the center of the explosion (for a shape that spans multiple cells)
-	// We'll use the provided x,z as the top-left corner and assume a 2x2 area for better visual effect
-	const centerX = x + 1;
-	const centerZ = z + 1;
+	// Translate board coordinates to world coordinates using the centre marker
+	const absolutePos = translatePosition({ x, z }, gameState, true);
 	
-	console.log(`Explosion center calculated at (${centerX}, ${centerZ})`);
+	// Calculate the center of the explosion (for a shape that spans multiple cells)
+	// We'll use the translated position as the center and assume a 2x2 area for better visual effect
+	const centerX = absolutePos.x + 1;
+	const centerZ = absolutePos.z + 1;
+	
+	console.log(`Explosion at board (${x}, ${z}) translated to world position (${absolutePos.x}, ${absolutePos.z}), center at (${centerX}, ${centerZ})`);
 	
 	for (let i = 0; i < particleCount; i++) {
 		const size = Math.random() * 0.4 + 0.1; // Slightly larger particles
@@ -443,23 +449,8 @@ function showExplosionAnimation(x, z, gameState) {
 			particles.length = 0;
 		}
 		
-		// Ensure we transition to chess phase
-		if (gameState.turnPhase !== 'chess') {
-			gameState.turnPhase = 'chess';
-			updateGameStatusDisplay();
-			
-			// Force a render update after changing phase
-			if (gameState.renderer && gameState.scene && gameState.camera) {
-				gameState.renderer.render(gameState.scene, gameState.camera);
-			}
-			
-			// Try to run the renderScene function if available
-			if (typeof gameState.renderScene === 'function') {
-				gameState.renderScene();
-			}
-		}
-		
-		console.log('Explosion animation complete, transitioned to chess phase');
+		// Phase transition is handled by the server response — don't override here
+		console.log('Explosion animation complete, phase:', gameState.turnPhase);
 	};
 	
 	// Start the animation
@@ -595,6 +586,28 @@ function sendTetrominoPlacementToServer(tetrominoData) {
 		} catch (error) {
 			console.error('Error submitting tetromino placement:', error);
 			
+			// Server-side cooldown / rate limiting
+			if (error && error.reason === 'rate_limited') {
+				const retryAfterMs = error.retryAfterMs || error.details?.retryAfterMs;
+				return {
+					success: false,
+					reason: 'rate_limited',
+					retryAfterMs,
+					message: 'rate_limited',
+					error: error
+				};
+			}
+			
+			// Preserve server-provided placement reasons when available
+			if (error && error.reason === 'validation_error' && error.details) {
+				return {
+					success: false,
+					reason: error.details.reason || 'validation_error',
+					message: error.details.message || error.message || 'Server rejected placement',
+					error: error
+				};
+			}
+			
 			// Identify error type
 			const isNetworkError = error.message?.includes('connect') || 
 								error.message?.includes('network') ||
@@ -657,14 +670,7 @@ function sendTetrominoPlacementToServer(tetrominoData) {
 				window.updateBoardVisuals();
 			}
 			
-			// Double-check that turnPhase is set correctly
-			if (gameState.turnPhase !== 'chess') {
-				console.warn('turnPhase is not chess after placement! Setting it now.');
-				gameState.turnPhase = 'chess';
-				if (typeof window.updateGameStatusDisplay === 'function') {
-					window.updateGameStatusDisplay();
-				}
-			}
+			// Phase transition is determined by server response, not forced here
 		}
 		
 		return response;
@@ -687,74 +693,108 @@ function validatePlacementLocally(tetrominoData) {
 
 	const { shape, position } = tetrominoData;
 	const { x: posX, z: posZ } = position;
+	const playerId = gameState.currentPlayer;
+	const isFirstPlacement = !gameState?._hasPlacedTetromino;
 
-	// First check for collision with existing cells or boundaries
+	// Server-side truth (see `server.js` -> socket.on('tetromino_placed') and `server/game/TetrominoManager.js`):
+	// - The server validates placement at y=0 (it does not use client-provided y).
+	// - "Occupied" means the cell contains ANY non-home content (home markers alone do NOT block).
+	// - Placement must connect (8-way adjacency) to the player's own territory (non-home) OR their home markers.
+
+	// 1) Collision check (match server: non-home blocks).
 	const hasCollision = checkTetrominoCollision(gameState, shape, posX, posZ);
 	if (hasCollision) {
 		console.log('Local validation: Collision detected');
 		return false;
 	}
 
-	// Check if tetromino is adjacent to existing cells
-	const isAdjacent = isTetrominoAdjacentToExistingCells(gameState, shape, posX, posZ);
-	if (!isAdjacent) {
-		console.log('Local validation: Not adjacent to existing cells');
-		return false;
-	}
+	// Helper to normalize board cell into an array of items.
+	const getCellItems = (cell) => {
+		if (cell === null || cell === undefined) return [];
+		if (Array.isArray(cell)) return cell;
+		if (typeof cell === 'object' && Array.isArray(cell.contents)) return cell.contents;
+		return [cell];
+	};
 
-	// Check if any cell of the tetromino would have a path to the king
-	let hasPath = false;
-	
-	// First, we'll simulate placing the tetromino on the board to check connectivity
-	const simulatedBoard = JSON.parse(JSON.stringify(gameState.board));
-	if (!simulatedBoard.cells) simulatedBoard.cells = {};
-	
-	// Add the tetromino cells to the simulated board
+	// Helper predicates aligned with server semantics.
+	const isOwnedNonHome = (item) =>
+		item &&
+		String(item.player) === String(playerId) &&
+		String(item.type) !== 'home';
+
+	const isOwnedHome = (item) =>
+		item &&
+		String(item.player) === String(playerId) &&
+		String(item.type) === 'home';
+
+	// 2) Adjacency check (8-way)
+	// Server semantics:
+	// - Adjacent to owned NON-home content => valid if:
+	//   - first placement (server short-circuits), OR
+	//   - there is a path to king through owned cells.
+	// - Adjacent to owned HOME marker => valid ONLY for first placement.
 	for (let z = 0; z < shape.length; z++) {
 		for (let x = 0; x < shape[z].length; x++) {
-			if (shape[z][x] === 1) {
-				const boardX = posX + x;
-				const boardZ = posZ + z;
-				const key = `${boardX},${boardZ}`;
-				simulatedBoard.cells[key] = {
-					type: 'tetromino',
-					player: gameState.currentPlayer
-				};
-			}
-		}
-	}
-	
-	// Now check if any cell has a path to the king
-	for (let z = 0; z < shape.length; z++) {
-		for (let x = 0; x < shape[z].length; x++) {
-			if (shape[z][x] === 1) {
-				const boardX = posX + x;
-				const boardZ = posZ + z;
-				
-				// Create a temporary gameState for path checking
-				const tempGameState = { ...gameState, board: simulatedBoard };
-				
-				const path = hasPathToKing(tempGameState, boardX, boardZ, gameState.currentPlayer);
-				if (path) {
-					hasPath = true;
-					
-					// Store the best path for visualization
-					gameState.pendingPath = path;
-					break;
+			if (shape[z][x] !== 1) continue;
+
+			const blockX = posX + x;
+			const blockZ = posZ + z;
+
+			const adjacentPositions = [
+				{ x: blockX - 1, z: blockZ },
+				{ x: blockX + 1, z: blockZ },
+				{ x: blockX, z: blockZ - 1 },
+				{ x: blockX, z: blockZ + 1 },
+				{ x: blockX - 1, z: blockZ - 1 },
+				{ x: blockX + 1, z: blockZ - 1 },
+				{ x: blockX - 1, z: blockZ + 1 },
+				{ x: blockX + 1, z: blockZ + 1 }
+			];
+
+			for (const pos of adjacentPositions) {
+				const cell = gameState.board.cells?.[`${pos.x},${pos.z}`];
+				const items = getCellItems(cell);
+				if (items.length === 0) continue;
+
+				// Adjacent to owned non-home territory
+				if (items.some(isOwnedNonHome)) {
+					console.log(`Found adjacent owned non-home cell at (${pos.x}, ${pos.z})`);
+					if (isFirstPlacement) {
+						console.log('Local validation: Placement is valid (first placement)');
+						return true;
+					}
+
+					// Non-first placement: must have a path to king via owned territory (diagonal-inclusive)
+					try {
+						const tempGameState = { ...gameState, board: gameState.board };
+						const hasPath = hasPathToKing(tempGameState, pos.x, pos.z, playerId);
+						if (hasPath) {
+							console.log('Local validation: Placement is valid (path to king)');
+							return true;
+						}
+					} catch (e) {
+						console.warn('Local validation: hasPathToKing check failed, treating as invalid:', e);
+					}
+
+					// Adjacent but disconnected
+					console.log('Local validation: No connected path to king');
+					return false;
+				}
+
+				// Adjacent to owned home markers (only valid on first placement)
+				if (items.some(isOwnedHome)) {
+					console.log(`Found adjacent owned home cell at (${pos.x}, ${pos.z})`);
+					if (isFirstPlacement) {
+						console.log('Local validation: Placement is valid (first placement adjacent to home)');
+						return true;
+					}
 				}
 			}
 		}
-		if (hasPath) break;
 	}
-	
-	// If the tetromino would form an island with no path to king, it's invalid
-	if (!hasPath) {
-		console.log('Local validation: No path to king');
-		return false;
-	}
-	
-	console.log('Local validation: Placement is valid');
-	return true;
+
+	console.log('Local validation: Not adjacent to existing cells');
+	return false;
 }
 
 /**
@@ -800,21 +840,9 @@ function showLocalPlacementEffect(tetrominoData) {
 		document.body.removeChild(animElement);
 	}, 1000);
 	
-	// Switch to chess phase
-	gameState.turnPhase = 'chess';
-	
-	// Update game status display
-	if (typeof window.updateGameStatusDisplay === 'function') {
-		window.updateGameStatusDisplay();
-	}
-	
-	// Update the board visuals
 	if (typeof window.updateBoardVisuals === 'function') {
 		window.updateBoardVisuals();
 	}
-	
-	// Log the phase change
-	console.log('Local validation successful - switched to chess phase:', gameState.turnPhase);
 }
 
 /**
@@ -825,11 +853,7 @@ function showLocalExplosionEffect(tetrominoData) {
 	const posX = tetrominoData.position.x;
 	const posZ = tetrominoData.position.z;
 	
-	// Show explosion animation
 	showExplosionAnimation(posX, posZ, gameState);
-	
-	// Switch to chess phase
-	gameState.turnPhase = 'chess';
 	
 	// Update game status display
 	if (typeof window.updateGameStatusDisplay === 'function') {
@@ -906,14 +930,6 @@ function showCorrectionPlacementEffect(tetrominoData) {
 	setTimeout(() => {
 		document.body.removeChild(animElement);
 	}, 1800);
-	
-	// Switch to chess phase
-	gameState.turnPhase = 'chess';
-	
-	// Update game status display
-	if (typeof window.updateGameStatusDisplay === 'function') {
-		window.updateGameStatusDisplay();
-	}
 }
 
 /**
@@ -977,14 +993,6 @@ function showCorrectionExplosionEffect(tetrominoData) {
 	setTimeout(() => {
 		document.body.removeChild(animElement);
 	}, 1800);
-	
-	// Switch to chess phase
-	gameState.turnPhase = 'chess';
-	
-	// Update game status display
-	if (typeof window.updateGameStatusDisplay === 'function') {
-		window.updateGameStatusDisplay();
-	}
 }
 
 /**
@@ -1152,13 +1160,19 @@ export function createTetrominoBlock(x, z, playerType, isGhost = false, heightAb
 	}
 
 	// Update material properties
+	const isRetro = gameState && gameState.retroMode;
 	if (block.material) {
 		block.material.color.setHex(color);
 		block.material.transparent = isGhost;
 		block.material.opacity = isGhost ? 0.3 : 1.0;
-		block.material.wireframe = isGhost;
-		block.material.emissive = isGhost ? { r: 0, g: 0, b: 0 } : block.material.color;
-		block.material.emissiveIntensity = isGhost ? 0 : 0.2;
+		block.material.wireframe = isGhost || isRetro;
+		if (isRetro && !isGhost) {
+			block.material.emissive = new THREE.Color(color);
+			block.material.emissiveIntensity = 0.6;
+		} else {
+			block.material.emissive = new THREE.Color(0x000000);
+			block.material.emissiveIntensity = 0;
+		}
 		block.material.needsUpdate = true;
 	}
 
@@ -1212,7 +1226,7 @@ export function createTetrominoBlock(x, z, playerType, isGhost = false, heightAb
  * @param {Object} gameState - The current game state
  * @returns {Object} Initial position {x, z, heightAboveBoard} for the tetromino
  */
-export function determineInitialTetrominoPosition(gameState) {
+export function determineInitialTetrominoPosition(gameState, shapeOverride = null) {
 
 	
 	// Find the current player's king using boardFunctions helper
@@ -1239,19 +1253,23 @@ export function determineInitialTetrominoPosition(gameState) {
 	let kingDirection;
 	switch (kingOrientation) {
 		case 0: // Facing up
-			kingDirection = { x: 0, z: -1 };
-			break;
-		case 1: // Facing right
-			kingDirection = { x: -1, z: 0 };
-			break;
-		case 2: // Facing down
+			// In-game convention (matches server + camera): orientation 0 faces +Z
 			kingDirection = { x: 0, z: 1 };
 			break;
-		case 3: // Facing left
+		case 1: // Facing right
+			// orientation 1 faces +X
 			kingDirection = { x: 1, z: 0 };
 			break;
+		case 2: // Facing down
+			// orientation 2 faces -Z
+			kingDirection = { x: 0, z: -1 };
+			break;
+		case 3: // Facing left
+			// orientation 3 faces -X
+			kingDirection = { x: -1, z: 0 };
+			break;
 		default:
-			kingDirection = { x: 0, z: -1 }; // Default to facing up
+			kingDirection = { x: 0, z: 1 }; // Default to facing up (+Z)
 	}
 	
 	// Create right vector (perpendicular to king direction)
@@ -1259,50 +1277,81 @@ export function determineInitialTetrominoPosition(gameState) {
 		x: -kingDirection.z, // Perpendicular to forward direction
 		z: kingDirection.x
 	};
-	
-	// Random offset between -6 and 6 in the right direction
-	const randomOffset = Math.floor(Math.random() * 13) - 6;
-	
-	// Apply random offset left/right from king position
-	let initialX = kingPosition.x + (rightVector.x * randomOffset);
-	let initialZ = kingPosition.z + (rightVector.z * randomOffset);
-	
-	// Calculate how far forward we need to go to avoid collisions
-	let forwardDistance = 2; // Start with a minimum distance
-	let collisionFree = false;
 
-	console.log('Initial tetromino position', initialX, initialZ);
-	
-	// Keep moving forward until we find a collision-free initial position
-	while (!collisionFree && forwardDistance < 20) { // Limit to prevent infinite loops
-		const testX = initialX + (kingDirection.x * forwardDistance);
-		const testZ = initialZ + (kingDirection.z * forwardDistance);
-		
-		// Round to nearest integers for board positions
-		const posX = Math.round(testX);
-		const posZ = Math.round(testZ);
-		
-		// Create a test position
+	// Determine which shape to test for collision/adjacency
+	const shapeToTest = Array.isArray(shapeOverride) ? shapeOverride : (gameState.currentTetromino?.shape || null);
+	if (!shapeToTest) {
+		console.warn('Tetromino: No shape available for spawn search; using a 1x1 fallback.');
+	}
+	const collisionShape = shapeToTest || [[1]];
+
+	const MAX_LATERAL_OFFSET = 6;
+	const MIN_FORWARD_DISTANCE = 1;
+	const MAX_FORWARD_DISTANCE = 20;
+	const MAX_CANDIDATES = 6;
+
+	const buildOffsets = (maxAbs) => {
+		const offsets = [0];
+		for (let i = 1; i <= maxAbs; i++) {
+			offsets.push(i, -i);
+		}
+		return offsets;
+	};
+
+	const lateralOffsets = buildOffsets(MAX_LATERAL_OFFSET);
+	const candidates = [];
+
+	const tryAddCandidate = (posX, posZ, requireAdjacency) => {
 		const testPos = { x: posX, z: posZ };
-		
-		// Check if there are any collisions in the path
-		if (gameState.currentTetromino && 
-			gameState.currentTetromino.shape && 
-			isValidTetrominoPosition(gameState, gameState.currentTetromino.shape, testPos)) {
-			collisionFree = true;
-			initialX = posX;
-			initialZ = posZ;
-		} else {
-			forwardDistance += 1;
+		if (!isValidTetrominoPosition(gameState, collisionShape, testPos)) return false;
+		if (requireAdjacency && !isTetrominoAdjacentToExistingCells(gameState, collisionShape, posX, posZ)) return false;
+		candidates.push({ x: posX, z: posZ });
+		return true;
+	};
+
+	// Prefer spawn points "in front" of the king that will land adjacent (prevents instant explosion on landing)
+	for (let forwardDistance = MIN_FORWARD_DISTANCE; forwardDistance <= MAX_FORWARD_DISTANCE; forwardDistance++) {
+		for (const lateralOffset of lateralOffsets) {
+			const testX = kingPosition.x + (rightVector.x * lateralOffset) + (kingDirection.x * forwardDistance);
+			const testZ = kingPosition.z + (rightVector.z * lateralOffset) + (kingDirection.z * forwardDistance);
+
+			const posX = Math.round(testX);
+			const posZ = Math.round(testZ);
+
+			if (tryAddCandidate(posX, posZ, true) && candidates.length >= MAX_CANDIDATES) {
+				forwardDistance = MAX_FORWARD_DISTANCE + 1;
+				break;
+			}
 		}
 	}
-	
-	console.log(`Initial tetromino position, collision free: (${initialX}, ${initialZ})`);
-	
-	// Return the initial position with a height above board
+
+	// Fallback: any collision-free spawn (player can still move into adjacency)
+	if (candidates.length === 0) {
+		for (let forwardDistance = MIN_FORWARD_DISTANCE; forwardDistance <= MAX_FORWARD_DISTANCE; forwardDistance++) {
+			for (const lateralOffset of lateralOffsets) {
+				const testX = kingPosition.x + (rightVector.x * lateralOffset) + (kingDirection.x * forwardDistance);
+				const testZ = kingPosition.z + (rightVector.z * lateralOffset) + (kingDirection.z * forwardDistance);
+
+				const posX = Math.round(testX);
+				const posZ = Math.round(testZ);
+
+				if (tryAddCandidate(posX, posZ, false) && candidates.length >= MAX_CANDIDATES) {
+					forwardDistance = MAX_FORWARD_DISTANCE + 1;
+					break;
+				}
+			}
+		}
+	}
+
+	const chosen = candidates.length > 0
+		? candidates[Math.floor(Math.random() * candidates.length)]
+		: { x: kingPosition.x, z: kingPosition.z };
+
+	console.log(`Initial tetromino spawn selected: (${chosen.x}, ${chosen.z}) candidates=${candidates.length}`);
+
 	return {
-		x: initialX,
-		z: initialZ,
+		x: chosen.x,
+		z: chosen.z,
 		heightAboveBoard: 10 // Start high above the board
 	};
 }
@@ -1314,16 +1363,6 @@ export function determineInitialTetrominoPosition(gameState) {
  * @returns {Object} The initialized tetromino
  */
 export function initializeNewTetromino(gameState, type) {
-	// Get the initial position based on king
-	const initialPosition = determineInitialTetrominoPosition(gameState);
-	
-	console.log('Initial tetromino position', initialPosition);
-
-	if(!initialPosition) {
-		console.log('Tetromino: No initial position found, returning null');
-		return null;
-	}
-
 	// Determine shape based on type
 	let shape;
 	switch (type) {
@@ -1382,17 +1421,40 @@ export function initializeNewTetromino(gameState, type) {
 				[1, 1]
 			];
 	}
+
+	// Get the initial position based on king + shape
+	const initialPosition = determineInitialTetrominoPosition(gameState, shape);
+	
+	console.log('Initial tetromino position', initialPosition);
+
+	if(!initialPosition) {
+		console.log('Tetromino: No initial position found, returning null');
+		return null;
+	}
 	
 	// Create the tetromino object
-	return {
+	const tetromino = {
 		type: type,
 		shape: shape,
 		position: {
 			x: initialPosition.x,
 			z: initialPosition.z
 		},
-		heightAboveBoard: initialPosition.heightAboveBoard
+		heightAboveBoard: initialPosition.heightAboveBoard,
+		sponsor: null // Will be populated asynchronously
 	};
+	
+	// Fetch sponsor asynchronously (non-blocking)
+	fetchNextSponsor().then(sponsor => {
+		if (sponsor) {
+			tetromino.sponsor = sponsor;
+			console.log('Sponsor attached to tetromino:', sponsor.name);
+		}
+	}).catch(err => {
+		console.warn('Could not fetch sponsor for tetromino:', err);
+	});
+	
+	return tetromino;
 }
 
 /**
@@ -1482,8 +1544,7 @@ export function renderTetromino(gameState) {
 						block.material.transparent = false;
 						block.material.opacity = 1.0;
 						block.material.wireframe = false;
-						block.material.emissive = block.material.color;
-						block.material.emissiveIntensity = 0.2;
+						block.material.emissiveIntensity = 0;
 						block.material.needsUpdate = true;
 					}
 					
@@ -1602,7 +1663,6 @@ function renderGhostPiece(gameState, tetromino) {
 						block.material.transparent = true;
 						block.material.opacity = 0.3;
 						block.material.wireframe = true;
-						block.material.emissive = new THREE.Color(0, 0, 0); // Fix emissive being an object literal
 						block.material.emissiveIntensity = 0;
 						block.material.needsUpdate = true;
 					}
@@ -1658,29 +1718,14 @@ export function createTetrominoMesh(tetrominoData, gameState) {
  * @returns {boolean} - Whether the position is valid
  */
 function isValidTetrominoPosition(gameState, shape, position) {
-	// Check each block of the tetromino
-	for (let z = 0; z < shape.length; z++) {
-		for (let x = 0; x < shape[z].length; x++) {
-			if (shape[z][x] === 1) {
-				// Calculate block position
-				const blockX = position.x + x;
-				const blockZ = position.z + z;
-
-				// Check for collision with existing board content using sparse structure
-				if (gameState.board && gameState.board.cells) {
-					const key = `${blockX},${blockZ}`;
-					const cell = gameState.board.cells[key];
-
-					if (cell !== undefined && cell !== null) {
-						console.log(`Collision detected at (${blockX}, ${blockZ}) with:`, cell);
-						return false;
-					}
-				}
-			}
-		}
+	// Use the same collision semantics as server validation:
+	// only NON-home content blocks.
+	if (!position) return false;
+	const collided = checkTetrominoCollision(gameState, shape, position.x, position.z);
+	if (collided && gameState?.debugMode) {
+		console.log(`Collision detected for tetromino at (${position.x}, ${position.z})`);
 	}
-
-	return true;
+	return !collided;
 }/**
  * Place the current tetromino on the board
  * @param {Object} gameState - The current game state
@@ -1742,16 +1787,8 @@ function placeTetromino(gameState, showPlacementEffect, updateGameStatusDisplay,
 		showPlacementEffect(posX, posZ, gameState);
 	}
 
-	// Switch to chess phase
-	gameState.turnPhase = 'chess';
-	if (typeof updateGameStatusDisplay === 'function') {
-		updateGameStatusDisplay();
-	}
+	cleanupCurrentTetromino();
 
-	// Clear the current tetromino
-	gameState.currentTetromino = null;
-
-	// Update the board visuals
 	if (typeof updateBoardVisuals === 'function') {
 		updateBoardVisuals();
 	}
@@ -1765,68 +1802,38 @@ function placeTetromino(gameState, showPlacementEffect, updateGameStatusDisplay,
  * @returns {boolean} - Whether the tetromino is adjacent to existing cells
  */
 export function isTetrominoAdjacentToExistingCells(gameState, shape, posX, posZ) {
-	// First check if the board is completely empty
-	const hasCells = gameState.board &&
-		gameState.board.cells &&
-		Object.keys(gameState.board.cells).length > 0;
+	const currentPlayer = gameState?.currentPlayer || gameState?.localPlayerId;
 
-	// If the board is completely empty, allow placement anywhere
-	if (!hasCells) {
-		console.log('Board is empty, allowing first piece placement');
+	if (!gameState?.board?.cells || Object.keys(gameState.board.cells).length === 0) {
 		return true;
 	}
 
-	// For the very first piece on the board, we need to handle the special case
-	const occupiedCells = Object.keys(gameState.board.cells || {}).filter(key => {
-		const cell = gameState.board.cells[key];
-		return cell !== null && cell !== undefined;
-	});
+	const playerStr = currentPlayer ? String(currentPlayer) : null;
 
-	if (occupiedCells.length === 0) {
-		console.log('No occupied cells on board, allowing first piece placement');
-		return true;
-	}
-
-	// For each block in the tetromino, check if it's adjacent to an existing cell
+	// For each block in the tetromino, check 8-way adjacency to ANY owned cell.
+	// The server is authoritative — this is just a fast client hint.
 	for (let z = 0; z < shape.length; z++) {
 		for (let x = 0; x < shape[z].length; x++) {
-			if (shape[z][x] === 1) {
-				const blockX = posX + x;
-				const blockZ = posZ + z;
+			if (!shape[z][x]) continue;
+			const blockX = posX + x;
+			const blockZ = posZ + z;
 
-				// Check all 8 adjacent positions
-				const directions = [
-					{ dx: -1, dz: 0 }, // Left
-					{ dx: 1, dz: 0 }, // Right
-					{ dx: 0, dz: -1 }, // Up
-					{ dx: 0, dz: 1 }, // Down
-					{ dx: -1, dz: -1 }, // Top-left
-					{ dx: 1, dz: -1 }, // Top-right
-					{ dx: -1, dz: 1 }, // Bottom-left
-					{ dx: 1, dz: 1 } // Bottom-right
-				];
-
-				for (const dir of directions) {
-					const adjX = blockX + dir.dx;
-					const adjZ = blockZ + dir.dz;
-					const key = `${adjX},${adjZ}`;
-
-					// Check if the adjacent cell contains a block
-					if (gameState.board && gameState.board.cells &&
-						gameState.board.cells[key] !== undefined &&
-						gameState.board.cells[key] !== null) {
-						console.log(`Found adjacent cell at (${adjX}, ${adjZ})`);
-						return true;
-					}
+			for (let dx = -1; dx <= 1; dx++) {
+				for (let dz = -1; dz <= 1; dz++) {
+					if (dx === 0 && dz === 0) continue;
+					const key = `${blockX + dx},${blockZ + dz}`;
+					const cell = gameState.board.cells[key];
+					if (!cell) continue;
+					const items = Array.isArray(cell) ? cell : (cell.contents || [cell]);
+					const owned = items.some(item =>
+						item && playerStr && String(item.player) === playerStr
+					);
+					if (owned) return true;
 				}
 			}
 		}
 	}
 
-	// Debug logging
-	console.log('No adjacent existing cells found for tetromino at position:', { posX, posZ });
-
-	// No adjacent existing cells found
 	return false;
 }
 /**
@@ -1838,6 +1845,36 @@ export function isTetrominoAdjacentToExistingCells(gameState, shape, posX, posZ)
  * @returns {boolean} - Whether there is a collision
  */
 function checkTetrominoCollision(gameState, shape, posX, posZ) {
+	// Shaktris server-side rules (see server/game/TetrominoManager.js):
+	// - Board is sparse and can expand; do NOT clamp to boardBounds.
+	// - A cell is considered "occupied" only if it contains any NON-home content.
+	//   Cells containing only home markers are allowed to be built upon.
+	if (!gameState?.board?.cells) return false;
+
+	const cellHasNonHomeContent = (cell) => {
+		if (cell === null || cell === undefined) return false;
+
+		// Normalize to an array of items.
+		const items = Array.isArray(cell)
+			? cell
+			: (typeof cell === 'object' && Array.isArray(cell.contents))
+				? cell.contents
+				: [cell];
+
+		// Match server semantics: anything that is not an explicit home marker blocks placement.
+		// Also ignore purely-client metadata markers (centre markers, etc.).
+		return items.some(item => {
+			if (!item) return true; // unknown/invalid item => treat as blocking
+			
+			// Support marker-only cells that exist client-side for positioning/debugging.
+			// These should not block placement.
+			if (!item.type && item.specialMarker) return false;
+			
+			const t = String(item.type || '');
+			return !(t === 'home' || t === 'specialMarker' || t === 'boardCentre');
+		});
+	};
+
 	// For each block in the tetromino
 	for (let z = 0; z < shape.length; z++) {
 		for (let x = 0; x < shape[z].length; x++) {
@@ -1845,21 +1882,12 @@ function checkTetrominoCollision(gameState, shape, posX, posZ) {
 				const boardX = posX + x;
 				const boardZ = posZ + z;
 
-				// Check board boundaries
-				const minX = gameState.boardBounds?.minX || 0;
-				const maxX = gameState.boardBounds?.maxX || 32;
-				const minZ = gameState.boardBounds?.minZ || 0;
-				const maxZ = gameState.boardBounds?.maxZ || 32;
-
-				if (boardX < minX || boardX > maxX || boardZ < minZ || boardZ > maxZ) {
-					return true; // Out of bounds
-				}
-
-				// Check if the position is already occupied
 				const key = `${boardX},${boardZ}`;
-				if (gameState.board && gameState.board.cells &&
-					gameState.board.cells[key] !== undefined &&
-					gameState.board.cells[key] !== null) {
+				const cell = gameState.board.cells[key];
+				if (cellHasNonHomeContent(cell)) {
+					if (gameState?.debugMode) {
+						console.log(`Collision (non-home) at (${boardX}, ${boardZ}) with:`, cell);
+					}
 					return true; // Collision
 				}
 			}
@@ -1943,6 +1971,10 @@ export function updateNextTetrominoDisplay(tetrominoType, gameState) {
 		console.log('Creating next tetromino display element');
 		nextTetrominoDisplay = document.createElement('div');
 		nextTetrominoDisplay.id = 'next-tetromino-display';
+		// Make it discoverable/clickable for accessibility (and automated testing)
+		nextTetrominoDisplay.setAttribute('role', 'button');
+		nextTetrominoDisplay.setAttribute('aria-label', 'Next piece: click to start tetris turn');
+		nextTetrominoDisplay.tabIndex = 0;
 		nextTetrominoDisplay.style.position = 'fixed';
 		nextTetrominoDisplay.style.top = '20px';
 		nextTetrominoDisplay.style.right = '20px';
@@ -1986,6 +2018,12 @@ export function updateNextTetrominoDisplay(tetrominoType, gameState) {
 		
 		// Add click handler for the whole display box
 		nextTetrominoDisplay.addEventListener('click', handleNextPieceClick);
+		nextTetrominoDisplay.addEventListener('keydown', (e) => {
+			if (e.key === 'Enter' || e.key === ' ') {
+				e.preventDefault();
+				handleNextPieceClick(e);
+			}
+		});
 		nextTetrominoDisplay.addEventListener('mouseenter', () => {
 			nextTetrominoDisplay.style.boxShadow = '0 0 10px rgba(255, 255, 255, 0.5)';
 		});
@@ -2137,6 +2175,12 @@ function updateNextPieceHint(gameState) {
 	}
 	const nextTetrominoDisplay = document.getElementById('next-tetromino-display');
 	if (nextTetrominoDisplay) {
+		nextTetrominoDisplay.setAttribute(
+			'aria-label',
+			gameState.turnPhase === 'chess'
+				? 'Next piece: click to start tetris turn'
+				: 'Next piece: tetris turn active'
+		);
 		nextTetrominoDisplay.removeEventListener('click', handleNextPieceClick);
 		nextTetrominoDisplay.addEventListener('click', handleNextPieceClick);
 	}
@@ -2158,11 +2202,10 @@ function handleNextPieceClick(event) {
 	
 	// Only proceed if we're in chess phase
 	if (gameState.turnPhase !== 'chess') {
-		console.log('Already in tetris phase, changing to chess phase', gameState.turnPhase);
-		// Add a small shake animation to indicate it's not clickable now
-		//alert user to tell them to move their chess piece, with a nice animation
+		console.log('Next piece click ignored (not in chess phase):', gameState.turnPhase);
+		// Add a small shake + message to indicate it's not clickable right now
 		const alertElement = document.createElement('div');
-		alertElement.textContent = 'Move your chess piece first';
+		alertElement.textContent = 'Finish your tetris drop first';
 		alertElement.style.position = 'fixed';
 		alertElement.style.top = '50%';
 		alertElement.style.left = '50%';
@@ -2184,15 +2227,13 @@ function handleNextPieceClick(event) {
 		setTimeout(() => {
 			alertElement.remove();
 		}, 2500);
-		gameState.turnPhase = 'chess';
-		updateGameStatusDisplay();
-		console.log('Changed to chess phase', gameState.turnPhase);
-		//update clickHandler on the next piece display
-		const nextTetrominoDisplay = document.getElementById('next-tetromino-display');
-		if (nextTetrominoDisplay) {
-			nextTetrominoDisplay.removeEventListener('click', handleNextPieceClick);
-			nextTetrominoDisplay.addEventListener('click', handleNextPieceClick);
-		}
+		
+		// Keep the current phase unchanged, just update hint/accessibility state
+		updateNextPieceHint(gameState);
+		
+		// Prevent this click from bubbling into the 3D canvas handlers
+		try { event?.stopPropagation?.(); } catch (_) {}
+		try { event?.preventDefault?.(); } catch (_) {}
 
 		return;
 	}
@@ -2238,7 +2279,9 @@ function handleNextPieceClick(event) {
 	renderTetromino(gameState);
 	
 	// 6. If there's a function to handle turn phase changes, call it
-	gameState.handleTurnPhaseChange('tetris');
+	if (typeof gameState.handleTurnPhaseChange === 'function') {
+		gameState.handleTurnPhaseChange('tetris');
+	}
 	
 	
 	// 7. Force a render update if needed
@@ -2677,6 +2720,9 @@ function processPlaceTetromino() {
 	const originalX = gameState.currentTetromino.position.x;
 	const originalZ = gameState.currentTetromino.position.z;
 	
+	// Capture sponsor data before the tetromino is cleared
+	const placedTetrominoSponsor = gameState.currentTetromino.sponsor;
+	
 	// Clean up any ghost piece immediately (we're going to place the real piece)
 	cleanupGhostPiece();
 	
@@ -2698,37 +2744,104 @@ function processPlaceTetromino() {
 			
 			// If server validated the placement, check if there are valid chess moves
 			if (response && response.success === true) {
-				// Clear the current tetromino reference since it's now placed
-				gameState.currentTetromino = null;
+				// Track that we've successfully placed at least one tetromino this session.
+				// This helps the client-side adjacency rule match the server (home-zone adjacency only for first placement).
+				gameState._hasPlacedTetromino = true;
 				
-				// Explicitly set turn phase to chess
-				gameState.turnPhase = 'chess';
-				
-				// Make sure UI is updated
-				if (typeof window.updateGameStatusDisplay === 'function') {
-					window.updateGameStatusDisplay();
+				// Display sponsor ad if this tetromino had a sponsor
+				if (placedTetrominoSponsor) {
+					console.log('Displaying sponsor ad for:', placedTetrominoSponsor.name);
+					displaySponsorInfo(placedTetrominoSponsor);
 				}
+
+				// Clear the tetromino visuals and reference
+				cleanupCurrentTetromino();
 				
-				// Update the board visuals
+				// Update the board visuals first so the new cells are visible
 				if (typeof window.updateBoardVisuals === 'function') {
 					window.updateBoardVisuals();
 				}
 				
 				// Log the phase change
-				console.log('Placement successful - switched to chess phase:', gameState.turnPhase);
+				console.log('Placement successful. Server hasValidMoves:', response.hasValidMoves);
 				
-				const canMakeChessMove = boardFunctions.analyzePossibleMoves(gameState, gameState.currentPlayer);
-				
-				// If no valid chess moves, skip to next tetromino turn
-				if (!canMakeChessMove.hasMoves) {
-					console.log('No valid chess moves available, skipping to next tetromino turn');
-					boardFunctions.handleTetrisPhaseClick(gameState, window.updateGameStatusDisplay, window.updateBoardVisuals, gameState.tetrominoGroup, createTetrominoBlock);
+				// Trust the server's hasValidMoves flag
+				if (response.hasValidMoves === false) {
+					// Server says no valid chess moves - the server will send a new_tetromino event
+					console.log('Server says no valid chess moves - waiting for new tetromino');
+					gameState.turnPhase = 'tetris';
+					
+					if (typeof showToastMessage === 'function') {
+						showToastMessage('No chess moves available - next piece incoming');
+					}
 				} else {
-					console.log('Valid chess moves available, continuing to chess phase');
+					// We have valid chess moves, switch to chess phase
+					gameState.turnPhase = 'chess';
+					console.log('Valid chess moves available, switched to chess phase');
+					
+					if (typeof showToastMessage === 'function') {
+						showToastMessage('Make your chess move!');
+					}
+				}
+				
+				// Make sure UI is updated
+				if (typeof window.updateGameStatusDisplay === 'function') {
+					window.updateGameStatusDisplay();
 				}
 			} else if (response && response.success === false) {
 				// Server explicitly rejected the placement
-				console.error('Server rejected placement:', response.error || 'Unknown error');
+				if (response.reason === 'rate_limited' || response.error === 'rate_limited' || response.message === 'rate_limited') {
+					const retryAfterMs = Number(response.retryAfterMs || 0);
+					const seconds = retryAfterMs > 0 ? Math.max(0.1, Math.ceil(retryAfterMs / 100) / 10) : null;
+					
+					if (typeof showToastMessage === 'function') {
+						showToastMessage(seconds ? `Too fast. Placing in ${seconds}s...` : 'Too fast. Placing shortly...');
+					}
+					
+					// Keep the tetromino and retry placement after the cooldown.
+					// Guard against stacking retries.
+					if (gameState._placementRetryTimeoutId) {
+						clearTimeout(gameState._placementRetryTimeoutId);
+					}
+					
+					gameState._placementRetryTimeoutId = setTimeout(() => {
+						if (gameState.currentTetromino && gameState.turnPhase === 'tetris') {
+							queueTetrominoMovement(MOVEMENT_TYPES.PLACE, {});
+						}
+					}, Math.max(0, retryAfterMs));
+					
+					return;
+				}
+				
+				// Show a helpful reason (if provided)
+				try {
+					const reason = response.reason;
+					let message = response.message;
+					
+					if (!message && reason) {
+						switch (reason) {
+							case 'occupied':
+								message = 'That space is already occupied.';
+								break;
+							case 'not_adjacent':
+								message = 'Tetromino must connect to your territory.';
+								break;
+							case 'no_path_to_king':
+								message = 'Tetromino must connect (via territory) back to your king.';
+								break;
+							default:
+								message = 'Placement rejected by server.';
+						}
+					}
+					
+					if (message && typeof showToastMessage === 'function') {
+						showToastMessage(message);
+					}
+				} catch (e) {
+					// Ignore toast errors
+				}
+				
+				console.error('Server rejected placement:', response.reason || response.error || 'Unknown error');
 				showExplosionAnimation(originalX, originalZ, gameState);
 				cleanupCurrentTetromino();
 			}
@@ -2796,17 +2909,30 @@ function processCleanup(message) {
 		gameState.ghostTetromino = null;
 	}
 	
-	// Switch to chess phase
-	gameState.turnPhase = 'chess';
-	
-	// Update game status display
-	if (typeof window.updateGameStatusDisplay === 'function') {
-		window.updateGameStatusDisplay();
+	// After an explosion, check if the player has valid chess moves.
+	// If so, transition to chess phase. Otherwise, give a new tetromino.
+	if (gameState.turnPhase === 'tetris' || !gameState.turnPhase) {
+		const hasChessMoves = boardFunctions.analyzePossibleMoves &&
+			typeof boardFunctions.analyzePossibleMoves === 'function'
+			? boardFunctions.analyzePossibleMoves(gameState, gameState.localPlayerId)?.allMoves?.length > 0
+			: false;
+
+		if (hasChessMoves) {
+			console.log('Tetromino exploded, valid chess moves exist — switching to chess phase');
+			gameState.turnPhase = 'chess';
+		} else {
+			console.log('Tetromino exploded, no valid chess moves — giving new tetromino');
+			gameState.turnPhase = 'tetris';
+			const newTetromino = initializeNextTetromino(gameState);
+			if (newTetromino) {
+				gameState.currentTetromino = newTetromino;
+				gameState.currentTetromino.heightAboveBoard = gameState.TETROMINO_START_HEIGHT || 20;
+			}
+		}
 	}
-	
-	// Log cleanup completion
-	console.log('Tetromino cleanup completed - set turnPhase to:', gameState.turnPhase);
-	
+
+	console.log('Tetromino cleanup completed, phase:', gameState.turnPhase);
+
 	// Update the board visuals
 	if (typeof window.updateBoardVisuals === 'function') {
 		window.updateBoardVisuals();
@@ -2859,12 +2985,58 @@ export function hasPathToKing(gameState, startX, startZ, playerId) {
 		return false;
 	}
 
+	const playerStr = String(playerId);
+
+	const cellHasKing = (cell) => {
+		if (!cell) return false;
+		
+		// Helper to check if item is a king (case-insensitive)
+		const isKing = (item) => {
+			if (!item || item.type !== 'chess') return false;
+			const pt = String(item.pieceType || '').toUpperCase();
+			return pt === 'KING' && String(item.player) === playerStr;
+		};
+		
+		// New format: array of layered objects
+		if (Array.isArray(cell)) {
+			return cell.some(isKing);
+		}
+		// Mixed legacy: { contents: [...] }
+		if (typeof cell === 'object' && Array.isArray(cell.contents)) {
+			return cell.contents.some(isKing);
+		}
+		// Very legacy: { type: 'king', player }
+		const legacyType = String(cell.type || '').toLowerCase();
+		return legacyType === 'king' && String(cell.player) === playerStr;
+	};
+
+	const cellIsOwnedTerritory = (cell) => {
+		if (!cell) return false;
+		const isOwnedItem = (item) =>
+			item &&
+			String(item.player) === playerStr &&
+			(item.type === 'home' || item.type === 'tetromino' || item.type === 'chess');
+
+		// New format: array of layered objects
+		if (Array.isArray(cell)) {
+			return cell.some(isOwnedItem);
+		}
+
+		// Mixed legacy: { contents: [...] }
+		if (typeof cell === 'object' && Array.isArray(cell.contents)) {
+			return cell.contents.some(isOwnedItem);
+		}
+
+		// Legacy single object
+		return isOwnedItem(cell);
+	};
+
 	// Find the king position
 	let kingX = -1;
 	let kingZ = -1;
 
 	for (const [key, cell] of Object.entries(gameState.board.cells)) {
-		if (cell && cell.type === 'king' && cell.player === playerId) {
+		if (cellHasKing(cell)) {
 			[kingX, kingZ] = key.split(',').map(Number);
 			break;
 		}
@@ -2910,9 +3082,9 @@ export function hasPathToKing(gameState, startX, startZ, playerId) {
 				continue;
 			}
 
-			// Skip if cell is empty
+			// Skip if cell is empty or not owned territory
 			const cell = gameState.board.cells[key];
-			if (!cell) {
+			if (!cellIsOwnedTerritory(cell) && !(newX === kingX && newZ === kingZ)) {
 				continue;
 			}
 
@@ -2929,100 +3101,8 @@ export function hasPathToKing(gameState, startX, startZ, playerId) {
 	return false;
 }
 
-/**
- * Highlight the path from a tetromino to the king
- * @param {Object} gameState - The current game state
- * @param {Array} path - Array of coordinates forming the path
- */
-export function highlightPathToKing(gameState, path) {
-	const THREE = getTHREE();
-	
-	// Remove existing path highlights
-	if (gameState.pathHighlights) {
-		gameState.pathHighlights.forEach(highlight => {
-			gameState.scene.remove(highlight);
-		});
-	}
-	
-	gameState.pathHighlights = [];
-	
-	if (!path || path.length === 0) {
-		return;
-	}
-	
-	// Create highlight material
-	const highlightMaterial = new THREE.MeshBasicMaterial({
-		color: 0xffff00,
-		transparent: true,
-		opacity: 0.3,
-		side: THREE.DoubleSide
-	});
-	
-	// Create highlights for each cell in the path
-	path.forEach(([x, z]) => {
-		const geometry = new THREE.BoxGeometry(1, 0.1, 1);
-		const highlight = new THREE.Mesh(geometry, highlightMaterial);
-		highlight.position.set(x + 0.5, 0.1, z + 0.5);
-		gameState.scene.add(highlight);
-		gameState.pathHighlights.push(highlight);
-	});
-}
-
-/**
- * Update path visualization as tetromino moves
- * @param {Object} gameState - The current game state
- */
-export function updatePathVisualization(gameState) {
-	if (!gameState || !gameState.currentTetromino || !gameState.currentPlayer) {
-		return;
-	}
-
-	const tetromino = gameState.currentTetromino;
-	const shape = tetromino.shape;
-	const posX = Math.round(tetromino.position.x);
-	const posZ = Math.round(tetromino.position.z);
-
-	// First, we'll simulate placing the tetromino on the board to check connectivity
-	const simulatedBoard = JSON.parse(JSON.stringify(gameState.board || { cells: {} }));
-	if (!simulatedBoard.cells) simulatedBoard.cells = {};
-	
-	// Add the tetromino cells to the simulated board
-	for (let z = 0; z < shape.length; z++) {
-		for (let x = 0; x < shape[z].length; x++) {
-			if (shape[z][x] === 1) {
-				const boardX = posX + x;
-				const boardZ = posZ + z;
-				const key = `${boardX},${boardZ}`;
-				simulatedBoard.cells[key] = {
-					type: 'tetromino',
-					player: gameState.currentPlayer
-				};
-			}
-		}
-	}
-
-	// Find any valid path from any cell of the tetromino
-	let bestPath = null;
-	
-	for (let z = 0; z < shape.length; z++) {
-		for (let x = 0; x < shape[z].length; x++) {
-			if (shape[z][x] === 1) {
-				// Create a temporary gameState for path checking
-				const tempGameState = { ...gameState, board: simulatedBoard };
-				
-				const path = hasPathToKing(tempGameState, posX + x, posZ + z, gameState.currentPlayer);
-				if (path && (!bestPath || path.length < bestPath.length)) {
-					bestPath = path;
-				}
-			}
-		}
-	}
-
-	// Update the visualization with the tetromino's color
-	highlightPathToKing(gameState, bestPath, getTetrominoColor(tetromino.type, gameState));
-}
-
-// ... existing code ...
+// NOTE: `updatePathVisualization` / `highlightPathToKing` are defined later in this file.
+// We keep a single export of each to avoid ES module "Identifier has already been declared" errors.
 
 // Find the animate function in the module
 export function animateWithPathVisualization() {

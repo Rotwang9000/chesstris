@@ -231,8 +231,8 @@ class BoardManager {
 	 * @returns {boolean} True if the cell is in a safe home zone
 	 */
 	isCellInSafeHomeZone(game, x, z) {
-		if (!game || !game.players) {
-			log(`isCellInSafeHomeZone: Game or players object is undefined`);
+		if (!game || !game.homeZones) {
+			log(`isCellInSafeHomeZone: Game or homeZones object is undefined`);
 			return false;
 		}
 		
@@ -240,19 +240,19 @@ class BoardManager {
 		let isInHomeZone = false;
 		let homeZoneOwner = null;
 		
-		for (const playerId in game.players) {
-			const player = game.players[playerId];
+		for (const playerId in game.homeZones) {
+			const homeZone = game.homeZones[playerId];
 			
-			// Skip if player has no home zone
-			if (!player.homeZone) {
+			// Skip if no home zone data
+			if (!homeZone) {
 				continue;
 			}
 			
-			const { x: homeX, z: homeZ } = player.homeZone;
+			const { x: homeX, z: homeZ } = homeZone;
 			
-			// Get home zone dimensions from the player's home zone object
-			const homeWidth = player.homeZone.width;
-			const homeHeight = player.homeZone.height;
+			// Get home zone dimensions from the home zone object
+			const homeWidth = homeZone.width || 8;
+			const homeHeight = homeZone.height || 2;
 			
 			// Check if coordinates are within this home zone
 			if (x >= homeX && x < homeX + homeWidth && 
@@ -456,9 +456,74 @@ class BoardManager {
 	 * @private
 	 */
 	_makePiecesFallTowardsKing(game, clearedRows) {
-		// Implementation would need to be updated to work with the sparse board structure
-		// This is a placeholder - would need more significant updates
-		log('Pieces falling towards kings after row clearing');
+		if (!clearedRows || clearedRows.length === 0) return;
+
+		const sortedRows = [...clearedRows].sort((a, b) => a - b);
+
+		// Build per-player king position map
+		const playerKingZ = {};
+		for (const [key, contents] of Object.entries(game.board.cells)) {
+			if (!Array.isArray(contents)) continue;
+			for (const item of contents) {
+				if (item && item.type === 'chess' && item.pieceType?.toLowerCase() === 'king') {
+					const [, zStr] = key.split(',');
+					playerKingZ[item.player] = Number(zStr);
+				}
+			}
+		}
+
+		// For each cleared row, shift cells that are on the far side of the gap relative to the player's king
+		for (const clearedZ of sortedRows) {
+			// Collect cells that need to move
+			const cellsToMove = [];
+
+			for (const [key, contents] of Object.entries(game.board.cells)) {
+				if (!Array.isArray(contents) || contents.length === 0) continue;
+				const [xStr, zStr] = key.split(',');
+				const cellZ = Number(zStr);
+
+				// Determine the owning player of this cell
+				const owner = contents.find(c => c && c.player)?.player;
+				if (!owner) continue;
+
+				const kingZ = playerKingZ[owner];
+				if (kingZ === undefined) continue;
+
+				// Cell is beyond the cleared row relative to king → needs to shift
+				if (kingZ < clearedZ && cellZ > clearedZ) {
+					cellsToMove.push({ x: Number(xStr), z: cellZ, dir: -1, contents });
+				} else if (kingZ > clearedZ && cellZ < clearedZ) {
+					cellsToMove.push({ x: Number(xStr), z: cellZ, dir: 1, contents });
+				}
+			}
+
+			// Sort so we process cells closest to the gap first to avoid collisions
+			cellsToMove.sort((a, b) => a.dir === -1 ? a.z - b.z : b.z - a.z);
+
+			for (const cell of cellsToMove) {
+				const oldKey = `${cell.x},${cell.z}`;
+				const newZ = cell.z + cell.dir;
+				const newKey = `${cell.x},${newZ}`;
+
+				// Only move if target is empty
+				if (game.board.cells[newKey] && game.board.cells[newKey].length > 0) continue;
+
+				// Move the cell
+				game.board.cells[newKey] = cell.contents;
+				delete game.board.cells[oldKey];
+
+				// Update chess piece positions embedded in contents
+				for (const item of cell.contents) {
+					if (item && item.position) {
+						item.position.z = newZ;
+					}
+				}
+			}
+		}
+
+		this.recalculateBoardBoundaries(game.board);
+
+		log(`Shifted cells towards kings after clearing rows: ${sortedRows.join(', ')}`);
 	}
 }
 

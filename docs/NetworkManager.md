@@ -70,6 +70,41 @@ The following methods are available:
 - `getGameState(options)`: Get the current game state
 - `getCurrentGameState()`: Get the cached game state
 
+## Socket Event Contract (current)
+
+The server is authoritative; clients submit actions and receive state via Socket.IO.
+
+### Client → Server
+
+- `join_game` `{ playerName?, gameId? }`
+  - Ack: `{ success, gameId, playerId, playerName, gameState }`
+- `get_game_state` `{ gameId?, options? }`
+  - `options.aoi` (optional): request a board window for global-world scalability
+    - `{ centerX, centerZ, radius }` or `{ minX, maxX, minZ, maxZ }`
+  - Server also emits `game_state` `{ success, gameId, state, players, timestamp }`
+- `tetromino_placed` `{ tetromino }`
+  - Ack success: `{ success:true, boardState, clearedRows, hasValidMoves }`
+  - Ack fail: `{ success:false, error:'invalid_placement', reason, message }`
+  - Rate limit: `{ success:false, error:'rate_limited', retryAfterMs }`
+- `chess_move` `{ pieceId, targetPosition:{x,z} }`
+  - Ack success: `{ success:true, updatedPiece, capturedPiece? }`
+  - Rate limit: `{ success:false, error:'rate_limited', retryAfterMs }`
+
+### Server → Client
+
+- `game_update` (full or delta)
+  - Full: `{ ...state, fullUpdate:true, timestamp, boardBounds }`
+  - Delta: `{ fullUpdate:false, timestamp, boardChanges, removedCells, boardBounds, chessPieces, lastAction }`
+- `row_cleared` `{ rows:[z,...], playerId }`
+- `player_joined` / `player_left`
+
+### Notes on deltas
+
+When `fullUpdate:false`, the client should:
+- apply each `boardChanges[]` item (set/overwrite `board.cells["x,z"]`)
+- apply each `removedCells[]` item (delete `board.cells["x,z"]`)
+- update local bounds from `boardBounds`
+
 ## Benefits of Class-based Approach
 
 1. **Improved Testability**: The class can be instantiated for testing with mocked dependencies.

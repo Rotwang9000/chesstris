@@ -31,13 +31,12 @@ A spectator view will allow you to see from that player's, or other players' vie
 - **Pawn Promotion:**  
   Pawns are automatically promoted to knights once they have moved 8 spaces forward, increasing their utility in the late game.
 
-- **Asynchronous Turns:**  
-  Each player has their own gameplay cycle:
-  1. A tetris piece falls for the player to place
-  2. After placing the piece, they can move one of their chess pieces
-  3. Players don't need to wait for other players' turns
-  4. A minimum 10-second turn length helps human players compete with others, especially computer-controlled opponents
-  5. Different difficulty worlds adjust this timing to accommodate various skill levels
+- **Real-time Actions (Global World):**  
+  All players act in the same world at the same time. The server enforces per-action cooldowns so spamming gets rate-limited:
+  - Chess move cooldown: ~0.75s
+  - Tetromino placement cooldown: ~1.5s
+  
+  The UI may still show “Tetris” vs “Chess” phases for clarity, but the server is authoritative.
 
 - **Piece Acquisition:**  
   Players can purchase additional pieces at any time using Solana:

@@ -1,6 +1,6 @@
 import { boardFunctions } from './boardFunctions.js';
-import chessPieceCreator from './chessPieceCreator.js';
-import { getTHREE } from './enhanced-gameCore.js';
+import chessPieceCreator, { createChessPiece as createDetailedChessPiece } from './chessPieceCreator.js';
+import { getTHREE } from './gameContext.js';
 import { highlightSinglePiece, setChessPiecesGroup } from './pieceHighlightManager.js';
 import { translatePosition } from './centreBoardMarker.js';
 
@@ -45,7 +45,12 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 		// Create a hash based on critical properties of each piece
 		currentHash = gameState.chessPieces.map(piece => {
 			if (!piece) return '';
-			return `${piece.id}-${piece.type}-${piece.player}-${piece.x}-${piece.z}`;
+			const pos = piece.position || piece;
+			const px = (pos && pos.x !== undefined) ? pos.x : piece.x;
+			const pz = (pos && pos.z !== undefined) ? pos.z : piece.z;
+			const orientation = Number.isFinite(piece.orientation) ? piece.orientation : '';
+			const hasMoved = piece.hasMoved ? 1 : 0;
+			return `${piece.id}-${piece.type}-${piece.player}-${px}-${pz}-${hasMoved}-${orientation}`;
 		}).sort().join('|');
 	}
 	
@@ -229,9 +234,11 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 					// Update color/appearance if needed
 					const newColor = getChessPieceColor(piece, gameState);
 					const newType = getChessPieceType(piece);
+					const existingType = existingPiece.userData ? (existingPiece.userData.pieceType || existingPiece.userData.type) : null;
+					const existingColor = existingPiece.userData ? existingPiece.userData.color : null;
 					
 					// Check if the type or color has changed
-					if (existingPiece.userData.type !== newType || existingPiece.userData.color !== newColor) {
+					if (existingType !== newType || existingColor !== newColor) {
 						// Need to recreate with new appearance
 						chessPiecesGroup.remove(existingPiece);
 						
@@ -248,13 +255,17 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 						if (existingPiece.geometry) existingPiece.geometry.dispose();
 
 						// Create a new piece with updated appearance
-						pieceMesh = chessPieceCreator.createPiece(newType, newColor, orientation, THREE);
+						pieceMesh = createPieceMeshForPlayer(piece, newType, newColor, orientation, gameState, THREE);
 						
 						pieceMesh.userData = {
-							...piece,
 							id: pieceId,
+							type: 'chessPiece',
+							pieceType: newType,
+							player: piece.player,
+							position: { x, z },
 							color: newColor,
-							type: newType
+							hasMoved: !!piece.hasMoved,
+							orientation
 						};
 						
 						// Calculate position relative to centre marker - CRITICAL for alignment
@@ -262,7 +273,7 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 						const adjustX = absPos.x;
 						const adjustZ = absPos.z;
 						
-						pieceMesh.position.set(adjustX, 0, adjustZ);
+						pieceMesh.position.set(adjustX, 0.5, adjustZ);
 						chessPiecesGroup.add(pieceMesh);
 						
 						piecesCreated++;
@@ -272,10 +283,12 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 						const adjustX = absPos.x;
 						const adjustZ = absPos.z;
 						
-						if (existingPiece.position.x !== adjustX || existingPiece.position.z !== adjustZ) {
-							existingPiece.position.set(adjustX, 0, adjustZ);
+						if (existingPiece.position.x !== adjustX || existingPiece.position.z !== adjustZ || existingPiece.position.y !== 0.5) {
+							existingPiece.position.set(adjustX, 0.5, adjustZ);
 						}
 
+						// Continue processing this piece in the shared positioning/userData block below
+						pieceMesh = existingPiece;
 						piecesReused++;
 					}
 				} else {
@@ -291,8 +304,7 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 					
 					// Try to use direct creation with color
 					try {
-						// Create piece with explicit color
-						pieceMesh = chessPieceCreator.createPiece(pieceType, pieceColor, orientation, THREE);
+						pieceMesh = createPieceMeshForPlayer(piece, pieceType, pieceColor, orientation, gameState, THREE);
 					} catch (err) {
 						console.warn('Error creating piece with color, falling back to getChessPiece:', err);
 						// Fall back to regular getChessPiece
@@ -353,7 +365,9 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 						pieceType: pieceType,
 						player: piece.player,
 						position: { x, z },
-						color: pieceColor
+						color: pieceColor,
+						hasMoved: !!piece.hasMoved,
+						orientation
 					};
 					
 					// Add to the chess pieces group
@@ -378,19 +392,55 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 					// For orientation 1(facing right): main pieces at left, pawns to right
 					// For orientation 3(facing left): main pieces at right, pawns to left
 
-					if(piece.orientation) { 
-						// Use Y-axis rotation to rotate pieces horizontally rather than tipping them over
-						pieceMesh.rotation.y = piece.orientation * Math.PI / 2;
-					}
+					// Use Y-axis rotation to rotate pieces horizontally rather than tipping them over
+					const orientationVal = Number.isFinite(piece.orientation) ? piece.orientation : 0;
+					pieceMesh.rotation.y = orientationVal * Math.PI / 2;
 
-					// Ensure the scale is appropriate
-					if (!pieceMesh.userData.scaleSet) {
-						pieceMesh.scale.set(0.8, 0.8, 0.8);
+					// Use richer local-piece scale and lighter opponent meshes for speed.
+					const localPiece = isLocalPlayerPiece(piece, gameState);
+					const renderScale = localPiece ? 1.0 : 0.78;
+					if (!pieceMesh.userData.scaleSet || pieceMesh.userData.renderScale !== renderScale) {
+						pieceMesh.scale.set(renderScale, renderScale, renderScale);
 						pieceMesh.userData.scaleSet = true;
+						pieceMesh.userData.renderScale = renderScale;
 					}
 					
-					// Update the userData with new position
+					// Ensure consistent userData for raycasting + move generation
+					if (!pieceMesh.userData) pieceMesh.userData = {};
+					pieceMesh.userData.id = pieceId;
+					pieceMesh.userData.type = 'chessPiece';
+					pieceMesh.userData.pieceType = getChessPieceType(piece);
+					pieceMesh.userData.player = piece.player;
 					pieceMesh.userData.position = { x, z };
+					pieceMesh.userData.color = getChessPieceColor(piece, gameState);
+					pieceMesh.userData.hasMoved = !!piece.hasMoved;
+					pieceMesh.userData.orientation = orientationVal;
+					
+					// Add an invisible, larger hitbox so clicks reliably register on pieces (esp. from far camera angles)
+					try {
+						if (pieceMesh.getObjectByName && !pieceMesh.getObjectByName('raycast-hitbox')) {
+							if (!updateChessPieces._raycastHitboxGeometry) {
+								updateChessPieces._raycastHitboxGeometry = new THREE.CylinderGeometry(0.55, 0.55, 1.3, 8);
+							}
+							if (!updateChessPieces._raycastHitboxMaterial) {
+							updateChessPieces._raycastHitboxMaterial = new THREE.MeshBasicMaterial({
+								transparent: true,
+								opacity: 0,
+								depthTest: false,
+								depthWrite: false,
+								colorWrite: false
+							});
+							}
+							const hitbox = new THREE.Mesh(updateChessPieces._raycastHitboxGeometry, updateChessPieces._raycastHitboxMaterial);
+							hitbox.name = 'raycast-hitbox';
+							hitbox.position.set(0, 0.65, 0);
+							hitbox.castShadow = false;
+							hitbox.receiveShadow = false;
+							pieceMesh.add(hitbox);
+						}
+					} catch (e) {
+						// Non-fatal: hitbox is just for input ergonomics
+					}
 					
 					// Make sure piece is visible
 					pieceMesh.visible = true;
@@ -555,6 +605,79 @@ function resetErrorTracking() {
 	}
 }
 
+function getResolvedLocalPlayerId(gameState) {
+	if (!gameState) return null;
+	return gameState.localPlayerId || gameState.myPlayerId || null;
+}
+
+function isLocalPlayerPiece(piece, gameState) {
+	const localPlayerId = getResolvedLocalPlayerId(gameState);
+	if (!localPlayerId || !piece) return false;
+	return String(piece.player) === String(localPlayerId);
+}
+
+const RETRO_CHARS = { KING: '\u041A', QUEEN: '\u0424', ROOK: '\u041B', BISHOP: '\u0421', KNIGHT: '\u041A\u043D', PAWN: '\u041F' };
+
+function createRetroPiece(type, isLocal, THREE) {
+	const c = document.createElement('canvas');
+	c.width = 128; c.height = 128;
+	const x = c.getContext('2d');
+	x.clearRect(0, 0, 128, 128);
+	const clr = isLocal ? '#00ff41' : '#ff8800';
+	x.shadowColor = clr; x.shadowBlur = 12;
+	x.fillStyle = clr;
+	const ch = RETRO_CHARS[type] || '?';
+	x.font = `bold ${ch.length > 1 ? 56 : 80}px monospace`;
+	x.textAlign = 'center'; x.textBaseline = 'middle';
+	x.fillText(ch, 64, 64);
+	const tex = new THREE.CanvasTexture(c);
+	tex.needsUpdate = true;
+	const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
+	const spr = new THREE.Sprite(mat);
+	spr.scale.set(0.9, 0.9, 0.9);
+	spr.position.y = 0.6;
+	const g = new THREE.Group();
+	g.add(spr);
+	return g;
+}
+
+function createPieceMeshForPlayer(piece, pieceType, pieceColor, orientation, gameState, THREE) {
+	const piecePos = piece?.position || piece;
+	const isLocalPiece = isLocalPlayerPiece(piece, gameState);
+
+	if (gameState && gameState.retroMode) {
+		return createRetroPiece(pieceType, isLocalPiece, THREE);
+	}
+
+	// Local player gets the detailed Russian-styled pieces.
+	if (
+		isLocalPiece &&
+		typeof createDetailedChessPiece === 'function' &&
+		piecePos &&
+		Number.isFinite(piecePos.x) &&
+		Number.isFinite(piecePos.z)
+	) {
+		try {
+			return createDetailedChessPiece(
+				gameState,
+				piecePos.x,
+				piecePos.z,
+				pieceType,
+				piece.player,
+				{
+					orientation,
+					isLocalPlayer: true
+				}
+			);
+		} catch (error) {
+			console.warn('Detailed local piece creation failed, using fallback:', error);
+		}
+	}
+	
+	// Opponents remain lightweight for performance.
+	return chessPieceCreator.createPiece(pieceType, pieceColor, orientation, THREE);
+}
+
 /**
  * Get the color for a chess piece
  * @param {Object} piece - The chess piece data
@@ -562,9 +685,6 @@ function resetErrorTracking() {
  * @returns {number} - The color as a hexadecimal number
  */
 function getChessPieceColor(piece, gameState) {
-
-	return boardFunctions.getPlayerColor(piece.player, gameState, false);
-
 	// If piece has an explicit color, use it
 	if (piece.color && piece.color !== 0xcccccc) {
 		return piece.color;
@@ -572,8 +692,7 @@ function getChessPieceColor(piece, gameState) {
 	
 	// Use the centralized color function for consistent colors
 	if (boardFunctions && typeof boardFunctions.getPlayerColor === 'function') {
-		// Pass false for forTetromino flag since this is a chess piece
-		return boardFunctions.getPlayerColor(piece.player, gameState, false);
+		return boardFunctions.getPlayerColor(piece.player, gameState, 'chess');
 	}
 	
 	// Fallback if the centralized function isn't available

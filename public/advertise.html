@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Advertise on Shaktris</title>
+	<meta name="description" content="Advertise your brand on Shaktris tetromino tiles. Pay with SOL cryptocurrency.">
+	
+	<style>
+		@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Inter:wght@400;500;600&display=swap');
+		
+		:root {
+			--gold: #ffcc00;
+			--gold-dark: #e6b800;
+			--bg-dark: #0a0a0f;
+			--bg-card: #14141f;
+			--border: #2a2a3a;
+			--text: #e0e0e0;
+			--text-muted: #888;
+			--success: #4ade80;
+			--error: #f87171;
+		}
+		
+		* {
+			margin: 0;
+			padding: 0;
+			box-sizing: border-box;
+		}
+		
+		body {
+			font-family: 'Inter', sans-serif;
+			background: var(--bg-dark);
+			color: var(--text);
+			min-height: 100vh;
+			line-height: 1.6;
+		}
+		
+		.container {
+			max-width: 900px;
+			margin: 0 auto;
+			padding: 40px 20px;
+		}
+		
+		header {
+			text-align: center;
+			margin-bottom: 50px;
+		}
+		
+		.logo {
+			font-family: 'Playfair Display', serif;
+			font-size: 48px;
+			font-weight: bold;
+			color: var(--gold);
+			text-shadow: 0 0 30px rgba(255, 204, 0, 0.4);
+			margin-bottom: 10px;
+		}
+		
+		.tagline {
+			font-size: 18px;
+			color: var(--text-muted);
+		}
+		
+		.back-link {
+			position: absolute;
+			top: 20px;
+			left: 20px;
+			color: var(--text-muted);
+			text-decoration: none;
+			display: flex;
+			align-items: center;
+			gap: 8px;
+			transition: color 0.2s;
+		}
+		
+		.back-link:hover {
+			color: var(--gold);
+		}
+		
+		.card {
+			background: var(--bg-card);
+			border: 1px solid var(--border);
+			border-radius: 16px;
+			padding: 32px;
+			margin-bottom: 24px;
+		}
+		
+		.card-title {
+			font-family: 'Playfair Display', serif;
+			font-size: 24px;
+			color: var(--gold);
+			margin-bottom: 20px;
+		}
+		
+		.pricing-grid {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+			gap: 20px;
+			margin-bottom: 30px;
+		}
+		
+		.pricing-item {
+			background: rgba(255, 204, 0, 0.05);
+			border: 1px solid var(--border);
+			border-radius: 12px;
+			padding: 20px;
+			text-align: center;
+		}
+		
+		.pricing-item h3 {
+			color: var(--gold);
+			font-size: 18px;
+			margin-bottom: 8px;
+		}
+		
+		.pricing-item .price {
+			font-size: 28px;
+			font-weight: bold;
+			color: var(--text);
+		}
+		
+		.pricing-item .unit {
+			font-size: 14px;
+			color: var(--text-muted);
+		}
+		
+		.form-group {
+			margin-bottom: 24px;
+		}
+		
+		.form-row {
+			display: grid;
+			grid-template-columns: 1fr 1fr;
+			gap: 20px;
+		}
+		
+		@media (max-width: 600px) {
+			.form-row {
+				grid-template-columns: 1fr;
+			}
+		}
+		
+		label {
+			display: block;
+			font-weight: 500;
+			margin-bottom: 8px;
+			color: var(--text);
+		}
+		
+		.label-hint {
+			font-weight: normal;
+			font-size: 12px;
+			color: var(--text-muted);
+		}
+		
+		input, textarea, select {
+			width: 100%;
+			padding: 12px 16px;
+			background: rgba(0, 0, 0, 0.3);
+			border: 1px solid var(--border);
+			border-radius: 8px;
+			color: var(--text);
+			font-size: 16px;
+			font-family: inherit;
+			transition: border-color 0.2s, box-shadow 0.2s;
+		}
+		
+		input:focus, textarea:focus, select:focus {
+			outline: none;
+			border-color: var(--gold);
+			box-shadow: 0 0 0 3px rgba(255, 204, 0, 0.1);
+		}
+		
+		input::placeholder, textarea::placeholder {
+			color: var(--text-muted);
+		}
+		
+		textarea {
+			resize: vertical;
+			min-height: 80px;
+		}
+		
+		.file-upload {
+			position: relative;
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			justify-content: center;
+			padding: 30px;
+			border: 2px dashed var(--border);
+			border-radius: 12px;
+			cursor: pointer;
+			transition: border-color 0.2s, background 0.2s;
+		}
+		
+		.file-upload:hover {
+			border-color: var(--gold);
+			background: rgba(255, 204, 0, 0.05);
+		}
+		
+		.file-upload input {
+			position: absolute;
+			inset: 0;
+			opacity: 0;
+			cursor: pointer;
+		}
+		
+		.file-upload-icon {
+			font-size: 40px;
+			margin-bottom: 10px;
+		}
+		
+		.file-upload-text {
+			color: var(--text-muted);
+			font-size: 14px;
+		}
+		
+		.preview-image {
+			max-width: 200px;
+			max-height: 150px;
+			border-radius: 8px;
+			display: none;
+			margin-top: 10px;
+		}
+		
+		.wallet-section {
+			display: flex;
+			gap: 16px;
+			align-items: center;
+			flex-wrap: wrap;
+		}
+		
+		.wallet-btn {
+			display: flex;
+			align-items: center;
+			gap: 10px;
+			padding: 12px 24px;
+			background: linear-gradient(135deg, #9945FF 0%, #14F195 100%);
+			border: none;
+			border-radius: 8px;
+			color: #fff;
+			font-size: 16px;
+			font-weight: 600;
+			cursor: pointer;
+			transition: transform 0.2s, box-shadow 0.2s;
+		}
+		
+		.wallet-btn:hover {
+			transform: translateY(-2px);
+			box-shadow: 0 8px 20px rgba(153, 69, 255, 0.3);
+		}
+		
+		.wallet-btn:disabled {
+			opacity: 0.6;
+			cursor: not-allowed;
+			transform: none;
+		}
+		
+		.wallet-status {
+			font-size: 14px;
+			color: var(--text-muted);
+		}
+		
+		.wallet-status.connected {
+			color: var(--success);
+		}
+		
+		.wallet-address {
+			font-family: monospace;
+			font-size: 14px;
+			background: rgba(0, 0, 0, 0.3);
+			padding: 8px 12px;
+			border-radius: 6px;
+			word-break: break-all;
+		}
+		
+		.bid-calculator {
+			background: rgba(255, 204, 0, 0.1);
+			border: 1px solid var(--gold);
+			border-radius: 12px;
+			padding: 20px;
+			margin-top: 20px;
+		}
+		
+		.bid-calculator h4 {
+			color: var(--gold);
+			margin-bottom: 12px;
+		}
+		
+		.bid-summary {
+			display: grid;
+			grid-template-columns: 1fr 1fr;
+			gap: 12px;
+		}
+		
+		.bid-summary-item {
+			display: flex;
+			justify-content: space-between;
+		}
+		
+		.bid-summary-label {
+			color: var(--text-muted);
+		}
+		
+		.bid-summary-value {
+			font-weight: 600;
+		}
+		
+		.submit-btn {
+			width: 100%;
+			padding: 16px 32px;
+			background: linear-gradient(135deg, var(--gold) 0%, var(--gold-dark) 100%);
+			border: none;
+			border-radius: 8px;
+			color: #000;
+			font-size: 18px;
+			font-weight: bold;
+			cursor: pointer;
+			transition: transform 0.2s, box-shadow 0.2s;
+		}
+		
+		.submit-btn:hover {
+			transform: translateY(-2px);
+			box-shadow: 0 8px 24px rgba(255, 204, 0, 0.4);
+		}
+		
+		.submit-btn:disabled {
+			opacity: 0.6;
+			cursor: not-allowed;
+			transform: none;
+		}
+		
+		.message {
+			padding: 16px;
+			border-radius: 8px;
+			margin-bottom: 20px;
+			display: none;
+		}
+		
+		.message.success {
+			background: rgba(74, 222, 128, 0.1);
+			border: 1px solid var(--success);
+			color: var(--success);
+			display: block;
+		}
+		
+		.message.error {
+			background: rgba(248, 113, 113, 0.1);
+			border: 1px solid var(--error);
+			color: var(--error);
+			display: block;
+		}
+		
+		.steps {
+			display: flex;
+			justify-content: center;
+			gap: 40px;
+			margin-bottom: 40px;
+		}
+		
+		.step {
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			gap: 8px;
+		}
+		
+		.step-number {
+			width: 40px;
+			height: 40px;
+			border-radius: 50%;
+			background: var(--border);
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			font-weight: bold;
+			transition: background 0.3s, color 0.3s;
+		}
+		
+		.step.active .step-number {
+			background: var(--gold);
+			color: #000;
+		}
+		
+		.step.completed .step-number {
+			background: var(--success);
+			color: #000;
+		}
+		
+		.step-label {
+			font-size: 14px;
+			color: var(--text-muted);
+		}
+		
+		.step.active .step-label {
+			color: var(--gold);
+		}
+		
+		.how-it-works {
+			background: rgba(255, 204, 0, 0.05);
+			border-radius: 12px;
+			padding: 24px;
+		}
+		
+		.how-it-works h3 {
+			color: var(--gold);
+			margin-bottom: 16px;
+		}
+		
+		.how-it-works ol {
+			margin-left: 20px;
+		}
+		
+		.how-it-works li {
+			margin-bottom: 12px;
+			color: var(--text-muted);
+		}
+		
+		.how-it-works li strong {
+			color: var(--text);
+		}
+	</style>
+</head>
+<body>
+	<a href="/" class="back-link">
+		<span>←</span> Back to Game
+	</a>
+	
+	<div class="container">
+		<header>
+			<div class="logo">SHAKTRIS</div>
+			<p class="tagline">Advertise Your Brand on the Board</p>
+		</header>
+		
+		<!-- Progress Steps -->
+		<div class="steps">
+			<div class="step active" id="step-1">
+				<div class="step-number">1</div>
+				<span class="step-label">Create Ad</span>
+			</div>
+			<div class="step" id="step-2">
+				<div class="step-number">2</div>
+				<span class="step-label">Connect Wallet</span>
+			</div>
+			<div class="step" id="step-3">
+				<div class="step-number">3</div>
+				<span class="step-label">Pay & Activate</span>
+			</div>
+		</div>
+		
+		<!-- Message Container -->
+		<div id="message" class="message"></div>
+		
+		<!-- How It Works -->
+		<div class="card">
+			<div class="how-it-works">
+				<h3>How Tile Advertising Works</h3>
+				<ol>
+					<li><strong>Bid per cell:</strong> Your bid is divided by the number of cells you want to sponsor. Higher cost-per-cell = more visibility.</li>
+					<li><strong>Rotation system:</strong> Advertisers rotate based on bid ranking. Top bidders appear first on falling tetrominos.</li>
+					<li><strong>Pay with SOL:</strong> Connect your Solana wallet (Phantom, Solflare) and pay in SOL cryptocurrency.</li>
+					<li><strong>Track performance:</strong> Monitor impressions, clicks, and click-through rate in real-time.</li>
+				</ol>
+			</div>
+		</div>
+		
+		<!-- Registration Form -->
+		<form id="advertiser-form" class="card">
+			<h2 class="card-title">Create Your Advertisement</h2>
+			
+			<div class="form-row">
+				<div class="form-group">
+					<label for="name">Business / Brand Name</label>
+					<input type="text" id="name" name="name" placeholder="Your company name" required>
+				</div>
+				
+				<div class="form-group">
+					<label for="email">Email Address</label>
+					<input type="email" id="email" name="email" placeholder="contact@example.com" required>
+				</div>
+			</div>
+			
+			<div class="form-group">
+				<label for="adLink">Landing Page URL</label>
+				<input type="url" id="adLink" name="adLink" placeholder="https://yoursite.com/promo" required>
+			</div>
+			
+			<div class="form-group">
+				<label for="adText">
+					Ad Message 
+					<span class="label-hint">(Max 64 characters)</span>
+				</label>
+				<input type="text" id="adText" name="adText" placeholder="Check out our amazing product!" maxlength="64" required>
+				<div style="text-align: right; font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+					<span id="char-count">0</span>/64
+				</div>
+			</div>
+			
+			<div class="form-group">
+				<label>Ad Image <span class="label-hint">(JPEG, PNG, GIF, WebP - Max 5MB)</span></label>
+				<div class="file-upload" id="file-upload-area">
+					<div class="file-upload-icon">📷</div>
+					<div class="file-upload-text">Click or drag to upload your ad image</div>
+					<input type="file" id="adImage" name="adImage" accept="image/jpeg,image/png,image/gif,image/webp" required>
+					<img id="preview-image" class="preview-image" alt="Preview">
+				</div>
+			</div>
+			
+			<div class="form-row">
+				<div class="form-group">
+					<label for="bidAmount">Bid Amount (SOL)</label>
+					<input type="number" id="bidAmount" name="bidAmount" placeholder="0.5" min="0.01" step="0.01" required>
+				</div>
+				
+				<div class="form-group">
+					<label for="cellCount">Number of Cells to Sponsor</label>
+					<input type="number" id="cellCount" name="cellCount" placeholder="100" min="1" required>
+				</div>
+			</div>
+			
+			<div class="bid-calculator">
+				<h4>Bid Summary</h4>
+				<div class="bid-summary">
+					<div class="bid-summary-item">
+						<span class="bid-summary-label">Total Bid:</span>
+						<span class="bid-summary-value" id="total-bid">0 SOL</span>
+					</div>
+					<div class="bid-summary-item">
+						<span class="bid-summary-label">Cost per Cell:</span>
+						<span class="bid-summary-value" id="cost-per-cell">0 SOL</span>
+					</div>
+					<div class="bid-summary-item">
+						<span class="bid-summary-label">Estimated USD:</span>
+						<span class="bid-summary-value" id="est-usd">$0</span>
+					</div>
+					<div class="bid-summary-item">
+						<span class="bid-summary-label">Priority:</span>
+						<span class="bid-summary-value" id="bid-priority">-</span>
+					</div>
+				</div>
+			</div>
+		</form>
+		
+		<!-- Wallet Connection -->
+		<div class="card">
+			<h2 class="card-title">Connect Wallet & Pay</h2>
+			
+			<div class="form-group">
+				<label>Solana Wallet</label>
+				<div class="wallet-section">
+					<button type="button" id="connect-wallet-btn" class="wallet-btn">
+						<svg width="20" height="20" viewBox="0 0 128 128" fill="currentColor">
+							<path d="M108.53,47.43l-15.14-15.14a3.2,3.2,0,0,0-4.53,0L64,57.16,39.14,32.29a3.2,3.2,0,0,0-4.53,0L19.47,47.43a3.2,3.2,0,0,0,0,4.53L44.34,76.82,19.47,101.69a3.2,3.2,0,0,0,0,4.53l15.14,15.14a3.2,3.2,0,0,0,4.53,0L64,96.49l24.86,24.87a3.2,3.2,0,0,0,4.53,0l15.14-15.14a3.2,3.2,0,0,0,0-4.53L83.66,76.82l24.87-24.86A3.2,3.2,0,0,0,108.53,47.43Z"/>
+						</svg>
+						Connect Phantom
+					</button>
+					<span id="wallet-status" class="wallet-status">Not connected</span>
+				</div>
+				<div id="wallet-address-container" style="display: none; margin-top: 12px;">
+					<div class="wallet-address" id="wallet-address"></div>
+				</div>
+			</div>
+			
+			<input type="hidden" id="walletAddress" name="walletAddress">
+			
+			<button type="button" id="submit-btn" class="submit-btn" disabled>
+				Submit & Pay with SOL
+			</button>
+		</div>
+		
+		<!-- Payment Status -->
+		<div class="card" id="payment-status-card" style="display: none;">
+			<h2 class="card-title">Payment Status</h2>
+			<div id="payment-status">
+				<p>Waiting for payment confirmation...</p>
+			</div>
+		</div>
+	</div>
+	
+	<script type="module" src="js/advertiser-registration.js"></script>
+</body>
+</html>
+
+
+

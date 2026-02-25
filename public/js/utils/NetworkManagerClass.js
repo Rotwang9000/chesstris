@@ -172,6 +172,97 @@ export default class NetworkManager {
 					}
 				});
 				
+				// Register core socket listeners immediately (before connect) to avoid missing early events
+			socket.on('player_id', (id) => {
+				try {
+					if (id) {
+						this.state.playerId = id;
+						this.emitEvent('player_id', { playerId: id });
+					}
+				} catch (error) {
+					console.warn('NetworkManager: Error handling player_id event:', error);
+				}
+			});
+
+			socket.on('set_session', (data) => {
+				if (data && data.playerId) {
+					document.cookie = `shaktris_player_id=${data.playerId};path=/;max-age=${60 * 60 * 24 * 30};SameSite=Lax`;
+					console.log('NetworkManager: Session cookie set for', data.playerId);
+				}
+			});
+				
+				socket.on('player_joined', (data) => {
+					this.emitEvent('player_joined', data);
+				});
+				
+				socket.on('player_left', (data) => {
+					this.emitEvent('player_left', data);
+				});
+				
+				socket.on('row_cleared', (data) => {
+					this.emitEvent('row_cleared', data);
+				});
+				
+				socket.on('no_valid_chess_moves', (data) => {
+					this.emitEvent('no_valid_chess_moves', data);
+				});
+				
+				socket.on('new_tetromino', (data) => {
+					this.emitEvent('new_tetromino', data);
+				});
+				
+				socket.on('turn_update', (data) => {
+					this.emitEvent('turn_update', data);
+				});
+				
+				socket.on('chess_move', (data) => {
+					this.emitEvent('chess_move', data);
+				});
+				
+			socket.on('tetrominoFailed', (data) => {
+				this.emitEvent('tetrominoFailed', data);
+			});
+
+			socket.on('pawn_promotion_available', (data) => {
+				this.emitEvent('pawn_promotion_available', data);
+			});
+
+			socket.on('king_captured', (data) => {
+				this.emitEvent('king_captured', data);
+			});
+
+			socket.on('suicidal_pawn', (data) => {
+				this.emitEvent('suicidal_pawn', data);
+			});
+
+			socket.on('simultaneous_capture_resolved', (data) => {
+				this.emitEvent('simultaneous_capture_resolved', data);
+			});
+
+			socket.on('king_duel_start', (data) => {
+				this.emitEvent('king_duel_start', data);
+			});
+
+			socket.on('king_duel_result', (data) => {
+				this.emitEvent('king_duel_result', data);
+			});
+
+			socket.on('king_duel_round_result', (data) => {
+				this.emitEvent('king_duel_round_result', data);
+			});
+
+			socket.on('king_duel_new_round', (data) => {
+				this.emitEvent('king_duel_new_round', data);
+			});
+
+			socket.on('king_duel_announced', (data) => {
+				this.emitEvent('king_duel_announced', data);
+			});
+				
+				socket.on('chessFailed', (data) => {
+					this.emitEvent('chessFailed', data);
+				});
+				
 				// Set up initial event handlers
 				socket.on('connect', () => {
 					console.log('NetworkManager: Connected to server');
@@ -187,17 +278,22 @@ export default class NetworkManager {
 					// Set up game state event handlers
 					socket.on('game_state', (data) => {
 						console.log('NetworkManager: Received game_state event:', data);
-						this.state.gameState = data;
+						// Store state for internal access (prefer the actual state object)
+						this.state.gameState = (data && data.state) ? data.state : data;
+						// Emit the full payload so listeners can access players, timestamps, etc.
 						this.emitEvent('game_state', data);
 					});
 					
 					socket.on('game_update', (data) => {
 						console.log('NetworkManager: Received game_update event:', data);
+						const incomingState = (data && data.state) ? data.state : data;
 						// Update our cached game state with new data if possible
 						if (this.state.gameState) {
-							this.state.gameState = { ...this.state.gameState, ...data };
+							this.state.gameState = { ...this.state.gameState, ...incomingState };
+						} else {
+							this.state.gameState = incomingState;
 						}
-						this.emitEvent('game_update', data);
+						this.emitEvent('game_update', incomingState);
 					});
 					
 					resolve(true);
@@ -441,7 +537,12 @@ export default class NetworkManager {
 					this.state.gameState = data.gameState;
 					
 					// Also emit a game_state event so listeners can update
-					this.emitEvent('game_state', data.gameState);
+					this.emitEvent('game_state', {
+						gameId: data.gameId,
+						state: data.gameState,
+						players: data.players,
+						timestamp: data.timestamp || Date.now()
+					});
 				} else {
 					console.log('NetworkManager: No game state in join response, requesting state...');
 					// If no game state in the response, request it
@@ -556,6 +657,57 @@ export default class NetworkManager {
 	}
 
 	/**
+	 * Permanently exit the game, clearing the session cookie.
+	 * @returns {Promise<boolean>}
+	 */
+	exitGame() {
+		return new Promise((resolve) => {
+			if (this.isConnected() && this.state.socket) {
+				this.state.socket.emit('exit_game', {}, () => {
+					this._clearSession();
+					resolve(true);
+				});
+				setTimeout(() => {
+					this._clearSession();
+					resolve(true);
+				}, 3000);
+			} else {
+				this._clearSession();
+				resolve(true);
+			}
+		});
+	}
+
+	_clearSession() {
+		document.cookie = 'shaktris_player_id=;path=/;max-age=0';
+		this.state.gameId = null;
+		this.state.hasJoinedGame = false;
+		this.state.playerId = null;
+		localStorage.removeItem('shaktris_game_key');
+	}
+
+	/**
+	 * Send a pawn promotion choice to the server
+	 * @param {string} pieceId - The pawn piece ID
+	 * @param {string} chosenType - QUEEN, ROOK, BISHOP, or KNIGHT
+	 * @returns {Promise<Object>}
+	 */
+	promotePawn(pieceId, chosenType) {
+		return this.sendMessage('promote_pawn', { pieceId, chosenType });
+	}
+
+	/**
+	 * Submit response to a King's Duel mini-game.
+	 * @param {string} duelId
+	 * @param {number} placement - Cell index where the player hid their king (0-7)
+	 * @param {number} guess - Cell index where the player guesses opponent hid theirs
+	 * @returns {Promise<Object>}
+	 */
+	submitDuelResponse(duelId, placement, guess) {
+		return this.sendMessage('king_duel_response', { duelId, placement, guess });
+	}
+
+	/**
 	 * Send a message to the server
 	 * @param {string} eventType - Event type
 	 * @param {Object} data - Event data
@@ -575,21 +727,43 @@ export default class NetworkManager {
 				if (response && response.error) {
 					console.error(`NetworkManager: Error sending message ${eventType}:`, response.error);
 					
+					// Rate limiting (real-time anti-spam)
+					const isRateLimited = response.error === 'rate_limited' || 
+						(typeof response.error === 'string' && response.error.includes('rate_limited'));
+					
+					if (isRateLimited) {
+						reject({
+							message: 'rate_limited',
+							reason: 'rate_limited',
+							retryAfterMs: response.retryAfterMs,
+							details: response
+						});
+						return;
+					}
+					
 					// Check if this is a validation error or a network error
-					const isValidationError = response.error.includes('Invalid') || 
-											 response.error.includes('invalid') ||
-											 response.error.includes('not allowed') ||
-											 response.error.includes('rejected');
+					const errorText = String(response.error);
+					const errorLower = errorText.toLowerCase();
+					
+					const isValidationError = (
+						errorLower.includes('invalid') ||
+						errorLower.includes('not allowed') ||
+						errorLower.includes('rejected') ||
+						errorLower.includes('not your') ||
+						errorLower.includes('not found') ||
+						errorLower.includes('cannot') ||
+						errorLower.includes('occupied')
+					);
 					
 					if (isValidationError) {
 						reject({
-							message: response.error,
+							message: errorText,
 							reason: 'validation_error',
 							details: response
 						});
 					} else {
 						reject({
-							message: response.error,
+							message: errorText,
 							reason: 'network_error',
 							details: response
 						});
@@ -638,6 +812,11 @@ export default class NetworkManager {
 			console.log('NetworkManager: Tetromino placement successful:', response);
 			return response;
 		} catch (error) {
+			// Preserve explicit rate limiting errors
+			if (error && error.reason === 'rate_limited') {
+				return Promise.reject(error);
+			}
+			
 			// Check if this is a validation error (placement rule violation) or a network error
 			if (error.message && (
 				error.message.includes('Invalid placement') ||
@@ -681,12 +860,15 @@ export default class NetworkManager {
 		
 		console.log('NetworkManager: Submitting chess move:', move);
 		
-		// Prepare data for server
-		const moveData = {
-			gameId: this.state.gameId,
-			playerId: this.getPlayerId(),
-			move: move
-		};
+		// Prepare canonical payload for server (server expects pieceId + targetPosition)
+		const pieceId = move?.pieceId || move?.id;
+		const targetPosition = move?.targetPosition || (
+			(move?.toX !== undefined && move?.toZ !== undefined)
+				? { x: move.toX, z: move.toZ }
+				: null
+		);
+		
+		const moveData = { pieceId, targetPosition };
 		
 		// Send move to server
 		try {
@@ -749,10 +931,10 @@ export default class NetworkManager {
 					}
 					
 					// Cache game state
-					this.state.gameState = response;
+					this.state.gameState = (response && response.state) ? response.state : response;
 					
 					// Emit game state event
-					this.emitEvent('gameState', response);
+					this.emitEvent('game_state', response);
 					
 					resolve(response);
 				}

@@ -1,4 +1,5 @@
-import { models } from './enhanced-gameCore.js';
+import { getModels } from './gameContext.js';
+const models = getModels();
 import * as THREE from './utils/three.module.js';
 
 /**

@@ -1,83 +1,53 @@
 /**
- * Create beautiful fluffy clouds for the sky
- * This module provides the cloud creation function that was missing
+ * Sparse cloud bed beneath the game board.
+ * Creates soft, low-profile cloud puffs for a floating-island aesthetic.
  */
 
 import * as THREE from './utils/three.module.js';
 
+const CLOUD_Y = -4.5;
+const CLOUD_SPREAD = 42;
+const CLOUD_COUNT = 28;
+
 /**
- * Create beautiful fluffy clouds for the sky
- * @param {THREE.Scene} scene - The THREE.js scene to add clouds to
- * @returns {THREE.Group} The cloud group
+ * Create a sparse cloud layer beneath the board
+ * @param {THREE.Scene} scene
+ * @returns {THREE.Group}
  */
 export function createFewClouds(scene) {
-	try {
-		// Create clouds container
-		const clouds = new THREE.Group();
-		clouds.name = 'clouds';
-		
-		// Create cloud material - make it very light and soft
-		const cloudMaterial = new THREE.MeshStandardMaterial({
-			color: 0xFFFFFF,
-			transparent: true,
-			opacity: 0.92,
-			roughness: 1.0,
-			metalness: 0.0,
-			emissive: 0xAAAAAA,
-			emissiveIntensity: 0.2
-		});
-		
-		// Create several fluffy clouds
-		const cloudCount = 10;
-		
-		for (let i = 0; i < cloudCount; i++) {
-			// Create a cloud group for each cloud
-			const cloudGroup = new THREE.Group();
-			
-			// Calculate random values based on cloud index
-			const seed = i * 412.531;
-			const cloudSize = 5 + Math.random() * 10;
-			
-			// Create puffs for each cloud
-			const puffCount = 3 + Math.floor(Math.random() * 5);
-			
-			for (let j = 0; j < puffCount; j++) {
-				// Create a sphere for each puff
-				const puffSize = cloudSize * (0.5 + Math.random() * 0.5);
-				const puffGeometry = new THREE.SphereGeometry(puffSize, 8, 8);
-				const puff = new THREE.Mesh(puffGeometry, cloudMaterial);
-				
-				// Position puffs to form a cloud shape
-				const xRange = cloudSize * 0.7;
-				const yRange = cloudSize * 0.3;
-				const zRange = cloudSize * 0.5;
-				
-				puff.position.set(
-					(Math.random() - 0.5) * xRange * 2,
-					Math.random() * yRange,
-					(Math.random() - 0.5) * zRange * 2
-				);
-				
-				cloudGroup.add(puff);
-			}
-			
-			// Position cloud in the sky
-			cloudGroup.position.set(
-				(Math.random() - 0.5) * 200,
-				40 + Math.random() * 30,
-				(Math.random() - 0.5) * 200
+	if (!scene) return null;
+
+	const group = new THREE.Group();
+	group.name = 'cloudBed';
+
+	const material = new THREE.MeshStandardMaterial({
+		color: 0xFFFFFF,
+		transparent: true,
+		opacity: 0.28,
+		roughness: 1.0,
+		metalness: 0.0,
+		depthWrite: false
+	});
+
+	for (let i = 0; i < CLOUD_COUNT; i++) {
+		const puffCount = 2 + Math.floor(Math.random() * 3);
+		const cx = (Math.random() - 0.5) * CLOUD_SPREAD;
+		const cz = (Math.random() - 0.5) * CLOUD_SPREAD;
+
+		for (let j = 0; j < puffCount; j++) {
+			const radius = 0.45 + Math.random() * 0.9;
+			const geom = new THREE.SphereGeometry(radius, 6, 4);
+			const puff = new THREE.Mesh(geom, material);
+			puff.position.set(
+				cx + (Math.random() - 0.5) * 2,
+				CLOUD_Y - Math.random() * 1.2,
+				cz + (Math.random() - 0.5) * 2
 			);
-			
-			clouds.add(cloudGroup);
+			puff.scale.set(1, 0.2, 1);
+			group.add(puff);
 		}
-		
-		// Add clouds to scene
-		scene.add(clouds);
-		console.log('Created beautiful sky with clouds');
-		
-		return clouds;
-	} catch (error) {
-		console.error('Error creating clouds:', error);
-		return null;
 	}
-} 
+
+	scene.add(group);
+	return group;
+}

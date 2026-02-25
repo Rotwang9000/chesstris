@@ -13,12 +13,119 @@ import { createUnifiedPlayerBar, updateUnifiedPlayerBar } from './unifiedPlayerB
 import './boardFunctions.js'; // Import the updated board functions
 import gameState from './utils/gameState.js';
 import * as tetrominoModule from './tetromino.js'; // Import tetromino module for socket events
+import { initFloatingBanner } from './floatingBanner.js'; // Import floating banner for ads
+import { initSponsorSystem } from '../utils/sponsors.js'; // Import sponsor system
 
 
 // Global state
 let isGameStarted = false;
 let playerName = localStorage.getItem('playerName') || '';
 let currentGameId = null;
+
+// --- Render profiles: Normal, Cute (low-spec), Retro (CRT Cyrillic) ---
+const RENDER_PROFILES = ['normal', 'cute', 'retro'];
+const PROFILE_LABELS = { normal: 'Mode: Normal', cute: 'Mode: Cute', retro: 'Mode: Retro' };
+
+function normalizeRenderProfile(value) {
+	const v = String(value || '').trim().toLowerCase();
+	if (!v) return null;
+	if (['cute', 'low', 'low-spec', 'lowspec', 'pixel', 'pixelated'].includes(v)) return 'cute';
+	if (['retro', 'crt', 'cyrillic', 'terminal'].includes(v)) return 'retro';
+	if (['normal', 'default', '3d', 'high'].includes(v)) return 'normal';
+	return null;
+}
+
+function resolveRenderProfile() {
+	const params = new URLSearchParams(window.location.search);
+	const fromPath = window.location.pathname === '/2d' ? 'cute' : null;
+	const fromFlags = (params.has('cute') || params.has('low') || params.has('pixel')) ? 'cute'
+		: params.has('retro') ? 'retro' : null;
+	const fromQuery =
+		normalizeRenderProfile(params.get('render')) ||
+		normalizeRenderProfile(params.get('mode')) ||
+		normalizeRenderProfile(params.get('quality'));
+	const stored = normalizeRenderProfile(localStorage.getItem('renderProfile'));
+	return fromQuery || fromFlags || fromPath || stored || 'normal';
+}
+
+function applyRenderProfileToDom(profile) {
+	const gameContainer = document.getElementById('game-container');
+	if (gameContainer) {
+		gameContainer.classList.toggle('render-cute', profile === 'cute');
+		gameContainer.classList.toggle('render-retro', profile === 'retro');
+		gameContainer.dataset.renderProfile = profile;
+	}
+	document.documentElement.dataset.renderProfile = profile;
+}
+
+function setupRenderModeToggle(profile) {
+	const button = document.getElementById('toggle-render-mode-btn');
+	if (!button) return;
+
+	button.textContent = PROFILE_LABELS[profile] || PROFILE_LABELS.normal;
+
+	if (button.dataset.bound === '1') return;
+	button.dataset.bound = '1';
+
+	button.addEventListener('click', () => {
+		const current = resolveRenderProfile();
+		const idx = RENDER_PROFILES.indexOf(current);
+		const next = RENDER_PROFILES[(idx + 1) % RENDER_PROFILES.length];
+
+		localStorage.setItem('renderProfile', next);
+		applyRenderProfileToDom(next);
+		button.textContent = PROFILE_LABELS[next] || PROFILE_LABELS.normal;
+
+		const gs = window.gameState;
+		if (gs) {
+			gs.renderProfile = next;
+			gs.lowQuality = next === 'cute';
+			gs.retroMode = next === 'retro';
+		}
+
+		try {
+			const sceneObj = gs?.scene;
+			if (sceneObj && gameCore.setupLightsInPlace) {
+				gameCore.setupLightsInPlace(sceneObj, next);
+			}
+		} catch (e) {
+			console.warn('Could not switch lighting in place:', e);
+		}
+
+		try {
+			const canvas = document.getElementById('game-canvas');
+			if (canvas && canvas.__renderer) {
+				const isCute = next === 'cute';
+				canvas.__renderer.setPixelRatio(isCute ? Math.min(1, window.devicePixelRatio * 0.6) : window.devicePixelRatio);
+				canvas.style.imageRendering = isCute ? 'pixelated' : '';
+			}
+		} catch (e) {
+			// Non-critical
+		}
+
+		// Apply CRT overlay for retro mode
+		applyCrtOverlay(next === 'retro');
+
+		console.log('Switched render mode to', next, 'without page reload');
+	});
+}
+
+function applyCrtOverlay(enabled) {
+	let overlay = document.getElementById('crt-overlay');
+	if (enabled) {
+		if (!overlay) {
+			overlay = document.createElement('div');
+			overlay.id = 'crt-overlay';
+			overlay.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:9999;' +
+				'background:repeating-linear-gradient(0deg,rgba(0,0,0,0.15) 0px,rgba(0,0,0,0.15) 1px,transparent 1px,transparent 3px);' +
+				'mix-blend-mode:multiply;';
+			document.body.appendChild(overlay);
+		}
+		overlay.style.display = '';
+	} else if (overlay) {
+		overlay.style.display = 'none';
+	}
+}
 
 // Main initialization
 async function init() {
@@ -27,6 +134,12 @@ async function init() {
 	// Force hide loading screen and error messages - failsafe
 	hideLoadingScreen();
 	hideError();
+
+	// Apply render profile ASAP so CSS + UI reflect it even before game starts
+	const renderProfile = resolveRenderProfile();
+	applyRenderProfileToDom(renderProfile);
+	setupRenderModeToggle(renderProfile);
+	applyCrtOverlay(renderProfile === 'retro');
 	
 	try {
 		// Run diagnostics first to catch any issues
@@ -81,7 +194,7 @@ async function init() {
 		gameContainer.style.height = '100vh';
 		gameContainer.style.minHeight = '100vh';
 		
-		isGameStarted = gameCore.initGame(gameContainer);
+		isGameStarted = gameCore.initGame(gameContainer, { renderProfile });
 		
 		if (!isGameStarted) {
 			throw new Error('Game initialization failed');
@@ -229,6 +342,29 @@ async function joinGame(gameId = null) {
 	try {
 		// Force hide any error messages - failsafe
 		hideError();
+		
+		// Check for saved state from mode switch (should rejoin same game)
+		if (!gameId) {
+			try {
+				const savedState = sessionStorage.getItem('shaktris_mode_switch_state');
+				if (savedState) {
+					const state = JSON.parse(savedState);
+					// Only use if saved within last 30 seconds (recent mode switch)
+					if (state.gameId && Date.now() - state.timestamp < 30000) {
+						console.log('Restoring game from mode switch:', state.gameId);
+						gameId = state.gameId;
+						// Restore player name if saved
+						if (state.playerName) {
+							localStorage.setItem('playerName', state.playerName);
+						}
+					}
+					// Clear the saved state after reading
+					sessionStorage.removeItem('shaktris_mode_switch_state');
+				}
+			} catch (e) {
+				console.warn('Could not restore mode switch state:', e);
+			}
+		}
 		
 		// Check if NetworkManager is available directly from import
 		if (!NetworkManager) {
@@ -426,6 +562,12 @@ async function joinGameAfterConnection(gameId = null) {
 			setTimeout(() => {
 				updateUnifiedPlayerBar(gameState);
 			}, 1000);
+			
+			// Initialize advertising/sponsor systems after game starts
+			setTimeout(() => {
+				initSponsorSystem().catch(err => console.warn('Sponsor system init error:', err));
+				initFloatingBanner().catch(err => console.warn('Floating banner init error:', err));
+			}, 2000);
 		} else {
 			throw new Error('Failed to join game');
 		}

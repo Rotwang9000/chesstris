@@ -311,7 +311,7 @@ function createBoardCells(gameState, boardGroup, createFloatingIsland, THREE) {
 	
 	// If createFloatingIsland function is not provided, create a simple fallback
 	const createIsland = createFloatingIsland || function(x, z, material, offset, hasContent) {
-		const geometry = new THREE.BoxGeometry(0.9, 0.2, 0.9);
+		const geometry = new THREE.BoxGeometry(0.94, 0.94, 0.94);
 		const mesh = new THREE.Mesh(geometry, material);
 		return mesh;
 	};
@@ -481,22 +481,10 @@ function createBoardCells(gameState, boardGroup, createFloatingIsland, THREE) {
 						}
 					}
 				}
-			} else if ((x + z) % 4 === 0 && Math.random() < 0.15) { // Reduced density
-				// Create a very simple flat plane for empty areas - no caps, just flat clouds
-				const cloudSize = 0.5 + Math.random() * 0.2; // Smaller size
+			} else if (false) { // Cloud planes removed — caused white haze
+				const cloudSize = 0.5;
 				const cloudGeometry = new THREE.PlaneGeometry(cloudSize, cloudSize);
 				const cloud = new THREE.Mesh(cloudGeometry, cloudMaterial);
-				
-				// Tag as a decoration cloud
-				cloud.userData = {
-					type: 'cloud',
-					position: { x, z }
-				};
-				
-				// Set position relative to center marker
-				cloud.position.x = x - centerX;
-				cloud.position.z = z - centerZ;
-				cloud.position.y = -1.5 - Math.random() * 0.3; // Lower than cells
 				cloud.rotation.x = -Math.PI / 2; // Flat orientation
 				
 				// Add to board group
@@ -556,6 +544,30 @@ function renderBoard(gameState, boardGroup, createFloatingIsland, THREE) {
 	const screenWidth = window.innerWidth;
 	const gridWidth = screenWidth > 1200 ? 40 : (screenWidth > 800 ? 30 : 20);
 	const gridHeight = gridWidth; // Keep it square for simplicity
+
+	// Shared render resources for board cells (avoid allocating per-cell geometry/materials where possible)
+	if (!renderBoard._renderCache) {
+		renderBoard._renderCache = {};
+	}
+	const renderCache = renderBoard._renderCache;
+	if (!renderCache.cellGeometry) {
+		renderCache.cellGeometry = new THREE.BoxGeometry(0.94, 0.94, 0.94);
+	}
+	if (!renderCache.cellEdgesGeometry) {
+		renderCache.cellEdgesGeometry = new THREE.EdgesGeometry(renderCache.cellGeometry);
+	}
+	if (!renderCache.cellEdgeMaterials) {
+		renderCache.cellEdgeMaterials = {
+			default: new THREE.LineBasicMaterial({ color: 0x333333, transparent: true, opacity: 0.15, depthTest: false }),
+			home: new THREE.LineBasicMaterial({ color: 0x333333, transparent: true, opacity: 0.2, depthTest: false }),
+			tetromino: new THREE.LineBasicMaterial({ color: 0x333333, transparent: true, opacity: 0.2, depthTest: false })
+		};
+	}
+	// Cloud puffs removed — they caused visible white haze around the board
+
+	// DISABLED: Wireframe edges were rendering on top of everything
+	// const ensureCellEdges = (mesh, kind) => { ... }
+	const ensureCellEdges = () => {}; // No-op
 	
 	// Create map of existing cells for fast lookup
 	const existingCells = {};
@@ -598,120 +610,135 @@ function renderBoard(gameState, boardGroup, createFloatingIsland, THREE) {
 			
 			// Check if a cell already exists at this position
 			const existingCell = existingCells[cellKey];
-			
-			if (existingCell) {
-				// Reuse the existing cell - just update its userData if needed
-				existingCell.userData.data = cellData;
-				existingCell.userData.processed = true;
-				cellsReused++;
-				
-				// Position the cell relative to the center marker using translation functions
-				const relativePosition = {x, z};
-				existingCell.position.x = relativePosition.x;
-				existingCell.position.z = relativePosition.z;
-			} else {
-				// Create a new cell
-				try {
-					// Choose the appropriate material based on cell type
-					let material;
-					
-					// Extract the home zone or tetromino data if present
-					let isHomeZone = false;
-					let homePlayer = null;
-					let tetrominoPlayer = null;
-					
-					// Handle array-based cells
-					if (Array.isArray(cellData)) {
-						// Look for home zone in array
-						const homeZone = cellData.find(item => item && item.type === 'home');
-						if (homeZone) {
-							isHomeZone = true;
-							homePlayer = homeZone.player;
-						}
-						
-						// Look for tetromino in array
-						const tetromino = cellData.find(item => item && item.type === 'tetromino');
-						if (tetromino) {
-							tetrominoPlayer = tetromino.player;
-						}
-					} 
-					// Handle object-based cells
-					else if (typeof cellData === 'object') {
-						// Extract home zone
-						if (cellData.type === 'home' || cellData.homeZone) {
-							isHomeZone = true;
-							homePlayer = cellData.player;
-						}
-						
-						// Extract tetromino
-						if (cellData.type === 'tetromino' || cellData.tetromino) {
-							tetrominoPlayer = cellData.player;
-						}
-					}
-					
-					// Create the material based on cell content
-					if (isHomeZone) {
-						// Home zone material - use player color if available
-						const homeColor = getPlayerColor(homePlayer, gameState, 'home');
-						material = new THREE.MeshStandardMaterial({ 
-							color: homeColor, 
-							roughness: 0.7,
-							metalness: 0.3,
-							transparent: true,
-							opacity: 0.85
-						});
-					} else if (tetrominoPlayer) {
-						// Tetromino material - use player color with tetromino flag
-						const tetrominoColor = getPlayerColor(tetrominoPlayer, gameState, 'tetromino');
-						material = new THREE.MeshStandardMaterial({ 
-							color: tetrominoColor, 
-							roughness: 0.5,
-							metalness: 0.5,
-							transparent: false,
-							opacity: 1.0
-						});
-					} else {
-						// Default chess board material - maintain chequered pattern
-						const isWhite = (x + z) % 2 === 0;
-						material = new THREE.MeshStandardMaterial({ 
-							color: isWhite ? 0xe9e9e9 : 0x808080, 
-							roughness: 0.6,
-							metalness: 0.2,
-							transparent: true,
-							opacity: 0.9
-						});
-					}
-					
-					// Get relative position from the center marker using translation functions
-					// const relativePosition = {x, z};
-					
-					// Create the cell mesh
-					/*const newCell = createFloatingIsland(
-						relativePosition.x,   // Position relative to the center marker
-						relativePosition.z, 
-						material, 
-						boardGroup,
-						centerX,
-						centerZ
-					);
-					
-					// Store the cell data in userData
-					newCell.userData = {
-						type: 'cell',
-						position: { x, z },
-						data: cellData,
-						processed: true
-					};
-					
-					// Add to board group
-					if (!boardGroup.children.includes(newCell)) {
-						boardGroup.add(newCell);
-					}*/
-					
-					cellsCreated++;
-				} catch (error) {
-					console.error(`Error creating cell at (${x}, ${z}):`, error);
+
+			// Extract the home zone or tetromino data if present (drives material)
+			let isHomeZone = false;
+			let homePlayer = null;
+			let tetrominoPlayer = null;
+
+			// Handle array-based cells (server sends multi-object arrays)
+			if (Array.isArray(cellData)) {
+				const homeZone = cellData.find(item => item && item.type === 'home');
+				if (homeZone) {
+					isHomeZone = true;
+					homePlayer = homeZone.player;
 				}
+
+				const tetromino = cellData.find(item => item && item.type === 'tetromino');
+				if (tetromino) {
+					tetrominoPlayer = tetromino.player;
+				}
+			} else if (typeof cellData === 'object') {
+				// Legacy/object-based cells
+				if (cellData.type === 'home' || cellData.homeZone) {
+					isHomeZone = true;
+					homePlayer = cellData.player;
+				}
+				if (cellData.type === 'tetromino' || cellData.tetromino) {
+					tetrominoPlayer = cellData.player;
+				}
+			}
+
+			// Determine material properties
+			let color;
+			let roughness = 0.6;
+			let metalness = 0.2;
+			let transparent = false;
+			let opacity = 1.0;
+			let kind = 'default';
+
+			if (isHomeZone) {
+				kind = 'home';
+				color = getPlayerColor(homePlayer, gameState, 'home');
+				roughness = 0.7;
+				metalness = 0.3;
+			} else if (tetrominoPlayer) {
+				kind = 'tetromino';
+				color = getPlayerColor(tetrominoPlayer, gameState, 'tetromino');
+				roughness = 0.55;
+				metalness = 0.1;
+				transparent = false;
+			} else if (gameState && gameState.retroMode) {
+				const isWhite = (x + z) % 2 === 0;
+				color = isWhite ? 0x001a00 : 0x002200;
+				roughness = 0.9;
+				metalness = 0;
+			} else {
+				const isWhite = (x + z) % 2 === 0;
+				color = isWhite ? 0xEDE8D5 : 0x5A7D5A;
+				roughness = 0.45;
+				metalness = 0.05;
+			}
+
+			// Position using the same transform as chess pieces (so cells sit under pieces)
+			const absPos = translatePosition({ x, z }, gameState, true);
+
+			if (existingCell) {
+				// Reuse existing mesh: update material + position + metadata
+				existingCell.userData.data = cellData;
+				existingCell.userData.kind = kind;
+				existingCell.userData.processed = true;
+
+				// Keep flat board alignment
+				existingCell.rotation.set(0, 0, 0);
+				existingCell.position.set(absPos.x, 0, absPos.z);
+
+				// Update material without re-allocating when possible
+				if (existingCell.material && existingCell.material.color) {
+					existingCell.material.color.setHex(color);
+					existingCell.material.roughness = roughness;
+					existingCell.material.metalness = metalness;
+					existingCell.material.transparent = transparent;
+					existingCell.material.opacity = opacity;
+					if (gameState && gameState.retroMode && kind !== 'default') {
+						existingCell.material.emissive = new THREE.Color(color);
+						existingCell.material.emissiveIntensity = 0.4;
+					} else if (existingCell.material.emissive) {
+						existingCell.material.emissive.setHex(0x000000);
+						existingCell.material.emissiveIntensity = 0;
+					}
+					existingCell.material.needsUpdate = true;
+				}
+				existingCell.castShadow = !(gameState && gameState.retroMode);
+				existingCell.receiveShadow = !(gameState && gameState.retroMode);
+
+				ensureCellEdges(existingCell, kind);
+
+				cellsReused++;
+				continue;
+			}
+
+			// Create a new visible board cell mesh (cube) for this coordinate
+			try {
+				const matOpts = { color, roughness, metalness, transparent, opacity };
+				if (gameState && gameState.retroMode && kind !== 'default') {
+					matOpts.emissive = new THREE.Color(color);
+					matOpts.emissiveIntensity = 0.4;
+				}
+				const material = new THREE.MeshStandardMaterial(matOpts);
+
+				const noShadows = gameState && gameState.retroMode;
+				const newCell = new THREE.Mesh(renderCache.cellGeometry, material);
+				newCell.castShadow = !noShadows;
+				newCell.receiveShadow = !noShadows;
+				newCell.rotation.set(0, 0, 0);
+				newCell.position.set(absPos.x, 0, absPos.z);
+
+				newCell.userData = {
+					type: 'cell',
+					position: { x, z },
+					data: cellData,
+					kind,
+					processed: true,
+					isStatic: true
+				};
+
+				boardGroup.add(newCell);
+				ensureCellEdges(newCell, kind);
+				
+				cellsCreated++;
+			} catch (error) {
+				console.error(`Error creating cell at (${x}, ${z}):`, error);
 			}
 		}
 	}
@@ -719,15 +746,23 @@ function renderBoard(gameState, boardGroup, createFloatingIsland, THREE) {
 	// Remove any cells that are no longer in the game state
 	if (boardGroup && boardGroup.children) {
 		const cellsToRemove = [];
+		const cloudsToRemove = [];
 		
 		boardGroup.children.forEach(child => {
-			if (child && child.userData && child.userData.type === 'cell' && 
-				child.userData.position) {
-				const key = `${child.userData.position.x},${child.userData.position.z}`;
-				
-				// If the cell wasn't processed in this update, remove it
-				if (!processedCells[key]) {
-					cellsToRemove.push(child);
+			if (child && child.userData) {
+				if (child.userData.type === 'cell' && child.userData.position) {
+					const key = `${child.userData.position.x},${child.userData.position.z}`;
+					
+					// If the cell wasn't processed in this update, remove it
+					if (!processedCells[key]) {
+						cellsToRemove.push(child);
+					}
+				}
+				// Also track cloud puffs associated with removed cells
+				if (child.userData.type === 'cloudPuff' && child.userData.parentCellKey) {
+					if (!processedCells[child.userData.parentCellKey]) {
+						cloudsToRemove.push(child);
+					}
 				}
 			}
 		});
@@ -742,8 +777,17 @@ function renderBoard(gameState, boardGroup, createFloatingIsland, THREE) {
 					cell.material.dispose();
 				}
 			}
-			if (cell.geometry) cell.geometry.dispose();
+			// Only dispose geometries if they're not shared
+			if (cell.geometry && cell.geometry !== renderCache.cellGeometry) {
+				cell.geometry.dispose();
+			}
 			cellsRemoved++;
+		});
+		
+		// Remove orphaned cloud puffs
+		cloudsToRemove.forEach(cloud => {
+			boardGroup.remove(cloud);
+			// Cloud puffs share geometry/material, so don't dispose
 		});
 	}
 	
@@ -981,8 +1025,8 @@ function createChessPiece(gameState, x, z, pieceType, playerIdent, ourPlayerIden
 		const playerColor = getPlayerColor(playerIdent, gameState);
 		const fallbackMaterial = new THREE.MeshStandardMaterial({ 
 			color: playerColor,
-			emissive: playerColor,
-			emissiveIntensity: 0.5
+			roughness: 0.6,
+			metalness: 0.3
 		});
 		
 		const fallbackMesh = new THREE.Mesh(fallbackGeometry, fallbackMaterial);
@@ -1161,16 +1205,24 @@ function getPlayerColor(playerId, gameState = null, type = 'chess') {
 		playerIdStr === String(gameState.myPlayerId) || 
 		playerIdStr === String(gameState.localPlayerId)
 	);
+
+	// Retro mode: green phosphor for us, amber for opponents
+	if (gameState && gameState.retroMode) {
+		if (isCurrentPlayer) {
+			return type === 'home' ? 0x004400 : 0x00ff41;
+		}
+		return type === 'home' ? 0x332200 : 0xff8800;
+	}
 	
-	// Current player always gets red shades
+	// Current player gets warm wood tones
 	if (isCurrentPlayer) {
 		switch (type) {
 			case 'home':
-				return 0xDD0000; // Darker red for home zone
+				return 0xC4A265;
 			case 'tetromino':
-				return 0xFF3333; // Brighter red for tetromino
+				return 0xDEB887;
 			default:
-				return 0xDD0000; // Standard red for chess pieces
+				return 0xC4A265;
 		}
 	}
 	
@@ -1565,6 +1617,50 @@ function buildBoardRepresentation(gameState) {
 }
 
 /**
+ * Return the chess piece at a board coordinate, if any.
+ * In Shaktris, chess pieces are authoritative in `gameState.chessPieces`, not always embedded in `board.cells`.
+ * @param {Object} gameState
+ * @param {number} x
+ * @param {number} z
+ * @returns {Object|null}
+ */
+function getChessPieceAt(gameState, x, z) {
+	const pieces = gameState?.chessPieces;
+	if (!Array.isArray(pieces)) return null;
+	
+	for (const p of pieces) {
+		if (!p) continue;
+		const pos = p.position || p;
+		if (!pos) continue;
+		if (Number(pos.x) === Number(x) && Number(pos.z) === Number(z)) return p;
+	}
+	
+	return null;
+}
+
+/**
+ * Whether a board cell (terrain) exists at this coordinate.
+ * Shaktris boards are sparse: missing cells are void and cannot be moved onto.
+ */
+function hasBoardCell(gameState, x, z) {
+	const key = `${x},${z}`;
+	const cell = gameState?.board?.cells ? gameState.board.cells[key] : null;
+	if (!cell) return false;
+	
+	// Server uses an array-of-objects per occupied square. Treat non-array marker objects as non-terrain.
+	if (Array.isArray(cell)) {
+		// A marker-only array should not count as terrain for chess movement.
+		return cell.some(item => item && item.type !== 'specialMarker' && item.type !== 'boardCentre');
+	}
+	
+	if (typeof cell === 'object' && Array.isArray(cell.contents)) {
+		return cell.contents.some(item => item && item.type !== 'specialMarker' && item.type !== 'boardCentre');
+	}
+	
+	return false;
+}
+
+/**
  * Get valid move sets for a chess piece
  * @param {Object} gameState - The current game state
  * @param {Object} piece - The chess piece
@@ -1581,11 +1677,49 @@ function getChessPieceMoveSets(gameState, piece) {
 	const currentZ = piece.position.z;
 	const pieceType = typeof piece.type === 'string' ? piece.type.toUpperCase() : 'PAWN';
 	
-	// Get board boundaries
-	const minX = gameState.boardBounds?.minX || 0;
-	const maxX = gameState.boardBounds?.maxX || 32;
-	const minZ = gameState.boardBounds?.minZ || 0;
-	const maxZ = gameState.boardBounds?.maxZ || 32;
+	// Get board boundaries - prefer boardBounds, fallback to board.minX/maxX, then calculate from cells
+	let minX = gameState.boardBounds?.minX ?? gameState.board?.minX;
+	let maxX = gameState.boardBounds?.maxX ?? gameState.board?.maxX;
+	let minZ = gameState.boardBounds?.minZ ?? gameState.board?.minZ;
+	let maxZ = gameState.boardBounds?.maxZ ?? gameState.board?.maxZ;
+	
+	// If still undefined, calculate from cells
+	if (!Number.isFinite(minX) || !Number.isFinite(maxX) || !Number.isFinite(minZ) || !Number.isFinite(maxZ)) {
+		const cells = gameState.board?.cells;
+		if (cells) {
+			minX = Infinity; maxX = -Infinity; minZ = Infinity; maxZ = -Infinity;
+			for (const key of Object.keys(cells)) {
+				const [x, z] = key.split(',').map(Number);
+				if (!isNaN(x) && !isNaN(z)) {
+					if (x < minX) minX = x;
+					if (x > maxX) maxX = x;
+					if (z < minZ) minZ = z;
+					if (z > maxZ) maxZ = z;
+				}
+			}
+		}
+		// Final fallback
+		if (!Number.isFinite(minX)) { minX = -100; maxX = 100; minZ = -100; maxZ = 100; }
+	}
+	
+	// DEBUG: Check cells around the piece
+	console.log(`getChessPieceMoveSets: ${pieceType} at (${currentX}, ${currentZ}), boardBounds: (${minX}-${maxX}, ${minZ}-${maxZ})`);
+	console.log(`getChessPieceMoveSets: board.cells count = ${gameState?.board?.cells ? Object.keys(gameState.board.cells).length : 0}`);
+	
+	// Check surrounding cells for debugging
+	for (let dz = -1; dz <= 1; dz++) {
+		for (let dx = -1; dx <= 1; dx++) {
+			if (dx === 0 && dz === 0) continue;
+			const testX = currentX + dx;
+			const testZ = currentZ + dz;
+			const key = `${testX},${testZ}`;
+			const cell = gameState?.board?.cells?.[key];
+			const hasCell = hasBoardCell(gameState, testX, testZ);
+			if (cell || hasCell) {
+				console.log(`  Cell at (${testX}, ${testZ}): exists=${!!cell}, hasBoardCell=${hasCell}, value=`, cell);
+			}
+		}
+	}
 	
 	// Generate moves based on piece type
 	switch (pieceType) {
@@ -1600,13 +1734,12 @@ function getChessPieceMoveSets(gameState, piece) {
 					
 					// Check bounds
 					if (toX < minX || toX > maxX || toZ < minZ || toZ > maxZ) continue;
+					// Must land on an existing cell (terrain)
+					if (!hasBoardCell(gameState, toX, toZ)) continue;
 					
-					// Check if destination has own piece
-					const key = `${toX},${toZ}`;
-					const targetCell = gameState.board?.cells?.[key];
-					const chessContent = targetCell ? extractCellContent(targetCell, 'chess') : null;
-					
-					if (chessContent && chessContent.player === piece.player) continue;
+					// Check occupancy via chessPieces list
+					const occupant = getChessPieceAt(gameState, toX, toZ);
+					if (occupant && String(occupant.player) === String(piece.player)) continue;
 					
 					validMoves.push({ x: toX, z: toZ });
 				}
@@ -1667,73 +1800,60 @@ function getChessPieceMoveSets(gameState, piece) {
 				
 				// Check bounds
 				if (toX < minX || toX > maxX || toZ < minZ || toZ > maxZ) continue;
+				// Must land on an existing cell (terrain)
+				if (!hasBoardCell(gameState, toX, toZ)) continue;
 				
-				// Check if destination has own piece
-				const key = `${toX},${toZ}`;
-				const targetCell = gameState.board?.cells?.[key];
-				const chessContent = targetCell ? extractCellContent(targetCell, 'chess') : null;
-				
-				if (chessContent && chessContent.player === piece.player) continue;
+				// Check occupancy via chessPieces list
+				const occupant = getChessPieceAt(gameState, toX, toZ);
+				if (occupant && String(occupant.player) === String(piece.player)) continue;
 				
 				validMoves.push({ x: toX, z: toZ });
 			}
 			break;
 			
 		case 'PAWN':
-			// Pawns move forward one square, or diagonally to capture
-			// Note: This is simplified and assumes pawns move in +z direction
-			// Would need to adjust based on player direction in a real game
-			
-			const forward = 1; // Assume all pawns move in +z direction
-			
-			// Forward move
-			const forwardX = currentX;
-			const forwardZ = currentZ + forward;
-			
-			// Check if forward move is valid (must be empty)
-			if (forwardZ <= maxZ) {
-				const forwardKey = `${forwardX},${forwardZ}`;
-				const forwardCell = gameState.board?.cells?.[forwardKey];
-				
-				if (!forwardCell) {
-					validMoves.push({ x: forwardX, z: forwardZ });
-					
-					// First move can be two squares forward
+			{
+				const orientation = Number.isFinite(piece.orientation) ? piece.orientation : 0;
+				const fwd = (() => {
+					switch (orientation) {
+						case 0: return { dx: 0, dz: 1 };
+						case 2: return { dx: 0, dz: -1 };
+						case 1: return { dx: 1, dz: 0 };
+						case 3: return { dx: -1, dz: 0 };
+						default: return { dx: 0, dz: 1 };
+					}
+				})();
+
+				// One-square forward
+				const f1x = currentX + fwd.dx;
+				const f1z = currentZ + fwd.dz;
+				const forwardClear = hasBoardCell(gameState, f1x, f1z) && !getChessPieceAt(gameState, f1x, f1z);
+				if (forwardClear) {
+					validMoves.push({ x: f1x, z: f1z });
+
+					// Two-square forward on first move
 					if (!piece.hasMoved) {
-						const doubleForwardZ = currentZ + 2 * forward;
-						
-						if (doubleForwardZ <= maxZ) {
-							const doubleKey = `${forwardX},${doubleForwardZ}`;
-							const doubleCell = gameState.board?.cells?.[doubleKey];
-							
-							if (!doubleCell) {
-								validMoves.push({ x: forwardX, z: doubleForwardZ });
-							}
+						const f2x = currentX + fwd.dx * 2;
+						const f2z = currentZ + fwd.dz * 2;
+						if (hasBoardCell(gameState, f2x, f2z) && !getChessPieceAt(gameState, f2x, f2z)) {
+							validMoves.push({ x: f2x, z: f2z });
 						}
 					}
 				}
-			}
-			
-			// Diagonal captures
-			const captureOffsets = [
-				{ dx: -1, dz: forward },  // Capture left
-				{ dx: 1, dz: forward }    // Capture right
-			];
-			
-			for (const offset of captureOffsets) {
-				const captureX = currentX + offset.dx;
-				const captureZ = currentZ + offset.dz;
-				
-				// Check bounds
-				if (captureX < minX || captureX > maxX || captureZ < minZ || captureZ > maxZ) continue;
-				
-				// Check if destination has opponent's piece
-				const captureKey = `${captureX},${captureZ}`;
-				const captureCell = gameState.board?.cells?.[captureKey];
-				const chessContent = captureCell ? extractCellContent(captureCell, 'chess') : null;
-				
-				if (chessContent && chessContent.player !== piece.player) {
-					validMoves.push({ x: captureX, z: captureZ });
+
+				// Diagonal captures
+				const captureOffsets = fwd.dx === 0
+					? [{ dx: -1, dz: fwd.dz }, { dx: 1, dz: fwd.dz }]
+					: [{ dx: fwd.dx, dz: -1 }, { dx: fwd.dx, dz: 1 }];
+
+				for (const offset of captureOffsets) {
+					const cx = currentX + offset.dx;
+					const cz = currentZ + offset.dz;
+					if (!hasBoardCell(gameState, cx, cz)) continue;
+					const occupant = getChessPieceAt(gameState, cx, cz);
+					if (occupant && String(occupant.player) !== String(piece.player)) {
+						validMoves.push({ x: cx, z: cz });
+					}
 				}
 			}
 			break;
@@ -1757,42 +1877,36 @@ function addStraightLineMoves(gameState, piece, validMoves, directions) {
 	const currentX = piece.position.x;
 	const currentZ = piece.position.z;
 	
-	// Get board boundaries
-	const minX = gameState.boardBounds?.minX || 0;
-	const maxX = gameState.boardBounds?.maxX || 32;
-	const minZ = gameState.boardBounds?.minZ || 0;
-	const maxZ = gameState.boardBounds?.maxZ || 32;
+	// Get board boundaries - prefer boardBounds, fallback to board, then wide defaults
+	let minX = gameState.boardBounds?.minX ?? gameState.board?.minX ?? -100;
+	let maxX = gameState.boardBounds?.maxX ?? gameState.board?.maxX ?? 100;
+	let minZ = gameState.boardBounds?.minZ ?? gameState.board?.minZ ?? -100;
+	let maxZ = gameState.boardBounds?.maxZ ?? gameState.board?.maxZ ?? 100;
 	
 	// Check each direction
 	for (const dir of directions) {
 		let toX = currentX + dir.dx;
 		let toZ = currentZ + dir.dz;
 		
-		// Move in this direction until hitting a boundary or piece
+		// Move in this direction until hitting a boundary, a gap, or a piece
 		while (toX >= minX && toX <= maxX && toZ >= minZ && toZ <= maxZ) {
-			const key = `${toX},${toZ}`;
-			const targetCell = gameState.board?.cells?.[key];
+			// Shaktris terrain is sparse: if there's no cell here, you can't move onto it or past it.
+			if (!hasBoardCell(gameState, toX, toZ)) {
+				break;
+			}
 			
-			if (targetCell) {
-				// Check if it's an opponent's piece (can capture)
-				const chessContent = extractCellContent(targetCell, 'chess');
-				
-				if (chessContent) {
-					if (chessContent.player !== piece.player) {
-						// Can capture opponent's piece
-						validMoves.push({ x: toX, z: toZ });
-					}
-					// Stop after hitting any piece
-					break;
-				} else {
-					// Non-chess cell content (like tetromino block)
-					// Many games would stop here, but let's allow movement onto tetromino blocks
+			const occupant = getChessPieceAt(gameState, toX, toZ);
+			
+			if (occupant) {
+				// Occupied by a chess piece: can capture opponent, but cannot move through
+				if (String(occupant.player) !== String(piece.player)) {
 					validMoves.push({ x: toX, z: toZ });
 				}
-			} else {
-				// Empty square
-				validMoves.push({ x: toX, z: toZ });
+				break;
 			}
+			
+			// Empty (no chess piece) but has terrain
+			validMoves.push({ x: toX, z: toZ });
 			
 			// Move to next square in this direction
 			toX += dir.dx;

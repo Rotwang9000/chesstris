@@ -3,8 +3,122 @@
  * Handles animations for cell and piece movement, removal, and appearance
  */
 
-import * as THREE from 'three';
-import { TWEEN } from 'three/addons/libs/tween.module.min.js';
+import { getTHREE } from './gameContext.js';
+
+// Get THREE instance dynamically to avoid circular dependency issues
+let THREE = null;
+let TWEEN = null;
+
+// Initialize THREE when first needed
+function ensureTHREE() {
+    if (!THREE) {
+        THREE = getTHREE();
+    }
+    return THREE;
+}
+
+// Simple TWEEN fallback using requestAnimationFrame
+// Note: For more complex animations, consider using a full TWEEN library via CDN
+const tweenObjects = [];
+const TWEEN_FALLBACK = {
+    Easing: {
+        Quadratic: {
+            InOut: (t) => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2,
+            In: (t) => t * t,
+            Out: (t) => 1 - (1 - t) * (1 - t)
+        },
+        Linear: {
+            None: (t) => t
+        },
+        Elastic: {
+            InOut: (t) => {
+                const c5 = (2 * Math.PI) / 4.5;
+                return t === 0 ? 0 : t === 1 ? 1 :
+                    t < 0.5 ? -(Math.pow(2, 20 * t - 10) * Math.sin((20 * t - 11.125) * c5)) / 2 :
+                    (Math.pow(2, -20 * t + 10) * Math.sin((20 * t - 11.125) * c5)) / 2 + 1;
+            }
+        },
+        Bounce: {
+            Out: (t) => {
+                const n1 = 7.5625, d1 = 2.75;
+                if (t < 1 / d1) return n1 * t * t;
+                else if (t < 2 / d1) return n1 * (t -= 1.5 / d1) * t + 0.75;
+                else if (t < 2.5 / d1) return n1 * (t -= 2.25 / d1) * t + 0.9375;
+                else return n1 * (t -= 2.625 / d1) * t + 0.984375;
+            }
+        }
+    },
+    Tween: class {
+        constructor(obj) {
+            this.object = { ...obj };
+            this.startValues = { ...obj };
+            this.endValues = {};
+            this.duration = 1000;
+            this.easingFunc = TWEEN_FALLBACK.Easing.Linear.None;
+            this.onUpdateCallback = null;
+            this.onCompleteCallback = null;
+            this.startTime = null;
+            this.isPlaying = false;
+        }
+        to(props, duration) {
+            this.endValues = props;
+            this.duration = duration;
+            return this;
+        }
+        easing(func) {
+            this.easingFunc = func;
+            return this;
+        }
+        onUpdate(callback) {
+            this.onUpdateCallback = callback;
+            return this;
+        }
+        onComplete(callback) {
+            this.onCompleteCallback = callback;
+            return this;
+        }
+        start() {
+            this.startTime = performance.now();
+            this.startValues = { ...this.object };
+            this.isPlaying = true;
+            tweenObjects.push(this);
+            return this;
+        }
+        update(time) {
+            if (!this.isPlaying) return false;
+            const elapsed = time - this.startTime;
+            const progress = Math.min(elapsed / this.duration, 1);
+            const easedProgress = this.easingFunc(progress);
+            
+            for (const key in this.endValues) {
+                this.object[key] = this.startValues[key] + (this.endValues[key] - this.startValues[key]) * easedProgress;
+            }
+            
+            if (this.onUpdateCallback) this.onUpdateCallback();
+            
+            if (progress >= 1) {
+                this.isPlaying = false;
+                if (this.onCompleteCallback) this.onCompleteCallback();
+                return false;
+            }
+            return true;
+        }
+        stop() {
+            this.isPlaying = false;
+            const index = tweenObjects.indexOf(this);
+            if (index > -1) tweenObjects.splice(index, 1);
+            return this;
+        }
+    },
+    update: (time) => {
+        for (let i = tweenObjects.length - 1; i >= 0; i--) {
+            if (!tweenObjects[i].update(time)) {
+                tweenObjects.splice(i, 1);
+            }
+        }
+    }
+};
+TWEEN = TWEEN_FALLBACK;
 
 /**
  * Animate the movement of an object from one position to another

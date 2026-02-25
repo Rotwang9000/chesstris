@@ -130,8 +130,25 @@ function update(data) {
 	// Create a deep copy of the data to avoid reference issues
 	const newData = JSON.parse(JSON.stringify(data));
 	
+	// Preserve client-managed properties that should NOT be overwritten by server
+	// turnPhase is managed by the client (tetris/chess phase transitions)
+	// currentTetromino is managed locally during gameplay
+	const preservedTurnPhase = gameState.turnPhase;
+	const preservedCurrentTetromino = gameState.currentTetromino;
+	const preservedInProgress = gameState.inProgress;
+	
 	// Update our game state with the new data
 	Object.assign(gameState, newData);
+	
+	// Restore client-managed properties (don't let server overwrite them)
+	if (preservedInProgress) {
+		// Only preserve turnPhase if game is in progress (player has started playing)
+		gameState.turnPhase = preservedTurnPhase;
+		// Don't overwrite currentTetromino with server data during gameplay
+		if (preservedCurrentTetromino && !newData.currentTetromino) {
+			gameState.currentTetromino = preservedCurrentTetromino;
+		}
+	}
 	
 	// Make sure gameStarted flag is set if we have board data
 	if (gameState.board && gameState.board.cells && Object.keys(gameState.board.cells).length > 0) {

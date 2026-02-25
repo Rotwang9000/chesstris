@@ -103,7 +103,7 @@ export function createUnifiedPlayerBar(gameState) {
 	Object.assign(playerBar.style, {
 		position: 'fixed',
 		top: '0',
-		left: '-250px', // Start off-screen
+		left: '0',
 		width: '250px',
 		height: '100%',
 		backgroundColor: 'rgba(0, 0, 0, 0.85)',
@@ -112,7 +112,8 @@ export function createUnifiedPlayerBar(gameState) {
 		boxShadow: '0 0 15px rgba(255, 204, 0, 0.5)',
 		fontFamily: 'Playfair Display, Times New Roman, serif',
 		borderRight: '2px solid #ffcc00',
-		transition: 'left 0.3s ease-in-out', // Change transform to left for cleaner animation
+		transform: 'translateX(-250px)', // Start hidden off-screen
+		transition: 'transform 0.3s ease-in-out',
 		backdropFilter: 'blur(5px)',
 		overflowY: 'auto',
 		display: 'flex',
@@ -120,8 +121,9 @@ export function createUnifiedPlayerBar(gameState) {
 	});
 	
 	// Create the tab that will always be visible
-	const pullTab = document.createElement('div');
+	const pullTab = document.createElement('button');
 	pullTab.id = 'player-bar-tab';
+	pullTab.type = 'button';
 	Object.assign(pullTab.style, {
 		position: 'fixed', // Fixed position so it stays visible
 		top: '50%',
@@ -143,12 +145,14 @@ export function createUnifiedPlayerBar(gameState) {
 		writingMode: 'vertical-rl',
 		textOrientation: 'mixed',
 		userSelect: 'none',
-		zIndex: '10001', // Higher than the panel itself
+		pointerEvents: 'auto',
+		zIndex: '20001', // Keep above floating overlays/banners
 		paddingTop: '10px',
 		paddingBottom: '10px',
 		fontSize: '14px',
 		fontWeight: 'bold',
-		textShadow: '0 0 5px rgba(255, 204, 0, 0.5)'
+		textShadow: '0 0 5px rgba(255, 204, 0, 0.5)',
+		outline: 'none'
 	});
 	pullTab.innerHTML = '👥 PLAYERS';
 	document.body.appendChild(pullTab);
@@ -164,14 +168,20 @@ export function createUnifiedPlayerBar(gameState) {
 		alignItems: 'center'
 	});
 	
-	// Header title
-	const headerTitle = document.createElement('h3');
+	// Header title (button to make expand/collapse affordance explicit)
+	const headerTitle = document.createElement('button');
 	headerTitle.textContent = 'PLAYERS';
+	headerTitle.type = 'button';
 	Object.assign(headerTitle.style, {
 		margin: '0',
 		color: '#ffcc00',
 		fontFamily: 'Playfair Display, Times New Roman, serif',
-		textShadow: '0 0 5px rgba(255, 204, 0, 0.5)'
+		textShadow: '0 0 5px rgba(255, 204, 0, 0.5)',
+		cursor: 'pointer',
+		background: 'none',
+		border: 'none',
+		padding: '0',
+		fontSize: '18px'
 	});
 	header.appendChild(headerTitle);
 	
@@ -274,6 +284,9 @@ export function createUnifiedPlayerBar(gameState) {
 			<button id="change-player-name" style="margin-top: 10px; padding: 5px; background: #333; color: #ffcc00; border: 1px solid #ffcc00; border-radius: 3px; cursor: pointer; font-size: 12px; width: 100%;">
 				Change Name
 			</button>
+			<button id="exit-game-sidebar-btn" style="margin-top: 8px; padding: 5px; background: #600; color: #fff; border: 1px solid #f44; border-radius: 3px; cursor: pointer; font-size: 12px; width: 100%;">
+				Exit Game
+			</button>
 		`;
 		playerBar.appendChild(footer);
 		
@@ -308,7 +321,16 @@ export function createUnifiedPlayerBar(gameState) {
 	
 	// Event listeners
 	pullTab.addEventListener('click', togglePlayerBar);
-	closeButton.addEventListener('click', hidePlayerBar);
+	// Make header title/header clickable too (users naturally click "PLAYERS")
+	headerTitle.addEventListener('click', togglePlayerBar);
+	header.addEventListener('click', (event) => {
+		if (event.target === closeButton) return;
+		togglePlayerBar();
+	});
+	closeButton.addEventListener('click', (event) => {
+		event.stopPropagation();
+		hidePlayerBar();
+	});
 	
 	// Add touch support for mobile devices
 	pullTab.addEventListener('touchstart', (e) => {
@@ -342,7 +364,8 @@ export function togglePlayerBar() {
 	if (!playerBar) return;
 	
 	isBarVisible = !isBarVisible;
-	playerBar.style.left = isBarVisible ? '0' : '-250px';
+	playerBar.style.left = '0';
+	playerBar.style.transform = isBarVisible ? 'translateX(0)' : 'translateX(-250px)';
 	
 	// Move tab when panel is visible
 	if (tab) {
@@ -360,6 +383,7 @@ export function showPlayerBar() {
 	
 	isBarVisible = true;
 	playerBar.style.left = '0';
+	playerBar.style.transform = 'translateX(0)';
 	
 	// Move tab
 	if (tab) {
@@ -376,7 +400,8 @@ export function hidePlayerBar() {
 	if (!playerBar) return;
 	
 	isBarVisible = false;
-	playerBar.style.left = '-250px';
+	playerBar.style.left = '0';
+	playerBar.style.transform = 'translateX(-250px)';
 	
 	// Move tab back to edge
 	if (tab) {
@@ -663,32 +688,15 @@ export function updateUnifiedPlayerBar(gameState) {
 		gameState.localPlayerId = localPlayerId;
 	}
 	
-	// Add our local player manually if not in the list
-	const storedPlayerName = localStorage.getItem('playerName');
-	if (storedPlayerName && (!gameState.players || !Object.values(gameState.players).some(p => p.name === storedPlayerName))) {
-		// Create a minimal game state if none exists
-		if (!gameState.players) {
-			gameState.players = {};
-		}
-		
-		// If we have a local player ID but it's not in the list, add it
-		if (localPlayerId && !gameState.players[localPlayerId]) {
-			gameState.players[localPlayerId] = {
-				name: storedPlayerName,
-				id: localPlayerId,
-				score: 0
-			};
-		}
-		// If we don't have a local player ID, make one up
-		else if (!localPlayerId) {
-			const newId = 'local-' + Math.random().toString(36).substring(2, 9);
-			gameState.players[newId] = {
-				name: storedPlayerName,
-				id: newId,
-				score: 0
-			};
-			gameState.localPlayerId = newId;
-		}
+	// Ensure local player appears in the list — match by ID, not name,
+	// to avoid creating phantom entries when names drift.
+	if (localPlayerId && gameState.players && !gameState.players[localPlayerId]) {
+		const storedPlayerName = localStorage.getItem('playerName');
+		gameState.players[localPlayerId] = {
+			name: storedPlayerName || `Player ${localPlayerId.substring(0, 6)}`,
+			id: localPlayerId,
+			score: 0
+		};
 	}
 	
 	// Add each player

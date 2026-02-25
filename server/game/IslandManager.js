@@ -19,78 +19,90 @@ class IslandManager {
 	 * @returns {boolean} True if there is a path
 	 */
 	hasPathToKing(game, startX, startZ, playerId) {
-		// Get the king's position for this player
-		let kingX = -1;
-		let kingZ = -1;
-		let kingFound = false;
-		
-		// Find the king in chess pieces
-		for (const piece of game.chessPieces) {
-			if (piece.player === playerId && piece.type === 'king') {
-				kingX = piece.x;
-				kingZ = piece.z;
-				kingFound = true;
-				break;
+		try {
+			// Validate sparse board
+			if (!game || !game.board || !game.board.cells) {
+				return false;
 			}
-		}
-		
-		if (!kingFound) {
-			// King might not exist yet or might have been captured
+			
+			// Find the king for this player (supports both {position:{x,z}} and legacy {x,z})
+			let kingX = null;
+			let kingZ = null;
+			
+			if (Array.isArray(game.chessPieces)) {
+				for (const piece of game.chessPieces) {
+					if (!piece || piece.player !== playerId) continue;
+					if (String(piece.type).toUpperCase() !== 'KING') continue;
+					
+					const pos = piece.position || piece;
+					if (pos && Number.isFinite(pos.x) && Number.isFinite(pos.z)) {
+						kingX = pos.x;
+						kingZ = pos.z;
+						break;
+					}
+				}
+			}
+			
+			if (kingX === null || kingZ === null) {
+				// King might not exist yet or might have been captured
+				return false;
+			}
+			
+			const isOwnedCell = (x, z) => {
+				const cellContents = game.board.cells[`${x},${z}`];
+				if (!cellContents) return false;
+				
+				if (Array.isArray(cellContents)) {
+					return cellContents.some(item => item && item.player === playerId);
+				}
+				
+				return !!(cellContents.player && String(cellContents.player) === String(playerId));
+			};
+			
+			// Starting cell must exist and be owned
+			if (!isOwnedCell(startX, startZ)) {
+				return false;
+			}
+			
+			// Breadth-first search (BFS) to find a path to the king through owned cells
+			const queue = [{ x: startX, z: startZ }];
+			const visited = new Set([`${startX},${startZ}`]);
+			
+			while (queue.length > 0) {
+				const { x, z } = queue.shift();
+				
+				if (x === kingX && z === kingZ) {
+					return true;
+				}
+				
+				// Check all adjacent cells including diagonals (in XZ plane)
+				const adjacentCells = [
+					{ x: x - 1, z },
+					{ x: x + 1, z },
+					{ x, z: z - 1 },
+					{ x, z: z + 1 },
+					{ x: x - 1, z: z - 1 },
+					{ x: x + 1, z: z - 1 },
+					{ x: x - 1, z: z + 1 },
+					{ x: x + 1, z: z + 1 }
+				];
+				
+				for (const cell of adjacentCells) {
+					const key = `${cell.x},${cell.z}`;
+					if (visited.has(key)) continue;
+					
+					if (isOwnedCell(cell.x, cell.z)) {
+						visited.add(key);
+						queue.push(cell);
+					}
+				}
+			}
+			
+			return false;
+		} catch (error) {
+			log(`Error checking path to king: ${error.message}`);
 			return false;
 		}
-		
-		// Breadth-first search (BFS) to find a path to the king
-		const queue = [{ x: startX, z: startZ }];
-		const visited = new Set();
-		const boardWidth = game.board[0].length;
-		const boardHeight = game.board.length;
-		
-		// Mark the starting point as visited
-		visited.add(`${startX},${startZ}`);
-		
-		while (queue.length > 0) {
-			const { x, z } = queue.shift();
-			
-			// Check if we've reached the king
-			if (x === kingX && z === kingZ) {
-				return true;
-			}
-			
-			// Check all adjacent cells including diagonals (in XZ plane)
-			const adjacentCells = [
-				{ x: x - 1, z },        // left
-				{ x: x + 1, z },        // right
-				{ x, z: z - 1 },        // up
-				{ x, z: z + 1 },        // down
-				{ x: x - 1, z: z - 1 }, // top-left
-				{ x: x + 1, z: z - 1 }, // top-right
-				{ x: x - 1, z: z + 1 }, // bottom-left
-				{ x: x + 1, z: z + 1 }  // bottom-right
-			];
-			
-			for (const cell of adjacentCells) {
-				// Skip if out of bounds
-				if (cell.x < 0 || cell.x >= boardWidth || cell.z < 0 || cell.z >= boardHeight) {
-					continue;
-				}
-				
-				// Skip if already visited
-				const cellKey = `${cell.x},${cell.z}`;
-				if (visited.has(cellKey)) {
-					continue;
-				}
-				
-				// Check if the cell belongs to the player
-				const boardCell = game.board[cell.z][cell.x];
-				if (boardCell && boardCell.player === playerId) {
-					visited.add(cellKey);
-					queue.push(cell);
-				}
-			}
-		}
-		
-		// No path found
-		return false;
 	}
 	
 	/**
@@ -99,29 +111,34 @@ class IslandManager {
 	 * @returns {Array} Array of islands
 	 */
 	detectIslands(game) {
-		const boardWidth = game.board[0].length;
-		const boardHeight = game.board.length;
-		const visited = Array(boardHeight).fill().map(() => Array(boardWidth).fill(false));
+		if (!game || !game.board || !game.board.cells) return [];
+		
+		const visited = new Set();
 		const islands = [];
 		
-		// Iterate through all cells on the board
-		for (let z = 0; z < boardHeight; z++) {
-			for (let x = 0; x < boardWidth; x++) {
-				if (!visited[z][x] && game.board[z][x] !== null) {
-					const cell = game.board[z][x];
-					const playerId = cell.player;
-					
-					// BFS to find all connected cells
-					const island = this._findConnectedCells(game, x, z, playerId, visited);
-					
-					// Only add islands with more than one cell
-					if (island.cells.length > 0) {
-						islands.push({
-							playerId,
-							cells: island.cells,
-							hasKing: island.hasKing
-						});
-					}
+		for (const key in game.board.cells) {
+			if (visited.has(key)) continue;
+			
+			const cellContents = game.board.cells[key];
+			if (!cellContents || !Array.isArray(cellContents) || cellContents.length === 0) continue;
+			
+			// Find all player IDs that own content in this cell
+			const playerIds = new Set();
+			for (const item of cellContents) {
+				if (item && item.player) playerIds.add(item.player);
+			}
+			
+			for (const playerId of playerIds) {
+				if (visited.has(`${key}:${playerId}`)) continue;
+				
+				const island = this._findConnectedCells(game, key, playerId, visited);
+				
+				if (island.cells.length > 0) {
+					islands.push({
+						playerId,
+						cells: island.cells,
+						hasKing: island.hasKing
+					});
 				}
 			}
 		}
@@ -139,69 +156,56 @@ class IslandManager {
 	 * @returns {Object} Object containing cells in the island and whether it has a king
 	 * @private
 	 */
-	_findConnectedCells(game, startX, startZ, playerId, visited) {
+	_findConnectedCells(game, startKey, playerId, visited) {
+		const [startX, startZ] = startKey.split(',').map(Number);
 		const queue = [{ x: startX, z: startZ }];
 		const cells = [];
 		let hasKing = false;
-		const boardWidth = game.board[0].length;
-		const boardHeight = game.board.length;
 		
-		// Mark the starting cell as visited
-		visited[startZ][startX] = true;
+		const visitKey = (x, z) => `${x},${z}:${playerId}`;
+		visited.add(visitKey(startX, startZ));
+		visited.add(startKey);
 		
-		// Check if the starting cell has a king on it
-		for (const piece of game.chessPieces) {
-			if (piece.player === playerId && piece.type === 'king' && 
-				piece.x === startX && piece.z === startZ) {
-				hasKing = true;
-				break;
-			}
-		}
+		const isOwnedCell = (x, z) => {
+			const cellContents = game.board.cells[`${x},${z}`];
+			if (!cellContents || !Array.isArray(cellContents)) return false;
+			return cellContents.some(item => item && String(item.player) === String(playerId));
+		};
 		
-		// Add the starting cell to the island
+		const hasKingAt = (x, z) => {
+			if (!Array.isArray(game.chessPieces)) return false;
+			return game.chessPieces.some(piece => {
+				if (!piece || String(piece.player) !== String(playerId)) return false;
+				if (String(piece.type).toLowerCase() !== 'king') return false;
+				const pos = piece.position || piece;
+				return pos.x === x && pos.z === z;
+			});
+		};
+		
 		cells.push({ x: startX, z: startZ });
+		if (hasKingAt(startX, startZ)) hasKing = true;
 		
 		while (queue.length > 0) {
 			const { x, z } = queue.shift();
 			
-			// Check all adjacent cells including diagonals (in XZ plane)
 			const adjacentCells = [
-				{ x: x - 1, z },        // left
-				{ x: x + 1, z },        // right
-				{ x, z: z - 1 },        // up
-				{ x, z: z + 1 },        // down
-				{ x: x - 1, z: z - 1 }, // top-left
-				{ x: x + 1, z: z - 1 }, // top-right
-				{ x: x - 1, z: z + 1 }, // bottom-left
-				{ x: x + 1, z: z + 1 }  // bottom-right
+				{ x: x - 1, z }, { x: x + 1, z },
+				{ x, z: z - 1 }, { x, z: z + 1 },
+				{ x: x - 1, z: z - 1 }, { x: x + 1, z: z - 1 },
+				{ x: x - 1, z: z + 1 }, { x: x + 1, z: z + 1 }
 			];
 			
 			for (const cell of adjacentCells) {
-				// Skip if out of bounds
-				if (cell.x < 0 || cell.x >= boardWidth || cell.z < 0 || cell.z >= boardHeight) {
-					continue;
-				}
+				const vk = visitKey(cell.x, cell.z);
+				if (visited.has(vk)) continue;
 				
-				// Skip if already visited
-				if (visited[cell.z][cell.x]) {
-					continue;
-				}
-				
-				// Check if the cell belongs to the player
-				const boardCell = game.board[cell.z][cell.x];
-				if (boardCell && boardCell.player === playerId) {
-					visited[cell.z][cell.x] = true;
+				if (isOwnedCell(cell.x, cell.z)) {
+					visited.add(vk);
+					visited.add(`${cell.x},${cell.z}`);
 					cells.push({ x: cell.x, z: cell.z });
 					queue.push(cell);
 					
-					// Check if this cell has a king
-					for (const piece of game.chessPieces) {
-						if (piece.player === playerId && piece.type === 'king' && 
-							piece.x === cell.x && piece.z === cell.z) {
-							hasKing = true;
-							break;
-						}
-					}
+					if (hasKingAt(cell.x, cell.z)) hasKing = true;
 				}
 			}
 		}
@@ -241,29 +245,40 @@ class IslandManager {
 	 * @private
 	 */
 	_processDisconnectedIslands(game, disconnectedIslands) {
-		// Process each disconnected island
 		for (const island of disconnectedIslands) {
 			const { playerId, cells } = island;
 			
 			// Remove chess pieces from disconnected islands
-			for (let i = game.chessPieces.length - 1; i >= 0; i--) {
-				const piece = game.chessPieces[i];
-				if (piece.player === playerId) {
-					// Check if the piece is on this island
-					const isOnIsland = cells.some(cell => cell.x === piece.x && cell.z === piece.z);
+			if (Array.isArray(game.chessPieces)) {
+				for (let i = game.chessPieces.length - 1; i >= 0; i--) {
+					const piece = game.chessPieces[i];
+					if (!piece || String(piece.player) !== String(playerId)) continue;
+					const pos = piece.position || piece;
+					const isOnIsland = cells.some(cell => cell.x === pos.x && cell.z === pos.z);
 					if (isOnIsland) {
-						// Remove the piece
 						game.chessPieces.splice(i, 1);
-						log(`Removed chess piece ${piece.type} at (${piece.x}, ${piece.z}) due to disconnected island`);
+						log(`Removed chess piece ${piece.type} at (${pos.x}, ${pos.z}) due to disconnected island`);
 					}
 				}
 			}
 			
-			// Clear cells on disconnected islands
+			// Clear cells on disconnected islands using sparse board
 			for (const cell of cells) {
-				// Clear the cell
-				game.board[cell.z][cell.x] = null;
-				log(`Cleared cell at (${cell.x}, ${cell.z}) due to disconnected island`);
+				const key = `${cell.x},${cell.z}`;
+				const cellContents = game.board.cells[key];
+				if (!cellContents) continue;
+				
+				// Remove only this player's content, keep others
+				const remaining = cellContents.filter(
+					item => item && String(item.player) !== String(playerId)
+				);
+				
+				if (remaining.length > 0) {
+					game.board.cells[key] = remaining;
+				} else {
+					delete game.board.cells[key];
+				}
+				log(`Cleared player ${playerId} content at (${cell.x}, ${cell.z}) due to disconnected island`);
 			}
 		}
 	}

@@ -2,7 +2,7 @@
  * ComputerPlayerManager.js - Manages computer players (AI) in the game
  */
 
-const { DIFFICULTY_SETTINGS } = require('./Constants');
+const { DIFFICULTY_SETTINGS, PIECE_PRICES } = require('./Constants');
 const { log } = require('./GameUtilities');
 
 class ComputerPlayerManager {
@@ -127,8 +127,7 @@ class ComputerPlayerManager {
 		const computerPlayer = this.computerPlayers[computerId];
 		if (!computerPlayer) return;
 		
-		// Get move interval from difficulty settings
-		const moveInterval = computerPlayer.settings.MOVE_INTERVAL;
+		const moveInterval = computerPlayer.settings.minMoveInterval || 10000;
 		
 		// Start a new move loop
 		this.moveIntervals[computerId] = setInterval(() => {
@@ -285,56 +284,50 @@ class ComputerPlayerManager {
 	 */
 	_makeTetrominoMove(game, computerId) {
 		const player = game.players[computerId];
-		const computerPlayer = this.computerPlayers[computerId];
 		
-		// Check if we have tetrominos available
 		if (!player.availableTetrominos || player.availableTetrominos.length === 0) {
 			return;
 		}
 		
-		// Choose a random tetromino from available ones
 		const tetromino = player.availableTetrominos[
 			Math.floor(Math.random() * player.availableTetrominos.length)
 		];
 		
-		// Find a valid position to place the tetromino
-		const boardWidth = game.board[0].length;
-		const boardHeight = game.board.length;
+		const board = game.board;
+		const minX = Number.isFinite(board.minX) ? board.minX : 0;
+		const maxX = Number.isFinite(board.maxX) ? board.maxX : 16;
+		const minZ = Number.isFinite(board.minZ) ? board.minZ : 0;
+		const maxZ = Number.isFinite(board.maxZ) ? board.maxZ : 16;
 		
-		// Try multiple random positions to find a valid one
-		for (let attempt = 0; attempt < 20; attempt++) {
-			// Random position within board bounds
-			const x = Math.floor(Math.random() * (boardWidth - 4)); // Adjust for tetromino width
-			const z = Math.floor(Math.random() * (boardHeight - 4)); // Adjust for tetromino height
+		// Try positions near the player's own king first, then random
+		const homeZone = game.homeZones[computerId];
+		const centreX = homeZone ? homeZone.x + 4 : Math.floor((minX + maxX) / 2);
+		const centreZ = homeZone ? homeZone.z + 1 : Math.floor((minZ + maxZ) / 2);
+		
+		for (let attempt = 0; attempt < 30; attempt++) {
+			// Bias towards the player's home zone area with increasing spread
+			const spread = Math.min(attempt + 2, 12);
+			const x = centreX + Math.floor(Math.random() * spread * 2) - spread;
+			const z = centreZ + Math.floor(Math.random() * spread * 2) - spread;
 			
-			// Randomly decide if we want to try placing at Y=1 (falling piece)
-			const y = Math.random() < 0.2 ? 1 : 0;
-			
-			// Create the move data
 			const moveData = {
 				pieceType: tetromino.pieceType,
-				rotation: tetromino.rotation,
+				rotation: Math.floor(Math.random() * 4),
 				x,
 				z,
-				y,
-				regenerate: true // Always regenerate tetrominos after placement
+				y: 0,
+				regenerate: true
 			};
 			
-			// Try to make the move
-			const action = {
-				type: 'tetromino',
-				data: moveData
-			};
-			
+			const action = { type: 'tetromino', data: moveData };
 			const result = this.playerManager.handlePlayerAction(game, computerId, action);
 			
 			if (result.success) {
-				log(`Computer player ${computerId} placed tetromino ${tetromino.pieceType} at (${x}, ${z}, ${y})`);
+				log(`Computer player ${computerId} placed tetromino ${tetromino.pieceType} at (${x}, ${z})`);
 				return;
 			}
 		}
 		
-		// If all attempts failed, log the failure
 		log(`Computer player ${computerId} failed to place a tetromino after multiple attempts`);
 	}
 	
@@ -345,46 +338,35 @@ class ComputerPlayerManager {
 	 * @private
 	 */
 	_makeChessMove(game, computerId) {
-		// Get the player's chess pieces
-		const chessPieces = game.chessPieces.filter(p => p.player === computerId);
+		const chessPieces = (game.chessPieces || []).filter(p => p && p.player === computerId);
 		
 		if (chessPieces.length === 0) {
 			return;
 		}
 		
-		// Choose a random piece to move
-		const piece = chessPieces[Math.floor(Math.random() * chessPieces.length)];
+		// Shuffle pieces so we don't always try the same one
+		const shuffled = chessPieces.sort(() => Math.random() - 0.5);
 		
-		// Generate possible moves based on piece type
-		const possibleMoves = this._generatePossibleMoves(game, piece);
-		
-		if (possibleMoves.length === 0) {
-			return;
+		for (const piece of shuffled) {
+			const possibleMoves = this._generatePossibleMoves(game, piece);
+			if (possibleMoves.length === 0) continue;
+			
+			const move = possibleMoves[Math.floor(Math.random() * possibleMoves.length)];
+			
+			const action = {
+				type: 'chess',
+				data: { pieceId: piece.id, toX: move.x, toZ: move.z }
+			};
+			
+			const result = this.playerManager.handlePlayerAction(game, computerId, action);
+			
+			if (result.success) {
+				log(`Computer player ${computerId} moved ${piece.type} to (${move.x}, ${move.z})`);
+				return;
+			}
 		}
 		
-		// Choose a random move from possible moves
-		const move = possibleMoves[Math.floor(Math.random() * possibleMoves.length)];
-		
-		// Create the move data
-		const moveData = {
-			pieceId: piece.id,
-			toX: move.x,
-			toZ: move.z
-		};
-		
-		// Try to make the move
-		const action = {
-			type: 'chess',
-			data: moveData
-		};
-		
-		const result = this.playerManager.handlePlayerAction(game, computerId, action);
-		
-		if (result.success) {
-			log(`Computer player ${computerId} moved ${piece.type} to (${move.x}, ${move.z})`);
-		} else {
-			log(`Computer player ${computerId} failed to move chess piece: ${result.error}`);
-		}
+		log(`Computer player ${computerId} found no valid chess moves`);
 	}
 	
 	/**
@@ -395,91 +377,84 @@ class ComputerPlayerManager {
 	 * @private
 	 */
 	_generatePossibleMoves(game, piece) {
+		const pos = piece.position || piece;
+		if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.z)) return [];
+		
+		const x = pos.x;
+		const z = pos.z;
+		const type = String(piece.type || '').toLowerCase();
 		const possibleMoves = [];
-		const boardWidth = game.board[0].length;
-		const boardHeight = game.board.length;
-		const { x, z, type } = piece;
+		const MAX_RANGE = 20;
 		
-		// Define movement patterns based on piece type
-		let movementPatterns = [];
+		const hasBoardCell = (tx, tz) => {
+			const cell = game.board.cells[`${tx},${tz}`];
+			return !!(cell && Array.isArray(cell) && cell.length > 0);
+		};
 		
-		switch (type) {
-			case 'pawn':
-				// Pawns move forward one step, or diagonally to capture
-				movementPatterns = [
-					{ dx: 0, dz: 1 }, // Forward
-					{ dx: 1, dz: 1 }, // Diagonal right
-					{ dx: -1, dz: 1 }  // Diagonal left
-				];
-				break;
-				
-			case 'rook':
-				// Rooks move horizontally or vertically
-				for (let i = 1; i < Math.max(boardWidth, boardHeight); i++) {
-					movementPatterns.push({ dx: i, dz: 0 }); // Right
-					movementPatterns.push({ dx: -i, dz: 0 }); // Left
-					movementPatterns.push({ dx: 0, dz: i }); // Down
-					movementPatterns.push({ dx: 0, dz: -i }); // Up
-				}
-				break;
-				
-			case 'knight':
-				// Knights move in an L-shape
-				movementPatterns = [
-					{ dx: 1, dz: 2 }, { dx: 2, dz: 1 },
-					{ dx: -1, dz: 2 }, { dx: -2, dz: 1 },
-					{ dx: 1, dz: -2 }, { dx: 2, dz: -1 },
-					{ dx: -1, dz: -2 }, { dx: -2, dz: -1 }
-				];
-				break;
-				
-			case 'bishop':
-				// Bishops move diagonally
-				for (let i = 1; i < Math.max(boardWidth, boardHeight); i++) {
-					movementPatterns.push({ dx: i, dz: i }); // Down-right
-					movementPatterns.push({ dx: -i, dz: i }); // Down-left
-					movementPatterns.push({ dx: i, dz: -i }); // Up-right
-					movementPatterns.push({ dx: -i, dz: -i }); // Up-left
-				}
-				break;
-				
-			case 'queen':
-				// Queens move horizontally, vertically, or diagonally
-				for (let i = 1; i < Math.max(boardWidth, boardHeight); i++) {
-					// Rook-like moves
-					movementPatterns.push({ dx: i, dz: 0 }); // Right
-					movementPatterns.push({ dx: -i, dz: 0 }); // Left
-					movementPatterns.push({ dx: 0, dz: i }); // Down
-					movementPatterns.push({ dx: 0, dz: -i }); // Up
-					
-					// Bishop-like moves
-					movementPatterns.push({ dx: i, dz: i }); // Down-right
-					movementPatterns.push({ dx: -i, dz: i }); // Down-left
-					movementPatterns.push({ dx: i, dz: -i }); // Up-right
-					movementPatterns.push({ dx: -i, dz: -i }); // Up-left
-				}
-				break;
-				
-			case 'king':
-				// Kings move one step in any direction
-				movementPatterns = [
-					{ dx: 0, dz: 1 }, { dx: 1, dz: 1 }, { dx: 1, dz: 0 },
-					{ dx: 1, dz: -1 }, { dx: 0, dz: -1 }, { dx: -1, dz: -1 },
-					{ dx: -1, dz: 0 }, { dx: -1, dz: 1 }
-				];
-				break;
-		}
+		const tryTarget = (tx, tz) => {
+			if (!hasBoardCell(tx, tz)) return;
+			// Avoid landing on own chess pieces
+			const targetPiece = (game.chessPieces || []).find(
+				p => p && (p.position || p).x === tx && (p.position || p).z === tz
+			);
+			if (targetPiece && targetPiece.player === piece.player) return;
+			possibleMoves.push({ x: tx, z: tz });
+		};
 		
-		// Check each potential move
-		for (const pattern of movementPatterns) {
-			const newX = x + pattern.dx;
-			const newZ = z + pattern.dz;
+		if (type === 'king') {
+			for (let dx = -1; dx <= 1; dx++) {
+				for (let dz = -1; dz <= 1; dz++) {
+					if (dx === 0 && dz === 0) continue;
+					tryTarget(x + dx, z + dz);
+				}
+			}
+		} else if (type === 'knight') {
+			const knightMoves = [
+				[1,2],[2,1],[-1,2],[-2,1],[1,-2],[2,-1],[-1,-2],[-2,-1]
+			];
+			for (const [dx, dz] of knightMoves) tryTarget(x + dx, z + dz);
+		} else if (type === 'pawn') {
+			const orientation = Number.isFinite(piece.orientation) ? piece.orientation : 0;
+			const forward = [
+				{ dx: 0, dz: 1 }, { dx: 1, dz: 0 },
+				{ dx: 0, dz: -1 }, { dx: -1, dz: 0 }
+			][orientation] || { dx: 0, dz: 1 };
 			
-			// Check if the move is within bounds
-			if (newX >= 0 && newX < boardWidth && newZ >= 0 && newZ < boardHeight) {
-				// For simplicity, just add all moves within bounds
-				// In a real implementation, we'd check for move validity
-				possibleMoves.push({ x: newX, z: newZ });
+			// Forward one
+			tryTarget(x + forward.dx, z + forward.dz);
+			// Forward two (first move)
+			if (!piece.hasMoved) tryTarget(x + forward.dx * 2, z + forward.dz * 2);
+			// Diagonal captures
+			if (forward.dx === 0) {
+				tryTarget(x - 1, z + forward.dz);
+				tryTarget(x + 1, z + forward.dz);
+			} else {
+				tryTarget(x + forward.dx, z - 1);
+				tryTarget(x + forward.dx, z + 1);
+			}
+		} else {
+			// Sliding pieces (rook, bishop, queen)
+			const directions = [];
+			if (type === 'rook' || type === 'queen') {
+				directions.push([1,0],[-1,0],[0,1],[0,-1]);
+			}
+			if (type === 'bishop' || type === 'queen') {
+				directions.push([1,1],[1,-1],[-1,1],[-1,-1]);
+			}
+			for (const [dx, dz] of directions) {
+				for (let step = 1; step <= MAX_RANGE; step++) {
+					const tx = x + dx * step;
+					const tz = z + dz * step;
+					if (!hasBoardCell(tx, tz)) break;
+					const blocker = (game.chessPieces || []).find(
+						p => p && (p.position || p).x === tx && (p.position || p).z === tz
+					);
+					if (blocker) {
+						if (blocker.player !== piece.player) possibleMoves.push({ x: tx, z: tz });
+						break;
+					}
+					possibleMoves.push({ x: tx, z: tz });
+				}
 			}
 		}
 		
@@ -496,43 +471,40 @@ class ComputerPlayerManager {
 		const player = game.players[computerId];
 		const computerPlayer = this.computerPlayers[computerId];
 		
-		// Available piece types to purchase
 		const pieceTypes = ['pawn', 'rook', 'knight', 'bishop', 'queen'];
-		
-		// Get a random piece type weighted by piece value
 		const pieceType = this._getWeightedPieceType(pieceTypes, player.balance, computerPlayer.difficulty);
 		
-		// Find a valid position to place the piece
-		const boardWidth = game.board[0].length;
-		const boardHeight = game.board.length;
+		// Try positions near own cells on the sparse board
+		const ownCellKeys = Object.keys(game.board.cells).filter(key => {
+			const cell = game.board.cells[key];
+			return Array.isArray(cell) && cell.some(item => item && item.player === computerId);
+		});
 		
-		// Try multiple random positions
 		for (let attempt = 0; attempt < 20; attempt++) {
-			const x = Math.floor(Math.random() * boardWidth);
-			const z = Math.floor(Math.random() * boardHeight);
+			let x, z;
+			if (ownCellKeys.length > 0) {
+				const randomKey = ownCellKeys[Math.floor(Math.random() * ownCellKeys.length)];
+				const [cx, cz] = randomKey.split(',').map(Number);
+				x = cx + Math.floor(Math.random() * 5) - 2;
+				z = cz + Math.floor(Math.random() * 5) - 2;
+			} else {
+				const homeZone = game.homeZones[computerId];
+				x = (homeZone ? homeZone.x : 0) + Math.floor(Math.random() * 8);
+				z = (homeZone ? homeZone.z : 0) + Math.floor(Math.random() * 4);
+			}
 			
-			// Create the purchase data
-			const purchaseData = {
-				pieceType,
-				x,
-				z
-			};
-			
-			// Try to make the purchase
 			const action = {
 				type: 'purchase',
-				data: purchaseData
+				data: { pieceType, x, z }
 			};
 			
 			const result = this.playerManager.handlePlayerAction(game, computerId, action);
-			
 			if (result.success) {
 				log(`Computer player ${computerId} purchased ${pieceType} at (${x}, ${z})`);
 				return;
 			}
 		}
 		
-		// If all attempts failed, log the failure
 		log(`Computer player ${computerId} failed to purchase a piece after multiple attempts`);
 	}
 	
@@ -554,8 +526,10 @@ class ComputerPlayerManager {
 			queen: 1
 		};
 		
-		// Filter pieces based on player's balance
-		const affordablePieces = pieceTypes.filter(type => PIECE_PRICES[type] <= balance);
+		const affordablePieces = pieceTypes.filter(type => {
+			const price = PIECE_PRICES[type.toUpperCase()] || PIECE_PRICES[type];
+			return price !== undefined && price <= balance;
+		});
 		
 		if (affordablePieces.length === 0) {
 			return pieceTypes[0]; // Default to first piece, will likely fail

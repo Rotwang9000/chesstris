@@ -1,9 +1,192 @@
 import { createFewClouds } from './createFewClouds.js';
-import { onWindowResize, getTHREE, getGameState } from './enhanced-gameCore.js';
+import { getTHREE, getGameState } from './gameContext.js';
+import { onWindowResize } from './enhanced-gameCore.js';
 import { translatePosition } from './centreBoardMarker.js';
 
 // Cache of existing islands for reuse
 const floatingIslandCache = {};
+
+/**
+ * Create a starfield for cute/space mode with extra whimsical elements
+ * @param {THREE.Scene} scene - The scene to add stars to
+ * @param {Object} THREE - Three.js instance
+ */
+function createStarfield(scene, THREE) {
+	// Create starfield with varied star sizes and colors
+	const starCount = 800; // More stars for cuter effect
+	const starPositions = [];
+	const starColors = [];
+	const starSizes = [];
+	
+	// Cute 8-bit style star colors: pastels and brights
+	const starColorPalette = [
+		new THREE.Color(0xffffff), // white
+		new THREE.Color(0x00ffff), // cyan  
+		new THREE.Color(0xff00ff), // magenta
+		new THREE.Color(0xffff00), // yellow
+		new THREE.Color(0xff80ff), // pink
+		new THREE.Color(0x80ffff), // light cyan
+		new THREE.Color(0xffaacc), // pastel pink
+		new THREE.Color(0xaaffcc), // mint
+		new THREE.Color(0xffccaa), // peach
+		new THREE.Color(0xccaaff), // lavender
+	];
+	
+	for (let i = 0; i < starCount; i++) {
+		// Distribute stars in a large sphere around the scene
+		const theta = Math.random() * Math.PI * 2;
+		const phi = Math.acos(2 * Math.random() - 1);
+		const radius = 80 + Math.random() * 120;
+		
+		const x = radius * Math.sin(phi) * Math.cos(theta);
+		const y = radius * Math.sin(phi) * Math.sin(theta);
+		const z = radius * Math.cos(phi);
+		
+		starPositions.push(x, y, z);
+		
+		// Random color from palette
+		const color = starColorPalette[Math.floor(Math.random() * starColorPalette.length)];
+		starColors.push(color.r, color.g, color.b);
+		
+		// Varied star sizes with some large "bright" stars for sparkle effect
+		const size = Math.random() < 0.15 ? 2.5 + Math.random() * 2.5 : 0.5 + Math.random() * 1.5;
+		starSizes.push(size);
+	}
+	
+	const geometry = new THREE.BufferGeometry();
+	geometry.setAttribute('position', new THREE.Float32BufferAttribute(starPositions, 3));
+	geometry.setAttribute('color', new THREE.Float32BufferAttribute(starColors, 3));
+	geometry.setAttribute('size', new THREE.Float32BufferAttribute(starSizes, 1));
+	
+	// Custom shader material for pixelated square stars (8-bit style)
+	const starMaterial = new THREE.PointsMaterial({
+		size: 2.0, // Slightly larger for cuter look
+		vertexColors: true,
+		transparent: true,
+		opacity: 1.0,
+		sizeAttenuation: true
+	});
+	
+	const starfield = new THREE.Points(geometry, starMaterial);
+	starfield.name = 'starfield';
+	scene.add(starfield);
+	
+	// Add animated "twinkling" by storing reference for later updates
+	starfield.userData.twinklePhases = new Float32Array(starCount);
+	starfield.userData.baseSizes = new Float32Array(starSizes);
+	for (let i = 0; i < starCount; i++) {
+		starfield.userData.twinklePhases[i] = Math.random() * Math.PI * 2;
+	}
+	
+	// Add cute floating shapes (hearts, stars) around the scene
+	addCuteFloatingShapes(scene, THREE);
+	
+	return starfield;
+}
+
+/**
+ * Add cute floating heart and star shapes for whimsical effect
+ * @param {THREE.Scene} scene - The scene to add shapes to
+ * @param {Object} THREE - Three.js instance
+ */
+function addCuteFloatingShapes(scene, THREE) {
+	const shapeGroup = new THREE.Group();
+	shapeGroup.name = 'cuteShapes';
+	
+	const cuteColors = [0xff69b4, 0x87ceeb, 0x98fb98, 0xffa07a, 0xdda0dd, 0xfffacd];
+	
+	// Create small floating geometric shapes
+	for (let i = 0; i < 30; i++) {
+		let geometry;
+		const shapeType = Math.random();
+		
+		if (shapeType < 0.5) {
+			// Star shape (octahedron as approximation)
+			geometry = new THREE.OctahedronGeometry(1 + Math.random() * 0.5, 0);
+		} else {
+			// Diamond/gem shape
+			geometry = new THREE.TetrahedronGeometry(0.8 + Math.random() * 0.4, 0);
+		}
+		
+		const material = new THREE.MeshBasicMaterial({
+			color: cuteColors[Math.floor(Math.random() * cuteColors.length)],
+			transparent: true,
+			opacity: 0.6 + Math.random() * 0.3
+		});
+		
+		const shape = new THREE.Mesh(geometry, material);
+		
+		// Random position in a wide area
+		const angle = Math.random() * Math.PI * 2;
+		const distance = 40 + Math.random() * 60;
+		shape.position.set(
+			Math.cos(angle) * distance,
+			-10 + Math.random() * 50,
+			Math.sin(angle) * distance
+		);
+		
+		// Random rotation
+		shape.rotation.set(
+			Math.random() * Math.PI,
+			Math.random() * Math.PI,
+			Math.random() * Math.PI
+		);
+		
+		// Store animation data
+		shape.userData = {
+			type: 'cuteShape',
+			baseY: shape.position.y,
+			floatSpeed: 0.5 + Math.random() * 1.0,
+			floatPhase: Math.random() * Math.PI * 2,
+			rotateSpeed: 0.2 + Math.random() * 0.5
+		};
+		
+		shapeGroup.add(shape);
+	}
+	
+	scene.add(shapeGroup);
+}
+
+/**
+ * Animate cute mode elements (stars twinkling, shapes floating)
+ * Call this in the render loop when in cute mode
+ * @param {THREE.Scene} scene - The scene
+ * @param {number} deltaTime - Time since last frame
+ */
+export function animateCuteElements(scene, deltaTime) {
+	if (!scene) return;
+	
+	const time = performance.now() * 0.001;
+	
+	// Animate starfield twinkling
+	const starfield = scene.getObjectByName('starfield');
+	if (starfield && starfield.userData.twinklePhases && starfield.userData.baseSizes) {
+		const sizes = starfield.geometry.attributes.size;
+		if (sizes) {
+			for (let i = 0; i < sizes.count; i++) {
+				const phase = starfield.userData.twinklePhases[i];
+				const baseSize = starfield.userData.baseSizes[i];
+				// Twinkle effect: size oscillates
+				sizes.array[i] = baseSize * (0.5 + 0.5 * Math.sin(time * 2 + phase));
+			}
+			sizes.needsUpdate = true;
+		}
+	}
+	
+	// Animate cute floating shapes
+	const cuteShapes = scene.getObjectByName('cuteShapes');
+	if (cuteShapes) {
+		cuteShapes.children.forEach(shape => {
+			if (shape.userData.type === 'cuteShape') {
+				// Gentle floating motion
+				shape.position.y = shape.userData.baseY + 
+					Math.sin(time * shape.userData.floatSpeed + shape.userData.floatPhase) * 2;
+				// Slow rotation
+				shape.rotation.y += shape.userData.rotateSpeed * deltaTime;
+			}
+		});
+	}
+}
 
 export function setupScene(containerElement, scene, camera, renderer, controls, boardGroup, tetrominoGroup, chessPiecesGroup, clouds, gameState) {
 	console.log('Setting up enhanced 3D scene with beautiful sky...');
@@ -353,10 +536,8 @@ export function createFloatingIsland(x, z, material, heightVariation = 0.7, hasC
 		rockMaterial.opacity = 0.5 + Math.random() * 0.3;
 		rockMaterial.transparent = true;
 		
-		// Make wireframe for decorative islands
-		if (!hasContent) {
-			rockMaterial.wireframe = Math.random() > 0.5; // 50% chance of wireframe
-		}
+		// DISABLED: Wireframe was rendering over other elements
+		// if (!hasContent) { rockMaterial.wireframe = Math.random() > 0.5; }
 		
 		const rock = new THREE.Mesh(rockGeometry, rockMaterial);
 		
@@ -539,36 +720,26 @@ function createRoundedBoxGeometry(width, height, depth, radius, segments) {
  */
 export function createFloatingCube(x, z, material, boardGroup) {
 	try {
-		// Create a cube for the cell
-		const cellGeometry = new THREE.BoxGeometry(0.9, 0.9, 0.9);
+		const cellGeometry = new THREE.BoxGeometry(0.94, 0.94, 0.94);
 		const cellMesh = new THREE.Mesh(cellGeometry, material);
 
-		// Get the gameState object from the enhanced-gameCore module
 		const gameState = getGameState();
-		
 		const absPos = translatePosition({x, z}, gameState, true);
 
-		// Position the cell using relative coordinates
 		cellMesh.position.set(absPos.x, 0, absPos.z);
-
-		// Ensure no rotation at all - critical to prevent board from becoming tilted
 		cellMesh.rotation.set(0, 0, 0);
 
-		// Mark it as a board cell to prevent it from being animated
 		cellMesh.userData = {
 			type: 'cell',
 			position: { x, z },
 			isWhite: (x + z) % 2 === 0,
-			isStatic: true // Indicates this should not be rotated or bobbed
+			isStatic: true
 		};
 
-		// Add shadows
 		cellMesh.castShadow = true;
 		cellMesh.receiveShadow = true;
 
-		// Add to board group
 		boardGroup.add(cellMesh);
-
 		return cellMesh;
 	} catch (error) {
 		console.error(`Error creating floating cube at (${x}, ${z}):`, error);
@@ -578,102 +749,197 @@ export function createFloatingCube(x, z, material, boardGroup) {
 /**
  * Set up lights for the scene
  */
-export function setupLights(scene) {
-	// Clear any existing lights first
-	scene.children = scene.children.filter(child => !(child instanceof THREE.Light));
+export function setupLights(scene, options = {}) {
+	const THREE = getTHREE();
+	const lowQuality = !!options.lowQuality;
 
-	// Create a beautiful light blue sky background
-	scene.background = new THREE.Color(0xAFE9FF); // Light sky blue
-	scene.fog = new THREE.Fog(0xC5F0FF, 60, 150); // Light blue fog, pushed back
+	// Clear existing lights, starfield, and floating shapes from previous mode
+	if (scene && Array.isArray(scene.children)) {
+		[...scene.children].forEach(child => {
+			if (child && (child.isLight || child instanceof THREE.Light)) {
+				scene.remove(child);
+			}
+			if (child && (child.name === 'starfield' || child.name === 'cuteShapes' || child.name === 'cloudBed' || child.name === 'clouds')) {
+				scene.remove(child);
+				if (child.geometry) child.geometry.dispose();
+				if (child.material) child.material.dispose();
+			}
+		});
+	}
 
+	// Low-spec / cute mode: 8-bit space theme with distinct aesthetic
+	if (lowQuality) {
+		// Deep space background - dark with purple/blue gradient feel
+		scene.background = new THREE.Color(0x0a0a1a); // Deep space dark blue
+		scene.fog = new THREE.Fog(0x0a0a2a, 80, 200); // Very subtle space fog
+		
+		// Create starfield
+		createStarfield(scene, THREE);
+		
+		// Bright arcade-style lighting
+		const mainLight = new THREE.DirectionalLight(0xffffff, 1.5);
+		mainLight.position.set(20, 40, 20);
+		mainLight.castShadow = false;
+		scene.add(mainLight);
+		
+		// Purple/magenta accent light for retro feel
+		const accentLight = new THREE.DirectionalLight(0xff00ff, 0.3);
+		accentLight.position.set(-20, 20, -10);
+		scene.add(accentLight);
+		
+		// Cyan accent light from opposite side
+		const accentLight2 = new THREE.DirectionalLight(0x00ffff, 0.25);
+		accentLight2.position.set(20, 15, -30);
+		scene.add(accentLight2);
+		
+		// Strong ambient for that flat 8-bit look
+		const ambientLight = new THREE.AmbientLight(0x4040a0, 0.8);
+		scene.add(ambientLight);
+		
+		return;
+	}
+	
+	// Retro mode: CRT terminal aesthetic
+	if (options.renderProfile === 'retro') {
+		scene.background = new THREE.Color(0x000000);
+		scene.fog = new THREE.Fog(0x001a00, 60, 180);
 
-	// Main sunlight - golden warm directional light
-	const sunLight = new THREE.DirectionalLight(0xFFFBE8, 1.35); // Warm sunlight
-	sunLight.position.set(25, 80, 30);
+		// Dim green ambient — everything bathed in phosphor glow
+		const ambientLight = new THREE.AmbientLight(0x003300, 0.6);
+		scene.add(ambientLight);
+
+		// Green directional from above
+		const mainLight = new THREE.DirectionalLight(0x00ff41, 0.8);
+		mainLight.position.set(15, 50, 15);
+		mainLight.castShadow = false;
+		scene.add(mainLight);
+
+		// Subtle amber accent from the side (for opponent contrast)
+		const amberAccent = new THREE.DirectionalLight(0xff8800, 0.15);
+		amberAccent.position.set(-20, 20, -15);
+		scene.add(amberAccent);
+
+		return;
+	}
+
+	// Normal mode: Rich blue gradient sky
+	scene.background = new THREE.Color(0x87CEFA);
+	scene.fog = new THREE.FogExp2(0xC5E8FF, 0.006);
+
+	// Key light — warm sun from upper-right
+	const sunLight = new THREE.DirectionalLight(0xFFF5E0, 1.1);
+	sunLight.position.set(30, 60, 25);
 	sunLight.castShadow = true;
 	sunLight.shadow.mapSize.width = 2048;
 	sunLight.shadow.mapSize.height = 2048;
-	sunLight.shadow.camera.near = 10;
-	sunLight.shadow.camera.far = 200;
-	sunLight.shadow.camera.left = -50;
-	sunLight.shadow.camera.right = 50;
-	sunLight.shadow.camera.top = 50;
-	sunLight.shadow.camera.bottom = -50;
-	sunLight.shadow.bias = -0.0001; // Reduce shadow acne
+	sunLight.shadow.camera.near = 5;
+	sunLight.shadow.camera.far = 150;
+	sunLight.shadow.camera.left = -40;
+	sunLight.shadow.camera.right = 40;
+	sunLight.shadow.camera.top = 40;
+	sunLight.shadow.camera.bottom = -40;
+	sunLight.shadow.bias = -0.0002;
+	sunLight.shadow.normalBias = 0.02;
 	scene.add(sunLight);
 
-	// Ambient light for general illumination - sky colored
-	const ambientLight = new THREE.AmbientLight(0xB0E2FF, 0.65); // Sky-colored
+	// Hemisphere light — sky/ground colour fill
+	const hemiLight = new THREE.HemisphereLight(0x88BBEE, 0x446633, 0.6);
+	scene.add(hemiLight);
+
+	// Ambient fill
+	const ambientLight = new THREE.AmbientLight(0xE8F0FF, 0.35);
 	scene.add(ambientLight);
 
-	// Add a soft golden backlight for rim lighting effect
-	const backLight = new THREE.DirectionalLight(0xFFF0E0, 0.4);
-	backLight.position.set(-15, 20, -25);
-	scene.add(backLight);
+	// Rim light from behind for depth
+	const rimLight = new THREE.DirectionalLight(0xFFE8D0, 0.3);
+	rimLight.position.set(-20, 15, -30);
+	scene.add(rimLight);
 
-	// Add a soft blue-ish fill light from below for floating cells
-	const fillLight = new THREE.DirectionalLight(0xC8E0FF, 0.25);
-	fillLight.position.set(-20, -5, -20);
-	scene.add(fillLight);
-
-	// Add a subtle hemisphere light for better outdoor lighting
-	const hemisphereLight = new THREE.HemisphereLight(0xFFFBE8, 0x080820, 0.5);
-	scene.add(hemisphereLight);
-
-	// Add beautiful fluffy clouds to scene
 	addCloudsToScene(scene);
+	addAmbientParticles(scene, THREE);
 }
+
+/**
+ * Add subtle floating ambient particles for full-res mode
+ * Creates a dreamy, magical atmosphere
+ * @param {THREE.Scene} scene - The scene to add particles to
+ * @param {Object} THREE - Three.js instance
+ */
+function addAmbientParticles(scene, THREE) {
+	const particleCount = 200;
+	const particlePositions = [];
+	const particleSizes = [];
+	
+	// Create particles in a wide area around the playing field
+	for (let i = 0; i < particleCount; i++) {
+		const x = (Math.random() - 0.5) * 120;
+		const y = Math.random() * 40 - 5;
+		const z = (Math.random() - 0.5) * 120;
+		
+		particlePositions.push(x, y, z);
+		particleSizes.push(0.1 + Math.random() * 0.3);
+	}
+	
+	const geometry = new THREE.BufferGeometry();
+	geometry.setAttribute('position', new THREE.Float32BufferAttribute(particlePositions, 3));
+	geometry.setAttribute('size', new THREE.Float32BufferAttribute(particleSizes, 1));
+	
+	const material = new THREE.PointsMaterial({
+		color: 0xffffff,
+		size: 0.3,
+		transparent: true,
+		opacity: 0.4,
+		sizeAttenuation: true
+	});
+	
+	const particles = new THREE.Points(geometry, material);
+	particles.name = 'ambientParticles';
+	
+	// Store base positions for animation
+	particles.userData.basePositions = [...particlePositions];
+	particles.userData.phases = new Float32Array(particleCount);
+	for (let i = 0; i < particleCount; i++) {
+		particles.userData.phases[i] = Math.random() * Math.PI * 2;
+	}
+	
+	scene.add(particles);
+}
+
+/**
+ * Animate ambient particles for full-res mode
+ * Call this in render loop for non-cute mode
+ * @param {THREE.Scene} scene - The scene
+ * @param {number} deltaTime - Time since last frame
+ */
+export function animateAmbientParticles(scene, deltaTime) {
+	if (!scene) return;
+	
+	const particles = scene.getObjectByName('ambientParticles');
+	if (!particles || !particles.userData.basePositions) return;
+	
+	const time = performance.now() * 0.0005;
+	const positions = particles.geometry.attributes.position;
+	const basePositions = particles.userData.basePositions;
+	const phases = particles.userData.phases;
+	
+	for (let i = 0; i < positions.count; i++) {
+		const i3 = i * 3;
+		const phase = phases[i];
+		
+		// Gentle floating motion
+		positions.array[i3] = basePositions[i3] + Math.sin(time + phase) * 0.5;
+		positions.array[i3 + 1] = basePositions[i3 + 1] + Math.sin(time * 0.7 + phase) * 0.3;
+		positions.array[i3 + 2] = basePositions[i3 + 2] + Math.cos(time * 0.8 + phase) * 0.5;
+	}
+	
+	positions.needsUpdate = true;
+}
+
 /**
  * Add decorative clouds to the scene
  */
 function addCloudsToScene(scene) {
-	// Create cloud material
-	const cloudMaterial = new THREE.MeshStandardMaterial({
-		color: 0xffffff,
-		transparent: true,
-		opacity: 0.85,
-		roughness: 1.0,
-		metalness: 0.0
-	});
-
-	// Create cloud group
-	const cloudGroup = new THREE.Group();
-	cloudGroup.name = 'clouds';
-
-	// Create several clouds at different positions
-	for (let i = 0; i < 15; i++) {
-		const cloudCluster = new THREE.Group();
-
-		// Random position in the sky
-		const x = (Math.random() - 0.5) * 100;
-		const y = 20 + Math.random() * 20;
-		const z = (Math.random() - 0.5) * 100;
-
-		// Create 3-5 puffs for each cloud
-		const puffCount = 3 + Math.floor(Math.random() * 3);
-
-		for (let j = 0; j < puffCount; j++) {
-			// Create a puff (a simple sphere)
-			const size = 2 + Math.random() * 3;
-			const puffGeometry = new THREE.SphereGeometry(size, 7, 7);
-			const puff = new THREE.Mesh(puffGeometry, cloudMaterial);
-
-			// Position within cluster
-			const puffX = (Math.random() - 0.5) * 5;
-			const puffY = (Math.random() - 0.5) * 2;
-			const puffZ = (Math.random() - 0.5) * 5;
-
-			puff.position.set(puffX, puffY, puffZ);
-			cloudCluster.add(puff);
-		}
-
-		// Position the whole cluster
-		cloudCluster.position.set(x, y, z);
-		cloudGroup.add(cloudCluster);
-	}
-
-	// Add clouds to scene
-	scene.add(cloudGroup);
+	// Sky clouds replaced by createFewClouds (sparse bed beneath the board)
 }
 
 
@@ -691,33 +957,40 @@ export function createBoard(boardGroup, gameState) {
 	}
 
 	try {
-		// Instead of clearing all children, keep the decorative islands and only remove cells
-		const childrenToRemove = [];
-		
-		// Identify children to remove (keep decorative islands)
-		for (let i = 0; i < boardGroup.children.length; i++) {
-			const child = boardGroup.children[i];
-			if (!child.userData || child.userData.type !== 'decorative') {
-				childrenToRemove.push(child);
-			}
-		}
-		
-		// Now remove the non-decorative children (board cells)
+		// Clear the board group fully. Keeping old decorative meshes caused persistent
+		// white "tube" artefacts after profile/theme updates.
+		const childrenToRemove = [...boardGroup.children];
 		for (const child of childrenToRemove) {
 			boardGroup.remove(child);
+			if (child && typeof child.traverse === 'function') {
+				child.traverse(node => {
+					if (node.geometry && typeof node.geometry.dispose === 'function') {
+						node.geometry.dispose();
+					}
+					if (node.material) {
+						if (Array.isArray(node.material)) {
+							node.material.forEach(mat => mat && typeof mat.dispose === 'function' && mat.dispose());
+						} else if (typeof node.material.dispose === 'function') {
+							node.material.dispose();
+						}
+					}
+				});
+			}
 		}
 
-		// Create materials for cells - use more natural colors
+		// Polished chess-board style tiles
 		const whiteMaterial = new THREE.MeshStandardMaterial({
-			color: 0xf5f5f5,
-			roughness: 0.8,
-			metalness: 0.1
+			color: 0xEDE8D5,
+			roughness: 0.45,
+			metalness: 0.05,
+			envMapIntensity: 0.3
 		});
 
 		const darkMaterial = new THREE.MeshStandardMaterial({
-			color: 0x3a3a3a,
-			roughness: 0.7,
-			metalness: 0.2
+			color: 0x5A7D5A,
+			roughness: 0.5,
+			metalness: 0.08,
+			envMapIntensity: 0.3
 		});
 
 		// Check if there's board data
@@ -730,8 +1003,6 @@ export function createBoard(boardGroup, gameState) {
 
 		// Track count for logging
 		let createdCellCount = 0;
-		let newIslandCount = 0;
-		let reusedIslandCount = 0;
 
 		// ONLY create cells where there's data
 		if (hasBoardData) {
@@ -750,49 +1021,8 @@ export function createBoard(boardGroup, gameState) {
 				// Create the floating cube for the actual game board
 				const cellMesh = createFloatingCube(x, z, material, boardGroup);
 
-				// Generate a deterministic random value based on coordinates
-				// This ensures the same cells always get islands
-				const deterministicRandom = Math.abs(Math.sin(x * 753.24 + z * 329.41));
-				
-				// Only create islands for 40% of cells to avoid clutter (60% threshold)
-				if (deterministicRandom > 0.6) {
-					// Create the floating island below the cube for decoration only
-					// Use varied white/very light green materials for the islands
-					const cloudColor = new THREE.Color(
-						0.95 + Math.abs(Math.sin(x * 0.3 + z * 0.7) * 0.05),  // Almost white
-						0.97 + Math.abs(Math.sin(x * 0.5 + z * 0.3) * 0.03),  // Very slight green tint
-						0.95 + Math.abs(Math.sin(x * 0.7 + z * 0.5) * 0.05)   // Almost white
-					);
-					
-					const islandMaterial = new THREE.MeshStandardMaterial({
-						color: cloudColor,
-						roughness: 1.0,
-						metalness: 0.0,
-						transparent: true,
-						opacity: 0.6  // More transparent
-					});
-					
-					// Calculate offsets deterministically
-					const offsetX = x + (Math.sin(x * 123.45) * 0.25);
-					const offsetZ = z + (Math.sin(z * 456.78) * 0.25);
-					
-					// Create decorative island with deterministic offsets
-					const island = createFloatingIsland(
-						offsetX,  // Deterministic X offset
-						offsetZ,  // Deterministic Z offset
-						islandMaterial,
-						0.4 + (deterministicRandom * 0.2),  // Deterministic height variation
-						false  // No content on island
-					);
-					
-					// Set scale deterministically
-					const scale = 0.7 + deterministicRandom * 0.4;
-					island.scale.set(scale, scale, scale);
-					
-					// Add the island to the board group
-					boardGroup.add(island);
-					newIslandCount++;
-				}
+				// Decorative per-cell island pillars removed; they were visually noisy and
+				// looked like white tubes. Atmosphere now comes from the sparse cloud bed.
 
 				// Save the absolute position in the userData
 				if (cellMesh) {
@@ -801,7 +1031,7 @@ export function createBoard(boardGroup, gameState) {
 				}
 			}
 
-			console.log(`Created ${createdCellCount} cells for the board with ${reusedIslandCount} reused islands and ${newIslandCount} new islands`);
+			console.log(`Created ${createdCellCount} cells for the board`);
 		} else {
 			console.log('No board data available, skipping board creation');
 		}

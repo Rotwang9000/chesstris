@@ -26,15 +26,10 @@ export function checkThreeJsStatus() {
 				status.hasOrbitControls = true;
 			}
 			
-			// Check for renderer support
-			try {
-				const testRenderer = new THREE.WebGLRenderer();
-				status.details.hasWebGL = true;
-				status.details.isWebGL2 = testRenderer.capabilities.isWebGL2;
-			} catch (error) {
-				status.details.hasWebGL = false;
-				status.details.rendererError = error.message;
-			}
+			// Lightweight capability flags only - avoid creating throwaway renderers
+			// here, because that can consume limited GPU/WebGL contexts on some systems.
+			status.details.hasWebGL = typeof window !== 'undefined' && typeof window.WebGLRenderingContext !== 'undefined';
+			status.details.isWebGL2 = typeof window !== 'undefined' && typeof window.WebGL2RenderingContext !== 'undefined';
 		}
 	} catch (error) {
 		status.error = error.message;
@@ -153,6 +148,18 @@ export function testThreeJsRendering(container) {
 		
 		result.steps.push('Removing test renderer');
 		container.removeChild(renderer.domElement);
+		if (typeof renderer.dispose === 'function') {
+			renderer.dispose();
+		}
+		if (typeof renderer.forceContextLoss === 'function') {
+			renderer.forceContextLoss();
+		}
+		if (geometry && typeof geometry.dispose === 'function') {
+			geometry.dispose();
+		}
+		if (material && typeof material.dispose === 'function') {
+			material.dispose();
+		}
 		
 		result.success = true;
 	} catch (error) {
