@@ -32,17 +32,14 @@ echo "    Target: ${DEPLOY_DIR}"
 echo "    Port:   ${PORT}"
 echo ""
 
-# Ensure the target directory exists
 if [ ! -d "$DEPLOY_DIR" ]; then
 	echo "ERROR: Deploy directory ${DEPLOY_DIR} does not exist."
-	echo "Create it first:  sudo mkdir -p ${DEPLOY_DIR} && sudo chmod 777 ${DEPLOY_DIR}"
 	exit 1
 fi
 
-# Create logs directory
 mkdir -p "${DEPLOY_DIR}/logs"
 
-# Sync files (exclude dev-only files, .git, node_modules)
+# Sync files (exclude dev-only artefacts)
 echo "--- Syncing files ---"
 rsync -a --delete \
 	--exclude='node_modules' \
@@ -53,6 +50,7 @@ rsync -a --delete \
 	--exclude='tests/' \
 	--exclude='ci/' \
 	--exclude='Jenkinsfile' \
+	--exclude='docker-compose.jenkins.yml' \
 	--exclude='ecosystem.config.cjs' \
 	--exclude='jest.config.js' \
 	--exclude='jest.setup.js' \
@@ -61,32 +59,46 @@ rsync -a --delete \
 	--exclude='logs/' \
 	./ "${DEPLOY_DIR}/"
 
-# Install production dependencies
-echo "--- Installing dependencies ---"
+# Copy the ecosystem config (needed by PM2 on the host)
+cp ecosystem.config.cjs "${DEPLOY_DIR}/ecosystem.config.cjs" 2>/dev/null || true
+
+# Install production dependencies in the deploy dir
+echo "--- Installing production dependencies ---"
 cd "${DEPLOY_DIR}"
 npm ci --omit=dev --prefer-offline 2>/dev/null || npm install --omit=dev
 
-# Restart the process via PM2
+# Restart the process — try PM2 directly first, fall back to trigger file
 echo "--- Restarting ${PM2_NAME} ---"
 if command -v pm2 &>/dev/null; then
-	# Check if the process already exists
-	if pm2 describe "$PM2_NAME" &>/dev/null; then
-		pm2 restart "$PM2_NAME" --update-env
-	else
-		# Start using the ecosystem config
-		pm2 start "${DEPLOY_DIR}/ecosystem.config.cjs" --only "$PM2_NAME"
+	_pm2_on_host=true
+	# Check if we can actually talk to a PM2 daemon
+	if pm2 ping &>/dev/null 2>&1; then
+		if pm2 describe "$PM2_NAME" &>/dev/null; then
+			pm2 restart "$PM2_NAME" --update-env
+		else
+			pm2 start "${DEPLOY_DIR}/ecosystem.config.cjs" --only "$PM2_NAME"
+		fi
+		pm2 save
+		echo "PM2 restarted ${PM2_NAME} directly"
+		_pm2_on_host=false
 	fi
-	pm2 save
-	echo ""
-	pm2 show "$PM2_NAME"
+
+	if [ "$_pm2_on_host" = true ]; then
+		echo "PM2 daemon not reachable (likely inside Docker)"
+		echo "Writing deploy trigger for host watcher..."
+		_write_trigger=true
+	fi
 else
-	echo "WARNING: PM2 not found. Install it:  npm install -g pm2"
-	echo "Starting with plain node for now..."
-	# Kill any existing process on this port
-	fuser -k "${PORT}/tcp" 2>/dev/null || true
-	sleep 1
-	PORT="${PORT}" nohup node server.js > "${DEPLOY_DIR}/logs/out.log" 2> "${DEPLOY_DIR}/logs/err.log" &
-	echo "Started on PID $! (port ${PORT})"
+	echo "PM2 not found, writing deploy trigger for host watcher..."
+	_write_trigger=true
+fi
+
+# Write a trigger file so the host's cron/watcher can restart PM2
+if [ "${_write_trigger:-false}" = true ]; then
+	TRIGGER_DIR="/var/www/.deploy-triggers"
+	mkdir -p "$TRIGGER_DIR"
+	echo "${ENVIRONMENT}|${PM2_NAME}|$(date -Iseconds)" > "${TRIGGER_DIR}/${ENVIRONMENT}"
+	echo "Trigger written: ${TRIGGER_DIR}/${ENVIRONMENT}"
 fi
 
 echo ""

@@ -1,51 +1,28 @@
 #!/usr/bin/env bash
 #
-# jenkins-setup.sh — One-time Jenkins setup (run as root / with sudo).
-#
-# This script:
-#   1. Changes Jenkins to listen on port 8090
-#   2. Installs PM2 globally
-#   3. Creates deployment directories
-#   4. Starts Jenkins
-#   5. Prints the initial admin password
+# jenkins-setup.sh — Set up Docker-based Jenkins + PM2 deploy watcher.
+# Run as root on the host.
 #
 set -euo pipefail
 
-echo "=== Shaktris Jenkins CI/CD Setup ==="
+echo "=== Shaktris Jenkins CI/CD Setup (Docker) ==="
 echo ""
 
-# ── 1. Change Jenkins port to 8090 ──────────────────────────────────────────
+# ── 1. Pre-flight checks ────────────────────────────────────────────────────
 
-JENKINS_DEFAULTS="/etc/default/jenkins"
-JENKINS_SYSTEMD="/etc/systemd/system/jenkins.service.d"
-JENKINS_SERVICE="/lib/systemd/system/jenkins.service"
-
-echo "--- Configuring Jenkins on port 8090 ---"
-
-# Method A: Systemd override (preferred on modern Ubuntu)
-if [ -f "$JENKINS_SERVICE" ]; then
-	mkdir -p "$JENKINS_SYSTEMD"
-	cat > "${JENKINS_SYSTEMD}/override.conf" <<'OVERRIDE'
-[Service]
-Environment="JENKINS_PORT=8090"
-OVERRIDE
-	echo "Created systemd override: ${JENKINS_SYSTEMD}/override.conf"
+if ! command -v docker &>/dev/null; then
+	echo "ERROR: Docker is not installed."
+	exit 1
 fi
 
-# Method B: /etc/default/jenkins (older systems)
-if [ -f "$JENKINS_DEFAULTS" ]; then
-	if grep -q 'HTTP_PORT=' "$JENKINS_DEFAULTS"; then
-		sed -i 's/HTTP_PORT=.*/HTTP_PORT=8090/' "$JENKINS_DEFAULTS"
-	else
-		echo 'HTTP_PORT=8090' >> "$JENKINS_DEFAULTS"
-	fi
-	echo "Updated ${JENKINS_DEFAULTS}"
+if ! docker compose version &>/dev/null 2>&1; then
+	echo "ERROR: Docker Compose v2 is not available."
+	exit 1
 fi
 
-# ── 2. Install PM2 globally ─────────────────────────────────────────────────
+# ── 2. Install PM2 on the host ──────────────────────────────────────────────
 
-echo ""
-echo "--- Installing PM2 ---"
+echo "--- Installing PM2 on the host ---"
 if ! command -v pm2 &>/dev/null; then
 	npm install -g pm2
 	echo "PM2 installed"
@@ -56,39 +33,31 @@ fi
 # ── 3. Create deployment directories ────────────────────────────────────────
 
 echo ""
-echo "--- Creating deployment directories ---"
-for DIR in /var/www/shaktris.staging /var/www/shaktris.live; do
-	mkdir -p "${DIR}/logs"
+echo "--- Creating directories ---"
+for DIR in /var/www/shaktris.staging /var/www/shaktris.live /var/www/.deploy-triggers; do
+	mkdir -p "${DIR}/logs" 2>/dev/null || mkdir -p "$DIR"
 	chmod 777 "$DIR"
-	chmod 777 "${DIR}/logs"
-	echo "  Created: ${DIR}"
+	echo "  ${DIR}"
 done
 
-# ── 4. Grant Jenkins user access ────────────────────────────────────────────
+# ── 4. Build and start Jenkins container ─────────────────────────────────────
 
+REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 echo ""
-echo "--- Granting Jenkins user deployment access ---"
-JENKINS_USER="jenkins"
-if id "$JENKINS_USER" &>/dev/null; then
-	# Add jenkins to the rotwang group (if it exists) for file access
-	usermod -aG rotwang "$JENKINS_USER" 2>/dev/null || true
-	echo "Jenkins user configured"
-else
-	echo "WARNING: Jenkins user '${JENKINS_USER}' not found"
-fi
-
-# ── 5. Start Jenkins ────────────────────────────────────────────────────────
+echo "--- Building Jenkins Docker image ---"
+cd "$REPO_DIR"
+docker compose -f docker-compose.jenkins.yml build
 
 echo ""
 echo "--- Starting Jenkins ---"
-systemctl daemon-reload
-systemctl enable jenkins
-systemctl restart jenkins
+docker compose -f docker-compose.jenkins.yml up -d
 
 # Wait for Jenkins to start
-echo "Waiting for Jenkins to start on port 8090..."
-for i in $(seq 1 30); do
-	if curl -s -o /dev/null -w "%{http_code}" http://localhost:8090 2>/dev/null | grep -q '403\|200'; then
+echo "Waiting for Jenkins on port 8090..."
+for i in $(seq 1 60); do
+	HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8090 2>/dev/null || echo "000")
+	if [ "$HTTP_CODE" = "403" ] || [ "$HTTP_CODE" = "200" ]; then
+		echo ""
 		echo "Jenkins is running!"
 		break
 	fi
@@ -97,40 +66,68 @@ for i in $(seq 1 30); do
 done
 echo ""
 
-# ── 6. Print initial admin password ─────────────────────────────────────────
+# ── 5. Set up the deploy watcher cron ───────────────────────────────────────
 
-INITIAL_PW="/var/lib/jenkins/secrets/initialAdminPassword"
+echo "--- Setting up deploy watcher cron ---"
+WATCHER_SCRIPT="/opt/shaktris/deploy-watcher.sh"
+mkdir -p /opt/shaktris
+cp "${REPO_DIR}/ci/deploy-watcher.sh" "$WATCHER_SCRIPT"
+chmod +x "$WATCHER_SCRIPT"
+
+# Add cron entries (every 30 seconds) if not already present
+CRON_MARKER="# shaktris-deploy-watcher"
+if ! crontab -l 2>/dev/null | grep -q "$CRON_MARKER"; then
+	(crontab -l 2>/dev/null || true; cat <<CRON
+$CRON_MARKER
+* * * * * $WATCHER_SCRIPT >> /var/log/shaktris-deploy.log 2>&1
+* * * * * sleep 30 && $WATCHER_SCRIPT >> /var/log/shaktris-deploy.log 2>&1
+CRON
+) | crontab -
+	echo "Cron entries added (30-second polling)"
+else
+	echo "Cron entries already exist"
+fi
+
+# ── 6. Get the initial admin password ────────────────────────────────────────
+
 echo ""
 echo "=============================================="
 echo " Jenkins is running at http://localhost:8090"
 echo "=============================================="
 echo ""
-if [ -f "$INITIAL_PW" ]; then
+
+# Wait a moment for Jenkins to write the password file
+sleep 5
+INIT_PW=$(docker exec shaktris-jenkins cat /var/jenkins_home/secrets/initialAdminPassword 2>/dev/null || echo "")
+
+if [ -n "$INIT_PW" ]; then
 	echo "Initial admin password:"
 	echo ""
-	cat "$INITIAL_PW"
+	echo "  $INIT_PW"
 	echo ""
 else
-	echo "(Initial password already consumed — Jenkins was previously set up)"
+	echo "(Password not yet available — try in a few seconds:)"
+	echo "  docker exec shaktris-jenkins cat /var/jenkins_home/secrets/initialAdminPassword"
 fi
 
 echo ""
 echo "=== Next steps ==="
+echo ""
 echo "1. Open http://<your-server>:8090 in a browser"
 echo "2. Enter the admin password above"
-echo "3. Install suggested plugins + 'NodeJS' + 'GitHub Integration'"
-echo "4. Create a Pipeline job:"
+echo "3. Install suggested plugins, then also install:"
+echo "   - GitHub Integration Plugin"
+echo "   - (NodeJS plugin is NOT needed — Node.js is baked into the image)"
+echo "4. Create a new item:"
 echo "   - Name: shaktris"
 echo "   - Type: Multibranch Pipeline"
-echo "   - Source: Git → https://github.com/Rotwang9000/chesstris.git"
-echo "   - Build Configuration: Jenkinsfile"
+echo "   - Branch Source: Git"
+echo "   - Repository URL: https://github.com/Rotwang9000/chesstris.git"
+echo "   - Build Configuration: by Jenkinsfile"
 echo "   - Scan Multibranch Pipeline Triggers: 1 minute"
-echo "5. Configure NodeJS tool:"
-echo "   - Manage Jenkins → Tools → NodeJS"
-echo "   - Add NodeJS 21.x, name it 'NodeJS-21'"
-echo "6. Set up GitHub webhook (optional):"
-echo "   - Repo Settings → Webhooks → Add webhook"
-echo "   - URL: http://<your-server>:8090/github-webhook/"
+echo "5. Optional — GitHub webhook for instant builds:"
+echo "   - Repo → Settings → Webhooks → Add"
+echo "   - URL: http://<server-ip>:8090/github-webhook/"
 echo "   - Content type: application/json"
 echo "   - Events: Just the push event"
 echo ""

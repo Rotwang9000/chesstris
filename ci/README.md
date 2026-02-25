@@ -3,7 +3,7 @@
 ## Architecture
 
 ```
-  GitHub (push) ──► Jenkins (port 8090)
+  GitHub (push) ──► Jenkins in Docker (port 8090)
                         │
                  ┌──────┴──────┐
                  │  npm test   │
@@ -11,7 +11,7 @@
                         │
            ┌────────────┼────────────┐
            │                         │
-    develop branch              main branch
+    Develop branch              main branch
            │                         │
     ┌──────▼──────┐          ┌───────▼───────┐
     │   Staging   │          │  Production   │
@@ -21,21 +21,29 @@
     └─────────────┘          └───────────────┘
 ```
 
-## Quick Start (run as root)
+### How deployment works
+
+1. Jenkins (in Docker) runs tests, then rsyncs files to a **mounted volume**
+   (`/var/www/shaktris.staging` or `/var/www/shaktris.live`)
+2. Jenkins writes a **trigger file** to `/var/www/.deploy-triggers/`
+3. A **cron job** on the host (every 30s) picks up the trigger and restarts
+   the corresponding PM2 process
+4. PM2 manages the Node.js server on the correct port
+
+## Quick Start
 
 ```bash
-# 1. Run the setup script
-bash ci/jenkins-setup.sh
-
-# 2. Open Jenkins at http://<server>:8090
-#    Enter the initial admin password printed by the script
-
-# 3. Install plugins: suggested + NodeJS + GitHub Integration
-
-# 4. Create a Multibranch Pipeline job:
-#    - Source: https://github.com/Rotwang9000/chesstris.git
-#    - Build config: Jenkinsfile
+# Run as root on the server
+cd /home/rotwang/chesstris
+sudo bash ci/jenkins-setup.sh
 ```
+
+This will:
+- Install PM2 on the host
+- Create deployment directories
+- Build and start the Jenkins Docker container on port 8090
+- Set up the deploy-watcher cron job
+- Print the initial admin password
 
 ## Pipeline Stages
 
@@ -43,12 +51,12 @@ bash ci/jenkins-setup.sh
 |-------|---------|-------------|
 | Checkout | Every push | Pulls the code |
 | Install | Every push | `npm ci` |
-| Lint Check | Every push | Syntax-checks ES modules |
-| Test | Every push | `npm test` (Jest) |
-| Deploy Staging | develop branch | Syncs to `/var/www/shaktris.staging`, restarts PM2 |
-| Deploy Production | main branch | Manual approval, then syncs to `/var/www/shaktris.live` |
+| Lint Check | Every push | Syntax-checks key ES modules |
+| Test | Every push | `npm test` (Jest, CI mode) |
+| Deploy Staging | Develop branch | Syncs to `/var/www/shaktris.staging`, triggers PM2 restart |
+| Deploy Production | main branch | Manual approval, then deploys to `/var/www/shaktris.live` |
 
-## Deployment Directories
+## Environments
 
 | Environment | Directory | Port | URL |
 |-------------|-----------|------|-----|
@@ -58,28 +66,37 @@ bash ci/jenkins-setup.sh
 ## Manual Deployment
 
 ```bash
-# Deploy to staging
 bash scripts/deploy.sh staging
-
-# Deploy to production
 bash scripts/deploy.sh production
 ```
 
-## PM2 Process Management
+## PM2 Commands
 
 ```bash
-# View processes
 pm2 list
-
-# View logs
 pm2 logs shaktris-staging
 pm2 logs shaktris-production
-
-# Restart
 pm2 restart shaktris-staging
-
-# Start from ecosystem config
 pm2 start ecosystem.config.cjs --only shaktris-staging
+```
+
+## Docker Commands
+
+```bash
+# View Jenkins logs
+docker logs -f shaktris-jenkins
+
+# Restart Jenkins
+docker compose -f docker-compose.jenkins.yml restart
+
+# Rebuild after Dockerfile changes
+docker compose -f docker-compose.jenkins.yml up -d --build
+
+# Stop Jenkins
+docker compose -f docker-compose.jenkins.yml down
+
+# Get initial admin password
+docker exec shaktris-jenkins cat /var/jenkins_home/secrets/initialAdminPassword
 ```
 
 ## Files
@@ -87,7 +104,10 @@ pm2 start ecosystem.config.cjs --only shaktris-staging
 | File | Purpose |
 |------|---------|
 | `Jenkinsfile` | Pipeline definition |
+| `docker-compose.jenkins.yml` | Jenkins Docker Compose config |
+| `ci/Dockerfile.jenkins` | Custom Jenkins image with Node.js |
+| `ci/jenkins-setup.sh` | One-time server setup (run as root) |
+| `ci/deploy-watcher.sh` | Host cron script — restarts PM2 on deploy |
+| `ci/nginx-jenkins.conf` | Optional nginx proxy for Jenkins |
 | `ecosystem.config.cjs` | PM2 process config |
 | `scripts/deploy.sh` | Deployment script |
-| `ci/jenkins-setup.sh` | One-time Jenkins setup (run as root) |
-| `ci/nginx-jenkins.conf` | Optional nginx proxy for Jenkins |

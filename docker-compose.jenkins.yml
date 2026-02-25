@@ -1,0 +1,26 @@
+services:
+  jenkins:
+    build:
+      context: ./ci
+      dockerfile: Dockerfile.jenkins
+    container_name: shaktris-jenkins
+    restart: unless-stopped
+    ports:
+      - "8090:8080"
+      - "50000:50000"
+    volumes:
+      # Jenkins home — persists config, jobs, plugins between restarts
+      - jenkins_home:/var/jenkins_home
+
+      # Deployment target directories on the host
+      - /var/www/shaktris.staging:/var/www/shaktris.staging
+      - /var/www/shaktris.live:/var/www/shaktris.live
+
+      # Deploy trigger directory (Jenkins writes, host cron reads)
+      - /var/www/.deploy-triggers:/var/www/.deploy-triggers
+
+    environment:
+      - JAVA_OPTS=-Djenkins.install.runSetupWizard=true
+
+volumes:
+  jenkins_home:

@@ -24,7 +24,8 @@ pipeline {
 			steps {
 				checkout scm
 				sh 'echo "Branch: ${GIT_BRANCH}"'
-				sh 'echo "Commit: $(git log -1 --format="%h %s")"'
+				sh 'echo "Commit: $(git log -1 --format=\\"%h %s\\")"'
+				sh 'node --version && npm --version'
 			}
 		}
 
