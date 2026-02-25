@@ -7,7 +7,6 @@ services:
     restart: unless-stopped
     ports:
       - "8090:8080"
-      - "50000:50000"
     volumes:
       # Jenkins home — persists config, jobs, plugins between restarts
       - jenkins_home:/var/jenkins_home
