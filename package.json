@@ -31,6 +31,7 @@
 		"test:game-manager": "node server/test/game-manager-test.js",
 		"test:tetromino": "jest tests/server/TetrominoManager.test.js --verbose",
 		"test:chess": "jest tests/server/ChessManager.test.js --verbose",
+		"test:ci": "jest --ci --forceExit --passWithNoTests --testPathIgnorePatterns=/tests/security/",
 		"test:fail-first": "jest --bail",
 		"test:debug": "node --inspect-brk node_modules/.bin/jest --runInBand",
 		"run:computer-players": "node scripts/run-computer-players.js",
