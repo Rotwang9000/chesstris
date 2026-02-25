@@ -23,8 +23,7 @@ class ChessManager {
 		const pieces = [];
 		const playerColor = game.players[playerId].color;
 		
-		// Log the orientation for debugging
-		console.log(`ChessManager: Initializing chess pieces for player ${playerId} with home zone orientation ${homeZone.orientation}`);
+		log(`ChessManager: Initialising chess pieces for player ${playerId} with home zone orientation ${homeZone.orientation}`);
 		
 		// Determine layout based on orientation (not just dimensions)
 		// Horizontal layout for orientation 0 (facing up) and 2 (facing down)
@@ -55,6 +54,8 @@ class ChessManager {
 					position: { x, z },
 					color: playerColor,
 					hasMoved: false,
+					moveCount: 0,
+					forwardDistance: 0,
 					orientation: homeZone.orientation
 				};
 				
@@ -96,6 +97,8 @@ class ChessManager {
 					position: { x, z },
 					color: playerColor,
 					hasMoved: false,
+					moveCount: 0,
+					forwardDistance: 0,
 					orientation: homeZone.orientation
 				};
 				
@@ -145,6 +148,8 @@ class ChessManager {
 					position: { x, z },
 					color: playerColor,
 					hasMoved: false,
+					moveCount: 0,
+					forwardDistance: 0,
 					orientation: homeZone.orientation
 				};
 				
@@ -186,6 +191,8 @@ class ChessManager {
 					position: { x, z },
 					color: playerColor,
 					hasMoved: false,
+					moveCount: 0,
+					forwardDistance: 0,
 					orientation: homeZone.orientation
 				};
 				
@@ -714,7 +721,7 @@ class ChessManager {
 					game.chessPieces.splice(i, 1);
 					
 					if (p.type === 'KING') {
-						this._handleKingCapture(game, p.player);
+						this._handleKingCapture(game, p.player, playerId);
 					}
 					break;
 				}
@@ -742,6 +749,11 @@ class ChessManager {
 			piece.position.z = toZ;
 			piece.hasMoved = true;
 			piece.moveCount = (piece.moveCount || 0) + 1;
+
+			// Track net forward distance for pawn promotion
+			if (piece.type === 'PAWN') {
+				this._updatePawnForwardDistance(piece, fromX, fromZ, toX, toZ);
+			}
 			
 			// If capturing, also strip the captured piece's cell entry at the destination
 			if (capture) {
@@ -820,33 +832,189 @@ class ChessManager {
 	}
 	
 	/**
-	 * Handle king capture
+	 * Handle king capture — per the bible:
+	 * 1. Non-pawn pieces transfer to the captor.
+	 * 2. Pawns become "suicidal" (3 s delay, then one per 0.5 s, destroying cells).
+	 * 3. Island decay runs after all suicidal pawns detonate.
+	 * 4. Defeated player is eliminated; their territory transfers.
+	 * 5. Captured king goes to prison.
+	 *
 	 * @param {Object} game - The game object
-	 * @param {string} playerId - The player who lost their king
+	 * @param {string} defeatedId - The player who lost their king
+	 * @param {string} captorId - The player who captured the king
 	 * @private
 	 */
-	_handleKingCapture(game, playerId) {
-		log(`Player ${playerId} lost their king!`);
-		
-		// Mark the player as eliminated
-		game.players[playerId].eliminated = true;
-		game.players[playerId].eliminatedAt = Date.now();
-		
+	_handleKingCapture(game, defeatedId, captorId) {
+		log(`Player ${defeatedId} lost their king to ${captorId}!`);
+
+		const defeated = game.players[defeatedId];
+		const captor = game.players[captorId];
+		if (!defeated || !captor) return;
+
+		// ── 1. Transfer non-pawn pieces to the captor ───────────────────────
+		const suicidalPawns = [];
+		for (const piece of game.chessPieces) {
+			if (!piece || piece.player !== defeatedId) continue;
+			if (piece.type === 'KING') continue;
+
+			if (piece.type === 'PAWN') {
+				suicidalPawns.push(piece);
+			} else {
+				piece.player = captorId;
+				piece.color = captor.color;
+
+				// Update cell entry ownership
+				const key = `${piece.position.x},${piece.position.z}`;
+				const cell = game.board.cells[key];
+				if (Array.isArray(cell)) {
+					const entry = cell.find(
+						it => it && it.type === 'chess' && String(it.player) === String(defeatedId)
+					);
+					if (entry) {
+						entry.player = captorId;
+						entry.color = captor.color;
+					}
+				}
+				log(`Transferred ${piece.type} at (${piece.position.x}, ${piece.position.z}) to ${captorId}`);
+			}
+		}
+
+		// ── 2. Suicidal pawns — schedule detonation ─────────────────────────
+		const detonateAt = Date.now() + GAME_RULES.SUICIDAL_PAWN_DELAY_MS;
+		for (let i = 0; i < suicidalPawns.length; i++) {
+			suicidalPawns[i]._suicidalDetonateAt =
+				detonateAt + i * GAME_RULES.SUICIDAL_PAWN_INTERVAL_MS;
+			suicidalPawns[i]._suicidal = true;
+		}
+
+		if (suicidalPawns.length > 0) {
+			const totalTime =
+				GAME_RULES.SUICIDAL_PAWN_DELAY_MS +
+				suicidalPawns.length * GAME_RULES.SUICIDAL_PAWN_INTERVAL_MS;
+
+			log(`${suicidalPawns.length} suicidal pawns will detonate over ${totalTime} ms`);
+
+			this._scheduleSuicidalPawns(game, suicidalPawns, captorId, defeatedId);
+		} else {
+			this._finaliseKingCapture(game, defeatedId, captorId);
+		}
+	}
+
+	/**
+	 * Tick through suicidal pawns one at a time, destroying cells.
+	 * @private
+	 */
+	_scheduleSuicidalPawns(game, pawns, captorId, defeatedId) {
+		let idx = 0;
+
+		const detonateNext = () => {
+			if (idx >= pawns.length) {
+				this.islandManager.checkForIslandsAfterRowClear(game);
+				this._finaliseKingCapture(game, defeatedId, captorId);
+				return;
+			}
+
+			const pawn = pawns[idx];
+			idx++;
+
+			if (!pawn || !pawn.position) {
+				detonateNext();
+				return;
+			}
+
+			const px = pawn.position.x;
+			const pz = pawn.position.z;
+			log(`Suicidal pawn detonates at (${px}, ${pz})`);
+
+			// Remove the pawn from the game
+			const pawnIdx = game.chessPieces.indexOf(pawn);
+			if (pawnIdx !== -1) game.chessPieces.splice(pawnIdx, 1);
+
+			// Destroy the cell entirely
+			const key = `${px},${pz}`;
+			delete game.board.cells[key];
+
+			setTimeout(detonateNext, GAME_RULES.SUICIDAL_PAWN_INTERVAL_MS);
+		};
+
+		setTimeout(detonateNext, GAME_RULES.SUICIDAL_PAWN_DELAY_MS);
+	}
+
+	/**
+	 * Finalise king capture after suicidal pawns have detonated.
+	 * @private
+	 */
+	_finaliseKingCapture(game, defeatedId, captorId) {
+		const defeated = game.players[defeatedId];
+		const captor = game.players[captorId];
+
+		// ── 3. Transfer remaining territory to captor ────────────────────────
+		for (const key in game.board.cells) {
+			const cell = game.board.cells[key];
+			if (!Array.isArray(cell)) continue;
+			for (const item of cell) {
+				if (item && String(item.player) === String(defeatedId)) {
+					item.player = captorId;
+					item.color = captor ? captor.color : item.color;
+				}
+			}
+		}
+
+		// ── 4. King goes to prison ──────────────────────────────────────────
+		if (!game.state) game.state = {};
+		if (!game.state.kingPrison) game.state.kingPrison = [];
+		game.state.kingPrison.push({
+			playerId: defeatedId,
+			capturedBy: captorId,
+			capturedAt: Date.now(),
+		});
+
+		// ── 5. Track captured styles ────────────────────────────────────────
+		if (!captor.capturedStyles) captor.capturedStyles = [];
+		captor.capturedStyles.push({
+			playerId: defeatedId,
+			color: defeated ? defeated.color : null,
+		});
+
+		// ── 6. Eliminate the defeated player ─────────────────────────────────
+		if (defeated) {
+			defeated.eliminated = true;
+			defeated.eliminatedAt = Date.now();
+		}
+
 		// Check if only one player remains
 		const remainingPlayers = Object.values(game.players)
 			.filter(p => !p.eliminated && !p.isObserver);
-		
+
 		if (remainingPlayers.length === 1) {
-			// Game over, declare the remaining player as the winner
 			game.status = 'completed';
 			game.winnerId = remainingPlayers[0].id;
 			game.completedAt = Date.now();
 			log(`Game over! Player ${game.winnerId} wins!`);
 		}
+
+		log(`King capture finalised: ${captorId} defeated ${defeatedId}`);
 	}
 	
 	/**
-	 * Check for pawn promotion
+	 * Update the pawn's net forward distance from its start position.
+	 * @private
+	 */
+	_updatePawnForwardDistance(piece, fromX, fromZ, toX, toZ) {
+		const orientation = Number.isFinite(piece.orientation) ? piece.orientation : 0;
+		let forwardDelta = 0;
+		switch (orientation) {
+			case 0: forwardDelta = toZ - fromZ; break;
+			case 1: forwardDelta = toX - fromX; break;
+			case 2: forwardDelta = fromZ - toZ; break;
+			case 3: forwardDelta = fromX - toX; break;
+		}
+		piece.forwardDistance = (piece.forwardDistance || 0) + forwardDelta;
+	}
+
+	/**
+	 * Check for pawn promotion — triggers after 9 squares forward
+	 * from starting position (net forward distance, not total moves).
 	 * @param {Object} game - The game object
 	 * @param {Object} piece - The chess piece (pawn)
 	 * @private
@@ -854,7 +1022,7 @@ class ChessManager {
 	_checkPawnPromotion(game, piece) {
 		if (piece.type !== 'PAWN') return null;
 
-		const distance = piece.moveCount || 0;
+		const distance = piece.forwardDistance || 0;
 		if (distance < GAME_RULES.PAWN_PROMOTION_DISTANCE) return null;
 
 		return { pieceId: piece.id, playerId: piece.player };

@@ -481,15 +481,6 @@ function createBoardCells(gameState, boardGroup, createFloatingIsland, THREE) {
 						}
 					}
 				}
-			} else if (false) { // Cloud planes removed — caused white haze
-				const cloudSize = 0.5;
-				const cloudGeometry = new THREE.PlaneGeometry(cloudSize, cloudSize);
-				const cloud = new THREE.Mesh(cloudGeometry, cloudMaterial);
-				cloud.rotation.x = -Math.PI / 2; // Flat orientation
-				
-				// Add to board group
-				boardGroup.add(cloud);
-				cloudCount++;
 			}
 		}
 	}
@@ -825,11 +816,8 @@ function findPlayerKingPosition(gameState) {
 	
 	// Check if we have chess pieces
 	if (!gameState.chessPieces || !Array.isArray(gameState.chessPieces)) {
-		console.log("No chess pieces found in game state, using default position for player " + currentPlayer);
-		return getDefaultPlayerPosition(gameState, currentPlayer);
+		return null;
 	}
-	
-	console.log(`Looking for ${currentPlayer}'s king among ${gameState.chessPieces.length} pieces`);
 	
 	// Find the king for the current player
 	for (const piece of gameState.chessPieces) {
@@ -854,8 +842,7 @@ function findPlayerKingPosition(gameState) {
 		}
 	}
 	
-	console.log(`No king found for player ${currentPlayer}, using default position`);
-	return getDefaultPlayerPosition(gameState, currentPlayer);
+	return null;
 }
 
 

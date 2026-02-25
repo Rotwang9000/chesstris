@@ -44,6 +44,7 @@ let controls = null;
 let gridHelperObj = null;
 
 // Performance tracking
+let _targetFPS = 60;
 let animationFrameId = null;
 let lastFrameTime = 0;
 let framesThisSecond = 0;
@@ -123,24 +124,21 @@ export function startRenderLoop() {
 		return false;
 	}
 	
-	// Set up animation frame
+	if (isRenderLoopRunning) return true;
+	isRenderLoopRunning = true;
+
 	const animate = () => {
-		// Request next frame
-		requestAnimationFrame(animate);
-		
-		// Update controls if available
+		if (!isRenderLoopRunning) return;
+		animationFrameId = requestAnimationFrame(animate);
+
 		if (_controls) {
 			_controls.update();
 		}
-		
-		// Render scene
+
 		_renderer.render(_scene, _camera);
 	};
-	
-	// Start animation
-	animate();
-	
-	console.log('Render loop started');
+
+	animationFrameId = requestAnimationFrame(animate);
 	return true;
 }
 

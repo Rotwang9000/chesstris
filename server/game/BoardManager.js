@@ -444,9 +444,6 @@ class BoardManager {
 		}
 		
 		log(`Cleared row ${rowIndex}`);
-		
-		// Check if there are any chess pieces that need to be adjusted
-		this._makePiecesFallTowardsKing(game, [rowIndex]);
 	}
 	
 	/**

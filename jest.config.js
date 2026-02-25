@@ -90,6 +90,13 @@ module.exports = {
 			testEnvironment: 'node'
 		},
 		{
+			displayName: 'server',
+			testMatch: [
+				'<rootDir>/tests/server/**/*.test.js'
+			],
+			testEnvironment: 'node'
+		},
+		{
 			displayName: 'default',
 			testMatch: [
 				'<rootDir>/tests/gameplay/**/*.test.js',

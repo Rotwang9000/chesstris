@@ -117,8 +117,6 @@ class IslandManager {
 		const islands = [];
 		
 		for (const key in game.board.cells) {
-			if (visited.has(key)) continue;
-			
 			const cellContents = game.board.cells[key];
 			if (!cellContents || !Array.isArray(cellContents) || cellContents.length === 0) continue;
 			
@@ -164,7 +162,6 @@ class IslandManager {
 		
 		const visitKey = (x, z) => `${x},${z}:${playerId}`;
 		visited.add(visitKey(startX, startZ));
-		visited.add(startKey);
 		
 		const isOwnedCell = (x, z) => {
 			const cellContents = game.board.cells[`${x},${z}`];
@@ -201,7 +198,6 @@ class IslandManager {
 				
 				if (isOwnedCell(cell.x, cell.z)) {
 					visited.add(vk);
-					visited.add(`${cell.x},${cell.z}`);
 					cells.push({ x: cell.x, z: cell.z });
 					queue.push(cell);
 					

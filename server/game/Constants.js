@@ -50,14 +50,14 @@ const DIFFICULTY_SETTINGS = {
 };
 
 // Piece prices in SOL
-const PIECE_PRICES = {
+const PIECE_PRICES = Object.freeze({
 	PAWN: 0.1,
 	ROOK: 0.5,
 	KNIGHT: 0.5,
 	BISHOP: 0.5,
-	QUEEN: 1.0
+	QUEEN: 1.0,
 	// Kings cannot be purchased
-};
+});
 
 // Tetromino shapes
 const TETROMINO_SHAPES = {
@@ -122,17 +122,18 @@ const CHESS_PIECE_POSITIONS = {
 };
 
 // Game rules
-const GAME_RULES = {
+const GAME_RULES = Object.freeze({
 	REQUIRED_CELLS_FOR_ROW_CLEARING: 8,
 	PAWN_PROMOTION_DISTANCE: 9,
+	AUTO_QUEEN_TIMEOUT_MS: 15000,
 	SUICIDAL_PAWN_DELAY_MS: 3000,
-	KING_CAPTURE_GRACE_MOVES: 1,
+	SUICIDAL_PAWN_INTERVAL_MS: 500,
 	SIMULTANEOUS_CAPTURE_WINDOW_MS: 1000,
 	KING_DUEL_TIMEOUT_MS: 10000,
 	KING_DUEL_GRID_COLS: 4,
 	KING_DUEL_GRID_ROWS: 2,
-	KING_DUEL_MAX_ROUNDS: 5
-};
+	KING_DUEL_MAX_ROUNDS: 5,
+});
 
 // Export all constants
 module.exports = {
