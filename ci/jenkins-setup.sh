@@ -88,7 +88,45 @@ else
 	echo "Cron entries already exist"
 fi
 
-# ── 6. Get the initial admin password ────────────────────────────────────────
+# ── 6. Install required plugins and create pipeline job ──────────────────────
+
+echo "--- Installing Jenkins plugins ---"
+
+# Install plugins using jenkins-plugin-cli inside the container
+docker exec shaktris-jenkins bash -c '
+	jenkins-plugin-cli --plugins \
+		git \
+		workflow-aggregator \
+		workflow-multibranch \
+		github \
+		github-branch-source \
+		pipeline-stage-view \
+		2>/dev/null || echo "Plugin CLI not available — will install via UI"
+' 2>/dev/null
+
+echo "--- Copying pipeline init script ---"
+docker exec shaktris-jenkins mkdir -p /var/jenkins_home/init.groovy.d
+docker cp "${REPO_DIR}/ci/create-pipeline-job.groovy" \
+	shaktris-jenkins:/var/jenkins_home/init.groovy.d/create-pipeline-job.groovy
+
+echo "--- Restarting Jenkins to apply plugins and create pipeline ---"
+docker restart shaktris-jenkins
+
+# Wait for Jenkins to come back up
+echo "Waiting for Jenkins to restart..."
+for i in $(seq 1 60); do
+	HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8090 2>/dev/null || echo "000")
+	if [ "$HTTP_CODE" = "403" ] || [ "$HTTP_CODE" = "200" ]; then
+		echo ""
+		echo "Jenkins is back up!"
+		break
+	fi
+	sleep 2
+	echo -n "."
+done
+echo ""
+
+# ── 7. Get the initial admin password ────────────────────────────────────────
 
 echo ""
 echo "=============================================="

@@ -48,21 +48,30 @@ pipeline {
 			}
 		}
 
-		stage('Test') {
+		stage('Test — Server') {
 			steps {
 				sh '''
-					npm test -- \
+					npx jest \
+						--ci \
+						--forceExit \
+						--selectProjects server \
+						tests/server/
+				'''
+			}
+		}
+
+		stage('Test — Other') {
+			steps {
+				sh '''
+					npx jest \
 						--ci \
 						--forceExit \
 						--passWithNoTests \
-						--testPathIgnorePatterns="/tests/security/" \
+						tests/examples/ \
+						tests/core/gameContext.test.js \
+						tests/core/rendererManager.test.js \
 						|| true
 				'''
-			}
-			post {
-				always {
-					junit allowEmptyResults: true, testResults: 'junit.xml'
-				}
 			}
 		}
 

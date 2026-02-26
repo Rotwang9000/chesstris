@@ -41,7 +41,7 @@ mkdir -p "${DEPLOY_DIR}/logs"
 
 # Sync files (exclude dev-only artefacts)
 echo "--- Syncing files ---"
-rsync -a --delete \
+rsync -a --delete --no-group --no-owner --chmod=ugo=rwX \
 	--exclude='node_modules' \
 	--exclude='.git' \
 	--exclude='.env' \
