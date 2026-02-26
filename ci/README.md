@@ -24,7 +24,9 @@
 ### How deployment works
 
 1. Jenkins (in Docker) runs tests, then rsyncs files to a **mounted volume**
-   (`/var/www/shaktris.staging` or `/var/www/shaktris.live`)
+   (`/var/www/shaktris.staging` or `/var/www/shaktris.live`) using
+   `--no-times --omit-dir-times --no-perms --no-owner --no-group` to avoid
+   Docker-volume permission failures when syncing metadata
 2. Jenkins writes a **trigger file** to `/var/www/.deploy-triggers/`
 3. A **cron job** on the host (every 30s) picks up the trigger and restarts
    the corresponding PM2 process
@@ -52,7 +54,8 @@ This will:
 | Checkout | Every push | Pulls the code |
 | Install | Every push | `npm ci` |
 | Lint Check | Every push | Syntax-checks key ES modules |
-| Test | Every push | `npm test` (Jest, CI mode) |
+| Test — Server | Every push | `npx jest --selectProjects server tests/server/` (must pass) |
+| Test — Other | Every push | Runs stable non-server tests; non-blocking |
 | Deploy Staging | Develop branch | Syncs to `/var/www/shaktris.staging`, triggers PM2 restart |
 | Deploy Production | main branch | Manual approval, then deploys to `/var/www/shaktris.live` |
 
