@@ -30,6 +30,13 @@ else
 	echo "PM2 already installed: $(pm2 --version)"
 fi
 
+PM2_BIN_PATH="$(command -v pm2 || true)"
+if [ -n "$PM2_BIN_PATH" ]; then
+	echo "PM2 path: ${PM2_BIN_PATH}"
+else
+	echo "WARNING: PM2 binary not found in PATH for this user"
+fi
+
 # ── 3. Create deployment directories ────────────────────────────────────────
 
 echo ""
@@ -76,11 +83,15 @@ chmod +x "$WATCHER_SCRIPT"
 
 # Add cron entries (every 30 seconds) if not already present
 CRON_MARKER="# shaktris-deploy-watcher"
+CRON_PM2_PREFIX=""
+if [ -n "$PM2_BIN_PATH" ]; then
+	CRON_PM2_PREFIX="PM2_BIN=${PM2_BIN_PATH} "
+fi
 if ! crontab -l 2>/dev/null | grep -q "$CRON_MARKER"; then
 	(crontab -l 2>/dev/null || true; cat <<CRON
 $CRON_MARKER
-* * * * * $WATCHER_SCRIPT >> /var/log/shaktris-deploy.log 2>&1
-* * * * * sleep 30 && $WATCHER_SCRIPT >> /var/log/shaktris-deploy.log 2>&1
+* * * * * ${CRON_PM2_PREFIX}$WATCHER_SCRIPT >> /var/log/shaktris-deploy.log 2>&1
+* * * * * sleep 30 && ${CRON_PM2_PREFIX}$WATCHER_SCRIPT >> /var/log/shaktris-deploy.log 2>&1
 CRON
 ) | crontab -
 	echo "Cron entries added (30-second polling)"

@@ -154,4 +154,42 @@ describe('BoardManager', () => {
 			expect(boardManager.getCell(game.board, 5, 7)).toBeNull();
 		});
 	});
+	
+	describe('isCellInSafeHomeZone', () => {
+		test('returns false when home-zone bounds exist but the cell has no active home marker', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+			createHomeZone(game, boardManager, 'p1', 4, 5, 0);
+			
+			game.chessPieces.push({
+				id: 'p1-KING', type: 'KING', player: 'p1',
+				position: { x: 8, z: 5 }, hasMoved: false,
+			});
+			boardManager.addToCellContents(game.board, 8, 5, {
+				type: 'chess', player: 'p1', pieceId: 'p1-KING', pieceType: 'king',
+			});
+			
+			// Replace one home cell with normal terrain only.
+			boardManager.setCell(game.board, 4, 5, [{ type: 'tetromino', player: 'p1' }]);
+			
+			expect(boardManager.isCellInSafeHomeZone(game, 4, 5)).toBe(false);
+		});
+		
+		test('returns false for degraded home zones even if home markers remain', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+			createHomeZone(game, boardManager, 'p1', 4, 5, 0);
+			game.homeZones.p1.isDegraded = true;
+			
+			game.chessPieces.push({
+				id: 'p1-KING', type: 'KING', player: 'p1',
+				position: { x: 8, z: 5 }, hasMoved: false,
+			});
+			boardManager.addToCellContents(game.board, 8, 5, {
+				type: 'chess', player: 'p1', pieceId: 'p1-KING', pieceType: 'king',
+			});
+			
+			expect(boardManager.isCellInSafeHomeZone(game, 4, 5)).toBe(false);
+		});
+	});
 });

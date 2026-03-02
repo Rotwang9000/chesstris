@@ -27,9 +27,10 @@
    (`/var/www/shaktris.staging` or `/var/www/shaktris.live`) using
    `--no-times --omit-dir-times --no-perms --no-owner --no-group` to avoid
    Docker-volume permission failures when syncing metadata
-2. Jenkins writes a **trigger file** to `/var/www/.deploy-triggers/`
+2. When running inside Docker, deploy writes a **trigger file** to
+   `/var/www/.deploy-triggers/` instead of trying to run PM2 in-container
 3. A **cron job** on the host (every 30s) picks up the trigger and restarts
-   the corresponding PM2 process
+   the corresponding PM2 process (using detected or configured `PM2_BIN`)
 4. PM2 manages the Node.js server on the correct port
 
 ## Quick Start
@@ -71,6 +72,37 @@ This will:
 ```bash
 bash scripts/deploy.sh staging
 bash scripts/deploy.sh production
+```
+
+## Deployment Troubleshooting
+
+```bash
+# Trigger watcher manually on the host
+/opt/shaktris/deploy-watcher.sh
+
+# Check watcher output
+tail -n 100 /var/log/shaktris-deploy.log
+
+# Verify the app is listening
+ss -ltnp | grep ':3661\|:3666'
+```
+
+## Nginx Configuration
+
+The game requires correct nginx config to work behind a reverse proxy. Key points:
+- `/socket.io/` must use `^~` prefix to override the static-file regex
+- `/api/` must also be proxied to Node.js
+- Static file regex should use `try_files $uri @backend` as a fallback
+
+Updated configs are in the repo:
+- `ci/nginx-staging.conf` → copy to `/etc/nginx/sites-available/staging.shaktris.com.conf`
+- `ci/nginx-production.conf` → copy to `/etc/nginx/sites-available/shaktris.com.conf`
+
+```bash
+# As root:
+cp ci/nginx-staging.conf /etc/nginx/sites-available/staging.shaktris.com.conf
+cp ci/nginx-production.conf /etc/nginx/sites-available/shaktris.com.conf
+nginx -t && systemctl reload nginx
 ```
 
 ## PM2 Commands

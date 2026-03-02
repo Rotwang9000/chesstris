@@ -9,7 +9,7 @@ import * as debugUtils from './utils/debugUtils.js';
 import * as NetworkManager from './utils/networkManager.js';
 import * as NetworkStatusManager from './utils/networkStatusManager.js';
 import { createNetworkStatusDisplay } from './createNetworkStatusDisplay.js';
-import { createUnifiedPlayerBar, updateUnifiedPlayerBar } from './unifiedPlayerBar.js';
+import { createUnifiedPlayerBar, updateUnifiedPlayerBar, showPlayerBar } from './unifiedPlayerBar.js';
 import './boardFunctions.js'; // Import the updated board functions
 import gameState from './utils/gameState.js';
 import * as tetrominoModule from './tetromino.js'; // Import tetromino module for socket events
@@ -106,6 +106,12 @@ function setupRenderModeToggle(profile) {
 		// Apply CRT overlay for retro mode
 		applyCrtOverlay(next === 'retro');
 
+		// Force chess piece rebuild — retro uses letter sprites while other
+		// modes use 3D geometry, so existing meshes must be replaced.
+		if (gs && typeof gameCore.forceChessPieceRebuild === 'function') {
+			gameCore.forceChessPieceRebuild();
+		}
+
 		console.log('Switched render mode to', next, 'without page reload');
 	});
 }
@@ -125,6 +131,29 @@ function applyCrtOverlay(enabled) {
 	} else if (overlay) {
 		overlay.style.display = 'none';
 	}
+}
+
+function openPlayerCodePanel() {
+	showPlayerBar();
+	const playerCodeInput = document.getElementById('sidebar-player-code-display');
+	if (playerCodeInput) {
+		playerCodeInput.focus();
+		playerCodeInput.select();
+		playerCodeInput.setSelectionRange(0, 99999);
+	}
+}
+
+function wireSessionWarningLink() {
+	const warningEl = document.getElementById('session-warning');
+	if (!warningEl || warningEl.dataset.wired === '1') return;
+	warningEl.dataset.wired = '1';
+	warningEl.addEventListener('click', openPlayerCodePanel);
+	warningEl.addEventListener('keydown', (event) => {
+		if (event.key === 'Enter' || event.key === ' ') {
+			event.preventDefault();
+			openPlayerCodePanel();
+		}
+	});
 }
 
 // Main initialization
@@ -226,6 +255,7 @@ async function init() {
 		hideError();
 		// Create player bar
 		createUnifiedPlayerBar(initialState);
+		wireSessionWarningLink();
 		
 		// Join or create a game - this will handle the loading screen
 		joinGame();
@@ -380,7 +410,7 @@ async function joinGame(gameId = null) {
 		}
 
 		// Show connecting message
-		showToastNotification('Connecting to game server...');
+		showToastNotification('Connecting to world server...');
 
 		// Initialize network connection with progressive retry
 		let connected = false;
@@ -492,8 +522,8 @@ async function joinGame(gameId = null) {
 
 		return joinGameAfterConnection(gameId);
 	} catch (error) {
-		console.error('Error joining game:', error);
-		showError('An error occurred while joining the game. Please try again.');
+		console.error('Error joining world:', error);
+		showError('An error occurred while entering the world. Please try again.');
 		
 		// Hide loading screen even if there's an error
 		document.getElementById('loading').style.display = 'none';
@@ -533,8 +563,8 @@ async function joinGameAfterConnection(gameId = null) {
 				console.log('Local player ID set to:', gameState.localPlayerId);
 			}
 			
-			// Update window title with game ID
-			document.title = `Shaktris - Game ${currentGameId}`;
+			// Update window title with world ID
+			document.title = `Shaktris - World ${currentGameId}`;
 			
 			// Show in URL but don't reload page
 			const url = new URL(window.location);
@@ -572,8 +602,8 @@ async function joinGameAfterConnection(gameId = null) {
 			throw new Error('Failed to join game');
 		}
 	} catch (error) {
-		console.error('Error joining game after connection:', error);
-		showError(`Failed to join game: ${error.message || 'Unknown error'}`);
+		console.error('Error entering world after connection:', error);
+		showError(`Failed to enter world: ${error.message || 'Unknown error'}`);
 	}
 }
 
@@ -639,16 +669,28 @@ function setupPlayerListUpdates() {
 			if (typeof NetworkManager.onMessage === 'function') {
 				NetworkManager.onMessage('player_list', (data) => {
 					if (data && data.players) {
+						const normalisedPlayers = Array.isArray(data.players)
+							? data.players.reduce((acc, playerEntry) => {
+								if (!playerEntry || !playerEntry.id) return acc;
+								acc[playerEntry.id] = {
+									id: playerEntry.id,
+									name: playerEntry.name || playerEntry.id,
+									isComputer: !!playerEntry.isComputer
+								};
+								return acc;
+							}, {})
+							: (typeof data.players === 'object' ? data.players : {});
+						
 						// Update the game state with players
 						if (gameState) {
-							gameState.players = Object.assign({}, gameState.players || {}, data.players);
+							gameState.players = Object.assign({}, gameState.players || {}, normalisedPlayers);
 							
 							// Update the unified player bar with the updated game state
 							updateUnifiedPlayerBar(gameState);
 						} else {
 							// If no game state yet, create a minimal one for the player bar
 							const minimalState = {
-								players: data.players,
+								players: normalisedPlayers,
 								localPlayerId: NetworkManager.getPlayerId?.() || null
 							};
 							updateUnifiedPlayerBar(minimalState);

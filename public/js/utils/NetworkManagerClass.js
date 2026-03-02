@@ -2,7 +2,13 @@
  * NetworkManager Class
  * Handles all network communication in the game.
  */
-import io from '/node_modules/socket.io-client/dist/socket.io.esm.min.js';
+// socket.io-client is loaded globally by the CDN <script> in index.html.
+// Using the global avoids fragile /node_modules/ imports that break behind nginx.
+function getSocketIO() {
+	if (typeof window !== 'undefined' && window.io) return window.io;
+	throw new Error('Socket.IO client not loaded — check CDN script tag in index.html');
+}
+const io = getSocketIO();
 
 // Configuration Constants
 const CONNECTION_TIMEOUT_MS = 10000; // 10 seconds
@@ -234,6 +240,18 @@ export default class NetworkManager {
 			socket.on('suicidal_pawn', (data) => {
 				this.emitEvent('suicidal_pawn', data);
 			});
+			
+			socket.on('pawn_detonation', (data) => {
+				this.emitEvent('pawn_detonation', data);
+			});
+			
+			socket.on('king_detonation', (data) => {
+				this.emitEvent('king_detonation', data);
+			});
+			
+			socket.on('island_decay', (data) => {
+				this.emitEvent('island_decay', data);
+			});
 
 			socket.on('simultaneous_capture_resolved', (data) => {
 				this.emitEvent('simultaneous_capture_resolved', data);
@@ -263,39 +281,31 @@ export default class NetworkManager {
 					this.emitEvent('chessFailed', data);
 				});
 				
-				// Set up initial event handlers
+				socket.on('game_state', (data) => {
+					this.state.gameState = (data && data.state) ? data.state : data;
+					this.emitEvent('game_state', data);
+				});
+
+				socket.on('game_update', (data) => {
+					const incomingState = (data && data.state) ? data.state : data;
+					if (this.state.gameState) {
+						this.state.gameState = { ...this.state.gameState, ...incomingState };
+					} else {
+						this.state.gameState = incomingState;
+					}
+					this.emitEvent('game_update', incomingState);
+				});
+
 				socket.on('connect', () => {
 					console.log('NetworkManager: Connected to server');
 					this.state.socket = socket;
 					this.state.playerName = playerName;
 					this.state.isInitializing = false;
-					this.state.reconnectAttempts = 0; // Reset counter on successful connection
+					this.state.reconnectAttempts = 0;
 					this.state.connectionStatus = 'connected';
-					
-					// Emit connect event to listeners
+
 					this.emitEvent('connect', { connected: true, playerName: this.state.playerName, playerId: this.state.playerId || socket.id });
-					
-					// Set up game state event handlers
-					socket.on('game_state', (data) => {
-						console.log('NetworkManager: Received game_state event:', data);
-						// Store state for internal access (prefer the actual state object)
-						this.state.gameState = (data && data.state) ? data.state : data;
-						// Emit the full payload so listeners can access players, timestamps, etc.
-						this.emitEvent('game_state', data);
-					});
-					
-					socket.on('game_update', (data) => {
-						console.log('NetworkManager: Received game_update event:', data);
-						const incomingState = (data && data.state) ? data.state : data;
-						// Update our cached game state with new data if possible
-						if (this.state.gameState) {
-							this.state.gameState = { ...this.state.gameState, ...incomingState };
-						} else {
-							this.state.gameState = incomingState;
-						}
-						this.emitEvent('game_update', incomingState);
-					});
-					
+
 					resolve(true);
 				});
 				
@@ -881,6 +891,16 @@ export default class NetworkManager {
 		}
 	}
 
+	async detonatePawn(pieceId) {
+		if (!this.isConnected()) {
+			return Promise.reject(new Error('Not connected'));
+		}
+		if (!this.state.gameId) {
+			return Promise.reject(new Error('Not in a game'));
+		}
+		return this.sendMessage('detonate_pawn', { pieceId });
+	}
+
 	/**
 	 * Get the current game state
 	 * @param {Object} options - Options for the request
@@ -1196,11 +1216,29 @@ export default class NetworkManager {
 	 */
 	handleSocketDisconnect(reason) {
 		console.warn('NetworkManager: Disconnected from server:', reason);
-		
+
 		this.state.connectionStatus = 'disconnected';
-		
-		// Emit disconnect event
+
 		this.emitEvent('disconnect', { reason });
+
+		if (reason === 'io client disconnect') return;
+
+		const MAX_RECONNECT = 8;
+		const BASE_DELAY_MS = 2000;
+		const attempt = (this.state.reconnectAttempts || 0) + 1;
+		if (attempt > MAX_RECONNECT) {
+			console.warn('NetworkManager: Max reconnection attempts reached');
+			return;
+		}
+		this.state.reconnectAttempts = attempt;
+		const delay = Math.min(BASE_DELAY_MS * Math.pow(1.5, attempt - 1), 30000);
+		console.log(`NetworkManager: Reconnecting in ${Math.round(delay)}ms (attempt ${attempt}/${MAX_RECONNECT})`);
+		setTimeout(() => {
+			if (this.state.connectionStatus === 'connected') return;
+			this.ensureConnected(this.state.playerName).catch(err => {
+				console.warn('NetworkManager: Reconnection attempt failed:', err);
+			});
+		}, delay);
 	}
 
 	/**

@@ -334,16 +334,12 @@ class ChessManager {
 	 * @private
 	 */
 	_hasAdjacentCell(game, x, z, playerId) {
-		// Check all adjacent cells (including diagonals)
+		// Orthogonal only — must match island/tetromino adjacency rules
 		const directions = [
 			{ x: 0, z: -1 },  // North
-			{ x: 1, z: -1 },  // Northeast
 			{ x: 1, z: 0 },   // East
-			{ x: 1, z: 1 },   // Southeast
 			{ x: 0, z: 1 },   // South
-			{ x: -1, z: 1 },  // Southwest
 			{ x: -1, z: 0 },  // West
-			{ x: -1, z: -1 }  // Northwest
 		];
 		
 		for (const dir of directions) {
@@ -765,6 +761,12 @@ class ChessManager {
 				}
 			}
 			
+			// ── Cell ownership transfer ──────────────────────────────────────
+			// Landing on an enemy cell claims its non-home content for the
+			// mover. Home markers are intrinsic to the original owner and
+			// are never transferred.
+			this._transferCellOwnership(game, toX, toZ, playerId);
+
 			// Append the chess-piece marker to the destination cell without
 			// destroying existing tetromino / home content.
 			this.boardManager.addToCellContents(game.board, toX, toZ, {
@@ -831,6 +833,42 @@ class ChessManager {
 		}
 	}
 	
+	/**
+	 * Transfer cell content ownership when a chess piece lands on an enemy cell.
+	 * Home markers are never transferred (they belong to the zone owner).
+	 * After transfer, island detection runs for each affected former owner.
+	 *
+	 * @param {Object} game - The game object
+	 * @param {number} x - Target cell X
+	 * @param {number} z - Target cell Z
+	 * @param {string} newOwner - The player claiming the cell
+	 * @private
+	 */
+	_transferCellOwnership(game, x, z, newOwner) {
+		const key = `${x},${z}`;
+		const cell = game.board.cells[key];
+		if (!Array.isArray(cell)) return;
+
+		const affectedOwners = new Set();
+		const playerColor = game.players[newOwner]?.color;
+
+		for (const item of cell) {
+			if (!item || !item.player) continue;
+			if (String(item.player) === String(newOwner)) continue;
+			if (item.type === 'home') continue;
+
+			affectedOwners.add(String(item.player));
+			item.player = newOwner;
+			if (playerColor !== undefined) {
+				item.color = playerColor;
+			}
+		}
+
+		for (const prevOwner of affectedOwners) {
+			log(`Cell (${x},${z}) ownership transferred from ${prevOwner} to ${newOwner}`);
+		}
+	}
+
 	/**
 	 * Handle king capture — per the bible:
 	 * 1. Non-pawn pieces transfer to the captor.
@@ -1056,6 +1094,154 @@ class ChessManager {
 		log(`Pawn ${pieceId} promoted to ${promotionPiece} at (${piece.position.x}, ${piece.position.z})`);
 		return { success: true, pieceType: promotionPiece, piece };
 	}
+
+	/**
+	 * Voluntarily detonate one of the player's own pieces.
+	 * - Pawn: always destroys the detonated coordinate entirely.
+	 * - King: allowed only if it is the player's final remaining piece; this
+	 *   triggers a full self-destruct of all that player's territory.
+	 *
+	 * @param {Object} game - The game object
+	 * @param {string} playerId - The player requesting detonation
+	 * @param {string} pieceId - Piece to detonate
+	 * @returns {Object} Result with success flag and payload
+	 */
+	detonatePawn(game, playerId, pieceId) {
+		if (!game || !game.board || !game.board.cells || !Array.isArray(game.chessPieces)) {
+			return { success: false, error: 'Invalid game state' };
+		}
+		
+		const pieceIdx = game.chessPieces.findIndex(
+			p => p && p.id === pieceId && p.player === playerId
+		);
+		if (pieceIdx === -1) {
+			return { success: false, error: 'Piece not found or not yours' };
+		}
+		
+		const piece = game.chessPieces[pieceIdx];
+		const pieceType = String(piece.type || '').toUpperCase();
+		const piecePos = piece.position || piece;
+		if (!piecePos || !Number.isFinite(piecePos.x) || !Number.isFinite(piecePos.z)) {
+			return { success: false, error: 'Invalid piece position' };
+		}
+		const px = piecePos.x;
+		const pz = piecePos.z;
+		
+		if (pieceType === 'KING') {
+			const ownPieces = game.chessPieces.filter(
+				p => p && String(p.player) === String(playerId)
+			);
+			if (ownPieces.length > 1) {
+				return { success: false, error: 'King can only be detonated when it is your last piece' };
+			}
+			
+			const ownedCells = [];
+			const ownedCellSet = new Set();
+			for (const [key, contents] of Object.entries(game.board.cells)) {
+				if (!Array.isArray(contents) || contents.length === 0) continue;
+				const hasOwnedContent = contents.some(
+					item => item && String(item.player) === String(playerId)
+				);
+				if (!hasOwnedContent) continue;
+				const [x, z] = key.split(',').map(Number);
+				const cell = { x, z };
+				ownedCells.push(cell);
+				ownedCellSet.add(`${x},${z}`);
+			}
+			
+			// Compute orthogonal path length layers from the king through owned cells.
+			const distanceMap = new Map();
+			if (ownedCellSet.has(`${px},${pz}`)) {
+				const queue = [{ x: px, z: pz, d: 0 }];
+				distanceMap.set(`${px},${pz}`, 0);
+				
+				while (queue.length > 0) {
+					const current = queue.shift();
+					const adjacent = [
+						{ x: current.x - 1, z: current.z },
+						{ x: current.x + 1, z: current.z },
+						{ x: current.x, z: current.z - 1 },
+						{ x: current.x, z: current.z + 1 },
+					];
+					
+					for (const next of adjacent) {
+						const key = `${next.x},${next.z}`;
+						if (!ownedCellSet.has(key)) continue;
+						if (distanceMap.has(key)) continue;
+						const nextDistance = current.d + 1;
+						distanceMap.set(key, nextDistance);
+						queue.push({ x: next.x, z: next.z, d: nextDistance });
+					}
+				}
+			}
+			
+			let maxDistance = 0;
+			for (const d of distanceMap.values()) {
+				if (d > maxDistance) maxDistance = d;
+			}
+			
+			const explosionSequence = ownedCells.map(cell => {
+				const key = `${cell.x},${cell.z}`;
+				if (distanceMap.has(key)) {
+					return { ...cell, distance: distanceMap.get(key) };
+				}
+				
+				// Fallback for stale/disconnected remnants: still explode first.
+				const manhattan = Math.abs(cell.x - px) + Math.abs(cell.z - pz);
+				return { ...cell, distance: maxDistance + 1 + manhattan };
+			}).sort((a, b) => {
+				if (a.distance !== b.distance) return b.distance - a.distance;
+				if (a.x !== b.x) return a.x - b.x;
+				return a.z - b.z;
+			});
+			
+			for (const cell of explosionSequence) {
+				const key = `${cell.x},${cell.z}`;
+				const cellContents = game.board.cells[key];
+				if (!Array.isArray(cellContents) || cellContents.length === 0) continue;
+				
+				const remaining = cellContents.filter(
+					item => !(item && String(item.player) === String(playerId))
+				);
+				if (remaining.length > 0) {
+					game.board.cells[key] = remaining;
+				} else {
+					delete game.board.cells[key];
+				}
+			}
+			
+			game.chessPieces.splice(pieceIdx, 1);
+			this.boardManager.recalculateBoardBoundaries(game.board);
+			this.islandManager.checkForIslandsAfterRowClear(game);
+			
+			log(`Player ${playerId} detonated their final KING at (${px}, ${pz})`);
+			return {
+				success: true,
+				detonatedAt: { x: px, z: pz },
+				pieceType: 'KING',
+				endedGame: true,
+				layerIntervalMs: 500,
+				explosionSequence,
+			};
+		}
+		
+		if (pieceType !== 'PAWN') {
+			return { success: false, error: 'Only pawns can be detonated (except final king self-destruct)' };
+		}
+		
+		// Remove the pawn and destroy the cell entirely.
+		game.chessPieces.splice(pieceIdx, 1);
+		delete game.board.cells[`${px},${pz}`];
+		
+		log(`Player ${playerId} detonated pawn at (${px}, ${pz})`);
+		this.islandManager.checkForIslandsAfterRowClear(game);
+		
+		return {
+			success: true,
+			detonatedAt: { x: px, z: pz },
+			pieceType: 'PAWN',
+		};
+	}
 	
 	/**
 	 * Process a chess piece move from the client
@@ -1232,7 +1418,10 @@ class ChessManager {
 			if (!game || !game.board || !game.board.cells) return false;
 			
 			// Get all chess pieces for the player
-			const playerPieces = game.chessPieces.filter(piece => piece && piece.player === playerId);
+			const pid = String(playerId);
+			const playerPieces = game.chessPieces.filter(
+				piece => piece && String(piece.player) === pid
+			);
 			
 			// If the player has no pieces, they have no valid moves
 			if (!playerPieces.length) {

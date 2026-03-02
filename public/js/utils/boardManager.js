@@ -230,15 +230,12 @@ export function hasPathToKing(board, startX, startZ, playerId) {
 	// BFS to find path to king
 	const queue = [{ x: startX, z: startZ }];
 	const visited = new Set();
+	// Orthogonal only (matching server island rules — no diagonals)
 	const directions = [
-		{ dx: 1, dz: 0 },  // Right
-		{ dx: -1, dz: 0 }, // Left
-		{ dx: 0, dz: 1 },  // Down
-		{ dx: 0, dz: -1 }, // Up
-		{ dx: 1, dz: 1 },  // Bottom-right (diagonal)
-		{ dx: -1, dz: 1 }, // Bottom-left (diagonal)
-		{ dx: 1, dz: -1 }, // Top-right (diagonal)
-		{ dx: -1, dz: -1 } // Top-left (diagonal)
+		{ dx: 1, dz: 0 },
+		{ dx: -1, dz: 0 },
+		{ dx: 0, dz: 1 },
+		{ dx: 0, dz: -1 },
 	];
 	
 	// Mark start as visited

@@ -259,6 +259,50 @@ class GameManagerWrapper {
 	}
 	
 	/**
+	 * Handle voluntary piece detonation.
+	 * @param {string} gameId
+	 * @param {string} playerId
+	 * @param {Object} data - { pieceId }
+	 * @returns {Object} Result of the operation
+	 */
+	handlePawnDetonation(gameId, playerId, data) {
+		const game = this.gameManager.getGame(gameId);
+		if (!game) return { success: false, error: 'Game not found' };
+
+		const result = this.gameManager.chessManager.detonatePawn(
+			game, playerId, data.pieceId
+		);
+
+		if (result.success) {
+			const socket = this.playerSockets[playerId];
+			if (socket) {
+				socket.to(gameId).emit('pawn_detonation', {
+					playerId,
+					pieceId: data.pieceId,
+					detonatedAt: result.detonatedAt,
+					pieceType: result.pieceType || 'PAWN',
+					endedGame: !!result.endedGame,
+				});
+				if (result.endedGame) {
+					this.io.to(gameId).emit('king_detonation', {
+						playerId,
+						pieceId: data.pieceId,
+						detonatedAt: result.detonatedAt,
+						explosionSequence: Array.isArray(result.explosionSequence)
+							? result.explosionSequence
+							: [],
+						layerIntervalMs: Number(result.layerIntervalMs) > 0
+							? Number(result.layerIntervalMs)
+							: 500,
+					});
+				}
+			}
+		}
+
+		return result;
+	}
+
+	/**
 	 * Handle chess piece purchase
 	 * @param {string} gameId - The game ID
 	 * @param {string} playerId - The player's ID

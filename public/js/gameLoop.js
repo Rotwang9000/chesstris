@@ -174,24 +174,18 @@ function updateGameLogic(_deltaTime) {
 
 function validateSceneGraph(object) {
 	if (!object) return;
+	const gs = getGameState();
+	if (!gs?.debugMode) return;
 	try {
-		if (object.visible === undefined || object.visible === null) {
-			object.visible = true;
-		}
-		if (object.matrixAutoUpdate && object.matrix?.elements?.some(e => Number.isNaN(e))) {
-			object.updateMatrix();
-		}
 		if (object.children) {
-			const hasNullChildren = object.children.some(c => c === null || c === undefined);
-			if (hasNullChildren) {
-				object.children = object.children.filter(c => c !== null && c !== undefined);
-			}
-			for (const child of [...object.children]) {
-				if (child) validateSceneGraph(child);
+			for (let i = object.children.length - 1; i >= 0; i--) {
+				if (!object.children[i]) {
+					object.children.splice(i, 1);
+				}
 			}
 		}
 	} catch (err) {
-		console.error('Error validating object in scene graph:', err);
+		console.error('Error validating scene graph:', err);
 	}
 }
 

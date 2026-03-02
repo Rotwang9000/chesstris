@@ -55,12 +55,15 @@ Each player is assigned a home zone when they join.
 
 ### Home zone degradation
 
-If a home zone contains no pieces at all, it degrades over time:
+Home zones now degrade by converting to normal terrain (not by deleting cells):
 
-- **Interval**: every 2.5 minutes of inactivity
-  (`HOME_ZONE_DEGRADATION_INTERVAL = 150 000 ms`).
-- Each tick the zone width shrinks by 1. When width reaches 0 the zone is
-  removed entirely.
+- **Interval**: after sustained inactivity
+  (`HOME_ZONE_DEGRADATION_INTERVAL = 150 000 ms`, checked periodically).
+- Home markers are converted into normal owned terrain cells.
+- Occupied cells are preserved: pieces remain on-board; no timed auto-removal of
+  cells just because a piece is standing on them.
+- Once converted, those cells are no longer treated as protected "safe home
+  zone" cells for row-clearing rules.
 
 ---
 
@@ -71,18 +74,34 @@ persists across browser reloads. On reconnection the server matches the cookie
 to the existing player record and restores their game state. There is a
 **5-minute grace period** after disconnect before the player is removed.
 
+- **Terminology**:
+  - **World** = the single shared global board (current default mode).
+  - **Player Code** = your persistent player identity/session inside that world.
+- **Where to find Player Code**: open the **PLAYERS** panel and copy it from the
+  **Player Code** field.
+
 - **Exit**: a player may explicitly leave via an "Exit Game" button. This shows
   a warning: *"If you have not stored your player code, you will lose your
   game."* Confirming clears the session cookie.
 - **Rejoin**: if the cookie is still set, the player silently rejoins their
   previous game on page load.
 
+### World Persistence
+
+The global game world **survives server restarts**. The server saves a snapshot
+of the entire world (board cells, chess pieces, player data, AI state) to
+`data/world.json` every 30 seconds when state has changed and on graceful
+shutdown (SIGINT/SIGTERM). On startup the server restores from this file,
+re-registers AI opponents, and reconnects returning players via their cookies.
+A backup copy (`world.json.bak`) is kept for safety. A version-based migration
+framework allows rule changes to be applied to saved worlds automatically.
+
 ---
 
 ## 5. Game Start Flow
 
 1. The page loads with the camera in a **neutral overview position**.
-2. The player sees a start screen and clicks **"Start"**.
+2. The player sees a start screen and clicks **"Enter Shared World"**.
 3. Their home zone and chess pieces are added to the board.
 4. The camera **flies behind their pieces** (drone-style).
 5. Once the camera animation completes, the first tetromino piece appears and
@@ -97,8 +116,8 @@ strict turns, but the server enforces **cooldowns** to prevent spamming:
 
 | Action | Server cooldown |
 |--------|-----------------|
-| Chess move | 750 ms (`CHESS_MOVE_COOLDOWN_MS`) |
-| Tetromino placement | 1 500 ms (`TETROMINO_PLACEMENT_COOLDOWN_MS`) |
+| Chess move | 500 ms (`CHESS_MOVE_COOLDOWN_MS`) |
+| Tetromino placement | 800 ms (`TETROMINO_PLACEMENT_COOLDOWN_MS`) |
 
 ### Phase flow
 
@@ -106,8 +125,10 @@ After a player places a tetromino, the client transitions to **chess phase**.
 If the player has **no valid chess moves**, the client skips straight back to
 **tetromino phase** and a new piece appears.
 
-If a tetromino **explodes** (cannot be placed), the client transitions to
-**chess phase** if valid chess moves exist; otherwise a new tetromino is given.
+If a tetromino **misses adjacency/path checks**, it falls through and
+**dissolves**. If it collides with occupied cells, it still **explodes**.
+After failure, the client transitions to **chess phase** if valid chess moves
+exist; otherwise a new tetromino is given.
 
 ---
 
@@ -122,8 +143,9 @@ Seven standard shapes: **I, O, T, S, Z, J, L** - each with four rotations
 
 1. **No overlap** - every cell of the piece must land on an empty coordinate.
 
-2. **Adjacency** - at least one cell of the piece must be **adjacent**
-   (including diagonals) to an existing cell **owned by the same player**.
+2. **Adjacency** - at least one cell of the piece must be **orthogonally
+   adjacent** (up/down/left/right — **not** diagonals) to an existing cell
+   **owned by the same player**.
 
 3. **Connectivity to king** - for all placements after the first, the adjacent
    owned cell must have a **contiguous path** back to the player's king through
@@ -132,9 +154,15 @@ Seven standard shapes: **I, O, T, S, Z, J, L** - each with four rotations
 4. **First placement exception** - the very first tetromino may connect to
    any owned cell or to the player's home zone directly.
 
-If a tetromino cannot be placed at Y = 1 (the lowest valid height) it
-"explodes" - the piece is lost. Play proceeds to the **chess phase** if valid
-chess moves exist; otherwise a new tetromino is given immediately (see section 6).
+If a tetromino cannot be placed at Y = 1 (the lowest valid height), the piece
+is lost:
+- **Missed connection / no king path**: the tetromino falls through and
+  dissolves into sand.
+- **Collision with occupied cells**: the tetromino explodes.
+
+In UI copy this is treated as a **missed drop** rather than a generic
+"invalid". Play proceeds to the **chess phase** if valid chess moves exist;
+otherwise a new tetromino is given immediately (see section 6).
 
 ---
 
@@ -181,6 +209,12 @@ conditions:
   The underlying tetromino or home-zone content is preserved.
 - When a piece arrives at a cell, its chess entry is **appended** alongside
   existing content.
+- **Cell ownership transfer** - when a chess piece moves to a cell containing
+  enemy tetromino content, that content's ownership transfers to the mover.
+  Home-zone markers are **never** transferred. After transfer, island
+  detection runs on the previous owner — this can disconnect and destroy
+  their territory. This is a key strategic mechanic: moving pieces onto enemy
+  cells claims them for your empire.
 - **Moving into check is permitted.** There is no check/checkmate concept in
   Shaktris - only king capture. Moving your king into danger is legal but
   unwise.
@@ -203,6 +237,35 @@ Standard castling rules apply:
 - **Diagonal capture**: pawns capture one square diagonally forward.
 - **Direction**: determined by the player's `orientation` field (0-3), which
   maps to a forward vector via `[{0,1}, {1,0}, {0,-1}, {-1,0}]`.
+
+### Pawn detonation (voluntary)
+
+A player may choose to **detonate** one of their own pawns as a deliberate
+tactical action. The pawn is destroyed and island detection runs immediately
+afterwards.
+
+The detonated coordinate is destroyed entirely (all content at that cell is
+removed), including home-marked cells.
+
+If a player has **only their king left**, they may detonate that king as a
+final self-destruct. This removes all of that player's remaining territory
+from farthest-to-nearest relative to the king, ending that player's run.
+The visual detonation is staggered by distance layer (farthest cells first),
+with a short pause between each layer so the collapse moves inward visibly.
+
+This allows players to create gaps in enemy territory: if the detonated cell
+was a bridge between two sections of an opponent's land, the disconnected
+section (and any pieces on it) will be removed by island decay.
+
+| Detail | Value |
+|--------|-------|
+| Socket event | `detonate_pawn` with `{ pieceId }` |
+| Cost | The pawn is permanently lost |
+| Effect | Cell destroyed + full island detection (or full self-destruct for last king) |
+
+Frontend presentation:
+- The pawn enters a Lemmings-style countdown (`5..1`, then `"Oh no!"`) before detonation.
+- A **Cancel Detonation** button is available during the countdown; cancelling aborts the action.
 
 ### Pawn promotion
 
@@ -265,17 +328,19 @@ transfer to the captor as described above).
 
 ## 10. Island Decay (Disconnection)
 
-After any row clear **or** tetromino placement, the server runs island
-detection:
+After any row clear, tetromino placement, chess move, or pawn detonation, the
+server runs island detection:
 
 1. A BFS groups all cells by player into **islands** (connected components using
-   8-directional adjacency: orthogonal + diagonal).
+   **4-directional orthogonal adjacency only** — up, down, left, right).
+   Diagonal links do **not** count as connected.
 2. An island that **does not contain its player's king** is considered
    **disconnected**.
 3. All disconnected island cells belonging to that player are removed, and any
    chess pieces sitting on those cells are also removed.
 
-This prevents orphaned territory from persisting after row clears or captures.
+This prevents orphaned territory from persisting after row clears, captures, or
+strategic disconnection attacks.
 
 ---
 
@@ -371,6 +436,17 @@ colours is a trophy of conquest.
    is not limited to row clears).
 6. **No en passant** - this chess rule is intentionally omitted due to the
    complexity of tracking it on a dynamically expanding, real-time board.
+7. **Orthogonal-only connectivity** - diagonal adjacency does **not** count
+   for island connectivity or tetromino placement. All connections must be
+   up/down/left/right. This makes territory easier to disconnect and rewards
+   solid, compact building.
+8. **Cell ownership transfer** - moving a chess piece onto enemy territory
+   claims it. Combined with orthogonal-only connectivity, a single chess move
+   can sever and destroy large sections of opponent territory.
+9. **Lone-king support** - if a player is reduced to only a king, the server
+   guarantees that king still has a board cell beneath it. If that player then
+   chooses king self-destruct, all of their remaining cells collapse and are
+   removed.
 
 ---
 
@@ -382,8 +458,8 @@ PAWN_PROMOTION_DISTANCE             = 9
 HOME_ZONE_WIDTH                     = 8
 HOME_ZONE_HEIGHT                    = 2
 HOME_ZONE_DEGRADATION_INTERVAL      = 150 000 ms (2.5 min)
-CHESS_MOVE_COOLDOWN_MS              = 750
-TETROMINO_PLACEMENT_COOLDOWN_MS     = 1 500
+CHESS_MOVE_COOLDOWN_MS              = 500
+TETROMINO_PLACEMENT_COOLDOWN_MS     = 800
 SUICIDAL_PAWN_DELAY_MS              = 3 000
 SIMULTANEOUS_CAPTURE_WINDOW_MS      = 1 000
 KING_CAPTURE_GRACE_MOVES            = 1
@@ -404,8 +480,8 @@ sessions. All themes render the same game state — they are purely cosmetic.
 | Theme | Description |
 |-------|-------------|
 | **Normal** | Rich daylight scene, detailed Russian-styled 3D pieces, cream/sage board, clouds. |
-| **Cute** | 8-bit space theme, pixelated rendering, starfield, bright arcade lighting. |
-| **Retro** | 1980s CRT terminal. Black background, green phosphor (local) / amber (opponents). Chess pieces as Cyrillic text sprites. Scanline overlay. |
+| **Cute** | 8-bit space theme, pixelated rendering, starfield, bright arcade lighting. Chess pieces as blocky voxel-style shapes with dark outlines, each type in a unique arcade colour. |
+| **Retro** | 1980s CRT terminal. Black background, green phosphor (local) / amber (opponents). Chess pieces as letter sprites on glowing discs (K/Q/R/B/N/P). Scanline overlay. |
 
 ---
 

@@ -127,8 +127,7 @@ function update(data) {
 	// Verify we have valid data
 	if (!data) return;
 	
-	// Create a deep copy of the data to avoid reference issues
-	const newData = JSON.parse(JSON.stringify(data));
+	const newData = data;
 	
 	// Preserve client-managed properties that should NOT be overwritten by server
 	// turnPhase is managed by the client (tetris/chess phase transitions)
@@ -151,11 +150,24 @@ function update(data) {
 	}
 	
 	// Make sure gameStarted flag is set if we have board data
-	if (gameState.board && gameState.board.cells && Object.keys(gameState.board.cells).length > 0) {
+	const _hasCells = gameState.board?.cells && (function() { for (const _ in gameState.board.cells) return true; return false; })();
+	if (_hasCells) {
 		gameState.gameStarted = true;
-		// Set the orientation to the first chess piece
 		if (gameState.chessPieces.length > 0) {
 			gameState.orientation = gameState.chessPieces[0].orientation;
+		}
+	}
+
+	// Infer _hasPlacedTetromino from board state so reconnecting players
+	// don't get false-positive first-placement rules on the client.
+	if (!gameState._hasPlacedTetromino && gameState.board?.cells && gameState.localPlayerId) {
+		const pid = String(gameState.localPlayerId);
+		for (const cell of Object.values(gameState.board.cells)) {
+			const items = Array.isArray(cell) ? cell : (cell?.contents || []);
+			if (items.some(i => i && String(i.player) === pid && i.type === 'tetromino')) {
+				gameState._hasPlacedTetromino = true;
+				break;
+			}
 		}
 	}
 }

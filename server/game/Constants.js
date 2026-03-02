@@ -26,8 +26,8 @@ const BOARD_SETTINGS = {
 const PLAYER_SETTINGS = {
 	MIN_MOVE_TIME: 10000, // 10 seconds minimum between moves
 	// Real-time cooldowns (anti-spam) - used by the socket server
-	CHESS_MOVE_COOLDOWN_MS: 750,
-	TETROMINO_PLACEMENT_COOLDOWN_MS: 1500,
+	CHESS_MOVE_COOLDOWN_MS: 500,
+	TETROMINO_PLACEMENT_COOLDOWN_MS: 800,
 	DEFAULT_MOVE_TYPE: 'tetromino',
 	PAUSE_CHECK_INTERVAL: 60000, // 1 minute
 	MAX_PAUSE_DURATION: 900000 // 15 minutes

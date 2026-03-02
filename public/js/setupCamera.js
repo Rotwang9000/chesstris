@@ -122,12 +122,13 @@ export function resetCameraForGameplay(renderer, camera, controls, gameState, sc
  * Move the camera to view a player's home zone.
  * Returns true if it found the king, false otherwise.
  */
-export function moveToPlayerZone(camera, controls, gameState, renderer, scene, animate = true, forceImmediate = false, onComplete) {
-	if (!gameState.localPlayerId) return false;
+export function moveToPlayerZone(camera, controls, gameState, renderer, scene, animate = true, forceImmediate = false, onComplete, targetPlayerId) {
+	const playerId = targetPlayerId || gameState.localPlayerId;
+	if (!playerId) return false;
 
-	const kingPiece = boardFunctions.getPlayersKing(gameState, gameState.localPlayerId, false);
+	const kingPiece = boardFunctions.getPlayersKing(gameState, playerId, false);
 	if (!kingPiece) {
-		console.warn('No king found for player', gameState.localPlayerId, '— will retry');
+		console.warn('No king found for player', playerId, '— will retry');
 		return false;
 	}
 

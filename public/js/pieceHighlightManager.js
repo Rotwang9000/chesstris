@@ -131,15 +131,17 @@ export function clearSinglePieceHighlight(piece) {
 }
 
 function createRing(THREE, { innerRadius, outerRadius, colour, opacity, name }) {
-	const geometry = new THREE.RingGeometry(innerRadius, outerRadius, 24);
+	const tubeRadius = (outerRadius - innerRadius) / 2;
+	const torusRadius = innerRadius + tubeRadius;
+	const geometry = new THREE.TorusGeometry(torusRadius, tubeRadius, 8, 32);
 	const material = new THREE.MeshBasicMaterial({
 		color: colour, transparent: true, opacity,
-		side: THREE.DoubleSide, depthTest: false, depthWrite: false
+		side: THREE.DoubleSide, depthTest: true, depthWrite: false
 	});
 	const mesh = new THREE.Mesh(geometry, material);
 	mesh.name = name;
 	mesh.rotation.x = -Math.PI / 2;
-	mesh.position.y = 0.02;
+	mesh.position.y = 0.12;
 	mesh.renderOrder = 999;
 	return mesh;
 }

@@ -48,15 +48,16 @@ class IslandManager {
 				return false;
 			}
 			
+			const pid = String(playerId);
 			const isOwnedCell = (x, z) => {
 				const cellContents = game.board.cells[`${x},${z}`];
 				if (!cellContents) return false;
-				
+
 				if (Array.isArray(cellContents)) {
-					return cellContents.some(item => item && item.player === playerId);
+					return cellContents.some(item => item && String(item.player) === pid);
 				}
-				
-				return !!(cellContents.player && String(cellContents.player) === String(playerId));
+
+				return !!(cellContents.player && String(cellContents.player) === pid);
 			};
 			
 			// Starting cell must exist and be owned
@@ -75,17 +76,14 @@ class IslandManager {
 					return true;
 				}
 				
-				// Check all adjacent cells including diagonals (in XZ plane)
-				const adjacentCells = [
-					{ x: x - 1, z },
-					{ x: x + 1, z },
-					{ x, z: z - 1 },
-					{ x, z: z + 1 },
-					{ x: x - 1, z: z - 1 },
-					{ x: x + 1, z: z - 1 },
-					{ x: x - 1, z: z + 1 },
-					{ x: x + 1, z: z + 1 }
-				];
+				// Orthogonal adjacency only (no diagonals) — diagonal links
+			// are too easy to maintain and make island disconnection trivial.
+			const adjacentCells = [
+				{ x: x - 1, z },
+				{ x: x + 1, z },
+				{ x, z: z - 1 },
+				{ x, z: z + 1 },
+			];
 				
 				for (const cell of adjacentCells) {
 					const key = `${cell.x},${cell.z}`;
@@ -188,8 +186,6 @@ class IslandManager {
 			const adjacentCells = [
 				{ x: x - 1, z }, { x: x + 1, z },
 				{ x, z: z - 1 }, { x, z: z + 1 },
-				{ x: x - 1, z: z - 1 }, { x: x + 1, z: z - 1 },
-				{ x: x - 1, z: z + 1 }, { x: x + 1, z: z + 1 }
 			];
 			
 			for (const cell of adjacentCells) {
@@ -232,6 +228,9 @@ class IslandManager {
 			// Handle disconnected islands
 			this._processDisconnectedIslands(game, disconnectedIslands);
 		}
+		
+		// Guarantee each live king remains on a valid board cell.
+		this._ensureKingSupportCells(game);
 	}
 	
 	/**
@@ -241,6 +240,42 @@ class IslandManager {
 	 * @private
 	 */
 	_processDisconnectedIslands(game, disconnectedIslands) {
+		const isWithinHomeZone = (playerId, x, z) => {
+			if (!game || !game.homeZones || !game.homeZones[playerId]) return false;
+			const zone = game.homeZones[playerId];
+			const width = zone.width || 8;
+			const height = zone.height || 2;
+			return (
+				x >= zone.x &&
+				x < zone.x + width &&
+				z >= zone.z &&
+				z < zone.z + height
+			);
+		};
+		
+		// A "safe" home zone is one that still has at least one owned chess piece.
+		const safeHomeZonePlayers = new Set();
+		if (game && game.homeZones && Array.isArray(game.chessPieces)) {
+			for (const playerId of Object.keys(game.homeZones)) {
+				const hasPieceInZone = game.chessPieces.some(piece => {
+					if (!piece || String(piece.player) !== String(playerId)) return false;
+					const pos = piece.position || piece;
+					if (!pos) return false;
+					return isWithinHomeZone(playerId, pos.x, pos.z);
+				});
+				
+				if (hasPieceInZone) {
+					safeHomeZonePlayers.add(String(playerId));
+				}
+			}
+		}
+		
+		const isProtectedHomeCell = (playerId, x, z) => {
+			const pid = String(playerId);
+			if (!safeHomeZonePlayers.has(pid)) return false;
+			return isWithinHomeZone(pid, x, z);
+		};
+		
 		for (const island of disconnectedIslands) {
 			const { playerId, cells } = island;
 			
@@ -251,7 +286,7 @@ class IslandManager {
 					if (!piece || String(piece.player) !== String(playerId)) continue;
 					const pos = piece.position || piece;
 					const isOnIsland = cells.some(cell => cell.x === pos.x && cell.z === pos.z);
-					if (isOnIsland) {
+					if (isOnIsland && !isProtectedHomeCell(playerId, pos.x, pos.z)) {
 						game.chessPieces.splice(i, 1);
 						log(`Removed chess piece ${piece.type} at (${pos.x}, ${pos.z}) due to disconnected island`);
 					}
@@ -260,6 +295,8 @@ class IslandManager {
 			
 			// Clear cells on disconnected islands using sparse board
 			for (const cell of cells) {
+				if (isProtectedHomeCell(playerId, cell.x, cell.z)) continue;
+				
 				const key = `${cell.x},${cell.z}`;
 				const cellContents = game.board.cells[key];
 				if (!cellContents) continue;
@@ -275,6 +312,62 @@ class IslandManager {
 					delete game.board.cells[key];
 				}
 				log(`Cleared player ${playerId} content at (${cell.x}, ${cell.z}) due to disconnected island`);
+			}
+		}
+	}
+	
+	/**
+	 * Ensure kings always sit on a valid board square.
+	 * If a king's cell is missing or has no owned terrain support, create a
+	 * minimal owned support cell under it.
+	 * @param {Object} game - The game object
+	 * @private
+	 */
+	_ensureKingSupportCells(game) {
+		if (!game || !game.board || !game.board.cells || !Array.isArray(game.chessPieces)) return;
+		
+		for (const piece of game.chessPieces) {
+			if (!piece || String(piece.type).toUpperCase() !== 'KING') continue;
+			const playerId = piece.player;
+			const pos = piece.position || piece;
+			if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.z)) continue;
+			
+			const key = `${pos.x},${pos.z}`;
+			const cellContents = Array.isArray(game.board.cells[key]) ? [...game.board.cells[key]] : [];
+			
+			const hasKingMarker = cellContents.some(
+				item => item && item.type === 'chess' && String(item.pieceId) === String(piece.id)
+			);
+			const hasOwnedSupport = cellContents.some(
+				item => item && String(item.player) === String(playerId) && item.type !== 'chess'
+			);
+			
+			let changed = false;
+			
+			if (!hasOwnedSupport) {
+				cellContents.push({
+					type: 'tetromino',
+					pieceType: 'king_anchor',
+					player: playerId,
+					placedAt: Date.now(),
+					isKingAnchor: true,
+				});
+				changed = true;
+			}
+			
+			if (!hasKingMarker) {
+				cellContents.push({
+					type: 'chess',
+					player: playerId,
+					pieceType: 'king',
+					pieceId: piece.id,
+				});
+				changed = true;
+			}
+			
+			if (changed) {
+				game.board.cells[key] = cellContents;
+				log(`Reinforced king support cell for ${playerId} at (${pos.x}, ${pos.z})`);
 			}
 		}
 	}
@@ -304,6 +397,8 @@ class IslandManager {
 				this._processDisconnectedIslands(game, disconnectedIslands);
 			}
 		}
+		
+		this._ensureKingSupportCells(game);
 	}
 }
 

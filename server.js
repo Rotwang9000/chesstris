@@ -19,6 +19,7 @@ const advertiserRoutes = require('./routes/advertisers');
 
 // Import game managers
 const { GameManager } = require('./server/game');
+const persistence = require('./server/persistence');
 
 // Create Express app and HTTP server
 const app = express();
@@ -121,18 +122,33 @@ function computeSparseBoardDelta(gameId, board) {
 	};
 }
 
+function buildPlayersList(game) {
+	if (!game || !Array.isArray(game.players)) return [];
+	return game.players.map(id => {
+		const entry = players.get(id) || computerPlayers.get(id);
+		return {
+			id,
+			name: entry ? entry.name : `Player_${String(id).substring(0, 5)}`,
+			isComputer: computerPlayers.has(id),
+		};
+	});
+}
+
 function broadcastGameUpdate(gameId, game, forceFullUpdate = false) {
 	if (!game) return;
 	
+	if (gameId === GLOBAL_GAME_ID) persistence.markDirty();
+	
 	const timestamp = Date.now();
 	const state = game.state || {};
+	const playersList = buildPlayersList(game);
 	
 	if (forceFullUpdate) {
-		// Seed cache as if a full update was sent
 		computeSparseBoardDelta(gameId, state.board);
 		
 		io.to(gameId).emit('game_update', {
 			...state,
+			players: playersList,
 			boardBounds: state.board ? {
 				minX: state.board.minX,
 				maxX: state.board.maxX,
@@ -150,6 +166,7 @@ function broadcastGameUpdate(gameId, game, forceFullUpdate = false) {
 	if (boardDelta.fullUpdate) {
 		io.to(gameId).emit('game_update', {
 			...state,
+			players: playersList,
 			boardBounds: state.board ? {
 				minX: state.board.minX,
 				maxX: state.board.maxX,
@@ -162,7 +179,6 @@ function broadcastGameUpdate(gameId, game, forceFullUpdate = false) {
 		return;
 	}
 	
-	// Delta update: send only the changed board cells + current chess pieces
 	io.to(gameId).emit('game_update', {
 		timestamp,
 		fullUpdate: false,
@@ -170,7 +186,8 @@ function broadcastGameUpdate(gameId, game, forceFullUpdate = false) {
 		removedCells: boardDelta.removedCells,
 		boardBounds: boardDelta.boardBounds,
 		chessPieces: state.chessPieces,
-		lastAction: state.lastAction
+		lastAction: state.lastAction,
+		players: playersList,
 	});
 }
 
@@ -186,6 +203,10 @@ const COMPUTER_DIFFICULTY = {
 
 // Minimum time between computer player moves (in milliseconds)
 const MIN_COMPUTER_MOVE_TIME = 10000; // 10 seconds minimum as per requirements
+const HOME_ZONE_DEGRADATION_CHECK_MS = 30000;
+const WORLD_INTEGRITY_CHECK_MS = 10000;
+const ISLAND_DECAY_ANIMATION_MAX_CELLS = 160;
+const homeZoneIdleSince = new Map();
 
 /**
  * Get remaining cooldown time for an action.
@@ -206,8 +227,543 @@ function getCooldownRemainingMs(player, lastActionKey, cooldownMs) {
 	return remaining > 0 ? remaining : 0;
 }
 
-// Initialize global game on startup
-initializeGlobalGame();
+function getLatestPlayerActionAt(playerData) {
+	if (!playerData || typeof playerData !== 'object') return 0;
+	
+	const candidates = [
+		playerData.lastTetrominoPlacementAt,
+		playerData.lastChessMoveAt,
+		playerData.lastMoveTime,
+		playerData.lastActionAt,
+		playerData.lastMoveAt,
+	];
+	
+	let latest = 0;
+	for (const value of candidates) {
+		const num = Number(value);
+		if (Number.isFinite(num) && num > latest) {
+			latest = num;
+		}
+	}
+	
+	return latest;
+}
+
+function convertHomeZoneToNormalCells(gameState, playerId, homeZone) {
+	if (!gameState || !gameState.board || !gameState.board.cells || !homeZone) return 0;
+	
+	const width = homeZone.width || 8;
+	const height = homeZone.height || 2;
+	let convertedCount = 0;
+	
+	for (let z = homeZone.z; z < homeZone.z + height; z++) {
+		for (let x = homeZone.x; x < homeZone.x + width; x++) {
+			const key = `${x},${z}`;
+			const cellContents = gameState.board.cells[key];
+			if (!Array.isArray(cellContents) || cellContents.length === 0) continue;
+			
+			const hasPlayerHomeMarker = cellContents.some(
+				item => item && item.type === 'home' && String(item.player) === String(playerId)
+			);
+			if (!hasPlayerHomeMarker) continue;
+			
+			const remaining = cellContents.filter(
+				item => !(item && item.type === 'home' && String(item.player) === String(playerId))
+			);
+			
+			const hasOwnedTerrain = remaining.some(item =>
+				item &&
+				String(item.player) === String(playerId) &&
+				item.type !== 'home' &&
+				item.type !== 'chess'
+			);
+			
+			if (!hasOwnedTerrain) {
+				remaining.push({
+					type: 'tetromino',
+					pieceType: 'home_converted',
+					player: playerId,
+					placedAt: Date.now(),
+					fromHomeZone: true,
+				});
+			}
+			
+			gameState.board.cells[key] = remaining;
+			convertedCount++;
+		}
+	}
+	
+	if (convertedCount > 0) {
+		gameManager.boardManager.recalculateBoardBoundaries(gameState.board);
+	}
+	
+	return convertedCount;
+}
+
+function processHomeZoneDegradation() {
+	try {
+		const now = Date.now();
+		const degradationInterval = Number(BOARD_SETTINGS.HOME_ZONE_DEGRADATION_INTERVAL) > 0
+			? Number(BOARD_SETTINGS.HOME_ZONE_DEGRADATION_INTERVAL)
+			: 150000;
+		
+		for (const [gameId, game] of games.entries()) {
+			if (!game || !game.state || !game.state.homeZones || !game.state.board) continue;
+			
+			let gameChanged = false;
+			
+			for (const [playerId, homeZone] of Object.entries(game.state.homeZones)) {
+				if (!homeZone || homeZone.isDegraded) continue;
+				
+				const playerData = players.get(playerId) || computerPlayers.get(playerId) || null;
+				const latestActionAt = getLatestPlayerActionAt(playerData);
+				const idleKey = `${gameId}:${playerId}`;
+				
+				if (latestActionAt > 0) {
+					homeZoneIdleSince.set(idleKey, latestActionAt);
+				} else if (!homeZoneIdleSince.has(idleKey)) {
+					homeZoneIdleSince.set(idleKey, now);
+				}
+				
+				const idleSince = homeZoneIdleSince.get(idleKey) || now;
+				if (now - idleSince < degradationInterval) continue;
+				
+				const convertedCount = convertHomeZoneToNormalCells(game.state, playerId, homeZone);
+				homeZone.isDegraded = true;
+				homeZone.degradedAt = now;
+				homeZoneIdleSince.delete(idleKey);
+				gameChanged = true;
+				
+				console.log(
+					`[HomeZone] Degraded ${playerId} in ${gameId}; converted ${convertedCount} cells to normal terrain.`
+				);
+			}
+			
+			if (gameChanged) {
+				persistence.markDirty();
+				broadcastGameUpdate(gameId, game, true);
+			}
+		}
+	} catch (error) {
+		console.error('[HomeZone] Error during degradation tick:', error);
+	}
+}
+
+function buildManagerGameObject(gameId, game) {
+	return {
+		id: gameId,
+		board: game.state.board || { cells: {}, minX: 0, maxX: 0, minZ: 0, maxZ: 0 },
+		chessPieces: game.state.chessPieces || [],
+		homeZones: game.state.homeZones || {},
+		players: (Array.isArray(game.players) ? game.players : []).reduce((obj, id) => {
+			const playerObj = players.get(id) || computerPlayers.get(id) || {};
+			const homeZoneFromState = (game.state && game.state.homeZones && game.state.homeZones[id])
+				? game.state.homeZones[id]
+				: null;
+			obj[id] = {
+				id,
+				name: playerObj.name || `Player_${String(id).substring(0, 5)}`,
+				homeZone: homeZoneFromState || playerObj.homeZone || null,
+				lastTetrominoPlacement: playerObj.lastTetrominoPlacement || null,
+			};
+			return obj;
+		}, {})
+	};
+}
+
+function buildValidPlayerIdSet(gameObject) {
+	const validPlayerIds = new Set();
+	const playerMap = gameObject && gameObject.players && typeof gameObject.players === 'object'
+		? gameObject.players
+		: {};
+	
+	for (const id of Object.keys(playerMap)) {
+		if (!id) continue;
+		validPlayerIds.add(String(id));
+	}
+	
+	return validPlayerIds;
+}
+
+function stripUnknownOwnerContent(gameObject, validPlayerIds = null) {
+	if (!gameObject || !gameObject.board || !gameObject.board.cells || !Array.isArray(gameObject.chessPieces)) {
+		return { changed: false, removedPieces: 0, cleanedCellItems: 0 };
+	}
+	
+	const allowedPlayerIds = validPlayerIds || buildValidPlayerIdSet(gameObject);
+	if (allowedPlayerIds.size === 0) {
+		return { changed: false, removedPieces: 0, cleanedCellItems: 0 };
+	}
+	
+	let changed = false;
+	let removedPieces = 0;
+	let cleanedCellItems = 0;
+	
+	for (let i = gameObject.chessPieces.length - 1; i >= 0; i--) {
+		const piece = gameObject.chessPieces[i];
+		const ownerId = piece && piece.player != null ? String(piece.player) : null;
+		if (ownerId && !allowedPlayerIds.has(ownerId)) {
+			gameObject.chessPieces.splice(i, 1);
+			removedPieces++;
+			changed = true;
+		}
+	}
+	
+	const validPieceIds = new Set();
+	for (const piece of gameObject.chessPieces) {
+		if (!piece || piece.id == null) continue;
+		validPieceIds.add(String(piece.id));
+	}
+	
+	const boardCells = gameObject.board.cells;
+	for (const [key, cellContents] of Object.entries(boardCells)) {
+		if (!Array.isArray(cellContents) || cellContents.length === 0) continue;
+		
+		const filtered = cellContents.filter(item => {
+			if (!item) return false;
+			
+			const ownerId = item.player != null
+				? String(item.player)
+				: (item.chessPiece && item.chessPiece.player != null ? String(item.chessPiece.player) : null);
+			if (ownerId && !allowedPlayerIds.has(ownerId)) {
+				return false;
+			}
+			
+			if (item.type === 'chess') {
+				const markerPieceId = item.pieceId != null
+					? String(item.pieceId)
+					: (item.chessPiece && item.chessPiece.id != null ? String(item.chessPiece.id) : null);
+				if (markerPieceId && !validPieceIds.has(markerPieceId)) {
+					return false;
+				}
+			}
+			
+			return true;
+		});
+		
+		if (filtered.length !== cellContents.length) {
+			cleanedCellItems += cellContents.length - filtered.length;
+			changed = true;
+			if (filtered.length > 0) {
+				boardCells[key] = filtered;
+			} else {
+				delete boardCells[key];
+			}
+		}
+	}
+	
+	return { changed, removedPieces, cleanedCellItems };
+}
+
+function hasPlayerBoardPresence(game, playerId) {
+	if (!game || !game.state) return false;
+	const pid = String(playerId);
+	const homeZones = game.state.homeZones || {};
+	const boardCells = game.state.board && game.state.board.cells ? game.state.board.cells : {};
+	const chessPieces = Array.isArray(game.state.chessPieces) ? game.state.chessPieces : [];
+	
+	const hasHomeZone = !!homeZones[playerId];
+	const hasPiece = chessPieces.some(piece => piece && String(piece.player) === pid);
+	const hasOwnedCell = Object.values(boardCells).some(cell =>
+		Array.isArray(cell) && cell.some(item => item && String(item.player) === pid)
+	);
+	
+	return hasHomeZone && hasPiece && hasOwnedCell;
+}
+
+function rehydratePlayerState(gameId, game, playerId, playerName) {
+	const authoritativeGame = gameManager.getGame(gameId);
+	if (!authoritativeGame) {
+		return { success: false, error: 'Authoritative game not found' };
+	}
+	
+	const pid = String(playerId);
+	if (!authoritativeGame.players || typeof authoritativeGame.players !== 'object') {
+		authoritativeGame.players = {};
+	}
+	if (!authoritativeGame.homeZones || typeof authoritativeGame.homeZones !== 'object') {
+		authoritativeGame.homeZones = {};
+	}
+	if (!Array.isArray(authoritativeGame.chessPieces)) {
+		authoritativeGame.chessPieces = [];
+	}
+	if (!authoritativeGame.board || !authoritativeGame.board.cells) {
+		authoritativeGame.board = {
+			cells: {},
+			minX: 0,
+			maxX: 0,
+			minZ: 0,
+			maxZ: 0
+		};
+	}
+	
+	delete authoritativeGame.players[playerId];
+	delete authoritativeGame.homeZones[playerId];
+	
+	authoritativeGame.chessPieces = authoritativeGame.chessPieces.filter(
+		piece => piece && String(piece.player) !== pid
+	);
+	
+	for (const [key, cellContents] of Object.entries(authoritativeGame.board.cells)) {
+		if (!Array.isArray(cellContents)) {
+			delete authoritativeGame.board.cells[key];
+			continue;
+		}
+		
+		const remaining = cellContents.filter(item => {
+			if (!item) return false;
+			const ownerId = item.player != null
+				? String(item.player)
+				: (item.chessPiece && item.chessPiece.player != null ? String(item.chessPiece.player) : null);
+			return ownerId !== pid;
+		});
+		
+		if (remaining.length > 0) {
+			authoritativeGame.board.cells[key] = remaining;
+		} else {
+			delete authoritativeGame.board.cells[key];
+		}
+	}
+	
+	const registrationResult = gameManager.registerPlayer(gameId, playerId, playerName, false);
+	if (!registrationResult || !registrationResult.success) {
+		return registrationResult || { success: false, error: 'Failed to re-register player' };
+	}
+	
+	if (!Array.isArray(game.players)) {
+		game.players = [];
+	}
+	game.players = game.players.filter(id => String(id) !== pid);
+	game.players.push(playerId);
+	
+	game.state.board = authoritativeGame.board;
+	game.state.homeZones = authoritativeGame.homeZones;
+	game.state.chessPieces = Array.isArray(authoritativeGame.chessPieces)
+		? authoritativeGame.chessPieces
+		: [];
+	
+	return {
+		success: true,
+		homeZone: registrationResult.homeZone || game.state.homeZones[playerId] || null
+	};
+}
+
+function repairChessPieceCellConsistency(gameObject) {
+	if (!gameObject || !gameObject.board || !gameObject.board.cells || !Array.isArray(gameObject.chessPieces)) {
+		return { changed: false, removedPieces: 0, cleanedCellItems: 0 };
+	}
+
+	const boardCells = gameObject.board.cells;
+	let changed = false;
+	let removedPieces = 0;
+	let cleanedCellItems = 0;
+	
+	const validPlayerIds = buildValidPlayerIdSet(gameObject);
+	const staleOwnerCleanup = stripUnknownOwnerContent(gameObject, validPlayerIds);
+	if (staleOwnerCleanup.changed) {
+		changed = true;
+		removedPieces += staleOwnerCleanup.removedPieces;
+		cleanedCellItems += staleOwnerCleanup.cleanedCellItems;
+	}
+
+	for (let i = gameObject.chessPieces.length - 1; i >= 0; i--) {
+		const piece = gameObject.chessPieces[i];
+		if (!piece) {
+			gameObject.chessPieces.splice(i, 1);
+			removedPieces++;
+			changed = true;
+			continue;
+		}
+
+		const pos = piece.position || piece;
+		const isKing = String(piece.type || '').toUpperCase() === 'KING';
+		if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.z)) {
+			if (!isKing) {
+				gameObject.chessPieces.splice(i, 1);
+				removedPieces++;
+				changed = true;
+			}
+			continue;
+		}
+		
+		const key = `${pos.x},${pos.z}`;
+		const cellContents = boardCells[key];
+		if (!Array.isArray(cellContents) || cellContents.length === 0) {
+			if (isKing) {
+				boardCells[key] = [
+					{
+						type: 'tetromino',
+						pieceType: 'king_anchor',
+						player: piece.player,
+						placedAt: Date.now(),
+						isKingAnchor: true,
+					},
+					{
+						type: 'chess',
+						player: piece.player,
+						pieceId: piece.id,
+						pieceType: 'king',
+						chessPiece: piece,
+					},
+				];
+				changed = true;
+			} else {
+				gameObject.chessPieces.splice(i, 1);
+				removedPieces++;
+				changed = true;
+			}
+			continue;
+		}
+		
+		const hasChessMarker = cellContents.some(item => {
+			if (!item || item.type !== 'chess') return false;
+			const markerId = item.pieceId || item?.chessPiece?.id;
+			return markerId && String(markerId) === String(piece.id);
+		});
+		
+		if (!hasChessMarker) {
+			cellContents.push({
+				type: 'chess',
+				player: piece.player,
+				pieceId: piece.id,
+				pieceType: String(piece.type || '').toLowerCase(),
+				chessPiece: piece,
+			});
+			boardCells[key] = cellContents;
+			changed = true;
+		}
+	}
+	
+	return { changed, removedPieces, cleanedCellItems };
+}
+
+function snapshotBoardCellLengths(board) {
+	const snapshot = new Map();
+	if (!board || !board.cells || typeof board.cells !== 'object') return snapshot;
+	
+	for (const [key, value] of Object.entries(board.cells)) {
+		const length = Array.isArray(value) ? value.length : 0;
+		snapshot.set(key, length);
+	}
+	return snapshot;
+}
+
+function hasBoardLengthChanges(beforeSnapshot, boardAfter) {
+	const afterCells = (boardAfter && boardAfter.cells && typeof boardAfter.cells === 'object')
+		? boardAfter.cells
+		: {};
+	const afterKeys = Object.keys(afterCells);
+	
+	if (beforeSnapshot.size !== afterKeys.length) return true;
+	
+	for (const key of afterKeys) {
+		const beforeLen = beforeSnapshot.has(key) ? beforeSnapshot.get(key) : null;
+		const afterLen = Array.isArray(afterCells[key]) ? afterCells[key].length : 0;
+		if (beforeLen === null || beforeLen !== afterLen) return true;
+	}
+	return false;
+}
+
+function getReducedCellsFromSnapshot(beforeSnapshot, boardAfter) {
+	const cells = [];
+	const afterCells = (boardAfter && boardAfter.cells && typeof boardAfter.cells === 'object')
+		? boardAfter.cells
+		: {};
+	
+	for (const [key, beforeLen] of beforeSnapshot.entries()) {
+		const afterLen = Array.isArray(afterCells[key]) ? afterCells[key].length : 0;
+		if (beforeLen > afterLen) {
+			const { x, z } = parseBoardKey(key);
+			if (Number.isFinite(x) && Number.isFinite(z)) {
+				cells.push({ x, z });
+			}
+		}
+	}
+	
+	return cells;
+}
+
+function emitIslandDecayAnimation(gameId, cells) {
+	if (!Array.isArray(cells) || cells.length === 0) return;
+	
+	let payloadCells = cells;
+	if (cells.length > ISLAND_DECAY_ANIMATION_MAX_CELLS) {
+		const step = Math.ceil(cells.length / ISLAND_DECAY_ANIMATION_MAX_CELLS);
+		payloadCells = cells.filter((_, idx) => idx % step === 0).slice(0, ISLAND_DECAY_ANIMATION_MAX_CELLS);
+	}
+	
+	io.to(gameId).emit('island_decay', {
+		cells: payloadCells,
+		totalCells: cells.length,
+	});
+}
+
+function runIslandIntegrityPass(gameId, game, options = {}) {
+	const emitAnimation = options.emitAnimation !== false;
+	if (!game || !game.state || !game.state.board || !Array.isArray(game.state.chessPieces)) {
+		return { changed: false, decayCells: [] };
+	}
+	
+	const gameObject = buildManagerGameObject(gameId, game);
+	const pieceRepair = repairChessPieceCellConsistency(gameObject);
+	const beforeBoardSnapshot = snapshotBoardCellLengths(gameObject.board);
+	const beforeChessCount = gameObject.chessPieces.length;
+	
+	gameManager.islandManager.checkForIslandsAfterRowClear(gameObject);
+	gameManager.boardManager.recalculateBoardBoundaries(gameObject.board);
+	
+	const boardChanged = hasBoardLengthChanges(beforeBoardSnapshot, gameObject.board);
+	const chessChanged = beforeChessCount !== gameObject.chessPieces.length;
+	const changed = pieceRepair.changed || boardChanged || chessChanged;
+	const decayCells = boardChanged
+		? getReducedCellsFromSnapshot(beforeBoardSnapshot, gameObject.board)
+		: [];
+	
+	if (changed) {
+		game.state.board = gameObject.board;
+		game.state.chessPieces = gameObject.chessPieces;
+	}
+	
+	if (emitAnimation && decayCells.length > 0) {
+		emitIslandDecayAnimation(gameId, decayCells);
+	}
+	
+	if (pieceRepair.removedPieces > 0 || pieceRepair.cleanedCellItems > 0) {
+		console.log(
+			`[Integrity] Removed ${pieceRepair.removedPieces} orphaned chess piece(s) and ${pieceRepair.cleanedCellItems || 0} stale cell item(s) in ${gameId}.`
+		);
+	}
+	
+	return { changed, decayCells };
+}
+
+function processWorldIntegrityMaintenance(options = {}) {
+	const emitAnimation = options.emitAnimation !== false;
+	const broadcast = options.broadcast !== false;
+	
+	try {
+		for (const [gameId, game] of games.entries()) {
+			const result = runIslandIntegrityPass(gameId, game, { emitAnimation });
+			if (!result.changed) continue;
+			
+			persistence.markDirty();
+			
+			if (broadcast) {
+				broadcastGameUpdate(gameId, game);
+			}
+			
+			if (result.decayCells.length > 0) {
+				console.log(
+					`[Integrity] Repaired disconnected territory in ${gameId}; ${result.decayCells.length} cell(s) decayed.`
+				);
+			}
+		}
+	} catch (error) {
+		console.error('[Integrity] Error during world integrity maintenance:', error);
+	}
+}
+
+// World restore happens after all declarations — see bottom of file
 
 /**
  * Validates a player name to ensure it's a string with maximum length of 32 characters
@@ -668,32 +1224,55 @@ io.on('connection', (socket) => {
 	// Check if this is a reconnecting player
 	if (playerId && persistentPlayers.has(playerId)) {
 		const existing = persistentPlayers.get(playerId);
-		isRejoining = true;
-		console.log(`Player reconnecting: ${playerId} (socket ${socket.id})`);
-
-		// Clear any pending disconnect timeout
-		if (existing.disconnectTimer) {
-			clearTimeout(existing.disconnectTimer);
-			existing.disconnectTimer = null;
-		}
-
-		// Update the socket reference
-		if (players.has(playerId)) {
-			const playerData = players.get(playerId);
-			playerData.socket = socket;
-		} else {
+		const existingPlayer = players.get(playerId);
+		const wasEliminated = !!(existing?.eliminated || existingPlayer?.eliminated);
+		
+		if (wasEliminated) {
+			console.log(`Eliminated player ${playerId} refreshed; issuing a fresh player identity.`);
+			
+			if (existing.disconnectTimer) {
+				clearTimeout(existing.disconnectTimer);
+				existing.disconnectTimer = null;
+			}
+			
+			removePlayerCompletely(playerId);
+			persistentPlayers.delete(playerId);
+			
+			playerId = uuidv4();
 			players.set(playerId, {
 				id: playerId,
-				name: existing.name || `Player_${playerId.substring(0, 6)}`,
-				gameId: existing.gameId || null,
+				name: `Player_${playerId.substring(0, 6)}`,
+				gameId: null,
 				socket: socket
 			});
-		}
-
-		// Rejoin socket.io room if in a game
-		const player = players.get(playerId);
-		if (player && player.gameId) {
-			socket.join(player.gameId);
+		} else {
+			isRejoining = true;
+			console.log(`Player reconnecting: ${playerId} (socket ${socket.id})`);
+			
+			// Clear any pending disconnect timeout
+			if (existing.disconnectTimer) {
+				clearTimeout(existing.disconnectTimer);
+				existing.disconnectTimer = null;
+			}
+			
+			// Update the socket reference
+			if (players.has(playerId)) {
+				const playerData = players.get(playerId);
+				playerData.socket = socket;
+			} else {
+				players.set(playerId, {
+					id: playerId,
+					name: existing.name || `Player_${playerId.substring(0, 6)}`,
+					gameId: existing.gameId || null,
+					socket: socket
+				});
+			}
+			
+			// Rejoin socket.io room if in a game
+			const player = players.get(playerId);
+			if (player && player.gameId) {
+				socket.join(player.gameId);
+			}
 		}
 	} else {
 		// New player - generate a persistent ID
@@ -711,6 +1290,7 @@ io.on('connection', (socket) => {
 	persistentPlayers.set(playerId, {
 		name: players.get(playerId)?.name,
 		gameId: players.get(playerId)?.gameId,
+		eliminated: !!players.get(playerId)?.eliminated,
 		disconnectTimer: null
 	});
 
@@ -754,30 +1334,55 @@ io.on('connection', (socket) => {
 			
 			const game = games.get(gameId);
 			
-			// Check if game is full
-			if (game.players.length >= game.maxPlayers) {
+			const alreadyInGame = game.players.includes(playerId);
+			
+			// Check if game is full (only blocks brand-new joins, not reconnects)
+			if (!alreadyInGame && game.players.length >= game.maxPlayers) {
 				if (callback) callback({ success: false, error: 'Game is full' });
 				return;
 			}
 			
-			// Register player using GameManager
-			const registrationResult = gameManager.registerPlayer(
-				gameId,
-				playerId,
-				player.name,
-				false // Not an observer
-			);
+			let registrationResult = null;
 			
-			if (!registrationResult.success) {
-				console.error(`Failed to register player ${playerId} with GameManager:`, registrationResult.error);
-				if (callback) callback({ success: false, error: registrationResult.error });
-				return;
+			if (alreadyInGame && !hasPlayerBoardPresence(game, playerId)) {
+				console.warn(
+					`[Join Repair] Player ${playerId} missing board presence in ${gameId}; rehydrating state.`
+				);
+				const rehydrateResult = rehydratePlayerState(gameId, game, playerId, player.name);
+				if (!rehydrateResult || !rehydrateResult.success) {
+					const errorMessage = rehydrateResult && rehydrateResult.error
+						? rehydrateResult.error
+						: 'Failed to repair player state';
+					console.error(`[Join Repair] Failed for ${playerId}: ${errorMessage}`);
+					if (callback) callback({ success: false, error: errorMessage });
+					return;
+				}
+				registrationResult = {
+					homeZone: rehydrateResult.homeZone || null
+				};
+				persistence.markDirty();
 			}
 
+			if (!alreadyInGame) {
+				// Register player using GameManager
+				registrationResult = gameManager.registerPlayer(
+					gameId,
+					playerId,
+					player.name,
+					false // Not an observer
+				);
+
+				if (!registrationResult.success) {
+					console.error(`Failed to register player ${playerId} with GameManager:`, registrationResult.error);
+					if (callback) callback({ success: false, error: registrationResult.error });
+					return;
+				}
+
+				game.players.push(playerId);
+				persistence.markDirty();
+			}
+			
 			// Sync the socket-server game state from the authoritative GameManager game object.
-			// The GameManager stores chess pieces on `game.chessPieces`, not on this socket state's
-			// `game.state.chessPieces`. If we don't sync here, clients (and tests) will never see
-			// their king/pieces after joining.
 			const authoritativeGame = gameManager.getGame(gameId);
 			if (authoritativeGame) {
 				game.state.board = authoritativeGame.board;
@@ -786,9 +1391,7 @@ io.on('connection', (socket) => {
 					? authoritativeGame.chessPieces
 					: [];
 			}
-			
-			// Add player to game
-			game.players.push(playerId);
+
 			player.gameId = gameId;
 			
 			// Join socket room for this game
@@ -796,28 +1399,35 @@ io.on('connection', (socket) => {
 			
 			// If home zone data was returned, add it to the game state (kept for compatibility),
 			// but the authoritative sync above is what ensures consistent state.
-			if (registrationResult.homeZone) {
+			if (registrationResult && registrationResult.homeZone) {
 				if (!game.state.homeZones) {
 					game.state.homeZones = {};
 				}
 				game.state.homeZones[playerId] = registrationResult.homeZone;
 			}
 			
+			// Repair stale world state immediately on join so a reload cannot leave
+			// players looking at unsupported kings or lingering disconnected islands.
+			const integrityResult = runIslandIntegrityPass(gameId, game, { emitAnimation: false });
+			if (integrityResult.changed) {
+				persistence.markDirty();
+				broadcastGameUpdate(gameId, game);
+			}
+			
+			const playersList = buildPlayersList(game);
+
 			// Notify all players in the game
 			io.to(gameId).emit('player_joined', {
 				playerId: playerId,
 				playerName: player.name,
 				gameId: gameId,
-				players: game.players.map(id => ({
-					id: id,
-					name: (players.get(id) || computerPlayers.get(id)) ? (players.get(id) || computerPlayers.get(id)).name : `Player_${id.substring(0, 5)}`,
-					isComputer: computerPlayers.has(id)
-				}))
+				players: playersList,
 			});
 			
 			// Send game state to the new player
 			socket.emit('game_update', {
 				...game.state,
+				players: playersList,
 				boardBounds: game.state.board ? {
 					minX: game.state.board.minX,
 					maxX: game.state.board.maxX,
@@ -835,11 +1445,7 @@ io.on('connection', (socket) => {
 				playerId: playerId,
 				playerName: player.name,
 				gameState: game.state,
-				players: game.players.map(id => ({
-					id: id,
-					name: (players.get(id) || computerPlayers.get(id)) ? (players.get(id) || computerPlayers.get(id)).name : `Player_${id.substring(0, 5)}`,
-					isComputer: computerPlayers.has(id)
-				})),
+				players: playersList,
 				timestamp: Date.now()
 			});
 			
@@ -915,31 +1521,8 @@ io.on('connection', (socket) => {
 				return;
 			}
 			
-			// Create a proper game object format that our managers can work with
-			// This is needed because the Map-based games storage is different from the
-			// object format the game managers expect
-			const gameObject = {
-				id: gameId,
-				board: game.state.board || { cells: {}, width: 0, height: 0 },
-				chessPieces: game.state.chessPieces || [],
-				homeZones: game.state.homeZones || {}, // Include homeZones at top level for BoardManager
-				players: game.players.reduce((obj, id) => {
-					const playerObj = players.get(id) || computerPlayers.get(id) || {};
-					const homeZoneFromState = (game.state && game.state.homeZones && game.state.homeZones[id])
-						? game.state.homeZones[id]
-						: null;
-					obj[id] = {
-						id,
-						name: playerObj.name || `Player_${id.substring(0, 5)}`,
-						homeZone: homeZoneFromState || playerObj.homeZone || null,
-						// Persist tetromino placement state between server-side validations.
-						// TetrominoManager.validateTetrominoPlacement() uses this to determine "first placement".
-						lastTetrominoPlacement: playerObj.lastTetrominoPlacement || null,
-						// Add any other player properties needed
-					};
-					return obj;
-				}, {})
-			};
+			// Build a manager-compatible view of the game state.
+			const gameObject = buildManagerGameObject(gameId, game);
 			
 			// Validate the tetromino placement
 			if (!gameManager.tetrominoManager.isValidTetrisPiece(pieceType)) {
@@ -992,6 +1575,7 @@ io.on('connection', (socket) => {
 			// Update the game state with our modified gameObject
 			game.state.board = gameObject.board;
 			game.state.chessPieces = gameObject.chessPieces;
+			runIslandIntegrityPass(gameId, game, { emitAnimation: false });
 			
 			// Check for completed rows and clear them
 			const clearedRows = gameManager.boardManager.checkAndClearRows(gameObject);
@@ -999,6 +1583,10 @@ io.on('connection', (socket) => {
 			// Update game state again after row clearing
 			game.state.board = gameObject.board;
 			game.state.chessPieces = gameObject.chessPieces;
+			
+			// Always run island decay + king-support repair so disconnected
+			// territory dissolves promptly, even in long-running persisted worlds.
+			runIslandIntegrityPass(gameId, game, { emitAnimation: true });
 			
 			// Update game state
 			game.state.lastAction = {
@@ -1022,7 +1610,26 @@ io.on('connection', (socket) => {
 				: { x: tetromino.position.x, z: tetromino.position.z };
 			
 			// Check if player has any valid chess moves
-			const hasValidMoves = gameManager.chessManager.hasValidChessMoves(gameObject, playerId);
+			let hasValidMoves = gameManager.chessManager.hasValidChessMoves(gameObject, playerId);
+			if (!hasValidMoves) {
+				const repairResult = repairChessPieceCellConsistency(gameObject);
+				if (repairResult.changed) {
+					game.state.board = gameObject.board;
+					game.state.chessPieces = gameObject.chessPieces;
+					hasValidMoves = gameManager.chessManager.hasValidChessMoves(gameObject, playerId);
+				}
+				if (!hasValidMoves) {
+					const ownChessOnBoard = Object.values(gameObject.board?.cells || {}).some(cell =>
+						Array.isArray(cell) && cell.some(item =>
+							item && item.type === 'chess' && String(item.player) === String(playerId)
+						)
+					);
+					if (ownChessOnBoard) {
+						console.warn(`Suppressing auto-skip for ${playerId}: board still has chess markers.`);
+						hasValidMoves = true;
+					}
+				}
+			}
 			
 			// Send success response to the client with hasValidMoves flag
 			if (callback) callback({ 
@@ -1295,16 +1902,13 @@ io.on('connection', (socket) => {
 				}
 			}
 			
-			// Remove the piece from the source cell
-			const homeMarkersAtSource = sourceCell.filter(item => 
-				item && item.type === 'home'
+			// Remove only the moving chess piece from the source cell, preserving terrain
+			const remainingAtSource = sourceCell.filter(
+				item => !(item && item.type === 'chess' && String(item.pieceId) === String(piece.id))
 			);
-			
-			// Only keep home zone markers at the source
-			if (homeMarkersAtSource.length > 0) {
-				gameManager.boardManager.setCell(gameObject.board, piece.position.x, piece.position.z, homeMarkersAtSource);
+			if (remainingAtSource.length > 0) {
+				gameManager.boardManager.setCell(gameObject.board, piece.position.x, piece.position.z, remainingAtSource);
 			} else {
-				// Remove the cell completely if no home markers
 				gameManager.boardManager.setCell(gameObject.board, piece.position.x, piece.position.z, null);
 			}
 			
@@ -1581,6 +2185,72 @@ io.on('connection', (socket) => {
 			if (callback) callback({ success: true, pieceType: promotionType });
 		} catch (error) {
 			console.error('Error promoting pawn:', error);
+			if (callback) callback({ success: false, error: error.message });
+		}
+	});
+
+	// Handle voluntary piece detonation (pawn, or final king self-destruct)
+	socket.on('detonate_pawn', (data, callback) => {
+		try {
+			const player = players.get(playerId);
+			if (!player || !player.gameId) {
+				if (callback) callback({ success: false, error: 'Not in a game' });
+				return;
+			}
+			const game = games.get(player.gameId);
+			if (!game) {
+				if (callback) callback({ success: false, error: 'Game not found' });
+				return;
+			}
+
+			const { pieceId } = data || {};
+
+			const gameObject = buildManagerGameObject(player.gameId, game);
+
+			const result = gameManager.chessManager.detonatePawn(
+				gameObject, playerId, pieceId
+			);
+
+			if (result.success) {
+				// Sync modified state back
+				game.state.board = gameObject.board;
+				game.state.chessPieces = gameObject.chessPieces;
+				runIslandIntegrityPass(player.gameId, game, { emitAnimation: true });
+				
+				const pieceType = result.pieceType || 'PAWN';
+				console.log(`Player ${playerId} detonated ${pieceType} ${pieceId}`);
+				
+				socket.to(player.gameId).emit('pawn_detonation', {
+					playerId,
+					pieceId,
+					pieceType,
+					detonatedAt: result.detonatedAt,
+					endedGame: !!result.endedGame,
+				});
+				
+				if (result.endedGame) {
+					player.eliminated = true;
+					const persistent = persistentPlayers.get(playerId);
+					if (persistent) persistent.eliminated = true;
+					io.to(player.gameId).emit('king_detonation', {
+						playerId,
+						pieceId,
+						detonatedAt: result.detonatedAt,
+						explosionSequence: Array.isArray(result.explosionSequence)
+							? result.explosionSequence
+							: [],
+						layerIntervalMs: Number(result.layerIntervalMs) > 0
+							? Number(result.layerIntervalMs)
+							: 500,
+					});
+				}
+				
+				broadcastGameUpdate(player.gameId, game);
+			}
+
+			if (callback) callback(result);
+		} catch (error) {
+			console.error('Error detonating piece:', error);
 			if (callback) callback({ success: false, error: error.message });
 		}
 	});
@@ -2068,6 +2738,7 @@ io.on('connection', (socket) => {
 			// Keep the player alive for a grace period
 			persistent.name = players.get(playerId)?.name;
 			persistent.gameId = players.get(playerId)?.gameId;
+			persistent.eliminated = !!players.get(playerId)?.eliminated;
 			persistent.disconnectTimer = setTimeout(() => {
 				console.log(`Grace period expired for ${playerId}, removing from game`);
 				removePlayerCompletely(playerId);
@@ -2086,10 +2757,30 @@ function removePlayerCompletely(playerId) {
 	const player = players.get(playerId);
 	if (player && player.gameId) {
 		const gameId = player.gameId;
+		homeZoneIdleSince.delete(`${gameId}:${playerId}`);
 		const game = games.get(gameId);
 
 		if (game) {
 			game.players = game.players.filter(id => id !== playerId);
+			
+			// Keep the authoritative GameManager model in sync so re-joins can re-register cleanly.
+			const authoritativeGame = gameManager.getGame(gameId);
+			if (authoritativeGame && authoritativeGame.players && authoritativeGame.players[playerId]) {
+				delete authoritativeGame.players[playerId];
+			}
+			
+			if (game.state && game.state.homeZones && game.state.homeZones[playerId]) {
+				delete game.state.homeZones[playerId];
+			}
+			if (authoritativeGame && authoritativeGame.homeZones && authoritativeGame.homeZones[playerId]) {
+				delete authoritativeGame.homeZones[playerId];
+			}
+			
+			// Removing the player from game.players means integrity can now strip their terrain/chess content.
+			const integrityResult = runIslandIntegrityPass(gameId, game, { emitAnimation: false });
+			if (integrityResult.changed) {
+				broadcastGameUpdate(gameId, game, true);
+			}
 
 			io.to(gameId).emit('player_left', {
 				playerId: playerId,
@@ -2102,12 +2793,18 @@ function removePlayerCompletely(playerId) {
 			});
 
 			if (game.players.length === 0 && gameId !== GLOBAL_GAME_ID) {
+				for (const idleKey of homeZoneIdleSince.keys()) {
+					if (idleKey.startsWith(`${gameId}:`)) {
+						homeZoneIdleSince.delete(idleKey);
+					}
+				}
 				games.delete(gameId);
 				console.log(`Game ${gameId} removed (no players left)`);
 			}
 		}
 	}
 	players.delete(playerId);
+	persistence.markDirty();
 }
 
 // Create a new game
@@ -2161,40 +2858,37 @@ function createNewGame(gameId = null, settings = {}) {
 	
 	console.log(`New game created: ${id}`);
 	
-	// For global game, add a clearly identified AI opponent
+	// For global game, add 3 AI opponents at different difficulty levels
 	if (id === GLOBAL_GAME_ID) {
-		const computerId = `ai-opponent-${uuidv4().substring(0, 8)}`;
-		
-		// Generate a proper AI name and validate it
-		const aiName = validatePlayerName(`AI Opponent (Orange)`);
-		
-		// Add AI player to the game
-		computerPlayers.set(computerId, {
-			id: computerId,
-			name: aiName,
-			gameId: id,
-			isComputer: true,
-			difficulty: COMPUTER_DIFFICULTY.MEDIUM,
-			lastMoveTime: 0,
-			consecutiveMoves: 0,
-			minMoveInterval: 10000,
-			strategy: generateComputerStrategy(COMPUTER_DIFFICULTY.MEDIUM)
-		});
-		
-		// Register the computer player with the GameManager
-		gameManager.registerPlayer(
-			id,
-			computerId,
-			aiName,
-			false
-		);
-		
-		// Add to game's player list
-		game.players.push(computerId);
+		const AI_ROSTER = [
+			{ label: 'Novice',   difficulty: COMPUTER_DIFFICULTY.EASY,   interval: 15000 },
+			{ label: 'Standard', difficulty: COMPUTER_DIFFICULTY.MEDIUM, interval: 10000 },
+			{ label: 'Expert',   difficulty: COMPUTER_DIFFICULTY.HARD,   interval: 5000  },
+		];
+
+		for (const ai of AI_ROSTER) {
+			const computerId = `ai-${ai.label.toLowerCase()}-${uuidv4().substring(0, 8)}`;
+			const aiName = validatePlayerName(`AI ${ai.label}`);
+
+			computerPlayers.set(computerId, {
+				id: computerId,
+				name: aiName,
+				gameId: id,
+				isComputer: true,
+				difficulty: ai.difficulty,
+				lastMoveTime: 0,
+				consecutiveMoves: 0,
+				minMoveInterval: ai.interval,
+				strategy: generateComputerStrategy(ai.difficulty),
+			});
+
+			gameManager.registerPlayer(id, computerId, aiName, false);
+			game.players.push(computerId);
+
+			console.log(`AI opponent ${aiName} (${ai.difficulty}, ${computerId}) added to global game`);
+			startComputerPlayerActions(computerId, id);
+		}
 		game.hasComputerPlayer = true;
-		
-		console.log(`AI opponent (${computerId}) added to global game`);
-		startComputerPlayerActions(computerId, id);
 	} 
 	// For other games, add a computer player if specified
 	else if (settings.addComputerPlayer !== false) {
@@ -2377,11 +3071,20 @@ function performComputerAction(computerId, gameId) {
 	
 	const strategy = computerPlayer.strategy;
 	const gameState = game.state || {};
-	
-	// Determine action type based on player's situation and strategy
+
+	const aiPieces = (gameState.chessPieces || []).filter(
+		p => p && String(p.player) === String(computerId)
+	);
+	const onlyKingLeft = aiPieces.length === 1
+		&& String(aiPieces[0].type).toUpperCase() === 'KING';
+
+	if (onlyKingLeft) {
+		handleAiKingOnlyDetonation(computerId, gameId, game, aiPieces[0]);
+		return;
+	}
+
 	let actionType;
-	
-	// If computer has pieces under threat, prioritize defense based on defensiveness
+
 	const hasThreatenedPieces = checkForThreatenedPieces(gameState, computerId);
 	
 	if (hasThreatenedPieces && Math.random() < strategy.defensiveness) {
@@ -2413,10 +3116,90 @@ function performComputerAction(computerId, gameId) {
  * @param {string} computerId - Computer player ID
  * @returns {boolean} True if any pieces are threatened
  */
+function handleAiKingOnlyDetonation(computerId, gameId, game, kingPiece) {
+	console.log(`[AI] ${computerId} has only a king remaining – detonating and respawning.`);
+	const cp = computerPlayers.get(computerId);
+	if (!cp) return;
+	if (cp.pendingRespawn) return;
+	cp.pendingRespawn = true;
+
+	const gameObject = buildManagerGameObject(gameId, game);
+	const result = gameManager.chessManager.detonatePawn(gameObject, computerId, kingPiece.id);
+
+	if (!result.success) {
+		console.warn(`[AI] Failed king self-detonation for ${computerId}: ${result.error || 'unknown error'}`);
+		cp.pendingRespawn = false;
+		return;
+	}
+
+	game.state.board = gameObject.board;
+	game.state.chessPieces = gameObject.chessPieces;
+	runIslandIntegrityPass(gameId, game, { emitAnimation: true });
+	persistence.markDirty();
+
+	if (result.explosionSequence) {
+		io.to(gameId).emit('king_detonation', {
+			playerId: computerId,
+			explosionSequence: result.explosionSequence,
+			layerIntervalMs: result.layerIntervalMs || 500,
+		});
+	}
+	broadcastGameUpdate(gameId, game, true);
+
+	const difficulty = cp?.difficulty || COMPUTER_DIFFICULTY.MEDIUM;
+	const diffLabel = difficulty === COMPUTER_DIFFICULTY.EASY ? 'Novice'
+		: difficulty === COMPUTER_DIFFICULTY.HARD ? 'Expert' : 'Standard';
+
+	setTimeout(() => {
+		const currentGame = games.get(gameId);
+		if (!currentGame) {
+			const stale = computerPlayers.get(computerId);
+			if (stale) stale.pendingRespawn = false;
+			return;
+		}
+
+		const newId = `ai-${diffLabel.toLowerCase()}-${uuidv4().substring(0, 8)}`;
+		const aiName = validatePlayerName(`AI ${diffLabel}`);
+
+		currentGame.players = currentGame.players.filter(id => id !== computerId);
+		computerPlayers.delete(computerId);
+
+		computerPlayers.set(newId, {
+			id: newId, name: aiName, gameId,
+			isComputer: true, difficulty,
+			lastMoveTime: 0, consecutiveMoves: 0,
+			minMoveInterval: cp?.minMoveInterval || 10000,
+			strategy: generateComputerStrategy(difficulty),
+		});
+		gameManager.registerPlayer(gameId, newId, aiName, false);
+		currentGame.players.push(newId);
+		currentGame.hasComputerPlayer = true;
+		persistence.markDirty();
+
+		startComputerPlayerActions(newId, gameId);
+		broadcastGameUpdate(gameId, currentGame, true);
+		console.log(`[AI] Respawned ${aiName} (${newId}) replacing ${computerId}`);
+	}, 5000);
+}
+
 function checkForThreatenedPieces(gameState, computerId) {
-	// Implementation would check if opponent pieces can capture in the next move
-	// Simplified version for now
-	return Math.random() < 0.3; // 30% chance to detect threatened pieces
+	const pieces = (gameState.chessPieces || []).filter(
+		p => p && String(p.player) === String(computerId)
+	);
+	if (pieces.length === 0) return false;
+	const opponentPieces = (gameState.chessPieces || []).filter(
+		p => p && String(p.player) !== String(computerId)
+	);
+	for (const op of opponentPieces) {
+		const opPos = op.position || op;
+		for (const myP of pieces) {
+			const myPos = myP.position || myP;
+			const dx = Math.abs(opPos.x - myPos.x);
+			const dz = Math.abs(opPos.z - myPos.z);
+			if (dx <= 2 && dz <= 2) return true;
+		}
+	}
+	return false;
 }
 
 /**
@@ -2426,9 +3209,22 @@ function checkForThreatenedPieces(gameState, computerId) {
  * @returns {boolean} True if king is exposed
  */
 function isKingExposed(gameState, computerId) {
-	// Implementation would check king's position and surrounding protection
-	// Simplified version for now
-	return Math.random() < 0.2; // 20% chance to detect exposed king
+	const king = (gameState.chessPieces || []).find(
+		p => p && String(p.player) === String(computerId)
+			&& String(p.type).toUpperCase() === 'KING'
+	);
+	if (!king) return false;
+	const kp = king.position || king;
+	const cells = gameState.board?.cells || {};
+	let neighbours = 0;
+	for (let dx = -1; dx <= 1; dx++) {
+		for (let dz = -1; dz <= 1; dz++) {
+			if (dx === 0 && dz === 0) continue;
+			const k = `${kp.x + dx},${kp.z + dz}`;
+			if (cells[k] && Array.isArray(cells[k]) && cells[k].length > 0) neighbours++;
+		}
+	}
+	return neighbours < 3;
 }
 
 /**
@@ -2438,9 +3234,23 @@ function isKingExposed(gameState, computerId) {
  * @returns {boolean} True if attack opportunity exists
  */
 function hasAttackOpportunity(gameState, computerId) {
-	// Implementation would check if computer pieces can capture opponent pieces
-	// Simplified version for now
-	return Math.random() < 0.4; // 40% chance to detect attack opportunity
+	const myPieces = (gameState.chessPieces || []).filter(
+		p => p && String(p.player) === String(computerId)
+	);
+	const opponentPieces = (gameState.chessPieces || []).filter(
+		p => p && String(p.player) !== String(computerId)
+	);
+	if (myPieces.length === 0 || opponentPieces.length === 0) return false;
+	for (const mine of myPieces) {
+		const mp = mine.position || mine;
+		for (const opp of opponentPieces) {
+			const op = opp.position || opp;
+			const dx = Math.abs(mp.x - op.x);
+			const dz = Math.abs(mp.z - op.z);
+			if (dx <= 1 && dz <= 1) return true;
+		}
+	}
+	return false;
 }
 
 /**
@@ -2458,24 +3268,7 @@ function performStrategicTetrominoPlacement(gameState, computerId, strategy) {
 	if (!game) return;
 	
 	// Build a game object compatible with our server-side managers
-	const gameObject = {
-		id: gameId,
-		board: game.state.board || { cells: {}, minX: 0, maxX: 0, minZ: 0, maxZ: 0 },
-		chessPieces: game.state.chessPieces || [],
-		homeZones: game.state.homeZones || {}, // Include homeZones at top level for BoardManager
-		players: game.players.reduce((obj, id) => {
-			const playerObj = players.get(id) || computerPlayers.get(id) || {};
-			const homeZoneFromState = (game.state && game.state.homeZones && game.state.homeZones[id])
-				? game.state.homeZones[id]
-				: null;
-			obj[id] = {
-				id,
-				name: playerObj.name || `Player_${id.substring(0, 5)}`,
-				homeZone: homeZoneFromState || playerObj.homeZone || null
-			};
-			return obj;
-		}, {})
-	};
+	const gameObject = buildManagerGameObject(gameId, game);
 	
 	const board = gameObject.board;
 	
@@ -2547,16 +3340,21 @@ function performStrategicTetrominoPlacement(gameState, computerId, strategy) {
 		
 		// Apply placement using the same managers as human players
 		gameManager.tetrominoManager.placeTetromino(gameObject, tetromino, x, z, computerId);
-		
+
+		// Mark placement so future placements require king-path validation
+		const compObj = computerPlayers.get(computerId);
+		if (compObj) compObj.lastTetrominoPlacement = { x, z };
+
 		// Clear completed rows (and any pieces on them)
 		const clearedRows = gameManager.boardManager.checkAndClearRows(gameObject);
 		
 		// Update socket-layer game state and broadcast full state
 		game.state.board = gameObject.board;
 		game.state.chessPieces = gameObject.chessPieces;
-	game.state.lastAction = {
-		type: 'tetromino_placed',
-		playerId: computerId,
+		runIslandIntegrityPass(gameId, game, { emitAnimation: true });
+		game.state.lastAction = {
+			type: 'tetromino_placed',
+			playerId: computerId,
 			data: { pieceType, rotation, x, z, clearedRows }
 		};
 		
@@ -2566,7 +3364,7 @@ function performStrategicTetrominoPlacement(gameState, computerId, strategy) {
 			io.to(gameId).emit('row_cleared', { rows: clearedRows, playerId: computerId });
 		}
 		
-	updateSpectators(computerId, game.state);
+		updateSpectators(computerId, game.state);
 		return;
 	}
 }
@@ -2680,10 +3478,12 @@ function performStrategicChessMove(gameState, computerId, strategy) {
 			}
 		}
 		
-		// Remove the piece from the source cell (preserve home markers)
-		const homeMarkersAtSource = sourceCell.filter(item => item && item.type === 'home');
-		if (homeMarkersAtSource.length > 0) {
-			gameManager.boardManager.setCell(gameObject.board, piece.position.x, piece.position.z, homeMarkersAtSource);
+		// Remove only the moving chess piece from the source cell, preserving terrain
+		const remainingAtAISource = sourceCell.filter(
+			item => !(item && item.type === 'chess' && String(item.pieceId) === String(pieceId))
+		);
+		if (remainingAtAISource.length > 0) {
+			gameManager.boardManager.setCell(gameObject.board, piece.position.x, piece.position.z, remainingAtAISource);
 		} else {
 			gameManager.boardManager.setCell(gameObject.board, piece.position.x, piece.position.z, null);
 		}
@@ -2726,7 +3526,7 @@ function performStrategicChessMove(gameState, computerId, strategy) {
 		io.to(gameId).emit('chess_move', { playerId: computerId, movedPiece, capturedPiece });
 		
 		if (capturedPiece && capturedPiece.type === 'KING') {
-			endGame(gameId, { winner: computerId, reason: 'king_captured' });
+			executeKingCapture(gameId, computerId, capturedPiece.player);
 		}
 		
 		updateSpectators(computerId, game.state);
@@ -2772,6 +3572,87 @@ function initializeGlobalGame() {
 	console.log(`Global game created with ID: ${GLOBAL_GAME_ID}`);
 }
 
+
+// --- Restore persistent world (or create fresh) ---
+const _worldSnapshot = persistence.loadWorld();
+if (_worldSnapshot) {
+	const restored = persistence.restoreWorld(_worldSnapshot, {
+		games, players, computerPlayers, persistentPlayers,
+		gameManager, startComputerPlayerActions, generateComputerStrategy,
+	});
+	if (!restored) {
+		console.warn('[Startup] World restore failed, creating fresh global game.');
+		initializeGlobalGame();
+	}
+} else {
+	initializeGlobalGame();
+}
+
+// Ensure the global game has the expected AI roster after restore
+(function ensureAiRoster() {
+	const game = games.get(GLOBAL_GAME_ID);
+	if (!game) return;
+
+	const AI_TARGET_COUNT = 3;
+	const AI_ROSTER_TEMPLATE = [
+		{ label: 'Novice',   difficulty: COMPUTER_DIFFICULTY.EASY,   interval: 15000 },
+		{ label: 'Standard', difficulty: COMPUTER_DIFFICULTY.MEDIUM, interval: 10000 },
+		{ label: 'Expert',   difficulty: COMPUTER_DIFFICULTY.HARD,   interval: 5000  },
+	];
+
+	const existingAiIds = game.players.filter(id => computerPlayers.has(id));
+	const needed = AI_TARGET_COUNT - existingAiIds.length;
+
+	if (needed > 0) {
+		const usedDifficulties = new Set(existingAiIds.map(id => computerPlayers.get(id)?.difficulty));
+		let added = 0;
+		for (const tmpl of AI_ROSTER_TEMPLATE) {
+			if (added >= needed) break;
+			if (usedDifficulties.has(tmpl.difficulty)) continue;
+
+			const computerId = `ai-${tmpl.label.toLowerCase()}-${uuidv4().substring(0, 8)}`;
+			const aiName = validatePlayerName(`AI ${tmpl.label}`);
+			computerPlayers.set(computerId, {
+				id: computerId, name: aiName, gameId: GLOBAL_GAME_ID,
+				isComputer: true, difficulty: tmpl.difficulty,
+				lastMoveTime: 0, consecutiveMoves: 0,
+				minMoveInterval: tmpl.interval,
+				strategy: generateComputerStrategy(tmpl.difficulty),
+			});
+			gameManager.registerPlayer(GLOBAL_GAME_ID, computerId, aiName, false);
+			game.players.push(computerId);
+			startComputerPlayerActions(computerId, GLOBAL_GAME_ID);
+			console.log(`[Startup] Topped-up AI: ${aiName} (${tmpl.difficulty})`);
+			added++;
+		}
+		if (added > 0) game.hasComputerPlayer = true;
+	}
+})();
+
+// Repair stale persisted-world issues immediately on startup, without forcing
+// players to reset the world.
+processWorldIntegrityMaintenance({ emitAnimation: false, broadcast: false });
+
+// --- Persistence: auto-save + graceful shutdown ---
+const _persistenceDeps = {
+	games, players, computerPlayers, persistentPlayers,
+	globalGameId: GLOBAL_GAME_ID, gameManager,
+};
+persistence.startAutoSave(_persistenceDeps);
+setInterval(processHomeZoneDegradation, HOME_ZONE_DEGRADATION_CHECK_MS);
+setInterval(() => processWorldIntegrityMaintenance({
+	emitAnimation: true,
+	broadcast: true,
+}), WORLD_INTEGRITY_CHECK_MS);
+
+function gracefulShutdown(signal) {
+	console.log(`\n[Shutdown] Received ${signal}, saving world...`);
+	persistence.stopAutoSave();
+	persistence.saveWorldSync(_persistenceDeps);
+	process.exit(0);
+}
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
 // Start the server
 server.listen(PORT, () => {

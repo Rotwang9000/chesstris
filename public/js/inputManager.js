@@ -53,6 +53,7 @@ export function setupInputHandlers() {
 			const target = e.target;
 			const isUIElement = target.closest('button, input, select, a, .player-list-container, #loading, .tutorial-message');
 			if (isUIElement) return;
+			if (gameState.turnPhase !== 'chess') return;
 
 			const m = getMouse();
 			m.x = ((e.clientX - canvasRect.left) / canvasRect.width) * 2 - 1;
@@ -77,13 +78,9 @@ export function setupInputHandlers() {
 		setMouse(mouse);
 	}
 
-	containerElement.addEventListener('click', handleMouseDown, true);
-	containerElement.addEventListener('mousedown', handleMouseDown, true);
 	containerElement.addEventListener('mousemove', handleMouseMove);
 
 	if (renderer && renderer.domElement) {
-		renderer.domElement.addEventListener('click', handleMouseDown, true);
-		renderer.domElement.addEventListener('mousedown', handleMouseDown, true);
 		renderer.domElement.style.pointerEvents = 'auto';
 	}
 
@@ -184,12 +181,15 @@ function handleMouseDown(event) {
 }
 
 function handleMouseMove(event) {
-	const containerElement = getContainerElement();
 	const mouse = getMouse();
-	if (!containerElement || !mouse) return;
+	const renderer = getRenderer();
+	if (!mouse) return;
 
 	try {
-		const rect = containerElement.getBoundingClientRect();
+		const rect = renderer && renderer.domElement
+			? renderer.domElement.getBoundingClientRect()
+			: getContainerElement()?.getBoundingClientRect();
+		if (!rect) return;
 		mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
 		mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 	} catch (error) {
@@ -208,6 +208,7 @@ function handleTouchStart(event) {
 	try {
 		event.preventDefault();
 		if (event.touches.length > 0) {
+			if (gameState.turnPhase !== 'chess') return;
 			const rect = containerElement.getBoundingClientRect();
 			mouse.x = ((event.touches[0].clientX - rect.left) / rect.width) * 2 - 1;
 			mouse.y = -((event.touches[0].clientY - rect.top) / rect.height) * 2 + 1;

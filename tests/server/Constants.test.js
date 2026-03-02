@@ -22,8 +22,8 @@ describe('Constants — bible compliance', () => {
 	});
 
 	test('player cooldowns match bible', () => {
-		expect(PLAYER_SETTINGS.CHESS_MOVE_COOLDOWN_MS).toBe(750);
-		expect(PLAYER_SETTINGS.TETROMINO_PLACEMENT_COOLDOWN_MS).toBe(1500);
+		expect(PLAYER_SETTINGS.CHESS_MOVE_COOLDOWN_MS).toBe(500);
+		expect(PLAYER_SETTINGS.TETROMINO_PLACEMENT_COOLDOWN_MS).toBe(800);
 	});
 
 	test('game rules match bible', () => {

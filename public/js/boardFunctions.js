@@ -112,7 +112,6 @@ function extractCellContent(cell, contentType) {
 	
 	// Handle null/undefined cells
 	if (!cell) {
-		console.log('Cell is null or undefined');
 		return null;
 	}
 	
@@ -155,19 +154,14 @@ function extractCellContent(cell, contentType) {
 	if (typeof cell === 'object') {
 		// Direct match if cell has a type property
 		if (cell.type === contentType) {
-			console.log(`Direct match for ${contentType}:`, cell);
 			return cell;
 		}
-		
-		// Check in contents array if it exists
+
 		if (cell.contents && Array.isArray(cell.contents)) {
-			const found = cell.contents.find(item => item.type === contentType);
-			console.log(`Contents search for ${contentType}:`, found);
-			return found || null;
+			return cell.contents.find(item => item.type === contentType) || null;
 		}
 	}
-	
-	console.log(`No ${contentType} found in cell`);
+
 	return null;
 }
 
@@ -268,12 +262,9 @@ function createBoardCells(gameState, boardGroup, createFloatingIsland, THREE) {
 		// Use the existing centre marker directly from gameState
 		centerX = gameState.board.centreMarker.x;
 		centerZ = gameState.board.centreMarker.z;
-		console.log(`Using existing board centreMarker at (${centerX}, ${centerZ}) for cell positions`);
 	} else {
-		// Fallback to calculated centre
 		centerX = calculatedCenterX;
 		centerZ = calculatedCenterZ;
-		console.log(`No centreMarker found in game state, using calculated center at (${centerX}, ${centerZ})`);
 		
 		// IMPORTANT: Create the centre marker in the game state for future use
 		if (gameState.board) {
@@ -302,12 +293,7 @@ function createBoardCells(gameState, boardGroup, createFloatingIsland, THREE) {
 	const startZ = Math.max(minZ, Math.floor(centerZ - visibleRangeZ/2));
 	const endZ = Math.min(maxZ + 1, startZ + visibleRangeZ);
 	
-	// Log visible cell range
-	console.log(`Creating cells in range: x=${startX}-${endX}, z=${startZ}-${endZ} (board bounds: x=${minX}-${maxX}, z=${minZ}-${maxZ})`);
 	
-	// Debug output of the actual board structure
-	console.log('Board structure sample:', 
-		gameState.board.cells ? `${Object.keys(gameState.board.cells).length} cells` : 'Empty');
 	
 	// If createFloatingIsland function is not provided, create a simple fallback
 	const createIsland = createFloatingIsland || function(x, z, material, offset, hasContent) {
@@ -318,7 +304,7 @@ function createBoardCells(gameState, boardGroup, createFloatingIsland, THREE) {
 	
 	// IMPORTANT: Always create the centre marker cell to ensure it exists
 	// This is the anchor point for all positioning
-	console.log(`Creating centre marker cell at (${centerX}, ${centerZ})`);
+	
 	
 	// Create a special island for the centre marker
 	const centreIsland = createIsland(centerX, centerZ, centreMarkerMaterial, 0.3, true);
@@ -462,22 +448,16 @@ function createBoardCells(gameState, boardGroup, createFloatingIsland, THREE) {
 							// Try direct array handling as a backup
 							for (const cellItem of cellData) {
 								if (cellItem.type === 'chess') {
-									console.log(`Found chess piece through direct array access: ${cellItem.pieceType || 'UNKNOWN'}`);
-									
 									extractedPieces.push({
-										id: cellItem.pieceId || 
+										id: cellItem.pieceId ||
 											`${cellItem.player}-${cellItem.pieceType || 'PAWN'}-${x}-${z}`,
 										position: { x, z },
 										type: cellItem.pieceType ? cellItem.pieceType.toUpperCase() : "PAWN",
 										player: cellItem.player || 'player1',
 										color: cellItem.color || 0xcccccc
 									});
-									
-									console.log(`Extracted chess piece at (${x},${z}): ${cellItem.pieceType || 'PAWN'} for player ${cellItem.player || 'player1'}`);
 								}
 							}
-						} else {
-							console.log(`No chess piece found at (${x},${z}) in:`, cellData);
 						}
 					}
 				}
@@ -487,14 +467,9 @@ function createBoardCells(gameState, boardGroup, createFloatingIsland, THREE) {
 	
 	// Update the game state with extracted chess pieces
 	if (extractedPieces.length > 0) {
-		console.log(`Extracted ${extractedPieces.length} chess pieces from board cells`);
-		// Always set the pieces we found, as they should be the most current representation
 		gameState.chessPieces = extractedPieces;
-	} else {
-		console.warn('No chess pieces were extracted from the board');
 	}
-	
-	console.log(`Created ${cellCount} board cells and ${cloudCount} decorative clouds for visualization`);
+
 	return { cellCount, cloudCount };
 }
 
@@ -524,7 +499,7 @@ function renderBoard(gameState, boardGroup, createFloatingIsland, THREE) {
 	const centreMark = findBoardCentreMarker(gameState);
 	centerX = centreMark.x;
 	centerZ = centreMark.z;
-	console.log(`Using centralized centre marker at (${centerX}, ${centerZ}) for board rendering`);
+	
 	
 	// Ensure the marker is saved to the game state for future use
 	if (gameState.board) {
@@ -701,12 +676,19 @@ function renderBoard(gameState, boardGroup, createFloatingIsland, THREE) {
 
 			// Create a new visible board cell mesh (cube) for this coordinate
 			try {
-				const matOpts = { color, roughness, metalness, transparent, opacity };
-				if (gameState && gameState.retroMode && kind !== 'default') {
-					matOpts.emissive = new THREE.Color(color);
-					matOpts.emissiveIntensity = 0.4;
+				if (!renderCache.materials) renderCache.materials = {};
+				const retro = !!(gameState && gameState.retroMode && kind !== 'default');
+				const matKey = `${color}-${kind}-${retro}-${opacity}`;
+				let material = renderCache.materials[matKey];
+				if (!material) {
+					const matOpts = { color, roughness, metalness, transparent, opacity };
+					if (retro) {
+						matOpts.emissive = new THREE.Color(color);
+						matOpts.emissiveIntensity = 0.4;
+					}
+					material = new THREE.MeshStandardMaterial(matOpts);
+					renderCache.materials[matKey] = material;
 				}
-				const material = new THREE.MeshStandardMaterial(matOpts);
 
 				const noShadows = gameState && gameState.retroMode;
 				const newCell = new THREE.Mesh(renderCache.cellGeometry, material);
@@ -786,13 +768,12 @@ function renderBoard(gameState, boardGroup, createFloatingIsland, THREE) {
 	if (gameState.chessPieces === undefined || gameState.chessPieces.length === 0) {
 		// Use the centralized function for consistent extraction
 		gameState.chessPieces = extractChessPiecesFromCells(gameState);
-		console.log(`Extracted ${gameState.chessPieces.length} chess pieces during board rendering`);
 	}
-	
-	// Report performance and statistics
+
 	const endTime = performance.now();
-	console.log(`Board rendering completed in ${(endTime - startTime).toFixed(2)}ms`);
-	console.log(`Statistics: ${cellsCreated} cells created, ${cellsReused} reused, ${cellsRemoved} removed`);
+	if (gameState?.debugMode) {
+		console.log(`Board rendering: ${(endTime - startTime).toFixed(1)}ms — ${cellsCreated} created, ${cellsReused} reused, ${cellsRemoved} removed`);
+	}
 	
 	// Return statistics for callers
 	return {
@@ -900,15 +881,9 @@ function createChessPiece(gameState, x, z, pieceType, playerIdent, ourPlayerIden
 	const centreMark = findBoardCentreMarker(gameState);
 	centerX = centreMark.x;
 	centerZ = centreMark.z;
-	console.log(`Using centralized centre marker at (${centerX}, ${centerZ}) for chess piece creation`);
-	
-	// Ensure the marker is saved to the game state for future use
 	if (gameState.board) {
 		gameState.board.centreMarker = { x: centerX, z: centerZ };
 	}
-	
-	// Log for debugging the positioning
-	console.log(`Creating piece at board coordinates (${x}, ${z}), using board centre: (${centerX}, ${centerZ})`);
 	
 	try {
 		// Verify parameters for debugging
@@ -1088,7 +1063,7 @@ function extractChessPiecesFromCells(gameState) {
 	const centreX = centreMark?.x ?? 4;
 	const centreZ = centreMark?.z ?? 4;
 	
-	console.log(`Using board centre at (${centreX}, ${centreZ}) for chess piece extraction`);
+	
 	
 	// Process all cells in the board data
 	for (const key in gameState.board.cells) {
@@ -1171,7 +1146,6 @@ function extractChessPiecesFromCells(gameState) {
 		}
 	}
 	
-	console.log(`Extracted ${chessPieces.length} chess pieces from board cells`);
 	return chessPieces;
 }
 
@@ -1312,16 +1286,12 @@ function debugAdjacencyCheck(gameState, logBoardState = false) {
 				const blockX = posX + x;
 				const blockZ = posZ + z;
 				
-				// Check all 8 adjacent positions
+				// Orthogonal adjacency only (matching server island rules)
 				const directions = [
 					{ dx: -1, dz: 0, name: 'Left' },
 					{ dx: 1, dz: 0, name: 'Right' },
 					{ dx: 0, dz: -1, name: 'Up' },
 					{ dx: 0, dz: 1, name: 'Down' },
-					{ dx: -1, dz: -1, name: 'TopLeft' },
-					{ dx: 1, dz: -1, name: 'TopRight' },
-					{ dx: -1, dz: 1, name: 'BottomLeft' },
-					{ dx: 1, dz: 1, name: 'BottomRight' }
 				];
 				
 				const blockAdjacency = {
@@ -1376,16 +1346,12 @@ function debugAdjacencyCheck(gameState, logBoardState = false) {
 function getAdjacentCells(gameState, x, z) {
 	const adjacentCells = [];
 	
-	// Check all 8 adjacent positions
+	// Orthogonal adjacency only (matching server island rules)
 	const directions = [
 		{ dx: -1, dz: 0, name: 'Left' },
 		{ dx: 1, dz: 0, name: 'Right' },
 		{ dx: 0, dz: -1, name: 'Up' },
 		{ dx: 0, dz: 1, name: 'Down' },
-		{ dx: -1, dz: -1, name: 'TopLeft' },
-		{ dx: 1, dz: -1, name: 'TopRight' },
-		{ dx: -1, dz: 1, name: 'BottomLeft' },
-		{ dx: 1, dz: 1, name: 'BottomRight' }
 	];
 	
 	for (const dir of directions) {
@@ -1687,25 +1653,6 @@ function getChessPieceMoveSets(gameState, piece) {
 		}
 		// Final fallback
 		if (!Number.isFinite(minX)) { minX = -100; maxX = 100; minZ = -100; maxZ = 100; }
-	}
-	
-	// DEBUG: Check cells around the piece
-	console.log(`getChessPieceMoveSets: ${pieceType} at (${currentX}, ${currentZ}), boardBounds: (${minX}-${maxX}, ${minZ}-${maxZ})`);
-	console.log(`getChessPieceMoveSets: board.cells count = ${gameState?.board?.cells ? Object.keys(gameState.board.cells).length : 0}`);
-	
-	// Check surrounding cells for debugging
-	for (let dz = -1; dz <= 1; dz++) {
-		for (let dx = -1; dx <= 1; dx++) {
-			if (dx === 0 && dz === 0) continue;
-			const testX = currentX + dx;
-			const testZ = currentZ + dz;
-			const key = `${testX},${testZ}`;
-			const cell = gameState?.board?.cells?.[key];
-			const hasCell = hasBoardCell(gameState, testX, testZ);
-			if (cell || hasCell) {
-				console.log(`  Cell at (${testX}, ${testZ}): exists=${!!cell}, hasBoardCell=${hasCell}, value=`, cell);
-			}
-		}
 	}
 	
 	// Generate moves based on piece type
@@ -2122,7 +2069,7 @@ function synchronizeBoardState(
 	animateRemoval, 
 	animateMovement
 ) {
-	console.log("Synchronizing board state with updates...");
+	
 	const startTime = performance.now();
 	
 	// Clone current state for comparison
@@ -2364,82 +2311,54 @@ function synchronizeBoardState(
 		};
 	}
 	
-	// Detect cells that were removed
+	// Build a position-keyed lookup of boardGroup children for O(1) access
+	const childByPos = new Map();
+	for (let i = 0; i < boardGroup.children.length; i++) {
+		const child = boardGroup.children[i];
+		if (child?.userData?.type === 'cell' && child.userData.position) {
+			childByPos.set(`${child.userData.position.x},${child.userData.position.z}`, child);
+		}
+	}
+
 	for (const key in currentCellsMap) {
 		if (!newCellsMap[key]) {
-			// Cell was removed at this position
 			const cellInfo = currentCellsMap[key];
-			console.log(`Cell removed at position ${key}`);
 			stats.cellsRemoved++;
-			
-			// Find corresponding visual cell
-			const cellObject = boardGroup.children.find(obj => 
-				obj.userData && 
-				obj.userData.type === 'cell' && 
-				obj.userData.position && 
-				obj.userData.position.x === cellInfo.position.x && 
-				obj.userData.position.z === cellInfo.position.z
-			);
-			
+
+			const cellObject = childByPos.get(key);
 			if (cellObject) {
 				const isInVisualRange = isPositionInVisualRange(
-					cellInfo.position.x, 
-					cellInfo.position.z, 
+					cellInfo.position.x,
+					cellInfo.position.z,
 					gameState
 				);
-				
+
 				if (typeof animateRemoval === 'function' && isInVisualRange) {
-					// Animate removal
 					animateRemoval(cellObject, () => {
 						boardGroup.remove(cellObject);
 						disposeObject3D(cellObject);
 					});
 				} else {
-					// Remove immediately
 					boardGroup.remove(cellObject);
 					disposeObject3D(cellObject);
 				}
 			}
 		}
 	}
-	
-	// Process cells that need to be added or moved
+
 	for (const key in newCellsMap) {
 		const newCellInfo = newCellsMap[key];
-		
-		// Check if this is a new cell or an existing one
+
 		if (!currentCellsMap[key]) {
-			// New cell
-			console.log(`New cell added at position ${key}`);
 			stats.cellsAdded++;
-			
-			// Create new visual cell
-			// Actual cell creation would depend on your specific implementation
-			// This would normally call a createCell function
 		} else {
-			// Cell exists at this position - check if content changed significantly
 			const currentCellInfo = currentCellsMap[key];
-			
-			// Simple comparison - in a real implementation, you'd want deeper comparison
-			// to detect changes in cell properties
-			const contentChanged = JSON.stringify(currentCellInfo.content) !== 
-				JSON.stringify(newCellInfo.content);
-			
+			const contentChanged = currentCellInfo.id !== newCellInfo.id;
+
 			if (contentChanged) {
-				console.log(`Cell content changed at position ${key}`);
-				
-				// Update cell visual representation
-				const cellObject = boardGroup.children.find(obj => 
-					obj.userData && 
-					obj.userData.type === 'cell' && 
-					obj.userData.position && 
-					obj.userData.position.x === newCellInfo.position.x && 
-					obj.userData.position.z === newCellInfo.position.z
-				);
-				
+				const cellObject = childByPos.get(key);
 				if (cellObject) {
-					// Update cell material or other visual properties based on new content
-					// This would depend on your specific implementation
+					// Visual properties are updated by the full renderBoard pass
 				}
 			}
 		}
@@ -2484,14 +2403,12 @@ function synchronizeBoardState(
 			const currentCell = cells.find(c => c.state === 'current').info;
 			const newCell = cells.find(c => c.state === 'new').info;
 			
-			console.log(`Cell moved: ${id} from ${cells.find(c => c.state === 'current').key} to ${cells.find(c => c.state === 'new').key}`);
 			stats.cellsMoved++;
-			
-			// Find the visual representation
-			const cellObject = boardGroup.children.find(obj => 
-				obj.userData && 
-				obj.userData.type === 'cell' && 
-				obj.userData.position && 
+
+			const cellObject = childByPos.get(cells.find(c => c.state === 'current')?.key) || boardGroup.children.find(obj =>
+				obj.userData &&
+				obj.userData.type === 'cell' &&
+				obj.userData.position &&
 				obj.userData.position.x === currentCell.position.x && 
 				obj.userData.position.z === currentCell.position.z
 			);
@@ -2552,9 +2469,9 @@ function synchronizeBoardState(
 	gameState.chessPieces = [...newPieces];
 	
 	const endTime = performance.now();
-	console.log(`Board sync completed in ${(endTime - startTime).toFixed(2)}ms`);
-	console.log(`Stats: ${stats.cellsAdded} cells added, ${stats.cellsRemoved} removed, ${stats.cellsMoved} moved`);
-	console.log(`Pieces: ${stats.piecesAdded} added, ${stats.piecesRemoved} removed, ${stats.piecesMoved} moved`);
+	if (gameState?.debugMode) {
+		console.log(`Board sync: ${(endTime - startTime).toFixed(1)}ms — cells +${stats.cellsAdded} -${stats.cellsRemoved} ~${stats.cellsMoved}`);
+	}
 	
 	return stats;
 }

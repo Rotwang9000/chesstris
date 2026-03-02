@@ -69,7 +69,18 @@ npm ci --omit=dev --prefer-offline 2>/dev/null || npm install --omit=dev
 
 # Restart the process — try PM2 directly first, fall back to trigger file
 echo "--- Restarting ${PM2_NAME} ---"
-if command -v pm2 &>/dev/null; then
+_is_container=false
+if [ -f "/.dockerenv" ]; then
+	_is_container=true
+elif [ -r "/proc/1/cgroup" ] && grep -Eq 'docker|containerd|kubepods' "/proc/1/cgroup"; then
+	_is_container=true
+fi
+
+if [ "$_is_container" = true ]; then
+	echo "Container environment detected"
+	echo "Writing deploy trigger for host watcher..."
+	_write_trigger=true
+elif command -v pm2 &>/dev/null; then
 	_pm2_on_host=true
 	# Check if we can actually talk to a PM2 daemon
 	if pm2 ping &>/dev/null 2>&1; then
@@ -84,7 +95,7 @@ if command -v pm2 &>/dev/null; then
 	fi
 
 	if [ "$_pm2_on_host" = true ]; then
-		echo "PM2 daemon not reachable (likely inside Docker)"
+		echo "PM2 daemon not reachable in this environment"
 		echo "Writing deploy trigger for host watcher..."
 		_write_trigger=true
 	fi

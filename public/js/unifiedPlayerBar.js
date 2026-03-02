@@ -81,6 +81,68 @@ function getLocalPlayerId(gameState) {
 	return null;
 }
 
+function getCookieValue(name) {
+	const cookieText = document.cookie || '';
+	if (!cookieText) return null;
+	const entries = cookieText.split(';');
+	for (const entry of entries) {
+		const [rawKey, ...rawValue] = entry.trim().split('=');
+		if (rawKey === name) {
+			return decodeURIComponent(rawValue.join('='));
+		}
+	}
+	return null;
+}
+
+function resolvePlayerCode(gameState) {
+	if (NetworkManager && typeof NetworkManager.getPlayerId === 'function') {
+		const networkId = NetworkManager.getPlayerId();
+		if (networkId) return String(networkId);
+	}
+	if (gameState && gameState.localPlayerId) return String(gameState.localPlayerId);
+	const cookieId = getCookieValue('shaktris_player_id');
+	return cookieId ? String(cookieId) : '';
+}
+
+function resolveWorldId() {
+	if (NetworkManager && typeof NetworkManager.getGameId === 'function') {
+		const networkGameId = NetworkManager.getGameId();
+		if (networkGameId) return String(networkGameId);
+	}
+	const params = new URLSearchParams(window.location.search);
+	return params.get('gameId') || params.get('game') || 'shared-world';
+}
+
+function updateSessionDetails(gameState) {
+	const worldInput = document.getElementById('sidebar-world-id-display');
+	if (worldInput) {
+		worldInput.value = resolveWorldId();
+	}
+	const playerCodeInput = document.getElementById('sidebar-player-code-display');
+	if (playerCodeInput) {
+		playerCodeInput.value = resolvePlayerCode(gameState) || 'Not assigned yet';
+	}
+}
+
+function copyInputFieldValue(inputId, button, successText = 'Copied!') {
+	const input = document.getElementById(inputId);
+	if (!input) return;
+	input.focus();
+	input.select();
+	input.setSelectionRange(0, 99999);
+	let copied = false;
+	try {
+		copied = document.execCommand('copy');
+	} catch (_error) {
+		copied = false;
+	}
+	const originalText = button.textContent;
+	button.textContent = copied ? successText : 'Copy failed';
+	setTimeout(() => {
+		button.textContent = originalText;
+	}, 1400);
+}
+
 /**
  * Create the unified player bar that slides out from the right
  */
@@ -215,7 +277,7 @@ export function createUnifiedPlayerBar(gameState) {
 	});
 	playerBar.appendChild(playerContainer);
 	
-	// Add Game ID section
+	// Add World / Player session section
 	const gameIdSection = document.createElement('div');
 	gameIdSection.id = 'sidebar-game-id';
 	Object.assign(gameIdSection.style, {
@@ -223,22 +285,34 @@ export function createUnifiedPlayerBar(gameState) {
 		borderTop: '1px solid rgba(255, 204, 0, 0.5)'
 	});
 	
-	// Get the game ID from URL parameters
-	const urlParams = new URLSearchParams(window.location.search);
-	const gameId = urlParams.get('game') || 'Creating new game...';
+	const worldId = resolveWorldId();
+	const playerCode = resolvePlayerCode(gameState);
 	
 	gameIdSection.innerHTML = `
-		<div style="font-weight: bold; margin-bottom: 5px; color: #ffcc00;">Game ID</div>
+		<div style="font-weight: bold; margin-bottom: 5px; color: #ffcc00;">World ID</div>
 		<div style="display: flex; align-items: center; margin-bottom: 10px;">
-			<input id="sidebar-game-id-display" type="text" value="${gameId}" 
+			<input id="sidebar-world-id-display" type="text" value="${worldId}" 
 				style="flex-grow: 1; margin-right: 5px; background: rgba(34, 34, 34, 0.8); color: #ffcc00; 
 				border: 1px solid #ffcc00; border-radius: 3px; font-family: monospace; padding: 5px;" readonly>
-			<button id="sidebar-copy-game-id" 
+			<button id="sidebar-copy-world-id" 
 				style="background: #333; color: #ffcc00; border: 1px solid #ffcc00; 
 				border-radius: 3px; padding: 5px 8px; cursor: pointer; font-family: 'Playfair Display', serif;">
 				Copy
 			</button>
 		</div>
+		<div style="font-size: 11px; color: #bbb; margin-bottom: 12px;">Shared board identifier</div>
+		<div style="font-weight: bold; margin-bottom: 5px; color: #ffcc00;">Player Code</div>
+		<div style="display: flex; align-items: center; margin-bottom: 6px;">
+			<input id="sidebar-player-code-display" type="text" value="${playerCode || 'Not assigned yet'}" 
+				style="flex-grow: 1; margin-right: 5px; background: rgba(34, 34, 34, 0.8); color: #ffcc00; 
+				border: 1px solid #ffcc00; border-radius: 3px; font-family: monospace; padding: 5px;" readonly>
+			<button id="sidebar-copy-player-code" 
+				style="background: #333; color: #ffcc00; border: 1px solid #ffcc00; 
+				border-radius: 3px; padding: 5px 8px; cursor: pointer; font-family: 'Playfair Display', serif;">
+				Copy
+			</button>
+		</div>
+		<div style="font-size: 11px; color: #bbb;">Use this code to restore your saved position in the world.</div>
 	`;
 	playerBar.appendChild(gameIdSection);
 	
@@ -300,22 +374,16 @@ export function createUnifiedPlayerBar(gameState) {
 	// Add to document
 	document.body.appendChild(playerBar);
 	
-	// Add event listener for Game ID copy button
-	const copyButton = document.getElementById('sidebar-copy-game-id');
-	if (copyButton) {
-		copyButton.addEventListener('click', () => {
-			const gameIdInput = document.getElementById('sidebar-game-id-display');
-			if (gameIdInput) {
-				gameIdInput.select();
-				document.execCommand('copy');
-				
-				// Show feedback
-				const originalText = copyButton.textContent;
-				copyButton.textContent = 'Copied!';
-				setTimeout(() => {
-					copyButton.textContent = originalText;
-				}, 2000);
-			}
+	const worldCopyButton = document.getElementById('sidebar-copy-world-id');
+	if (worldCopyButton) {
+		worldCopyButton.addEventListener('click', () => {
+			copyInputFieldValue('sidebar-world-id-display', worldCopyButton, 'Copied!');
+		});
+	}
+	const playerCodeCopyButton = document.getElementById('sidebar-copy-player-code');
+	if (playerCodeCopyButton) {
+		playerCodeCopyButton.addEventListener('click', () => {
+			copyInputFieldValue('sidebar-player-code-display', playerCodeCopyButton, 'Copied!');
 		});
 	}
 	
@@ -340,6 +408,7 @@ export function createUnifiedPlayerBar(gameState) {
 	
 	// Populate player information
 	updateUnifiedPlayerBar(gameState);
+	updateSessionDetails(gameState);
 	
 	// Show the bar initially
 	showPlayerBar();
@@ -577,6 +646,13 @@ function addPlayerToBar(playerBar, playerId, playerInfo, gameState) {
 		}
 	});
 	
+	// Click flies camera to that player's king
+	playerElement.addEventListener('click', () => {
+		if (window.gameCore && typeof window.gameCore.flyToPlayerKing === 'function') {
+			window.gameCore.flyToPlayerKing(playerId);
+		}
+	});
+
 	// Add touch events for mobile devices
 	playerElement.addEventListener('touchstart', (e) => {
 		// Prevent default to avoid scrolling
@@ -635,8 +711,8 @@ function addPlayerToBar(playerBar, playerId, playerInfo, gameState) {
 export function updateUnifiedPlayerBar(gameState) {
 	if (!gameState) return;
 	
-	// Debug the game state
-	console.log('Updating player bar with game state:', gameState);
+	// Debug the game state (gated to avoid performance hit from serialising the full object)
+	if (gameState?.debugMode) console.log('Updating player bar with game state:', gameState);
 	
 	// Ensure the bar exists
 	let playerBar = document.getElementById('unified-player-bar');
@@ -674,6 +750,7 @@ export function updateUnifiedPlayerBar(gameState) {
 	
 	// Update hash
 	lastPlayerDataHash = currentHash;
+	updateSessionDetails(gameState);
 	
 	// Get the player container
 	const playerContainer = document.getElementById('unified-player-container');
@@ -730,13 +807,8 @@ export function updateUnifiedPlayerBar(gameState) {
 		playerContainer.appendChild(waitingMessage);
 	}
 	
-	// Update Game ID when a game ID is available
-	const urlParams = new URLSearchParams(window.location.search);
-	const gameId = urlParams.get('game');
-	const gameIdInput = document.getElementById('sidebar-game-id-display');
-	if (gameIdInput && gameId) {
-		gameIdInput.value = gameId;
-	}
+	// Keep world/session details in sync with latest connection state
+	updateSessionDetails(gameState);
 }
 
 /**

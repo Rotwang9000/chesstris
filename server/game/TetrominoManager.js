@@ -84,98 +84,51 @@ class TetrominoManager {
 			}
 		}
 		
-		// Check if this is the player's first tetromino placement
+		const pid = String(playerId);
 		const isFirstPlacement = !game.players?.[playerId] || !game.players[playerId].lastTetrominoPlacement;
-		
+
 		let sawAdjacentPlayerContent = false;
-		
+
 		for (let i = 0; i < depth; i++) {
 			for (let j = 0; j < width; j++) {
 				if (!shape[i][j]) continue;
-				
+
 				const posX = x + j;
 				const posZ = z + i;
-				
-				// Check adjacent cells including diagonals
+
 				const adjacentPositions = [
-					{ x: posX - 1, z: posZ },        // left
-					{ x: posX + 1, z: posZ },        // right
-					{ x: posX, z: posZ - 1 },        // forward
-					{ x: posX, z: posZ + 1 },        // backward
-					{ x: posX - 1, z: posZ - 1 },    // top-left
-					{ x: posX + 1, z: posZ - 1 },    // top-right
-					{ x: posX - 1, z: posZ + 1 },    // bottom-left
-					{ x: posX + 1, z: posZ + 1 }     // bottom-right
+					{ x: posX - 1, z: posZ },
+					{ x: posX + 1, z: posZ },
+					{ x: posX, z: posZ - 1 },
+					{ x: posX, z: posZ + 1 },
 				];
-				
+
 				for (const pos of adjacentPositions) {
 					const adjacentCell = this.boardManager.getCell(game.board, pos.x, pos.z);
 					if (!adjacentCell || adjacentCell.length === 0) continue;
-					
-					// Check if any adjacent cell belongs to the player (excluding home markers)
-					const hasPlayerContent = adjacentCell.some(item => 
-						item && item.player === playerId && item.type !== 'home'
+
+					const hasPlayerContent = adjacentCell.some(
+						item => item && String(item.player) === pid
 					);
-					
+
 					if (!hasPlayerContent) continue;
 					sawAdjacentPlayerContent = true;
-					
-					// First placement can connect to any owned cell, or directly to home zone (handled below)
+
 					if (isFirstPlacement) {
 						return { valid: true };
 					}
-					
-					// Non-first placement must have a path to the king through owned territory
-					if (this.islandManager.hasPathToKing(game, pos.x, pos.z, playerId)) {
+
+					if (this.islandManager.hasPathToKing(game, pos.x, pos.z, pid)) {
 						return { valid: true };
 					}
 				}
 			}
 		}
-		
-		// For the first placement, allow adjacency to the player's home zone
-		if (isFirstPlacement && game.homeZones && game.homeZones[playerId]) {
-			const homeZone = game.homeZones[playerId];
-			if (homeZone) {
-				for (let i = 0; i < depth; i++) {
-					for (let j = 0; j < width; j++) {
-						if (!shape[i][j]) continue;
-						
-						const posX = x + j;
-						const posZ = z + i;
-						
-						const adjacentPositions = [
-							{ x: posX - 1, z: posZ },
-							{ x: posX + 1, z: posZ },
-							{ x: posX, z: posZ - 1 },
-							{ x: posX, z: posZ + 1 },
-							{ x: posX - 1, z: posZ - 1 },
-							{ x: posX + 1, z: posZ - 1 },
-							{ x: posX - 1, z: posZ + 1 },
-							{ x: posX + 1, z: posZ + 1 }
-						];
-						
-						for (const pos of adjacentPositions) {
-							const adjacentCell = this.boardManager.getCell(game.board, pos.x, pos.z);
-							if (!adjacentCell || adjacentCell.length === 0) continue;
-							
-							const hasHomeCell = adjacentCell.some(item => 
-								item && item.type === 'home' && item.player === playerId
-							);
-							
-							if (hasHomeCell) {
-								return { valid: true };
-							}
-						}
-					}
-				}
-			}
-		}
-		
+
 		if (sawAdjacentPlayerContent) {
 			return { valid: false, reason: 'no_path_to_king', message: 'No connected path to your king' };
 		}
-		
+
 		return { valid: false, reason: 'not_adjacent', message: 'Tetromino must connect to your territory' };
 	}
 	
@@ -233,16 +186,12 @@ class TetrominoManager {
 	 * @returns {Object} Result with hasAdjacent flag and coordinates
 	 */
 	hasAdjacentCell(game, x, z, playerId) {
-		// Check adjacent positions in XZ plane including diagonals
+		// Orthogonal adjacency only (matching island connectivity rules)
 		const adjacentPositions = [
-			{ x: x - 1, z },        // left
-			{ x: x + 1, z },        // right
-			{ x, z: z - 1 },        // forward
-			{ x, z: z + 1 },        // backward
-			{ x: x - 1, z: z - 1 }, // top-left
-			{ x: x + 1, z: z - 1 }, // top-right
-			{ x: x - 1, z: z + 1 }, // bottom-left
-			{ x: x + 1, z: z + 1 }  // bottom-right
+			{ x: x - 1, z },
+			{ x: x + 1, z },
+			{ x, z: z - 1 },
+			{ x, z: z + 1 },
 		];
 		
 		for (const pos of adjacentPositions) {

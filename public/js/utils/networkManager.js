@@ -68,6 +68,10 @@ export function submitChessMove(move) {
 	return networkManagerInstance.submitChessMove(move);
 }
 
+export function detonatePawn(pieceId) {
+	return networkManagerInstance.detonatePawn(pieceId);
+}
+
 export function getStatus() {
 	if (networkManagerInstance && typeof networkManagerInstance.getStatus === 'function') {
 		return networkManagerInstance.getStatus();
@@ -116,6 +120,10 @@ export function reconnect(maxAttempts = 5) {
 
 export function getSocket() {
 	return networkManagerInstance.getSocket();
+}
+
+export function exitGame() {
+	return networkManagerInstance.exitGame();
 }
 
 export function startGameStatePolling() {

@@ -32,18 +32,18 @@ let movesSinceLastForcedUpdate = 0; // Counter for moves since last forced updat
 let lastKnownMoveCount = 0; // Track the last move count to detect new moves
 
 export function updateChessPieces(chessPiecesGroup, camera, gameState) {
-	// Rate-limit updates to reduce performance impact
+	// Rate-limit updates to reduce performance impact (but never skip forced)
 	const now = Date.now();
-	if (now - lastChessPiecesUpdate < CHESS_PIECES_UPDATE_INTERVAL) {
-		return; // Skip if called too soon after previous update
+	if (now - lastChessPiecesUpdate < CHESS_PIECES_UPDATE_INTERVAL && !gameState._forceUpdate) {
+		return;
 	}
 	
-	// Only process if there are actual changes to the pieces
-	// Generate a simple hash of the current chess pieces
-	let currentHash = '';
+	// Generate a hash of the current chess pieces + render profile so
+	// switching themes triggers a rebuild even when positions haven't changed.
+	const profileTag = gameState.renderProfile || (gameState.retroMode ? 'retro' : 'normal');
+	let currentHash = `profile:${profileTag}|`;
 	if (gameState.chessPieces && Array.isArray(gameState.chessPieces)) {
-		// Create a hash based on critical properties of each piece
-		currentHash = gameState.chessPieces.map(piece => {
+		currentHash += gameState.chessPieces.map(piece => {
 			if (!piece) return '';
 			const pos = piece.position || piece;
 			const px = (pos && pos.x !== undefined) ? pos.x : piece.x;
@@ -184,9 +184,22 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 
 		// Quick safety check - if we have no chess pieces, stop processing
 		if (!chessPieces || chessPieces.length === 0) {
-			if (isFirstRun || gameState.debugMode) {
-				console.warn('No chess pieces to render, skipping update');
+			const existing = [...chessPiecesGroup.children];
+			for (const pieceMesh of existing) {
+				try {
+					chessPiecesGroup.remove(pieceMesh);
+					if (pieceMesh.geometry) pieceMesh.geometry.dispose();
+					if (pieceMesh.material) {
+						if (Array.isArray(pieceMesh.material)) {
+							pieceMesh.material.forEach(m => m && m.dispose && m.dispose());
+						} else if (pieceMesh.material.dispose) {
+							pieceMesh.material.dispose();
+						}
+					}
+				} catch (_) { /* ignore disposal issues */ }
 			}
+			lastChessPiecesHash = currentHash;
+			resetErrorTracking();
 			return;
 		}
 
@@ -420,7 +433,8 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 					try {
 						if (pieceMesh.getObjectByName && !pieceMesh.getObjectByName('raycast-hitbox')) {
 							if (!updateChessPieces._raycastHitboxGeometry) {
-								updateChessPieces._raycastHitboxGeometry = new THREE.CylinderGeometry(0.55, 0.55, 1.3, 8);
+								// Keep hitbox smaller than a full cell to avoid selecting pieces behind.
+								updateChessPieces._raycastHitboxGeometry = new THREE.CylinderGeometry(0.36, 0.36, 0.75, 8);
 							}
 							if (!updateChessPieces._raycastHitboxMaterial) {
 							updateChessPieces._raycastHitboxMaterial = new THREE.MeshBasicMaterial({
@@ -433,7 +447,7 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 							}
 							const hitbox = new THREE.Mesh(updateChessPieces._raycastHitboxGeometry, updateChessPieces._raycastHitboxMaterial);
 							hitbox.name = 'raycast-hitbox';
-							hitbox.position.set(0, 0.65, 0);
+							hitbox.position.set(0, 0.38, 0);
 							hitbox.castShadow = false;
 							hitbox.receiveShadow = false;
 							pieceMesh.add(hitbox);
@@ -543,6 +557,8 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 		// 	console.log(`Chess pieces updated: ${piecesCreated} created, ${piecesReused} reused, ${piecesRemoved} removed`);
 		// }
 		
+		lastChessPiecesHash = currentHash;
+
 		// If we get here without errors, reset error tracking
 		resetErrorTracking();
 	} catch (error) {
@@ -644,14 +660,12 @@ function createRetroPiece(type, isLocal, THREE) {
 function createPieceMeshForPlayer(piece, pieceType, pieceColor, orientation, gameState, THREE) {
 	const piecePos = piece?.position || piece;
 	const isLocalPiece = isLocalPlayerPiece(piece, gameState);
+	const isRetro = !!(gameState && (gameState.retroMode || gameState.renderProfile === 'retro'));
 
-	if (gameState && gameState.retroMode) {
-		return createRetroPiece(pieceType, isLocalPiece, THREE);
-	}
-
-	// Local player gets the detailed Russian-styled pieces.
+	// Retro mode or local-player pieces both use the detailed creator
+	// (which handles retro letter sprites or 3D geometry internally).
 	if (
-		isLocalPiece &&
+		(isRetro || isLocalPiece) &&
 		typeof createDetailedChessPiece === 'function' &&
 		piecePos &&
 		Number.isFinite(piecePos.x) &&
@@ -666,15 +680,15 @@ function createPieceMeshForPlayer(piece, pieceType, pieceColor, orientation, gam
 				piece.player,
 				{
 					orientation,
-					isLocalPlayer: true
+					isLocalPlayer: isLocalPiece
 				}
 			);
 		} catch (error) {
-			console.warn('Detailed local piece creation failed, using fallback:', error);
+			console.warn('Detailed piece creation failed, using fallback:', error);
 		}
 	}
-	
-	// Opponents remain lightweight for performance.
+
+	// Opponents in non-retro mode use the lightweight fallback.
 	return chessPieceCreator.createPiece(pieceType, pieceColor, orientation, THREE);
 }
 

@@ -174,8 +174,6 @@ export function createChessPiece(gameState, x, z, pieceType, player, options = {
 		
 	const pieceTypeName = PIECE_TYPE_MAP[pieceTypeNum] || 'PAWN';
 	
-	// Player is an identifier string, not a number
-	
 	// Determine if this is the local player (either from options or gameState)
 	const isLocalPlayer = options.isLocalPlayer !== undefined 
 		? options.isLocalPlayer 
@@ -187,11 +185,20 @@ export function createChessPiece(gameState, x, z, pieceType, player, options = {
 	// Material key to use - 'self' for local player, 'other' for opponents
 	const materialKey = isLocalPlayer ? 'self' : 'other';
 	
-	// Only log during debug mode to reduce console spam
 	if (gameState.debugMode) {
 		console.log(`Creating chess piece at (${x}, ${z}) of type ${pieceTypeName} for player ${player} (${isLocalPlayer ? 'local' : 'opponent'})`);
 	}
 	
+	// ── Retro mode: letter-based sprite pieces ──────────────────────────
+	if (gameState.retroMode || gameState.renderProfile === 'retro') {
+		return _createRetroLetterPiece(THREE, pieceTypeNum, pieceTypeName, player, x, z, isLocalPlayer, customColor);
+	}
+
+	// ── Cute mode: 8-bit voxel-style pieces ─────────────────────────────
+	if (gameState.lowQuality || gameState.renderProfile === 'cute') {
+		return _createCutePiece(THREE, pieceTypeNum, pieceTypeName, player, x, z, isLocalPlayer, customColor);
+	}
+
 	try {
 		// Create a group for the piece and its decorations
 		const pieceGroup = new THREE.Group();
@@ -366,6 +373,223 @@ export function createChessPiece(gameState, x, z, pieceType, player, options = {
 		fallbackGroup.visible = true;
 		return fallbackGroup;
 	}
+}
+
+// Letters used for each piece type in retro mode.
+// The bible specifies "Cyrillic text sprites" for retro — using standard
+// chess initials (K/Q/R/B/N/P) keeps it universally readable while still
+// feeling retro.
+const RETRO_PIECE_LETTERS = {
+	6: 'K',   // King
+	5: 'Q',   // Queen
+	4: 'B',   // Bishop
+	3: 'N',   // Knight
+	2: 'R',   // Rook
+	1: 'P',   // Pawn
+};
+
+/**
+ * Create a simple letter-on-disc piece for retro/CRT mode.
+ * Green phosphor for local player, amber for opponents.
+ */
+function _createRetroLetterPiece(THREE, pieceTypeNum, pieceTypeName, player, x, z, isLocalPlayer, customColor) {
+	const group = new THREE.Group();
+
+	// Near-black base so the piece stands out against any terrain colour
+	const discColor = 0x0A0A0A;
+	const rimColor = customColor
+		? customColor
+		: (isLocalPlayer ? 0x00FF00 : 0xFF8800);
+	// Pure white letter with coloured outline for maximum readability
+	const letterFill = '#FFFFFF';
+	const letterStroke = customColor
+		? `#${Number(customColor).toString(16).padStart(6, '0')}`
+		: (isLocalPlayer ? '#00FF00' : '#FF8800');
+
+	// Flat disc base — opaque black
+	const discGeo = new THREE.CylinderGeometry(0.38, 0.38, 0.10, 16);
+	const discMat = new THREE.MeshBasicMaterial({
+		color: discColor,
+		transparent: false,
+	});
+	const disc = new THREE.Mesh(discGeo, discMat);
+	disc.position.y = 0.05;
+	group.add(disc);
+
+	// Bright rim ring
+	const rimGeo = new THREE.TorusGeometry(0.34, 0.04, 6, 20);
+	const rimMat = new THREE.MeshBasicMaterial({
+		color: rimColor,
+	});
+	const rim = new THREE.Mesh(rimGeo, rimMat);
+	rim.rotation.x = -Math.PI / 2;
+	rim.position.y = 0.10;
+	group.add(rim);
+
+	// Canvas-based text label — white letter with coloured outline
+	const letter = RETRO_PIECE_LETTERS[pieceTypeNum] || '?';
+	const canvas = document.createElement('canvas');
+	canvas.width = 128;
+	canvas.height = 128;
+	const ctx = canvas.getContext('2d');
+	ctx.clearRect(0, 0, 128, 128);
+
+	// Coloured outline
+	ctx.font = 'bold 96px monospace';
+	ctx.textAlign = 'center';
+	ctx.textBaseline = 'middle';
+	ctx.strokeStyle = letterStroke;
+	ctx.lineWidth = 14;
+	ctx.strokeText(letter, 64, 64);
+
+	// White fill
+	ctx.fillStyle = letterFill;
+	ctx.fillText(letter, 64, 64);
+
+	const texture = new THREE.CanvasTexture(canvas);
+	texture.needsUpdate = true;
+
+	const spriteMat = new THREE.SpriteMaterial({
+		map: texture,
+		transparent: true,
+		depthTest: true,
+		depthWrite: false,
+	});
+	const sprite = new THREE.Sprite(spriteMat);
+	sprite.scale.set(0.75, 0.75, 1);
+	sprite.position.y = 0.55;
+	group.add(sprite);
+
+	// King/Queen get a second inner ring for distinction
+	if (pieceTypeNum >= 5) {
+		const ringGeo = new THREE.TorusGeometry(0.26, 0.025, 6, 16);
+		const ringMat = new THREE.MeshBasicMaterial({ color: rimColor });
+		const ring = new THREE.Mesh(ringGeo, ringMat);
+		ring.rotation.x = -Math.PI / 2;
+		ring.position.y = 0.10;
+		group.add(ring);
+	}
+
+	group.userData = {
+		type: 'chess',
+		pieceType: pieceTypeName,
+		pieceTypeNum,
+		player,
+		position: { x, z },
+		originalPosition: { x, z },
+		color: customColor,
+		retroMode: true,
+	};
+	group.visible = true;
+	return group;
+}
+
+// 8-bit colour palette per piece type — bright arcade colours
+const CUTE_PIECE_COLOURS = {
+	6: 0xFFD700, // King — gold
+	5: 0xFF69B4, // Queen — hot pink
+	4: 0x8B5CF6, // Bishop — purple
+	3: 0x22D3EE, // Knight — cyan
+	2: 0xF97316, // Rook — orange
+	1: 0x4ADE80, // Pawn — green
+};
+
+/**
+ * 8-bit voxel-style piece for cute/arcade mode.
+ * Blocky geometry, no smooth shading, bright flat colours.
+ */
+function _createCutePiece(THREE, pieceTypeNum, pieceTypeName, player, x, z, isLocalPlayer, customColor) {
+	const group = new THREE.Group();
+
+	const baseCol = customColor || CUTE_PIECE_COLOURS[pieceTypeNum] || 0xffffff;
+	const mat = new THREE.MeshLambertMaterial({ color: baseCol, flatShading: true });
+
+	// All pieces are built from stacked boxes — "voxel" style
+	const box = (w, h, d, yOff) => {
+		const geo = new THREE.BoxGeometry(w, h, d);
+		const mesh = new THREE.Mesh(geo, mat);
+		mesh.position.y = yOff;
+		mesh.castShadow = false;
+		group.add(mesh);
+		return mesh;
+	};
+
+	switch (pieceTypeNum) {
+		case 6: // King — tall with cross on top
+			box(0.5, 0.12, 0.5, 0.06);
+			box(0.35, 0.4, 0.35, 0.32);
+			box(0.25, 0.25, 0.25, 0.645);
+			box(0.08, 0.18, 0.08, 0.86);
+			box(0.18, 0.08, 0.08, 0.82);
+			break;
+		case 5: // Queen — tall with crown notches
+			box(0.5, 0.12, 0.5, 0.06);
+			box(0.35, 0.4, 0.35, 0.32);
+			box(0.3, 0.2, 0.3, 0.62);
+			box(0.08, 0.14, 0.08, 0.79);
+			box(0.3, 0.08, 0.08, 0.75);
+			break;
+		case 4: // Bishop — diagonal-sliced top
+			box(0.45, 0.12, 0.45, 0.06);
+			box(0.3, 0.35, 0.3, 0.295);
+			box(0.2, 0.2, 0.2, 0.57);
+			box(0.08, 0.12, 0.08, 0.73);
+			break;
+		case 3: { // Knight — horse head silhouette
+			box(0.45, 0.12, 0.45, 0.06);
+			box(0.25, 0.3, 0.25, 0.27);
+			const head = box(0.2, 0.22, 0.18, 0.53);
+			head.position.z = 0.04;
+			const snout = box(0.14, 0.12, 0.22, 0.44);
+			snout.position.z = 0.16;
+			const earL = box(0.06, 0.1, 0.06, 0.68);
+			earL.position.x = -0.06;
+			const earR = box(0.06, 0.1, 0.06, 0.68);
+			earR.position.x = 0.06;
+			break;
+		}
+		case 2: // Rook — crenellations
+			box(0.5, 0.12, 0.5, 0.06);
+			box(0.38, 0.35, 0.38, 0.295);
+			box(0.42, 0.1, 0.42, 0.52);
+			box(0.12, 0.12, 0.12, 0.63);
+			{
+				const c2 = box(0.12, 0.12, 0.12, 0.63);
+				c2.position.x = 0.15;
+				const c3 = box(0.12, 0.12, 0.12, 0.63);
+				c3.position.x = -0.15;
+			}
+			break;
+		default: // Pawn
+			box(0.4, 0.1, 0.4, 0.05);
+			box(0.22, 0.25, 0.22, 0.225);
+			box(0.16, 0.16, 0.16, 0.43);
+			break;
+	}
+
+	// Outline pass — dark wireframe overlay for 8-bit crispness
+	group.traverse(child => {
+		if (child.isMesh && child.geometry) {
+			const wireGeo = new THREE.EdgesGeometry(child.geometry);
+			const wireMat = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 1 });
+			const wire = new THREE.LineSegments(wireGeo, wireMat);
+			wire.position.copy(child.position);
+			group.add(wire);
+		}
+	});
+
+	group.userData = {
+		type: 'chess',
+		pieceType: pieceTypeName,
+		pieceTypeNum,
+		player,
+		position: { x, z },
+		originalPosition: { x, z },
+		color: customColor,
+		cuteMode: true,
+	};
+	group.visible = true;
+	return group;
 }
 
 /**
@@ -548,7 +772,7 @@ function createRussianKnightPiece(materialKey, isLocalPlayer, customMaterials = 
 	const THREE = getTHREE();
 	const group = new THREE.Group();
 	const materials = customMaterials || createSafeMaterials(materialKey);
-	const seg = isLocalPlayer ? 16 : 12;
+	const seg = isLocalPlayer ? 16 : 10;
 
 	// Flared base
 	const base = new THREE.Mesh(new THREE.CylinderGeometry(0.20, 0.26, 0.12, seg), materials.primary);
@@ -557,97 +781,91 @@ function createRussianKnightPiece(materialKey, isLocalPlayer, customMaterials = 
 	base.receiveShadow = true;
 	group.add(base);
 
-	// Pedestal / neck column
-	const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.18, 0.22, seg), materials.primary);
-	pedestal.position.y = 0.23;
+	// Pedestal
+	const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.18, 0.18, seg), materials.primary);
+	pedestal.position.y = 0.21;
 	pedestal.castShadow = true;
 	pedestal.receiveShadow = true;
 	group.add(pedestal);
 
+	// Arched neck — 7 stacked sections curving forward, tapering to head
+	const neckSteps = isLocalPlayer ? 7 : 4;
+	for (let i = 0; i < neckSteps; i++) {
+		const t = i / neckSteps;
+		const botR = 0.13 - t * 0.04;
+		const topR = 0.12 - t * 0.04;
+		const h = 0.05;
+		const section = new THREE.Mesh(
+			new THREE.CylinderGeometry(topR, botR, h, seg > 10 ? 10 : seg),
+			materials.primary
+		);
+		const arch = Math.sin(t * Math.PI * 0.6) * 0.12;
+		section.position.set(0, 0.33 + i * 0.05, arch);
+		section.rotation.x = -(t * 0.5);
+		section.castShadow = true;
+		section.receiveShadow = true;
+		group.add(section);
+	}
+
+	// Head / cranium — elongated sphere tilted forward
+	const cranium = new THREE.Mesh(new THREE.SphereGeometry(0.10, seg, seg > 10 ? 10 : seg), materials.secondary);
+	cranium.scale.set(0.85, 1.1, 1.5);
+	cranium.position.set(0, 0.64, 0.14);
+	cranium.rotation.x = -0.4;
+	cranium.castShadow = true;
+	cranium.receiveShadow = true;
+	group.add(cranium);
+
+	// Long muzzle / snout pointing down-forward
+	const muzzleGeo = new THREE.CylinderGeometry(0.045, 0.065, 0.22, 8);
+	const muzzle = new THREE.Mesh(muzzleGeo, materials.secondary);
+	muzzle.position.set(0, 0.54, 0.26);
+	muzzle.rotation.x = -Math.PI / 3;
+	muzzle.castShadow = true;
+	muzzle.receiveShadow = true;
+	group.add(muzzle);
+
+	// Nostrils
+	for (let side = -1; side <= 1; side += 2) {
+		const nostril = new THREE.Mesh(new THREE.SphereGeometry(0.018, 6, 6), materials.accent);
+		nostril.position.set(side * 0.03, 0.46, 0.35);
+		group.add(nostril);
+	}
+
+	// Lower jaw line
+	const jaw = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.03, 0.14), materials.secondary);
+	jaw.position.set(0, 0.50, 0.22);
+	jaw.rotation.x = -Math.PI / 4;
+	jaw.castShadow = true;
+	group.add(jaw);
+
 	if (isLocalPlayer) {
-		// Curved neck — built from stacked tapered sections
-		const neckSections = 5;
-		for (let i = 0; i < neckSections; i++) {
-			const t = i / neckSections;
-			const topR = 0.10 - t * 0.02;
-			const botR = 0.12 - t * 0.02;
-			const h = 0.06;
-			const neckPart = new THREE.Mesh(
-				new THREE.CylinderGeometry(topR, botR, h, 12),
-				materials.primary
-			);
-			// Curve forwards as we go up
-			neckPart.position.set(0, 0.37 + i * 0.055, 0.02 + t * 0.06);
-			neckPart.rotation.x = -t * 0.35;
-			neckPart.castShadow = true;
-			neckPart.receiveShadow = true;
-			group.add(neckPart);
-		}
-
-		// Cranium — slightly elongated sphere
-		const cranium = new THREE.Mesh(new THREE.SphereGeometry(0.11, 16, 12), materials.secondary);
-		cranium.scale.set(0.9, 1, 1.3);
-		cranium.position.set(0, 0.58, 0.12);
-		cranium.rotation.x = -0.3;
-		cranium.castShadow = true;
-		cranium.receiveShadow = true;
-		group.add(cranium);
-
-		// Muzzle — tapered box
-		const muzzle = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.09, 0.18), materials.secondary);
-		muzzle.position.set(0, 0.52, 0.24);
-		muzzle.rotation.x = -Math.PI / 5;
-		muzzle.castShadow = true;
-		muzzle.receiveShadow = true;
-		group.add(muzzle);
-
-		// Nostrils (two tiny spheres at tip)
+		// Ears — tall pointed cones
 		for (let side = -1; side <= 1; side += 2) {
-			const nostril = new THREE.Mesh(new THREE.SphereGeometry(0.018, 8, 8), materials.accent);
-			nostril.position.set(side * 0.035, 0.48, 0.33);
-			nostril.castShadow = true;
-			group.add(nostril);
-		}
-
-		// Ears — two pointed cones
-		for (let side = -1; side <= 1; side += 2) {
-			const ear = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.12, 8), materials.accent);
-			ear.position.set(side * 0.06, 0.68, 0.08);
-			ear.rotation.x = -0.15;
-			ear.rotation.z = side * 0.15;
+			const ear = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.13, 6), materials.accent);
+			ear.position.set(side * 0.055, 0.74, 0.09);
+			ear.rotation.x = -0.2;
+			ear.rotation.z = side * 0.2;
 			ear.castShadow = true;
-			ear.receiveShadow = true;
 			group.add(ear);
 		}
 
-		// Mane — series of thin ridges along back of neck
-		for (let i = 0; i < 4; i++) {
-			const ridge = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.04, 0.03), materials.accent);
-			ridge.position.set(0, 0.55 + i * 0.04, -0.02 - i * 0.015);
-			ridge.rotation.x = 0.2;
+		// Mane — angled ridges along back of neck
+		for (let i = 0; i < 5; i++) {
+			const ridge = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.035, 0.025), materials.accent);
+			const t = i / 5;
+			ridge.position.set(0, 0.52 + i * 0.045, -0.03 - t * 0.04);
+			ridge.rotation.x = 0.25;
 			ridge.castShadow = true;
 			group.add(ridge);
 		}
 
-		// Eye (small accent sphere, right side visible)
-		const eye = new THREE.Mesh(new THREE.SphereGeometry(0.02, 8, 8), materials.accent);
-		eye.position.set(0.08, 0.60, 0.18);
-		group.add(eye);
-	} else {
-		// Simple head block for opponents
-		const head = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.15, 0.25), materials.secondary);
-		head.position.set(0, 0.42, 0.05);
-		head.rotation.x = -Math.PI / 6;
-		head.castShadow = true;
-		head.receiveShadow = true;
-		group.add(head);
-
-		const muzzle = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.10, 0.20), materials.secondary);
-		muzzle.position.set(0, 0.40, 0.18);
-		muzzle.rotation.x = -Math.PI / 4;
-		muzzle.castShadow = true;
-		muzzle.receiveShadow = true;
-		group.add(muzzle);
+		// Eyes — both sides
+		for (let side = -1; side <= 1; side += 2) {
+			const eye = new THREE.Mesh(new THREE.SphereGeometry(0.018, 8, 8), materials.accent);
+			eye.position.set(side * 0.07, 0.63, 0.22);
+			group.add(eye);
+		}
 	}
 
 	return group;

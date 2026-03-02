@@ -52,7 +52,7 @@ import {
 	updateGameStatusDisplay, updateNetworkStatus,
 	showTutorialMessage
 } from './createLoadingIndicator.js';
-import { resetCameraForGameplay } from './setupCamera.js';
+import { resetCameraForGameplay, moveToPlayerZone } from './setupCamera.js';
 import {
 	preserveCentreMarker, findBoardCentreMarker,
 	createCentreMarker, translatePosition
@@ -257,12 +257,36 @@ export function initGame(container, options = {}) {
 		return true;
 	} catch (error) {
 		console.error("Error initialising game:", error);
+		const errorMessage = (error && error.message)
+			? String(error.message)
+			: String(error || 'Unknown initialisation error');
+		const webglInitFailure = /webgl/i.test(errorMessage) && /context|renderer/i.test(errorMessage);
+		
 		const loadingIndicator = document.getElementById('loading-indicator');
 		if (loadingIndicator) loadingIndicator.style.display = 'none';
 		const loadingElement = document.getElementById('loading');
 		if (loadingElement) loadingElement.style.display = 'none';
+		
+		if (
+			webglInitFailure &&
+			typeof window !== 'undefined' &&
+			!window.location.pathname.includes('index-2d.html') &&
+			!window.location.pathname.includes('/2D/')
+		) {
+			try {
+				const fallbackUrl = new URL(window.location.href);
+				fallbackUrl.pathname = '/index-2d.html';
+				fallbackUrl.searchParams.set('fallback', 'webgl');
+				console.warn(`WebGL unavailable; redirecting to 2D fallback: ${fallbackUrl.toString()}`);
+				window.location.assign(fallbackUrl.toString());
+				return false;
+			} catch (redirectError) {
+				console.warn('Failed to redirect to 2D fallback:', redirectError);
+			}
+		}
+		
 		if (typeof showErrorMessage === 'function') {
-			showErrorMessage(`Game initialisation failed: ${error.message}`);
+			showErrorMessage(`Game initialisation failed: ${errorMessage}`);
 		}
 		return false;
 	}
@@ -497,6 +521,49 @@ function setupEventSystem() {
 
 // ── Network events ──────────────────────────────────────────────────────────
 
+function ensureGameOverPulseStyles() {
+	if (document.getElementById('game-over-pulse-style')) return;
+	const style = document.createElement('style');
+	style.id = 'game-over-pulse-style';
+	style.textContent = `
+		@keyframes shaktrisGameOverPulse {
+			0% { transform: translate(-50%, -50%) scale(1); opacity: 0.85; }
+			50% { transform: translate(-50%, -50%) scale(1.12); opacity: 1; }
+			100% { transform: translate(-50%, -50%) scale(1); opacity: 0.85; }
+		}
+	`;
+	document.head.appendChild(style);
+}
+
+function showGameOverPulseOverlay(message = 'GAME OVER') {
+	ensureGameOverPulseStyles();
+	let overlay = document.getElementById('game-over-pulse-overlay');
+	if (!overlay) {
+		overlay = document.createElement('div');
+		overlay.id = 'game-over-pulse-overlay';
+		Object.assign(overlay.style, {
+			position: 'fixed',
+			left: '50%',
+			top: '50%',
+			transform: 'translate(-50%, -50%)',
+			zIndex: '2500',
+			fontFamily: 'Arial, sans-serif',
+			fontWeight: '900',
+			fontSize: 'clamp(56px, 12vw, 170px)',
+			letterSpacing: '0.12em',
+			color: '#ff3b3b',
+			textShadow: '0 0 22px rgba(255,0,0,0.85), 0 0 56px rgba(255,0,0,0.45)',
+			pointerEvents: 'none',
+			userSelect: 'none',
+			textTransform: 'uppercase',
+			animation: 'shaktrisGameOverPulse 1s ease-in-out infinite',
+		});
+		document.body.appendChild(overlay);
+	}
+	overlay.textContent = message;
+	overlay.style.display = 'block';
+}
+
 export function setupNetworkEvents() {
 	if (networkEventsInitialised) return;
 	networkEventsInitialised = true;
@@ -508,7 +575,9 @@ export function setupNetworkEvents() {
 
 	const dispatchGameUpdate = (detail) => {
 		try {
-			window.dispatchEvent(new CustomEvent('gameupdate', { detail }));
+			if (!detail) return;
+			const event = new CustomEvent('gameupdate', { detail });
+			window.dispatchEvent(event);
 		} catch (error) {
 			console.warn('setupNetworkEvents: Failed to dispatch gameupdate event:', error);
 		}
@@ -517,26 +586,30 @@ export function setupNetworkEvents() {
 	const normalisePlayersArrayToMap = (playersArray) => {
 		const map = {};
 		if (!Array.isArray(playersArray)) return map;
-		playersArray.forEach(p => {
-			if (!p || !p.id) return;
+		for (let i = 0; i < playersArray.length; i++) {
+			const p = playersArray[i];
+			if (!p || !p.id) continue;
 			map[p.id] = { id: p.id, name: p.name || p.id, isComputer: !!p.isComputer };
-		});
+		}
 		return map;
 	};
 
 	NetworkManager.on('game_state', (payload) => {
 		const state = payload?.state || payload;
 		if (!state || typeof state !== 'object') return;
-		const playersMap = normalisePlayersArrayToMap(payload?.players);
-		const detail = (payload && Array.isArray(payload.players))
-			? { ...state, players: playersMap }
-			: state;
-		dispatchGameUpdate(detail);
+		if (payload && Array.isArray(payload.players)) {
+			state.players = normalisePlayersArrayToMap(payload.players);
+		}
+		dispatchGameUpdate(state);
 	});
 
 	NetworkManager.on('game_update', (payload) => {
 		const state = payload?.state || payload;
 		if (!state || typeof state !== 'object') return;
+
+		if (Array.isArray(state.players)) {
+			state.players = normalisePlayersArrayToMap(state.players);
+		}
 
 		if (state.fullUpdate === false && Array.isArray(state.boardChanges)) {
 			if (!gameState.board) gameState.board = { cells: {}, minX: 0, maxX: 0, minZ: 0, maxZ: 0 };
@@ -616,9 +689,124 @@ export function setupNetworkEvents() {
 		} catch (_) { /* ignore toast errors */ }
 	});
 
+	NetworkManager.on('pawn_detonation', (payload) => {
+		try {
+			if (!payload) return;
+			const localId = gameState.localPlayerId;
+			const isLocal = localId && payload.playerId && String(payload.playerId) === String(localId);
+			if (!isLocal) {
+				const pieceType = String(payload.pieceType || 'PAWN').toUpperCase();
+				showToastMessage(pieceType === 'KING'
+					? 'Opponent detonated their king!'
+					: 'Opponent detonated a pawn!');
+			}
+		} catch (_) { /* ignore toast errors */ }
+	});
+	
+	NetworkManager.on('king_detonation', (payload) => {
+		try {
+			if (!payload || !Array.isArray(payload.explosionSequence)) return;
+			const layerIntervalMs = Number(payload.layerIntervalMs) > 0
+				? Number(payload.layerIntervalMs)
+				: 500;
+			const sequence = payload.explosionSequence
+				.filter(cell => cell && Number.isFinite(cell.x) && Number.isFinite(cell.z))
+				.map(cell => {
+					const hasDistance = Number.isFinite(cell.distance);
+					const fallbackDistance = (Number.isFinite(payload?.detonatedAt?.x) && Number.isFinite(payload?.detonatedAt?.z))
+						? Math.abs(cell.x - payload.detonatedAt.x) + Math.abs(cell.z - payload.detonatedAt.z)
+						: 0;
+					return {
+						x: cell.x,
+						z: cell.z,
+						distance: hasDistance ? Number(cell.distance) : fallbackDistance,
+					};
+				});
+			
+			if (typeof window.showExplosionAnimation !== 'function') return;
+
+			const MAX_KING_ANIMS_PER_LAYER = 12;
+			const MAX_KING_LAYERS = 20;
+			const MAX_KING_TOTAL_MS = 8000;
+
+			const layerMap = new Map();
+			for (const cell of sequence) {
+				const d = cell.distance;
+				if (!layerMap.has(d)) layerMap.set(d, []);
+				layerMap.get(d).push(cell);
+			}
+			const sortedDistances = [...layerMap.keys()].sort((a, b) => b - a).slice(0, MAX_KING_LAYERS);
+			const effectiveInterval = Math.min(
+				layerIntervalMs,
+				Math.floor(MAX_KING_TOTAL_MS / Math.max(sortedDistances.length, 1))
+			);
+
+			sortedDistances.forEach((distance, layerIdx) => {
+				let layerCells = layerMap.get(distance);
+				if (layerCells.length > MAX_KING_ANIMS_PER_LAYER) {
+					const step = Math.ceil(layerCells.length / MAX_KING_ANIMS_PER_LAYER);
+					layerCells = layerCells.filter((_, i) => i % step === 0);
+				}
+				setTimeout(() => {
+					for (const cell of layerCells) {
+						try { window.showExplosionAnimation(cell.x, cell.z, gameState); } catch (_) { /* ignore */ }
+					}
+				}, layerIdx * effectiveInterval);
+			});
+
+			const localId = gameState.localPlayerId;
+			const isLocalDetonation = localId && payload.playerId && String(payload.playerId) === String(localId);
+			if (isLocalDetonation) {
+				const totalDuration = cappedDistances.length * effectiveInterval;
+				setTimeout(() => { showGameOverPulseOverlay('GAME OVER'); }, totalDuration + 180);
+			}
+		} catch (e) { console.error('Error handling king_detonation:', e); }
+	});
+	
+	NetworkManager.on('island_decay', (payload) => {
+		try {
+			const cells = payload?.cells;
+			if (!Array.isArray(cells) || cells.length === 0) return;
+
+			const MAX_DECAY_ANIMS = 40;
+			const STAGGER_MS = 50;
+			const MAX_TOTAL_MS = 3000;
+
+			const playSand = (typeof window.showSandDissolveCellAnimation === 'function')
+				? window.showSandDissolveCellAnimation
+				: null;
+			const playExplosion = (typeof window.showExplosionAnimation === 'function')
+				? window.showExplosionAnimation
+				: null;
+
+			const validCells = cells.filter(
+				cell => cell && Number.isFinite(cell.x) && Number.isFinite(cell.z)
+			);
+			const capped = validCells.length > MAX_DECAY_ANIMS
+				? validCells.filter((_, i) => i % Math.ceil(validCells.length / MAX_DECAY_ANIMS) === 0)
+				: validCells;
+
+			const stagger = Math.min(STAGGER_MS, Math.floor(MAX_TOTAL_MS / Math.max(capped.length, 1)));
+
+			capped.forEach((cell, idx) => {
+				setTimeout(() => {
+					try {
+						if (playSand) {
+							playSand(cell.x, cell.z, gameState);
+						} else if (playExplosion) {
+							playExplosion(cell.x, cell.z, gameState);
+						}
+					} catch (_) { /* ignore animation errors */ }
+				}, idx * stagger);
+			});
+		} catch (e) { console.error('Error handling island_decay:', e); }
+	});
+
 	NetworkManager.on('no_valid_chess_moves', (payload) => {
 		try {
 			if (!payload?.playerId || String(payload.playerId) !== String(gameState.localPlayerId)) return;
+			clearChessSelection();
+			gameState.processingMove = false;
 			showToastMessage('No chess moves available — dropping next piece');
 			gameState.turnPhase = 'tetris';
 			updateGameStatusDisplay(gameState);
@@ -629,6 +817,8 @@ export function setupNetworkEvents() {
 		try {
 			const tetromino = payload?.tetromino;
 			if (!tetromino) return;
+			clearChessSelection();
+			gameState.processingMove = false;
 			const tetrominoType = tetromino.type || tetromino.pieceType;
 			const newTetromino = tetrominoModule.initializeNewTetromino(gameState, tetrominoType);
 			gameState.currentTetromino = newTetromino || tetrominoModule.initializeNextTetromino(gameState);
@@ -692,6 +882,27 @@ export function setupNetworkEvents() {
 				window.showToastNotification(`King's Duel! ${player1Name} vs ${player2Name} — both captured each other's king!`, 5000);
 			}
 		} catch (e) { console.error('Error handling king_duel_announced:', e); }
+	});
+
+	let _hadConnection = false;
+
+	NetworkManager.on('disconnect', () => {
+		if (typeof window.showToastNotification === 'function') {
+			window.showToastNotification('Connection lost — reconnecting…', 4000);
+		}
+	});
+
+	NetworkManager.on('connect', () => {
+		if (!_hadConnection) {
+			_hadConnection = true;
+			return;
+		}
+		if (typeof window.showToastNotification === 'function') {
+			window.showToastNotification('Reconnected!', 2000);
+		}
+		if (gameState.localPlayerId && typeof NetworkManager.joinGame === 'function') {
+			NetworkManager.joinGame().catch(() => {});
+		}
 	});
 }
 
@@ -794,7 +1005,7 @@ function updateBoardVisuals() {
 
 		if (renderer && scene && camera) renderer.render(scene, camera);
 
-		if (gameState.board?.cells && Object.keys(gameState.board.cells).length > 0) {
+		if (gameState.board?.cells && (function() { for (const _ in gameState.board.cells) return true; return false; })()) {
 			hideAllLoadingElements();
 		}
 	} catch (error) {
@@ -862,7 +1073,7 @@ export function onWindowResize(cam, rend, containerEl) {
 
 export function startPlayingGame(gameKey = null) {
 	if (gameState.inProgress && gameState.gameStarted) return;
-	console.log('Starting game...', gameKey ? `with key: ${gameKey}` : 'new game');
+	console.log('Entering world...', gameKey ? `with key: ${gameKey}` : 'default shared world');
 
 	if (gameKey) {
 		localStorage.setItem('shaktris_game_key', gameKey);
@@ -956,8 +1167,46 @@ export function setupLightsInPlace(sceneObj, profile) {
 	}
 }
 
+export function forceChessPieceRebuild() {
+	const chessPiecesGroup = getChessPiecesGroup();
+	if (!chessPiecesGroup) return;
+
+	// Clear all existing piece meshes so updateChessPieces recreates them
+	// with the current renderProfile (retro letters vs 3D geometry).
+	while (chessPiecesGroup.children.length > 0) {
+		const child = chessPiecesGroup.children[0];
+		chessPiecesGroup.remove(child);
+		if (child.traverse) {
+			child.traverse(obj => {
+				if (obj.geometry) obj.geometry.dispose();
+				if (obj.material) {
+					if (Array.isArray(obj.material)) {
+						obj.material.forEach(m => m.dispose());
+					} else {
+						obj.material.dispose();
+					}
+				}
+			});
+		}
+	}
+
+	const camera = getCamera();
+	if (camera) {
+		updateChessPieces(chessPiecesGroup, camera, { ...gameState, _forceUpdate: true });
+	}
+}
+
 export function resetCamera(animate = true) {
 	resetCameraForGameplay(getRenderer(), getCamera(), getControls(), gameState, getScene(), animate, !animate);
+}
+
+export function flyToPlayerKing(playerId) {
+	const camera = getCamera();
+	const controls = getControls();
+	const renderer = getRenderer();
+	const scene = getScene();
+	if (!camera || !controls) return;
+	moveToPlayerZone(camera, controls, gameState, renderer, scene, true, false, null, playerId);
 }
 
 export function exposeHighlightFunctionsGlobally() {
@@ -966,6 +1215,7 @@ export function exposeHighlightFunctionsGlobally() {
 	window.gameCore.removePlayerPiecesHighlight = removePlayerPiecesHighlight;
 	window.gameCore.highlightCurrentPlayerPieces = highlightCurrentPlayerPieces;
 	window.gameCore.resetCamera = resetCamera;
+	window.gameCore.flyToPlayerKing = flyToPlayerKing;
 	window.gameState = gameState;
 
 	const resetBtn = document.getElementById('reset-camera-btn');
@@ -976,10 +1226,16 @@ export function exposeHighlightFunctionsGlobally() {
 		if (exitBtn && !exitBtn.dataset.wired) {
 			exitBtn.dataset.wired = 'true';
 			exitBtn.addEventListener('click', () => {
-				const confirmed = window.confirm(
-					'Are you sure you want to exit?\n\n' +
-					'If you have not stored your player code, you will lose your game permanently.'
-				);
+			const gs = getGameState();
+			const hasPieces = Array.isArray(gs.chessPieces) && gs.chessPieces.some(
+				p => p && String(p.player) === String(gs.localPlayerId)
+			);
+			const msg = hasPieces
+				? 'You still have pieces and territory on the board!\n\n' +
+				  'Exiting will destroy all your pieces and start a fresh game on return.\n\n' +
+				  'Are you sure?'
+				: 'Are you sure you want to exit?';
+			const confirmed = window.confirm(msg);
 				if (confirmed) NetworkManager.exitGame().then(() => window.location.reload());
 			});
 		}

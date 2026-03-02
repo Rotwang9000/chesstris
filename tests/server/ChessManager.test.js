@@ -1,7 +1,8 @@
 /**
  * Tests for the real server/game/ChessManager.js
  * Covers: piece init, movement validation, castling, pawn promotion,
- *         king capture (transfer + suicidal pawns), piece purchase.
+ *         king capture (transfer + suicidal pawns), piece purchase,
+ *         cell ownership transfer on chess move.
  */
 
 const { GAME_RULES, PIECE_PRICES } = require('../../server/game/Constants');
@@ -241,7 +242,6 @@ describe('ChessManager', () => {
 			const game = createGame(boardManager);
 			addPlayer(game, 'p1');
 
-			// Place king at (4,0) and rook at (7,0) with board squares between
 			for (let x = 0; x <= 7; x++) {
 				boardManager.setCell(game.board, x, 0, [{ type: 'home', player: 'p1' }]);
 			}
@@ -310,7 +310,6 @@ describe('ChessManager', () => {
 			const game = createGame(boardManager);
 			addPlayer(game, 'p1');
 
-			// Set up a pawn with forwardDistance = 8 (one more to go)
 			const pawn = {
 				id: 'p1-PAWN-promo', type: 'PAWN', player: 'p1',
 				position: { x: 4, z: 9 }, hasMoved: true,
@@ -383,23 +382,19 @@ describe('ChessManager', () => {
 			addPlayer(game, 'attacker', { color: 0xFF0000 });
 			addPlayer(game, 'defender', { color: 0x0000FF });
 
-			// Defender's king
 			const defKing = {
 				id: 'def-KING', type: 'KING', player: 'defender',
 				position: { x: 5, z: 5 }, hasMoved: false, moveCount: 0,
 			};
-			// Defender's rook (should transfer)
 			const defRook = {
 				id: 'def-ROOK', type: 'ROOK', player: 'defender',
 				position: { x: 10, z: 10 }, hasMoved: false, moveCount: 0,
 			};
-			// Defender's pawn (should become suicidal, not transfer)
 			const defPawn = {
 				id: 'def-PAWN', type: 'PAWN', player: 'defender',
 				position: { x: 8, z: 8 }, hasMoved: false, moveCount: 0,
 				forwardDistance: 0, orientation: 0,
 			};
-			// Attacker's rook doing the capture
 			const attRook = {
 				id: 'att-ROOK', type: 'ROOK', player: 'attacker',
 				position: { x: 5, z: 0 }, hasMoved: true, moveCount: 2,
@@ -407,7 +402,6 @@ describe('ChessManager', () => {
 
 			game.chessPieces.push(defKing, defRook, defPawn, attRook);
 
-			// Set up board squares
 			for (let z = 0; z <= 5; z++) {
 				boardManager.setCell(game.board, 5, z, [{ type: 'tetromino', player: 'attacker' }]);
 			}
@@ -433,10 +427,8 @@ describe('ChessManager', () => {
 			expect(result.success).toBe(true);
 			expect(result.capture).toBe(true);
 
-			// Rook should have transferred to attacker
 			expect(defRook.player).toBe('attacker');
 
-			// Pawn should be marked suicidal
 			expect(defPawn._suicidal).toBe(true);
 			expect(defPawn._suicidalDetonateAt).toBeDefined();
 		});
@@ -471,7 +463,6 @@ describe('ChessManager', () => {
 				pieceId: attRook.id, toX: 1, toZ: 1,
 			});
 
-			// Advance timers to let suicidal pawns + finalisation complete
 			jest.runAllTimers();
 
 			expect(game.state.kingPrison).toBeDefined();
@@ -480,6 +471,392 @@ describe('ChessManager', () => {
 			expect(game.state.kingPrison[0].capturedBy).toBe('a');
 
 			jest.useRealTimers();
+		});
+	});
+
+	// ── Cell ownership transfer on chess move ───────────────────────────────
+
+	describe('cell ownership transfer', () => {
+		test('moving onto an enemy cell transfers tetromino ownership to the mover', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1', { color: 0xFF0000 });
+			addPlayer(game, 'p2', { color: 0x0000FF });
+
+			game.chessPieces.push({
+				id: 'p1-KING', type: 'KING', player: 'p1',
+				position: { x: 0, z: 0 }, hasMoved: false, moveCount: 0,
+			});
+			game.chessPieces.push({
+				id: 'p2-KING', type: 'KING', player: 'p2',
+				position: { x: 20, z: 0 }, hasMoved: false, moveCount: 0,
+			});
+			boardManager.setCell(game.board, 20, 0, [
+				{ type: 'tetromino', player: 'p2' },
+				{ type: 'chess', player: 'p2', pieceId: 'p2-KING' },
+			]);
+
+			// p1 territory: (0,0)→(4,0) so the target at (4,1) stays connected via (4,0)
+			for (let x = 0; x <= 4; x++) {
+				boardManager.setCell(game.board, x, 0, [
+					{ type: 'tetromino', player: 'p1' },
+				]);
+			}
+			boardManager.addToCellContents(game.board, 0, 0, {
+				type: 'chess', player: 'p1', pieceId: 'p1-KING',
+			});
+
+			// Knight at (2,0) — L-shape (2,0)→(4,1)
+			const knight = {
+				id: 'p1-KNIGHT', type: 'KNIGHT', player: 'p1',
+				position: { x: 2, z: 0 }, hasMoved: true, moveCount: 1,
+				forwardDistance: 0, orientation: 0,
+			};
+			game.chessPieces.push(knight);
+			boardManager.addToCellContents(game.board, 2, 0, {
+				type: 'chess', player: 'p1', pieceId: 'p1-KNIGHT',
+			});
+
+			// Target: p2 tetromino at (4,1) — adjacent to p1's (4,0)
+			boardManager.setCell(game.board, 4, 1, [
+				{ type: 'tetromino', player: 'p2' },
+			]);
+
+			const result = chessManager.executeChessMove(game, 'p1', {
+				pieceId: 'p1-KNIGHT', toX: 4, toZ: 1,
+			});
+
+			expect(result.success).toBe(true);
+
+			const cell = boardManager.getCell(game.board, 4, 1);
+			const tetContent = cell.find(item => item.type === 'tetromino');
+			expect(tetContent.player).toBe('p1');
+		});
+
+		test('home zone markers are NOT transferred on chess move', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1', { color: 0xFF0000 });
+			addPlayer(game, 'p2', { color: 0x0000FF });
+
+			game.chessPieces.push({
+				id: 'p1-KING', type: 'KING', player: 'p1',
+				position: { x: 0, z: 0 }, hasMoved: false, moveCount: 0,
+			});
+			// p2 king nearby so the home marker stays connected after transfer
+			game.chessPieces.push({
+				id: 'p2-KING', type: 'KING', player: 'p2',
+				position: { x: 4, z: 2 }, hasMoved: false, moveCount: 0,
+			});
+			boardManager.setCell(game.board, 4, 2, [
+				{ type: 'tetromino', player: 'p2' },
+				{ type: 'chess', player: 'p2', pieceId: 'p2-KING' },
+			]);
+
+			for (let x = 0; x <= 4; x++) {
+				boardManager.setCell(game.board, x, 0, [
+					{ type: 'tetromino', player: 'p1' },
+				]);
+			}
+			boardManager.addToCellContents(game.board, 0, 0, {
+				type: 'chess', player: 'p1', pieceId: 'p1-KING',
+			});
+
+			const knight = {
+				id: 'p1-KNIGHT', type: 'KNIGHT', player: 'p1',
+				position: { x: 2, z: 0 }, hasMoved: true, moveCount: 1,
+				forwardDistance: 0, orientation: 0,
+			};
+			game.chessPieces.push(knight);
+			boardManager.addToCellContents(game.board, 2, 0, {
+				type: 'chess', player: 'p1', pieceId: 'p1-KNIGHT',
+			});
+
+			// Target cell has home + tetromino; p2 king at (4,2) keeps home connected
+			boardManager.setCell(game.board, 4, 1, [
+				{ type: 'home', player: 'p2' },
+				{ type: 'tetromino', player: 'p2' },
+			]);
+
+			const result = chessManager.executeChessMove(game, 'p1', {
+				pieceId: 'p1-KNIGHT', toX: 4, toZ: 1,
+			});
+
+			expect(result.success).toBe(true);
+
+			const cell = boardManager.getCell(game.board, 4, 1);
+			const homeContent = cell.find(item => item.type === 'home');
+			expect(homeContent.player).toBe('p2');
+
+			const tetContent = cell.find(item => item.type === 'tetromino');
+			expect(tetContent.player).toBe('p1');
+		});
+
+		test('ownership transfer triggers island detection on previous owner', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1', { color: 0xFF0000 });
+			addPlayer(game, 'p2', { color: 0x0000FF });
+
+			game.chessPieces.push({
+				id: 'p1-KING', type: 'KING', player: 'p1',
+				position: { x: 0, z: 0 }, hasMoved: false, moveCount: 0,
+			});
+			game.chessPieces.push({
+				id: 'p2-KING', type: 'KING', player: 'p2',
+				position: { x: 10, z: 0 }, hasMoved: false, moveCount: 0,
+			});
+
+			// p1: (0,0)→(4,0) — knight at (2,0)
+			for (let x = 0; x <= 4; x++) {
+				boardManager.setCell(game.board, x, 0, [
+					{ type: 'tetromino', player: 'p1' },
+				]);
+			}
+			boardManager.addToCellContents(game.board, 0, 0, {
+				type: 'chess', player: 'p1', pieceId: 'p1-KING',
+			});
+
+			const knight = {
+				id: 'p1-KNIGHT', type: 'KNIGHT', player: 'p1',
+				position: { x: 2, z: 0 }, hasMoved: true, moveCount: 1,
+				forwardDistance: 0, orientation: 0,
+			};
+			game.chessPieces.push(knight);
+			boardManager.addToCellContents(game.board, 2, 0, {
+				type: 'chess', player: 'p1', pieceId: 'p1-KNIGHT',
+			});
+
+			// p2: king at (10,0), chain (5,0)→(10,0),
+			// then (5,1)→(4,1)→(4,2).
+			// Stealing (4,1) will disconnect (4,2).
+			boardManager.setCell(game.board, 10, 0, [
+				{ type: 'tetromino', player: 'p2' },
+				{ type: 'chess', player: 'p2', pieceId: 'p2-KING' },
+			]);
+			for (let x = 5; x <= 9; x++) {
+				boardManager.setCell(game.board, x, 0, [
+					{ type: 'tetromino', player: 'p2' },
+				]);
+			}
+			boardManager.setCell(game.board, 5, 1, [
+				{ type: 'tetromino', player: 'p2' },
+			]);
+			boardManager.setCell(game.board, 4, 1, [
+				{ type: 'tetromino', player: 'p2' },
+			]);
+			boardManager.setCell(game.board, 4, 2, [
+				{ type: 'tetromino', player: 'p2' },
+			]);
+
+			const result = chessManager.executeChessMove(game, 'p1', {
+				pieceId: 'p1-KNIGHT', toX: 4, toZ: 1,
+			});
+
+			expect(result.success).toBe(true);
+
+			// (4,1) now belongs to p1 (connected to p1 king via (4,0))
+			const cell41 = boardManager.getCell(game.board, 4, 1);
+			const tet41 = cell41.find(item => item.type === 'tetromino');
+			expect(tet41.player).toBe('p1');
+
+			// (4,2) was connected to p2's king only through (4,1).
+			// Now (4,1) is p1's so (4,2) is a disconnected p2 island → removed.
+			const cell42 = boardManager.getCell(game.board, 4, 2);
+			const hasP2Content = cell42 && cell42.some(item => item.player === 'p2');
+			expect(hasP2Content).toBeFalsy();
+		});
+	});
+
+	// ── Deliberate pawn detonation ──────────────────────────────────────────
+
+	describe('detonatePawn', () => {
+		test('detonating a pawn destroys the cell and runs island detection', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1', { color: 0xFF0000 });
+			addPlayer(game, 'p2', { color: 0x0000FF });
+
+			game.chessPieces.push({
+				id: 'p1-KING', type: 'KING', player: 'p1',
+				position: { x: 0, z: 0 }, hasMoved: false, moveCount: 0,
+			});
+
+			// Chain: (0,0)→(1,0)→(2,0)→(3,0)→(4,0)
+			for (let x = 0; x <= 4; x++) {
+				boardManager.setCell(game.board, x, 0, [
+					{ type: 'tetromino', player: 'p1' },
+				]);
+			}
+			boardManager.addToCellContents(game.board, 0, 0, {
+				type: 'chess', player: 'p1', pieceId: 'p1-KING',
+			});
+
+			// Pawn at (2,0) — middle of the chain
+			const pawn = {
+				id: 'p1-PAWN', type: 'PAWN', player: 'p1',
+				position: { x: 2, z: 0 }, hasMoved: true, moveCount: 1,
+				forwardDistance: 0, orientation: 0,
+			};
+			game.chessPieces.push(pawn);
+			boardManager.addToCellContents(game.board, 2, 0, {
+				type: 'chess', player: 'p1', pieceId: 'p1-PAWN',
+			});
+
+			const result = chessManager.detonatePawn(game, 'p1', 'p1-PAWN');
+
+			expect(result.success).toBe(true);
+			expect(result.detonatedAt).toEqual({ x: 2, z: 0 });
+
+			// Cell at (2,0) should be gone
+			expect(boardManager.getCell(game.board, 2, 0)).toBeNull();
+
+			// (3,0) and (4,0) are now disconnected from king at (0,0)
+			expect(boardManager.getCell(game.board, 3, 0)).toBeNull();
+			expect(boardManager.getCell(game.board, 4, 0)).toBeNull();
+
+			// (0,0) and (1,0) still connected to king
+			expect(boardManager.getCell(game.board, 0, 0)).not.toBeNull();
+			expect(boardManager.getCell(game.board, 1, 0)).not.toBeNull();
+		});
+		
+		test('detonating a pawn on own home cell still destroys that cell', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1', { color: 0xFF0000 });
+			
+			createHomeZone(game, boardManager, 'p1', 0, 0, 0);
+			
+			// Keep one piece in the home zone so it remains "safe".
+			const king = {
+				id: 'p1-KING', type: 'KING', player: 'p1',
+				position: { x: 0, z: 0 }, hasMoved: false, moveCount: 0,
+			};
+			game.chessPieces.push(king);
+			boardManager.addToCellContents(game.board, 0, 0, {
+				type: 'chess', player: 'p1', pieceId: king.id, pieceType: 'king',
+			});
+			
+			const pawn = {
+				id: 'p1-PAWN-HOME', type: 'PAWN', player: 'p1',
+				position: { x: 1, z: 0 }, hasMoved: true, moveCount: 1,
+				forwardDistance: 0, orientation: 0,
+			};
+			game.chessPieces.push(pawn);
+			boardManager.addToCellContents(game.board, 1, 0, {
+				type: 'chess', player: 'p1', pieceId: pawn.id, pieceType: 'pawn',
+			});
+			
+			const result = chessManager.detonatePawn(game, 'p1', 'p1-PAWN-HOME');
+			
+			expect(result.success).toBe(true);
+			expect(result.detonatedAt).toEqual({ x: 1, z: 0 });
+			expect(boardManager.getCell(game.board, 1, 0)).toBeNull();
+			
+			const pawnStillExists = game.chessPieces.some(piece => piece.id === 'p1-PAWN-HOME');
+			expect(pawnStillExists).toBe(false);
+		});
+
+		test('cannot detonate a non-pawn piece', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+
+			const rook = {
+				id: 'p1-ROOK', type: 'ROOK', player: 'p1',
+				position: { x: 0, z: 0 },
+			};
+			game.chessPieces.push(rook);
+
+			const result = chessManager.detonatePawn(game, 'p1', 'p1-ROOK');
+			expect(result.success).toBe(false);
+		});
+
+		test('cannot detonate another player\'s pawn', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+			addPlayer(game, 'p2');
+
+			const pawn = {
+				id: 'p2-PAWN', type: 'PAWN', player: 'p2',
+				position: { x: 0, z: 0 },
+			};
+			game.chessPieces.push(pawn);
+
+			const result = chessManager.detonatePawn(game, 'p1', 'p2-PAWN');
+			expect(result.success).toBe(false);
+		});
+		
+		test('cannot detonate king while other own pieces remain', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+			
+			const king = {
+				id: 'p1-KING', type: 'KING', player: 'p1',
+				position: { x: 0, z: 0 },
+			};
+			const pawn = {
+				id: 'p1-PAWN', type: 'PAWN', player: 'p1',
+				position: { x: 1, z: 0 },
+			};
+			game.chessPieces.push(king, pawn);
+			
+			const result = chessManager.detonatePawn(game, 'p1', 'p1-KING');
+			expect(result.success).toBe(false);
+		});
+		
+		test('detonating final king removes all owned cells in distance order', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+			addPlayer(game, 'p2');
+			
+			const king = {
+				id: 'p1-KING', type: 'KING', player: 'p1',
+				position: { x: 0, z: 0 },
+			};
+			const p2King = {
+				id: 'p2-KING', type: 'KING', player: 'p2',
+				position: { x: 2, z: 0 },
+			};
+			game.chessPieces.push(king, p2King);
+			
+			// p1 cells
+			boardManager.setCell(game.board, 0, 0, [
+				{ type: 'tetromino', player: 'p1' },
+				{ type: 'chess', player: 'p1', pieceId: 'p1-KING', pieceType: 'king' },
+			]);
+			boardManager.setCell(game.board, 1, 0, [{ type: 'tetromino', player: 'p1' }]);
+			boardManager.setCell(game.board, 3, 0, [{ type: 'tetromino', player: 'p1' }]);
+			// shared cell should keep p2 content
+			boardManager.setCell(game.board, 2, 0, [
+				{ type: 'tetromino', player: 'p1' },
+				{ type: 'tetromino', player: 'p2' },
+				{ type: 'chess', player: 'p2', pieceId: 'p2-KING', pieceType: 'king' },
+			]);
+			
+			const result = chessManager.detonatePawn(game, 'p1', 'p1-KING');
+			expect(result.success).toBe(true);
+			expect(result.pieceType).toBe('KING');
+			expect(result.endedGame).toBe(true);
+			expect(result.layerIntervalMs).toBe(500);
+			expect(Array.isArray(result.explosionSequence)).toBe(true);
+			expect(result.explosionSequence[result.explosionSequence.length - 1]).toMatchObject({
+				x: 0,
+				z: 0,
+				distance: 0,
+			});
+			const sequenceDistances = result.explosionSequence.map(cell => Number(cell.distance));
+			for (let i = 1; i < sequenceDistances.length; i++) {
+				expect(sequenceDistances[i]).toBeLessThanOrEqual(sequenceDistances[i - 1]);
+			}
+			
+			// p1 territory removed
+			expect(boardManager.getCell(game.board, 0, 0)).toBeNull();
+			expect(boardManager.getCell(game.board, 1, 0)).toBeNull();
+			expect(boardManager.getCell(game.board, 3, 0)).toBeNull();
+			
+			// shared cell still contains p2 content
+			const shared = boardManager.getCell(game.board, 2, 0);
+			expect(shared).not.toBeNull();
+			expect(shared.some(item => item && item.player === 'p2')).toBe(true);
+			expect(shared.some(item => item && item.player === 'p1')).toBe(false);
+			
+			// king removed
+			expect(game.chessPieces.find(p => p.id === 'p1-KING')).toBeUndefined();
 		});
 	});
 

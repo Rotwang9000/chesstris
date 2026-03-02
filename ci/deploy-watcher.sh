@@ -10,7 +10,46 @@
 #
 set -euo pipefail
 
+PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 TRIGGER_DIR="/var/www/.deploy-triggers"
+
+resolve_pm2_bin() {
+	if [ -n "${PM2_BIN:-}" ] && [ -x "${PM2_BIN}" ]; then
+		echo "${PM2_BIN}"
+		return 0
+	fi
+
+	if command -v pm2 &>/dev/null; then
+		command -v pm2
+		return 0
+	fi
+
+	if command -v npm &>/dev/null; then
+		NPM_GLOBAL_BIN=$(npm bin -g 2>/dev/null || true)
+		if [ -n "${NPM_GLOBAL_BIN}" ] && [ -x "${NPM_GLOBAL_BIN}/pm2" ]; then
+			echo "${NPM_GLOBAL_BIN}/pm2"
+			return 0
+		fi
+	fi
+
+	for CANDIDATE in /usr/local/bin/pm2 /usr/bin/pm2 /bin/pm2; do
+		if [ -x "$CANDIDATE" ]; then
+			echo "$CANDIDATE"
+			return 0
+		fi
+	done
+
+	for CANDIDATE in /root/.nvm/versions/node/*/bin/pm2 /home/*/.nvm/versions/node/*/bin/pm2; do
+		if [ -x "$CANDIDATE" ]; then
+			echo "$CANDIDATE"
+			return 0
+		fi
+	done
+
+	return 1
+}
+
+PM2_CMD="$(resolve_pm2_bin || true)"
 
 if [ ! -d "$TRIGGER_DIR" ]; then
 	exit 0
@@ -19,10 +58,13 @@ fi
 for TRIGGER_FILE in "$TRIGGER_DIR"/*; do
 	[ -f "$TRIGGER_FILE" ] || continue
 
-	CONTENT=$(cat "$TRIGGER_FILE")
-	ENV_NAME=$(echo "$CONTENT" | cut -d'|' -f1)
-	PM2_NAME=$(echo "$CONTENT" | cut -d'|' -f2)
-	TIMESTAMP=$(echo "$CONTENT" | cut -d'|' -f3)
+	IFS='|' read -r ENV_NAME PM2_NAME TIMESTAMP < "$TRIGGER_FILE"
+
+	if [ -z "${ENV_NAME:-}" ] || [ -z "${PM2_NAME:-}" ]; then
+		echo "[$(date -Iseconds)] ERROR: Malformed trigger ${TRIGGER_FILE}"
+		mv -f "$TRIGGER_FILE" "${TRIGGER_FILE}.invalid"
+		continue
+	fi
 
 	echo "[$(date -Iseconds)] Processing trigger: ${ENV_NAME} (${PM2_NAME}) from ${TIMESTAMP}"
 
@@ -31,23 +73,33 @@ for TRIGGER_FILE in "$TRIGGER_DIR"/*; do
 		DEPLOY_DIR="/var/www/shaktris.live"
 	fi
 
-	if command -v pm2 &>/dev/null; then
-		if pm2 describe "$PM2_NAME" &>/dev/null 2>&1; then
-			pm2 restart "$PM2_NAME" --update-env
+	PROCESSED_OK=false
+	if [ -z "$PM2_CMD" ]; then
+		echo "  ERROR: PM2 not found (set PM2_BIN in cron env)"
+	else
+		if "$PM2_CMD" describe "$PM2_NAME" &>/dev/null 2>&1; then
+			"$PM2_CMD" restart "$PM2_NAME" --update-env
 			echo "  Restarted ${PM2_NAME}"
+			PROCESSED_OK=true
 		else
 			if [ -f "${DEPLOY_DIR}/ecosystem.config.cjs" ]; then
-				pm2 start "${DEPLOY_DIR}/ecosystem.config.cjs" --only "$PM2_NAME"
+				"$PM2_CMD" start "${DEPLOY_DIR}/ecosystem.config.cjs" --only "$PM2_NAME"
 				echo "  Started ${PM2_NAME} from ecosystem config"
+				PROCESSED_OK=true
 			else
 				echo "  ERROR: No ecosystem config found at ${DEPLOY_DIR}/ecosystem.config.cjs"
 			fi
 		fi
-		pm2 save
-	else
-		echo "  ERROR: PM2 not found"
+
+		if [ "$PROCESSED_OK" = true ]; then
+			"$PM2_CMD" save || true
+		fi
 	fi
 
-	rm -f "$TRIGGER_FILE"
-	echo "  Trigger consumed"
+	if [ "$PROCESSED_OK" = true ]; then
+		rm -f "$TRIGGER_FILE"
+		echo "  Trigger consumed"
+	else
+		echo "  Trigger retained for retry"
+	fi
 done

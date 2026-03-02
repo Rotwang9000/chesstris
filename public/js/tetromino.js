@@ -36,14 +36,15 @@ const objectPool = {
 	// Get block from pool or create new
 	getTetrominoBlock: function () {
 		if (this.tetrominoBlocks.length > 0) {
-			return this.tetrominoBlocks.pop();
+			const reused = this.tetrominoBlocks.pop();
+			reused.visible = true;
+			return reused;
 		}
 		const THREE = getTHREE();
 
-		// Create new block
 		const geometry = new THREE.BoxGeometry(0.9, 0.9, 0.9);
 		const material = new THREE.MeshStandardMaterial({
-			color: 0xffffff, // Will be set later
+			color: 0x000000,
 			metalness: 0.3,
 			roughness: 0.7,
 			transparent: false
@@ -55,20 +56,16 @@ const objectPool = {
 
 	// Return block to pool
 	returnTetrominoBlock: function (mesh) {
-		// Don't exceed max pool size
 		if (this.tetrominoBlocks.length >= this.maxPoolSize) {
-			// Dispose properly
 			if (mesh.geometry) mesh.geometry.dispose();
 			if (mesh.material) mesh.material.dispose();
 			return;
 		}
 
-		// Reset properties for reuse
-		mesh.visible = true;
+		mesh.visible = false;
 		mesh.scale.set(1, 1, 1);
 		mesh.position.set(0, 0, 0);
 
-		// Add to pool
 		this.tetrominoBlocks.push(mesh);
 	},
 
@@ -99,13 +96,14 @@ const objectPool = {
 		for (let i = 0; i < neededCount; i++) {
 			const geometry = new THREE.BoxGeometry(0.9, 0.9, 0.9);
 			const material = new THREE.MeshStandardMaterial({
-				color: 0xffffff,
+				color: 0x000000,
 				metalness: 0.3,
 				roughness: 0.7,
 				transparent: false
 			});
 			
 			const mesh = new THREE.Mesh(geometry, material);
+			mesh.visible = false;
 			this.tetrominoBlocks.push(mesh);
 		}
 		
@@ -165,9 +163,10 @@ export function moveTetrominoHorizontal(dir, isXAxis = true) {
 						const explosionZ = gameState.currentTetromino.position.z;
 						cleanupTetrominoAndTransitionToChess(
 							gameState,
-							'Tetromino must connect to existing cells',
+							'Missed connection - tetromino dissolved into sand.',
 							explosionX,
-							explosionZ
+							explosionZ,
+							FAILURE_EFFECTS.DISSOLVE_FALL
 						);
 					}, 0);
 				}
@@ -256,245 +255,248 @@ function showDropAnimation(gameState) {
  * @param {number} z - Z position (board coordinates, relative to player)
  * @param {Object} gameState - The current game state
  */
+const MAX_ACTIVE_EXPLOSIONS = 6;
+const activeExplosionIds = new Set();
+
 function showExplosionAnimation(x, z, gameState) {
-	console.log(`Creating explosion at board position x=${x}, z=${z}`);
-	
 	const THREE = getTHREE();
-	// Create particle group
+	if (!THREE || !gameState?.scene) return;
+	if (activeExplosionIds.size >= MAX_ACTIVE_EXPLOSIONS) return;
+
+	const effectId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+	activeExplosionIds.add(effectId);
+
 	const particleGroup = new THREE.Group();
-	particleGroup.name = 'explosion-' + Date.now();
-	
-	// First ensure we have a valid scene
-	if (!gameState.scene) {
-		console.error('No scene available for explosion animation');
-		return;
-	}
-	
-	// Add particle group to scene
+	particleGroup.name = `explosion-${effectId}`;
 	gameState.scene.add(particleGroup);
-	
-	// Play explosion sound if available
+
 	if (typeof playSound === 'function') {
 		playSound('explosion');
 	}
 
-	// Create particles
-	const particleCount = 40; // Increased particle count
+	const isLowProfile = gameState.lowQuality || gameState.renderProfile === 'cute' || gameState.retroMode || gameState.renderProfile === 'retro';
+	const particleCount = isLowProfile ? 10 : 18;
 	const particles = [];
-	
-	// Translate board coordinates to world coordinates using the centre marker
 	const absolutePos = translatePosition({ x, z }, gameState, true);
-	
-	// Calculate the center of the explosion (for a shape that spans multiple cells)
-	// We'll use the translated position as the center and assume a 2x2 area for better visual effect
-	const centerX = absolutePos.x + 1;
-	const centerZ = absolutePos.z + 1;
-	
-	console.log(`Explosion at board (${x}, ${z}) translated to world position (${absolutePos.x}, ${absolutePos.z}), center at (${centerX}, ${centerZ})`);
-	
+	const centerX = absolutePos.x;
+	const centerZ = absolutePos.z;
+
 	for (let i = 0; i < particleCount; i++) {
-		const size = Math.random() * 0.4 + 0.1; // Slightly larger particles
+		const size = Math.random() * 0.22 + 0.08;
 		const geometry = new THREE.BoxGeometry(size, size, size);
-		
-		// Use player color for some particles, random bright colors for others
 		const usePlayerColor = Math.random() > 0.5;
 		let color;
-		
 		if (usePlayerColor && gameState.currentPlayer && PLAYER_COLORS[gameState.currentPlayer]) {
 			color = new THREE.Color(PLAYER_COLORS[gameState.currentPlayer]);
 		} else {
-			// Bright explosion colors - reds, oranges, yellows
-			color = new THREE.Color().setHSL(
-				Math.random() * 0.1 + 0.05, // Red to yellow hues
-				0.8,
-				0.6
-			);
+			color = new THREE.Color().setHSL(Math.random() * 0.1 + 0.05, 0.8, 0.6);
 		}
-		
-		const material = new THREE.MeshBasicMaterial({
-			color: color,
-			transparent: true,
-			opacity: 0.9
-		});
-
+		const material = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9 });
 		const particle = new THREE.Mesh(geometry, material);
-		
-		// Position particles centered on the explosion point for more consistent effect
 		particle.position.set(
-			centerX + Math.random() * 2 - 1,  // More focused spread
-			Math.random() * 2 + 0.5,    // Height spread
-			centerZ + Math.random() * 2 - 1   // More focused spread
+			centerX + Math.random() * 1.2 - 0.6,
+			Math.random() * 1.3 + 0.3,
+			centerZ + Math.random() * 1.2 - 0.6
 		);
-
-		// Add velocity for animation with more force
 		particle.userData.velocity = {
-			x: Math.random() * 0.3 - 0.15,
-			y: Math.random() * 0.4 + 0.2, // Higher initial upward velocity
-			z: Math.random() * 0.3 - 0.15
+			x: Math.random() * 0.22 - 0.11,
+			y: Math.random() * 0.28 + 0.16,
+			z: Math.random() * 0.22 - 0.11
 		};
-
-		// Add rotation for more dynamic effect
 		particle.userData.rotation = {
-			x: (Math.random() - 0.5) * 0.2,
-			y: (Math.random() - 0.5) * 0.2,
-			z: (Math.random() - 0.5) * 0.2
+			x: (Math.random() - 0.5) * 0.14,
+			y: (Math.random() - 0.5) * 0.14,
+			z: (Math.random() - 0.5) * 0.14
 		};
-
 		particleGroup.add(particle);
 		particles.push(particle);
 	}
 
-	// Add a flash effect
-	const flashGeometry = new THREE.PlaneGeometry(4, 4); // Smaller, more focused flash
+	const flashGeometry = new THREE.SphereGeometry(0.7, 10, 8);
 	const flashMaterial = new THREE.MeshBasicMaterial({
 		color: 0xFFFFFF,
 		transparent: true,
 		opacity: 0.8,
-		side: THREE.DoubleSide
+		wireframe: true
 	});
-	
-	// Position the flash directly at the center point for consistency
 	const flash = new THREE.Mesh(flashGeometry, flashMaterial);
-	flash.position.set(centerX, 0.5, centerZ); // Lower height for better visibility
-	flash.rotation.x = Math.PI / 2; // Flat on the board
+	flash.position.set(centerX, 0.6, centerZ);
+	flash.scale.set(1.05, 0.55, 1.05);
 	particleGroup.add(flash);
 	particles.push(flash);
-	
-	// Animate the explosion
+
 	let lifetime = 0;
 	let animationFrameId = null;
-	
-	// Ensure this animation doesn't get stuck if the page changes
-	const maxLifetime = 40;
+	const maxLifetime = isLowProfile ? 16 : 22;
 	const startTime = Date.now();
-	
+
+	const cleanup = () => {
+		if (animationFrameId) {
+			cancelAnimationFrame(animationFrameId);
+			animationFrameId = null;
+		}
+		activeExplosionIds.delete(effectId);
+		if (!particleGroup || !gameState.scene) return;
+		gameState.scene.remove(particleGroup);
+		particles.forEach(particle => {
+			if (particle.geometry) particle.geometry.dispose();
+			if (particle.material) {
+				if (Array.isArray(particle.material)) {
+					particle.material.forEach(m => m.dispose());
+				} else {
+					particle.material.dispose();
+				}
+			}
+		});
+		particles.length = 0;
+	};
+
 	const animate = () => {
-		// Check if animation has been running too long
-		if (Date.now() - startTime > 2000) {
-			console.warn('Explosion animation timed out, cleaning up');
+		if (Date.now() - startTime > 1400) {
 			cleanup();
 			return;
 		}
-		
 		lifetime++;
-
-		// Update particles
 		particleGroup.children.forEach(particle => {
-			// Skip the flash plane
-			if (particle.geometry instanceof THREE.PlaneGeometry) {
+			if (particle === flash) {
 				particle.material.opacity = 0.8 * Math.max(0, 1 - (lifetime * 2 / 30));
+				particle.scale.multiplyScalar(1.02);
 				return;
 			}
-			
-			// Apply velocity
 			particle.position.x += particle.userData.velocity.x;
 			particle.position.y += particle.userData.velocity.y;
 			particle.position.z += particle.userData.velocity.z;
-
-			// Apply rotation if available
 			if (particle.userData.rotation) {
 				particle.rotation.x += particle.userData.rotation.x;
 				particle.rotation.y += particle.userData.rotation.y;
 				particle.rotation.z += particle.userData.rotation.z;
 			}
-
-			// Apply gravity (stronger gravity)
-			particle.userData.velocity.y -= 0.015;
-
-			// Fade out
+			particle.userData.velocity.y -= 0.017;
 			if (particle.material) {
 				particle.material.opacity = 0.9 * (1 - lifetime / maxLifetime);
 			}
 		});
-
-		// Force render update to show the animation
-		if (gameState.renderer && gameState.scene && gameState.camera) {
-			gameState.renderer.render(gameState.scene, gameState.camera);
-		}
-
-		// Continue animation if not done
-		if (lifetime < maxLifetime) { // Longer animation duration
+		if (lifetime < maxLifetime) {
 			animationFrameId = requestAnimationFrame(animate);
 		} else {
 			cleanup();
 		}
 	};
-	
-	// Cleanup function to ensure resources are properly disposed
-	const cleanup = () => {
-		// Cancel animation if still running
-		if (animationFrameId) {
-			cancelAnimationFrame(animationFrameId);
-			animationFrameId = null;
-		}
-		
-		// Remove particles and dispose of resources
-		if (particleGroup && gameState.scene) {
-			// Remove particle group from scene
-			gameState.scene.remove(particleGroup);
-			
-			// Dispose of geometries and materials
-			particles.forEach(particle => {
-				if (particle.geometry) particle.geometry.dispose();
-				if (particle.material) {
-					if (Array.isArray(particle.material)) {
-						particle.material.forEach(m => m.dispose());
-					} else {
-						particle.material.dispose();
-					}
-				}
-			});
-			
-			// Clear arrays
-			particles.length = 0;
-		}
-		
-		// Phase transition is handled by the server response — don't override here
-		console.log('Explosion animation complete, phase:', gameState.turnPhase);
-	};
-	
-	// Start the animation
+
 	animate();
-	
-	// Create UI explosion effect as well
-	const animElement = document.createElement('div');
-	animElement.style.position = 'fixed';
-	animElement.style.top = '50%';
-	animElement.style.left = '50%';
-	animElement.style.transform = 'translate(-50%, -50%)';
-	animElement.style.color = 'red';
-	animElement.style.fontSize = '72px';
-	animElement.style.fontWeight = 'bold';
-	animElement.style.textShadow = '0 0 20px rgba(255,50,0,0.8)';
-	animElement.style.zIndex = '1000';
-	animElement.style.pointerEvents = 'none';
-	animElement.style.opacity = '0';
-	animElement.style.transition = 'all 0.5s';
-	animElement.textContent = 'INVALID!';
-
-	document.body.appendChild(animElement);
-
-	// Animation sequence
 	setTimeout(() => {
-		animElement.style.opacity = '1';
-		animElement.style.fontSize = '96px';
-	}, 50);
+		if (animationFrameId) cleanup();
+	}, 1800);
+}
 
-	setTimeout(() => {
-		animElement.style.opacity = '0';
-	}, 700);
+if (typeof window !== 'undefined') {
 
-	setTimeout(() => {
-		document.body.removeChild(animElement);
-	}, 1200);
-	
-	// Safety cleanup in case animation gets stuck
-	setTimeout(() => {
-		if (animationFrameId) {
-			console.warn('Explosion animation safety cleanup triggered');
+	window.showExplosionAnimation = showExplosionAnimation;
+	window.showSandDissolveCellAnimation = (x, z, gameState) => {
+		showSandDissolveFallAnimation(x, z, [[1]], gameState);
+	};
+}
+
+/**
+ * Show a miss effect: tetromino falls through and dissolves like sand.
+ * @param {number} x - X position (board coordinates)
+ * @param {number} z - Z position (board coordinates)
+ * @param {Array<Array<number>>} shape - Tetromino shape matrix
+ * @param {Object} gameState - Current game state
+ */
+function showSandDissolveFallAnimation(x, z, shape, gameState) {
+	const THREE = getTHREE();
+	if (!gameState?.scene || !shape) return;
+
+	const particleGroup = new THREE.Group();
+	particleGroup.name = 'sand-dissolve-' + Date.now();
+	gameState.scene.add(particleGroup);
+
+	const absPos = translatePosition({ x, z }, gameState, true);
+	const particles = [];
+	const sandPalette = [0xE5D3A1, 0xD9C58A, 0xBDA469, 0x9F8754];
+
+	for (let row = 0; row < shape.length; row++) {
+		for (let col = 0; col < shape[row].length; col++) {
+			if (shape[row][col] !== 1) continue;
+			const cellX = absPos.x + col + 0.5;
+			const cellZ = absPos.z + row + 0.5;
+			for (let i = 0; i < 16; i++) {
+				const size = 0.05 + Math.random() * 0.06;
+				const geo = new THREE.BoxGeometry(size, size, size);
+				const mat = new THREE.MeshBasicMaterial({
+					color: sandPalette[Math.floor(Math.random() * sandPalette.length)],
+					transparent: true,
+					opacity: 0.95
+				});
+				const p = new THREE.Mesh(geo, mat);
+				p.position.set(
+					cellX + (Math.random() - 0.5) * 0.85,
+					0.4 + Math.random() * 0.5,
+					cellZ + (Math.random() - 0.5) * 0.85
+				);
+				p.userData.velocity = {
+					x: (Math.random() - 0.5) * 0.045,
+					y: -(0.08 + Math.random() * 0.08),
+					z: (Math.random() - 0.5) * 0.045
+				};
+				p.userData.spin = {
+					x: (Math.random() - 0.5) * 0.12,
+					y: (Math.random() - 0.5) * 0.12,
+					z: (Math.random() - 0.5) * 0.12
+				};
+				particleGroup.add(p);
+				particles.push(p);
+			}
+		}
+	}
+
+	let frame = 0;
+	const maxFrames = 65;
+	let animationFrameId = null;
+
+	const cleanup = () => {
+		if (animationFrameId) cancelAnimationFrame(animationFrameId);
+		if (gameState.scene) gameState.scene.remove(particleGroup);
+		for (const p of particles) {
+			if (p.geometry) p.geometry.dispose();
+			if (p.material) p.material.dispose();
+		}
+		particles.length = 0;
+	};
+
+	const animate = () => {
+		frame++;
+		const t = frame / maxFrames;
+		for (const p of particles) {
+			p.position.x += p.userData.velocity.x;
+			p.position.y += p.userData.velocity.y;
+			p.position.z += p.userData.velocity.z;
+			p.userData.velocity.y -= 0.0045;
+			p.userData.velocity.x *= 0.985;
+			p.userData.velocity.z *= 0.985;
+			p.rotation.x += p.userData.spin.x;
+			p.rotation.y += p.userData.spin.y;
+			p.rotation.z += p.userData.spin.z;
+			if (p.material) {
+				p.material.opacity = Math.max(0, 0.95 * (1 - t));
+			}
+			p.scale.multiplyScalar(0.992);
+		}
+
+		if (gameState.renderer && gameState.scene && gameState.camera) {
+			gameState.renderer.render(gameState.scene, gameState.camera);
+		}
+
+		if (frame < maxFrames) {
+			animationFrameId = requestAnimationFrame(animate);
+		} else {
 			cleanup();
 		}
-	}, 2000);
+	};
+
+	animate();
+	setTimeout(cleanup, 2500);
 }
 /**
  * Send tetromino placement to server
@@ -640,37 +642,25 @@ function sendTetrominoPlacementToServer(tetrominoData) {
 		// Show "valid" animation immediately based on local validation
 		showLocalPlacementEffect(tetrominoData);
 	} else {
-		// Show "invalid" animation immediately based on local validation  
-		showLocalExplosionEffect(tetrominoData);
+		// Wait for server authority before exploding to avoid false-negative client mismatch noise.
+		console.log('Local validation failed; awaiting server authority for final outcome.');
 	}
 	
 	// Return a promise that resolves when server validation completes
 	return ensureConnectedAndSend().then(response => {
-		console.log('Server response for tetromino placement:', response);
-		console.log('Current turnPhase after server response:', gameState.turnPhase);
-		
-		// Check if server disagrees with our local validation
 		const serverAccepted = response && response.success;
-		
+
+		// Server is authoritative — apply silent correction on disagreement.
+		// Final user-facing success/failure visuals are handled by processPlaceTetromino.
 		if (serverAccepted !== isLocallyValid) {
-			console.log('Server and local validation disagree! Server says:', serverAccepted ? 'valid' : 'invalid');
-			
-			// Show the correct animation based on server response
-			if (serverAccepted) {
-				// We thought invalid, but server says valid
-				showCorrectionPlacementEffect(tetrominoData);
-			} else {
-				// We thought valid, but server says invalid
-				showCorrectionExplosionEffect(tetrominoData);
-			}
-		} else {
-			// Server agrees with local validation, but make sure things are cleaned up
-			// Update board visuals and game state if needed
+			console.warn('Client/server validation mismatch — server:', serverAccepted, 'local:', isLocallyValid);
+			cleanupCurrentTetromino();
+			cleanupGhostPiece();
 			if (typeof window.updateBoardVisuals === 'function') {
 				window.updateBoardVisuals();
 			}
-			
-			// Phase transition is determined by server response, not forced here
+		} else if (typeof window.updateBoardVisuals === 'function') {
+			window.updateBoardVisuals();
 		}
 		
 		return response;
@@ -699,7 +689,7 @@ function validatePlacementLocally(tetrominoData) {
 	// Server-side truth (see `server.js` -> socket.on('tetromino_placed') and `server/game/TetrominoManager.js`):
 	// - The server validates placement at y=0 (it does not use client-provided y).
 	// - "Occupied" means the cell contains ANY non-home content (home markers alone do NOT block).
-	// - Placement must connect (8-way adjacency) to the player's own territory (non-home) OR their home markers.
+	// - Placement must connect (orthogonal adjacency) to the player's own territory (non-home) OR their home markers.
 
 	// 1) Collision check (match server: non-home blocks).
 	const hasCollision = checkTetrominoCollision(gameState, shape, posX, posZ);
@@ -727,12 +717,9 @@ function validatePlacementLocally(tetrominoData) {
 		String(item.player) === String(playerId) &&
 		String(item.type) === 'home';
 
-	// 2) Adjacency check (8-way)
-	// Server semantics:
-	// - Adjacent to owned NON-home content => valid if:
-	//   - first placement (server short-circuits), OR
-	//   - there is a path to king through owned cells.
-	// - Adjacent to owned HOME marker => valid ONLY for first placement.
+	// 2) Adjacency check (orthogonal only — matching server island rules)
+	let sawAdjacentPlayerContent = false;
+
 	for (let z = 0; z < shape.length; z++) {
 		for (let x = 0; x < shape[z].length; x++) {
 			if (shape[z][x] !== 1) continue;
@@ -745,10 +732,6 @@ function validatePlacementLocally(tetrominoData) {
 				{ x: blockX + 1, z: blockZ },
 				{ x: blockX, z: blockZ - 1 },
 				{ x: blockX, z: blockZ + 1 },
-				{ x: blockX - 1, z: blockZ - 1 },
-				{ x: blockX + 1, z: blockZ - 1 },
-				{ x: blockX - 1, z: blockZ + 1 },
-				{ x: blockX + 1, z: blockZ + 1 }
 			];
 
 			for (const pos of adjacentPositions) {
@@ -756,44 +739,29 @@ function validatePlacementLocally(tetrominoData) {
 				const items = getCellItems(cell);
 				if (items.length === 0) continue;
 
-				// Adjacent to owned non-home territory
 				if (items.some(isOwnedNonHome)) {
-					console.log(`Found adjacent owned non-home cell at (${pos.x}, ${pos.z})`);
-					if (isFirstPlacement) {
-						console.log('Local validation: Placement is valid (first placement)');
-						return true;
-					}
+					sawAdjacentPlayerContent = true;
+					if (isFirstPlacement) return true;
 
-					// Non-first placement: must have a path to king via owned territory (diagonal-inclusive)
 					try {
-						const tempGameState = { ...gameState, board: gameState.board };
-						const hasPath = hasPathToKing(tempGameState, pos.x, pos.z, playerId);
-						if (hasPath) {
-							console.log('Local validation: Placement is valid (path to king)');
-							return true;
-						}
-					} catch (e) {
-						console.warn('Local validation: hasPathToKing check failed, treating as invalid:', e);
-					}
-
-					// Adjacent but disconnected
-					console.log('Local validation: No connected path to king');
-					return false;
+						const hasPath = hasPathToKing(
+							{ ...gameState, board: gameState.board },
+							pos.x, pos.z, playerId
+						);
+						if (hasPath) return true;
+					} catch (_) { /* continue to next cell */ }
 				}
 
-				// Adjacent to owned home markers (only valid on first placement)
 				if (items.some(isOwnedHome)) {
-					console.log(`Found adjacent owned home cell at (${pos.x}, ${pos.z})`);
-					if (isFirstPlacement) {
-						console.log('Local validation: Placement is valid (first placement adjacent to home)');
-						return true;
-					}
+					if (isFirstPlacement) return true;
 				}
 			}
 		}
 	}
 
-	console.log('Local validation: Not adjacent to existing cells');
+	if (sawAdjacentPlayerContent) {
+		console.log('Local validation: adjacent cells found but none connect to king');
+	}
 	return false;
 }
 
@@ -805,40 +773,7 @@ function showLocalPlacementEffect(tetrominoData) {
 	const posX = tetrominoData.position.x;
 	const posZ = tetrominoData.position.z;
 	
-	// Show placement effect
 	showPlacementEffect(posX, posZ, gameState);
-	
-	// Create animation element for "locked" feedback
-	const animElement = document.createElement('div');
-	animElement.style.position = 'fixed';
-	animElement.style.top = '50%';
-	animElement.style.left = '50%';
-	animElement.style.transform = 'translate(-50%, -50%)';
-	animElement.style.color = 'white';
-	animElement.style.fontSize = '48px';
-	animElement.style.fontWeight = 'bold';
-	animElement.style.textShadow = '0 0 10px rgba(0,255,0,0.8)';
-	animElement.style.zIndex = '1000';
-	animElement.style.pointerEvents = 'none';
-	animElement.style.opacity = '0';
-	animElement.style.transition = 'all 0.3s';
-	animElement.textContent = 'LOCKED!';
-
-	document.body.appendChild(animElement);
-	
-	// Animation sequence
-	setTimeout(() => {
-		animElement.style.opacity = '1';
-		animElement.style.fontSize = '72px';
-	}, 50);
-
-	setTimeout(() => {
-		animElement.style.opacity = '0';
-	}, 700);
-
-	setTimeout(() => {
-		document.body.removeChild(animElement);
-	}, 1000);
 	
 	if (typeof window.updateBoardVisuals === 'function') {
 		window.updateBoardVisuals();
@@ -879,57 +814,9 @@ function showCorrectionPlacementEffect(tetrominoData) {
 	
 	// Show placement effect
 	showPlacementEffect(posX, posZ, gameState);
-	
-	// Properly remove the current tetromino and ghost piece
-	if (gameState.currentTetrominoShapeGroup) {
-		if (gameState.tetrominoGroup) {
-			gameState.tetrominoGroup.remove(gameState.currentTetrominoShapeGroup);
-		}
-		gameState.currentTetrominoShapeGroup = null;
-	}
-	
-	// Remove ghost piece if it exists
-	if (gameState.ghostTetrominoGroup) {
-		if (gameState.tetrominoGroup) {
-			gameState.tetrominoGroup.remove(gameState.ghostTetrominoGroup);
-		}
-		gameState.ghostTetrominoGroup = null;
-	}
-	
-	// Clear the current tetromino
-	gameState.currentTetromino = null;
-	
-	// Show correction message
-	const animElement = document.createElement('div');
-	animElement.style.position = 'fixed';
-	animElement.style.top = '50%';
-	animElement.style.left = '50%';
-	animElement.style.transform = 'translate(-50%, -50%)';
-	animElement.style.color = 'yellow';
-	animElement.style.fontSize = '36px';
-	animElement.style.fontWeight = 'bold';
-	animElement.style.textShadow = '0 0 10px rgba(255,255,0,0.8)';
-	animElement.style.zIndex = '1000';
-	animElement.style.pointerEvents = 'none';
-	animElement.style.opacity = '0';
-	animElement.style.transition = 'all 0.3s';
-	animElement.textContent = 'SERVER OVERRIDE: VALID!';
 
-	document.body.appendChild(animElement);
-	
-	// Animation sequence
-	setTimeout(() => {
-		animElement.style.opacity = '1';
-		animElement.style.fontSize = '42px';
-	}, 50);
-
-	setTimeout(() => {
-		animElement.style.opacity = '0';
-	}, 1500);
-
-	setTimeout(() => {
-		document.body.removeChild(animElement);
-	}, 1800);
+	cleanupCurrentTetromino();
+	cleanupGhostPiece();
 }
 
 /**
@@ -942,57 +829,9 @@ function showCorrectionExplosionEffect(tetrominoData) {
 	
 	// Show explosion animation
 	showExplosionAnimation(posX, posZ, gameState);
-	
-	// Properly remove the current tetromino and ghost piece
-	if (gameState.currentTetrominoShapeGroup) {
-		if (gameState.tetrominoGroup) {
-			gameState.tetrominoGroup.remove(gameState.currentTetrominoShapeGroup);
-		}
-		gameState.currentTetrominoShapeGroup = null;
-	}
-	
-	// Remove ghost piece if it exists
-	if (gameState.ghostTetrominoGroup) {
-		if (gameState.tetrominoGroup) {
-				gameState.tetrominoGroup.remove(gameState.ghostTetrominoGroup);
-			}
-		gameState.ghostTetrominoGroup = null;
-	}
-	
-	// Clear the current tetromino
-	gameState.currentTetromino = null;
-	
-	// Show correction message
-	const animElement = document.createElement('div');
-	animElement.style.position = 'fixed';
-	animElement.style.top = '50%';
-	animElement.style.left = '50%';
-	animElement.style.transform = 'translate(-50%, -50%)';
-	animElement.style.color = 'orange';
-	animElement.style.fontSize = '36px';
-	animElement.style.fontWeight = 'bold';
-	animElement.style.textShadow = '0 0 10px rgba(255,165,0,0.8)';
-	animElement.style.zIndex = '1000';
-	animElement.style.pointerEvents = 'none';
-	animElement.style.opacity = '0';
-	animElement.style.transition = 'all 0.3s';
-	animElement.textContent = 'SERVER OVERRIDE: INVALID!';
 
-	document.body.appendChild(animElement);
-	
-	// Animation sequence
-	setTimeout(() => {
-		animElement.style.opacity = '1';
-		animElement.style.fontSize = '42px';
-	}, 50);
-
-	setTimeout(() => {
-		animElement.style.opacity = '0';
-	}, 1500);
-
-	setTimeout(() => {
-		document.body.removeChild(animElement);
-	}, 1800);
+	cleanupCurrentTetromino();
+	cleanupGhostPiece();
 }
 
 /**
@@ -1003,102 +842,74 @@ function showCorrectionExplosionEffect(tetrominoData) {
  */
 export function showPlacementEffect(x, z, gameState) {
 	const THREE = getTHREE();
-	
-	// Determine which scene to use - fall back to global scene if gameState.scene is undefined
+	if (!THREE) return;
+
 	let targetScene;
 	if (gameState && gameState.scene) {
 		targetScene = gameState.scene;
 	} else if (typeof scene !== 'undefined') {
-		// Fall back to global scene if available
 		targetScene = scene;
-		console.log('Using global scene for placement effect');
 	} else {
-		// If no scene is available, log and return
-		console.warn('No scene available for placement effect');
 		return;
 	}
-	
-	// Adjust the effect position to be relative to the board centre
-	const effectX = x; // These are board coordinates already
-	const effectZ = z;
-	
-	console.log(`Placement effect at board position (${effectX}, ${effectZ})`);
-	
-	// Create simple particles at the placement location
-	const particleCount = 20;
+
+	const absPos = translatePosition({ x, z }, gameState, true);
+	const effectX = absPos.x;
+	const effectZ = absPos.z;
+
+	const particleCount = 12;
 	const particleGroup = new THREE.Group();
-	particleGroup.position.set(0, 0, 0); // Position at origin
 	targetScene.add(particleGroup);
 
-	// Create particles
+	const playerColour = gameState.playerColor || 0x44AAFF;
+
 	for (let i = 0; i < particleCount; i++) {
-		const size = Math.random() * 0.2 + 0.1;
+		const size = Math.random() * 0.12 + 0.05;
 		const geometry = new THREE.BoxGeometry(size, size, size);
 		const material = new THREE.MeshBasicMaterial({
-			color: 0xFFFFFF,
+			color: playerColour,
 			transparent: true,
-			opacity: 0.8
+			opacity: 0.7
 		});
 
 		const particle = new THREE.Mesh(geometry, material);
-		
-		// Position particle relative to the board coordinates
 		particle.position.set(
-			effectX + Math.random() * 1.5 - 0.75, // Reduced spread
+			effectX + Math.random() - 0.5,
 			0.5,
-			effectZ + Math.random() * 1.5 - 0.75  // Reduced spread
+			effectZ + Math.random() - 0.5
 		);
-
-		// Add velocity
 		particle.userData.velocity = {
-			x: (Math.random() - 0.5) * 0.15,
-			y: Math.random() * 0.3 + 0.1,
-			z: (Math.random() - 0.5) * 0.15
+			x: (Math.random() - 0.5) * 0.1,
+			y: Math.random() * 0.25 + 0.1,
+			z: (Math.random() - 0.5) * 0.1
 		};
-
 		particleGroup.add(particle);
 	}
 
-	// Animate particles
 	let lifetime = 0;
 	const animate = () => {
 		lifetime += 1;
-
-		// Update particles
-		particleGroup.children.forEach(particle => {
+		for (const particle of particleGroup.children) {
 			particle.position.x += particle.userData.velocity.x;
 			particle.position.y += particle.userData.velocity.y;
 			particle.position.z += particle.userData.velocity.z;
-
-			// Apply gravity
-			particle.userData.velocity.y -= 0.01;
-
-			// Fade out
+			particle.userData.velocity.y -= 0.012;
 			if (particle.material) {
-				particle.material.opacity = Math.max(0, 0.8 - (lifetime / 20));
-			}
-		});
-
-		// Continue animation if not done
-		if (lifetime < 20) {
-			requestAnimationFrame(animate);
-		} else {
-			// Remove particles safely
-			try {
-				targetScene.remove(particleGroup);
-				
-				// Dispose of resources
-				particleGroup.children.forEach(particle => {
-					if (particle.geometry) particle.geometry.dispose();
-					if (particle.material) particle.material.dispose();
-				});
-			} catch (e) {
-				console.warn('Error removing particle group:', e);
+				particle.material.opacity = Math.max(0, 0.7 - (lifetime / 18));
 			}
 		}
+		if (lifetime < 18) {
+			requestAnimationFrame(animate);
+		} else {
+			try {
+				targetScene.remove(particleGroup);
+				for (const p of particleGroup.children) {
+					if (p.geometry) p.geometry.dispose();
+					if (p.material) p.material.dispose();
+				}
+			} catch (_e) { /* cleanup best effort */ }
+		}
 	};
-
-	// Start animation
 	animate();
 }
 /**
@@ -1242,12 +1053,8 @@ export function determineInitialTetrominoPosition(gameState, shapeOverride = nul
 		kingPosition = { x: kingPiece.position.x, z: kingPiece.position.z };
 		kingOrientation = kingPiece.orientation !== undefined ? kingPiece.orientation : 0;
 	} else {
-		console.log('Tetromino: No king found for player ' + currentPlayer + ', No king, no tetromino', gameState);
 		return null;
 	}
-	
-	
-	console.log(`Tetromino: Found king`, kingPosition, kingOrientation, kingPiece);
 	
 	// Translate orientation to direction vector
 	let kingDirection;
@@ -1489,13 +1296,7 @@ export function renderTetromino(gameState) {
 		const shape = tetromino.shape;
 		const heightAboveBoard = tetromino.heightAboveBoard || 0;
 		
-		// Log current state for debugging
-		console.log(`Rendering tetromino at board position (${tetromino.position.x}, ${tetromino.position.z}), height: ${heightAboveBoard}`);
-		
-		// Get absolute world position for the tetromino origin
-		// All operations use relative coordinates but render with absolute
 		const absPos = translatePosition(tetromino.position, gameState, true);
-		console.log(`Translated to absolute position: (${absPos.x}, ${absPos.z})`);
 		
 		// Create a single THREE.Group for the entire tetromino shape
 		const THREE = getTHREE();
@@ -1657,13 +1458,18 @@ function renderGhostPiece(gameState, tetromino) {
 					// Get block from object pool
 					const block = objectPool.getTetrominoBlock();
 					
-					// Set ghost material properties
+					// Ghost material — higher opacity + dashed outline
+				// for visibility against the busy board.
 					if (block.material) {
 						block.material.color.setHex(color);
 						block.material.transparent = true;
-						block.material.opacity = 0.3;
+						block.material.opacity = 0.5;
 						block.material.wireframe = true;
-						block.material.emissiveIntensity = 0;
+						block.material.wireframeLinewidth = 2;
+						if (block.material.emissive) {
+							block.material.emissive.setHex(color);
+							block.material.emissiveIntensity = 0.4;
+						}
 						block.material.needsUpdate = true;
 					}
 					
@@ -1810,26 +1616,24 @@ export function isTetrominoAdjacentToExistingCells(gameState, shape, posX, posZ)
 
 	const playerStr = currentPlayer ? String(currentPlayer) : null;
 
-	// For each block in the tetromino, check 8-way adjacency to ANY owned cell.
+	// Orthogonal-only adjacency (matching server island rules).
 	// The server is authoritative — this is just a fast client hint.
+	const ORTHO = [[0, -1], [0, 1], [-1, 0], [1, 0]];
 	for (let z = 0; z < shape.length; z++) {
 		for (let x = 0; x < shape[z].length; x++) {
 			if (!shape[z][x]) continue;
 			const blockX = posX + x;
 			const blockZ = posZ + z;
 
-			for (let dx = -1; dx <= 1; dx++) {
-				for (let dz = -1; dz <= 1; dz++) {
-					if (dx === 0 && dz === 0) continue;
-					const key = `${blockX + dx},${blockZ + dz}`;
-					const cell = gameState.board.cells[key];
-					if (!cell) continue;
-					const items = Array.isArray(cell) ? cell : (cell.contents || [cell]);
-					const owned = items.some(item =>
-						item && playerStr && String(item.player) === playerStr
-					);
-					if (owned) return true;
-				}
+			for (const [dx, dz] of ORTHO) {
+				const key = `${blockX + dx},${blockZ + dz}`;
+				const cell = gameState.board.cells[key];
+				if (!cell) continue;
+				const items = Array.isArray(cell) ? cell : (cell.contents || [cell]);
+				const owned = items.some(item =>
+					item && playerStr && String(item.player) === playerStr
+				);
+				if (owned) return true;
 			}
 		}
 	}
@@ -2356,6 +2160,11 @@ const MOVEMENT_TYPES = {
 	CLEANUP: 'cleanup'
 };
 
+const FAILURE_EFFECTS = {
+	EXPLODE: 'explode',
+	DISSOLVE_FALL: 'dissolve_fall'
+};
+
 /**
  * Add a movement operation to the queue
  * @param {string} type - Type of movement (use MOVEMENT_TYPES constants)
@@ -2381,7 +2190,7 @@ export function queueTetrominoMovement(type, params = {}) {
 		timestamp: Date.now()
 	});
 	
-	console.log(`Queued ${type} operation`, params);
+	
 	
 	// Start processing the queue if it's not already being processed
 	if (!gameState.isProcessingMovementQueue) {
@@ -2422,7 +2231,6 @@ function processTetrominoMovementQueue() {
 				continue;
 			}
 			
-			console.log(`Processing ${operation.type} operation`, operation.params);
 			
 			// Process the operation
 			switch (operation.type) {
@@ -2451,7 +2259,12 @@ function processTetrominoMovementQueue() {
 					break;
 					
 				case MOVEMENT_TYPES.EXPLODE:
-					processExplosion(operation.params.x, operation.params.z, operation.params.message);
+					processExplosion(
+						operation.params.x,
+						operation.params.z,
+						operation.params.message,
+						operation.params.effect || FAILURE_EFFECTS.EXPLODE
+					);
 					break;
 					
 				case MOVEMENT_TYPES.CLEANUP:
@@ -2565,14 +2378,15 @@ function processVerticalMove(height, isRelative) {
 		);
 		
 		if (!isAdjacent) {
-			// Not adjacent! Explode.
+			// Not adjacent — let it fall through and dissolve.
 			console.log(`Vertical move failed - tetromino not adjacent at landing position (Y=0)`);
-			// Ensure tetromino is visually at Y=0 before explosion
+			// Ensure tetromino is visually at Y=0 before dissolve
 			gameState.currentTetromino.heightAboveBoard = 0; 
 			queueTetrominoMovement(MOVEMENT_TYPES.EXPLODE, {
 				x: posX,
 				z: posZ,
-				message: 'Tetromino must connect to existing cells'
+				message: 'Missed connection - tetromino dissolved into sand.',
+				effect: FAILURE_EFFECTS.DISSOLVE_FALL
 			});
 			return; // Stop processing this move
 		}
@@ -2658,29 +2472,14 @@ function processHardDrop() {
 	const posX = gameState.currentTetromino.position.x;
 	const posZ = gameState.currentTetromino.position.z;
 	
-	// 1. Check for collisions with existing pieces at Y=0
-	for (let z = 0; z < shape.length; z++) {
-		for (let x = 0; x < shape[z].length; x++) {
-			if (shape[z][x] === 1) {
-				const boardX = posX + x;
-				const boardZ = posZ + z;
-				const key = `${boardX},${boardZ}`;
-				
-				if (gameState.board && gameState.board.cells && 
-					gameState.board.cells[key] !== undefined && 
-					gameState.board.cells[key] !== null) {
-					
-					// Collision detected! Explode.
-					console.log(`Hard drop failed - collision with existing piece at (${boardX}, ${boardZ})`);
-					queueTetrominoMovement(MOVEMENT_TYPES.EXPLODE, {
-						x: posX,
-						z: posZ,
-						message: 'Collision on landing'
-					});
-					return; // Stop processing this move
-				}
-			}
-		}
+	if (checkTetrominoCollision(gameState, shape, posX, posZ)) {
+		console.log(`Hard drop failed - collision at (${posX}, ${posZ})`);
+		queueTetrominoMovement(MOVEMENT_TYPES.EXPLODE, {
+			x: posX,
+			z: posZ,
+			message: 'Collision on landing'
+		});
+		return;
 	}
 	
 	// 2. Check adjacency if no collision occurred
@@ -2692,12 +2491,13 @@ function processHardDrop() {
 	);
 	
 	if (!isAdjacent) {
-		// Not adjacent! Explode.
+		// Not adjacent — let it fall through and dissolve.
 		console.log(`Hard drop failed - tetromino not adjacent at landing position`);
 		queueTetrominoMovement(MOVEMENT_TYPES.EXPLODE, {
 			x: posX,
 			z: posZ,
-			message: 'Tetromino must connect to existing cells'
+			message: 'Missed connection - tetromino dissolved into sand.',
+			effect: FAILURE_EFFECTS.DISSOLVE_FALL
 		});
 		return; // Stop processing this move
 	}
@@ -2715,6 +2515,8 @@ function processHardDrop() {
 function processPlaceTetromino() {
 	// Skip if no tetromino
 	if (!gameState.currentTetromino) return;
+	if (gameState.isSubmittingTetrominoPlacement) return;
+	gameState.isSubmittingTetrominoPlacement = true;
 	
 	// Capture original coordinates for later use
 	const originalX = gameState.currentTetromino.position.x;
@@ -2814,6 +2616,8 @@ function processPlaceTetromino() {
 				}
 				
 				// Show a helpful reason (if provided)
+				let rejectionMessage = 'Missed drop - tetromino dissolved into sand.';
+				let rejectionEffect = FAILURE_EFFECTS.EXPLODE;
 				try {
 					const reason = response.reason;
 					let message = response.message;
@@ -2822,120 +2626,135 @@ function processPlaceTetromino() {
 						switch (reason) {
 							case 'occupied':
 								message = 'That space is already occupied.';
+								rejectionEffect = FAILURE_EFFECTS.EXPLODE;
 								break;
 							case 'not_adjacent':
-								message = 'Tetromino must connect to your territory.';
+								message = 'Missed connection - tetromino dissolved into sand.';
+								rejectionEffect = FAILURE_EFFECTS.DISSOLVE_FALL;
 								break;
 							case 'no_path_to_king':
-								message = 'Tetromino must connect (via territory) back to your king.';
+								message = 'No king path - tetromino dissolved into sand.';
+								rejectionEffect = FAILURE_EFFECTS.DISSOLVE_FALL;
 								break;
 							default:
-								message = 'Placement rejected by server.';
+								message = 'Placement rejected - tetromino exploded.';
+								rejectionEffect = FAILURE_EFFECTS.EXPLODE;
 						}
 					}
-					
-					if (message && typeof showToastMessage === 'function') {
-						showToastMessage(message);
+					if (reason === 'not_adjacent' || reason === 'no_path_to_king') {
+						rejectionEffect = FAILURE_EFFECTS.DISSOLVE_FALL;
 					}
+					if (message) rejectionMessage = message;
 				} catch (e) {
 					// Ignore toast errors
 				}
 				
 				console.error('Server rejected placement:', response.reason || response.error || 'Unknown error');
-				showExplosionAnimation(originalX, originalZ, gameState);
-				cleanupCurrentTetromino();
+				processExplosion(originalX, originalZ, rejectionMessage, rejectionEffect);
 			}
 		})
 		.catch(error => {
 			console.error('Error during tetromino placement:', error);
-			// Show an explosion at the original position if placement failed
-			showExplosionAnimation(originalX, originalZ, gameState);
-			cleanupCurrentTetromino();
-			processCleanup('Placement failed: ' + (error.message || 'Unknown error'));
+			processExplosion(
+				originalX,
+				originalZ,
+				'Placement failed - tetromino exploded.',
+				FAILURE_EFFECTS.EXPLODE
+			);
+		})
+		.finally(() => {
+			gameState.isSubmittingTetrominoPlacement = false;
 		});
 }
 
 /**
- * Process explosion
+ * Process explosion — remove tetromino visuals first, then animate.
  * @param {number} x - X position for explosion
  * @param {number} z - Z position for explosion
  * @param {string} message - Message to display
+ * @param {string} effect - Visual effect type (explode or dissolve_fall)
  */
-function processExplosion(x, z, message) {
-	// Show explosion
-	showExplosionAnimation(x, z, gameState);
-	
-	// Queue cleanup
-	queueTetrominoMovement(MOVEMENT_TYPES.CLEANUP, {
-		message: message || 'Tetromino exploded'
-	});
-}
+function processExplosion(x, z, message, effect = FAILURE_EFFECTS.EXPLODE) {
+	const shapeSnapshot = gameState.currentTetromino?.shape
+		? gameState.currentTetromino.shape.map(row => row.slice())
+		: null;
 
-/**
- * Process cleanup
- * @param {string} message - Message to display
- */
-function processCleanup(message) {
-	// Show message
-	if (message && typeof showToastMessage === 'function') {
-		showToastMessage(message);
-	}
-	
-	console.log('Current turnPhase before cleanup:', gameState.turnPhase);
-	
-	// Ensure proper cleanup of all tetromino elements
-	
-	// 1. Remove the current tetromino shape group
+	// Remove the tetromino blocks immediately so they don't linger as a
+	// white/grey square underneath the particle explosion.
 	if (gameState.currentTetrominoShapeGroup) {
 		if (gameState.tetrominoGroup) {
 			gameState.tetrominoGroup.remove(gameState.currentTetrominoShapeGroup);
 		}
 		gameState.currentTetrominoShapeGroup = null;
 	}
-	
-	// 2. Remove ghost piece if it exists
-	if (gameState.ghostTetrominoGroup) {
-		if (gameState.tetrominoGroup) {
-			gameState.tetrominoGroup.remove(gameState.ghostTetrominoGroup);
-		}
-		gameState.ghostTetrominoGroup = null;
-	}
-	
-	// 3. Clear any references to the current tetromino
-	gameState.currentTetromino = null;
-	
-	// 4. Reset any other related state
-	if (gameState.ghostTetromino) {
-		gameState.ghostTetromino = null;
-	}
-	
-	// After an explosion, check if the player has valid chess moves.
-	// If so, transition to chess phase. Otherwise, give a new tetromino.
-	if (gameState.turnPhase === 'tetris' || !gameState.turnPhase) {
-		const hasChessMoves = boardFunctions.analyzePossibleMoves &&
-			typeof boardFunctions.analyzePossibleMoves === 'function'
-			? boardFunctions.analyzePossibleMoves(gameState, gameState.localPlayerId)?.allMoves?.length > 0
-			: false;
+	cleanupCurrentTetromino();
+	cleanupGhostPiece();
 
-		if (hasChessMoves) {
-			console.log('Tetromino exploded, valid chess moves exist — switching to chess phase');
-			gameState.turnPhase = 'chess';
-		} else {
-			console.log('Tetromino exploded, no valid chess moves — giving new tetromino');
-			gameState.turnPhase = 'tetris';
-			const newTetromino = initializeNextTetromino(gameState);
-			if (newTetromino) {
-				gameState.currentTetromino = newTetromino;
-				gameState.currentTetromino.heightAboveBoard = gameState.TETROMINO_START_HEIGHT || 20;
-			}
+	if (effect === FAILURE_EFFECTS.DISSOLVE_FALL) {
+		showSandDissolveFallAnimation(x, z, shapeSnapshot, gameState);
+	} else {
+		showExplosionAnimation(x, z, gameState);
+	}
+
+	// Run cleanup inline instead of queueing — the tetromino is already gone,
+	// so we just need to handle the phase transition and messaging.
+	processCleanup(message || 'Tetromino exploded');
+}
+
+/**
+ * Process cleanup after a tetromino explosion or failed placement.
+ * Always performs phase transition — never skips it.
+ * @param {string} message - Message to display
+ */
+function processCleanup(message) {
+	if (message && typeof showToastMessage === 'function') {
+		showToastMessage(message);
+	}
+
+	console.log('Current turnPhase before cleanup:', gameState.turnPhase);
+
+	// Ensure all tetromino visuals are gone
+	if (gameState.currentTetrominoShapeGroup) {
+		if (gameState.tetrominoGroup) {
+			gameState.tetrominoGroup.remove(gameState.currentTetrominoShapeGroup);
+		}
+		gameState.currentTetrominoShapeGroup = null;
+	}
+	cleanupGhostPiece();
+	gameState.currentTetromino = null;
+	gameState.ghostTetromino = null;
+
+	// Determine next phase: chess if moves exist, otherwise new tetromino
+	const activePlayerId = gameState.localPlayerId || gameState.currentPlayer || gameState.myPlayerId;
+	let hasChessMoves = true;
+	if (boardFunctions.analyzePossibleMoves && typeof boardFunctions.analyzePossibleMoves === 'function' && activePlayerId != null) {
+		try {
+			hasChessMoves = (boardFunctions.analyzePossibleMoves(gameState, activePlayerId)?.allMoves?.length || 0) > 0;
+		} catch (_) {
+			hasChessMoves = true;
+		}
+	}
+
+	if (hasChessMoves) {
+		console.log('Tetromino exploded, valid chess moves exist — switching to chess phase');
+		gameState.turnPhase = 'chess';
+	} else {
+		console.log('Tetromino exploded, no valid chess moves — giving new tetromino');
+		gameState.turnPhase = 'tetris';
+		const newTetromino = initializeNextTetromino(gameState);
+		if (newTetromino) {
+			gameState.currentTetromino = newTetromino;
+			gameState.currentTetromino.heightAboveBoard = gameState.TETROMINO_START_HEIGHT || 20;
 		}
 	}
 
 	console.log('Tetromino cleanup completed, phase:', gameState.turnPhase);
 
-	// Update the board visuals
 	if (typeof window.updateBoardVisuals === 'function') {
 		window.updateBoardVisuals();
+	}
+	if (typeof window.updateGameStatusDisplay === 'function') {
+		window.updateGameStatusDisplay();
 	}
 }
 
@@ -2961,8 +2780,8 @@ export function hardDropTetromino() {
 	return queueTetrominoMovement(MOVEMENT_TYPES.HARD_DROP, {});
 }
 
-export function cleanupTetrominoAndTransitionToChess(gameState, message, x, z) {
-	return queueTetrominoMovement(MOVEMENT_TYPES.EXPLODE, { x, z, message });
+export function cleanupTetrominoAndTransitionToChess(gameState, message, x, z, effect = FAILURE_EFFECTS.EXPLODE) {
+	return queueTetrominoMovement(MOVEMENT_TYPES.EXPLODE, { x, z, message, effect });
 }
 
 export function enhancedPlaceTetromino(gameState) {
@@ -2972,7 +2791,7 @@ export function enhancedPlaceTetromino(gameState) {
 }
 
 /**
- * Check if there's a path from a cell to a player's king using diagonal connections
+ * Check if there's a path from a cell to a player's king using orthogonal connections
  * @param {Object} gameState - The current game state
  * @param {number} startX - Starting X coordinate
  * @param {number} startZ - Starting Z coordinate
@@ -3051,16 +2870,12 @@ export function hasPathToKing(gameState, startX, startZ, playerId) {
 	const queue = [{ x: startX, z: startZ, path: [[startX, startZ]] }];
 	const visited = new Set([`${startX},${startZ}`]);
 	
-	// Include diagonal directions
+	// Orthogonal only (matching server island rules — no diagonals)
 	const directions = [
-		{ dx: -1, dz: 0 },  // Left
-		{ dx: 1, dz: 0 },   // Right
-		{ dx: 0, dz: -1 },  // Up
-		{ dx: 0, dz: 1 },   // Down
-		{ dx: -1, dz: -1 }, // Top-left
-		{ dx: 1, dz: -1 },  // Top-right
-		{ dx: -1, dz: 1 },  // Bottom-left
-		{ dx: 1, dz: 1 }    // Bottom-right
+		{ dx: -1, dz: 0 },
+		{ dx: 1, dz: 0 },
+		{ dx: 0, dz: -1 },
+		{ dx: 0, dz: 1 },
 	];
 
 	while (queue.length > 0) {
@@ -3071,7 +2886,7 @@ export function hasPathToKing(gameState, startX, startZ, playerId) {
 			return path;
 		}
 
-		// Try all eight directions
+		// Try orthogonal directions
 		for (const { dx, dz } of directions) {
 			const newX = x + dx;
 			const newZ = z + dz;
@@ -3180,54 +2995,43 @@ function handleRowCleared(data) {
  */
 function highlightClearedRows(rowIndices) {
 	const THREE = getTHREE();
-	if (!THREE) return;
-	
-	// Store existing highlight elements to remove later
-	const highlights = [];
-	
-	// Create highlight material with glowing effect
-	const highlightMaterial = new THREE.MeshBasicMaterial({
-		color: 0xffff00,
-		transparent: true,
-		opacity: 0.5,
-		side: THREE.DoubleSide
-	});
-	
-	// Add highlight mesh for each row
+	const scene = getScene();
+	if (!THREE || !scene) return;
+
+	const board = gameState.board;
+	const minX = board?.minX ?? 0;
+	const maxX = board?.maxX ?? 15;
+	const width = maxX - minX + 1;
+	const centreX = minX + width / 2;
+
 	rowIndices.forEach(rowIndex => {
-		// Create a plane that covers the entire row
-		const geometry = new THREE.PlaneGeometry(16, 1);
-		const highlight = new THREE.Mesh(geometry, highlightMaterial);
-		
-		// Position the highlight at the row's position, slightly above the board
-		highlight.position.set(8, 0.1, rowIndex);
-		highlight.rotation.x = -Math.PI / 2; // Rotate to lay flat
-		
-		// Add to scene
-		if (gameState.scene) {
-			gameState.scene.add(highlight);
-			highlights.push(highlight);
-			
-			// Animate the highlight
-			const startTime = Date.now();
-			const duration = 800; // milliseconds
-			
-			const animateHighlight = () => {
-				const elapsed = Date.now() - startTime;
-				if (elapsed < duration) {
-					highlight.material.opacity = 0.5 + 0.5 * Math.sin(elapsed / duration * Math.PI * 4);
-					requestAnimationFrame(animateHighlight);
-				} else {
-					// Remove highlight after animation completes
-					gameState.scene.remove(highlight);
-					highlight.geometry.dispose();
-					highlight.material.dispose();
-				}
-			};
-			
-			// Start animation
-			animateHighlight();
-		}
+		const geometry = new THREE.PlaneGeometry(width, 0.9);
+		const material = new THREE.MeshBasicMaterial({
+			color: 0x00ffff,
+			transparent: true,
+			opacity: 0.4,
+			side: THREE.DoubleSide,
+			depthWrite: false,
+		});
+		const highlight = new THREE.Mesh(geometry, material);
+		highlight.position.set(centreX, 0.12, rowIndex);
+		highlight.rotation.x = -Math.PI / 2;
+		scene.add(highlight);
+
+		const startTime = Date.now();
+		const duration = 600;
+		const tick = () => {
+			const elapsed = Date.now() - startTime;
+			if (elapsed < duration) {
+				material.opacity = 0.4 * (1 - elapsed / duration);
+				requestAnimationFrame(tick);
+			} else {
+				scene.remove(highlight);
+				geometry.dispose();
+				material.dispose();
+			}
+		};
+		tick();
 	});
 }
 
@@ -3237,30 +3041,20 @@ function highlightClearedRows(rowIndices) {
  */
 function handleTetrominoFailed(data) {
 	console.log('Tetromino placement failed:', data);
-	
-	// Ensure current tetromino is cleaned up
+
+	let failureMessage = data?.message || 'Placement failed - tetromino exploded.';
+	let failureEffect = FAILURE_EFFECTS.EXPLODE;
+	if (typeof failureMessage === 'string' && failureMessage.toLowerCase().includes('connect')) {
+		failureMessage = 'Missed connection - tetromino dissolved into sand.';
+		failureEffect = FAILURE_EFFECTS.DISSOLVE_FALL;
+	}
+
 	if (gameState.currentTetromino) {
-		// Capture position before cleanup for potential explosion animation
 		const posX = gameState.currentTetromino.position.x;
 		const posZ = gameState.currentTetromino.position.z;
-		
-		// Show explosion animation at the position
-		showExplosionAnimation(posX, posZ, gameState);
-		
-		// Clean up the current tetromino
-		cleanupCurrentTetromino();
-	}
-	
-	// Clean up ghost piece as well
-	cleanupGhostPiece();
-	
-	// Show error message if provided
-	if (data && data.message) {
-		if (typeof window.showToastMessage === 'function') {
-			window.showToastMessage(data.message, 'error');
-		} else {
-			alert('Placement failed: ' + data.message);
-		}
+		processExplosion(posX, posZ, failureMessage, failureEffect);
+	} else if (typeof window.showToastMessage === 'function') {
+		window.showToastMessage(failureMessage, 'error');
 	}
 }
 
@@ -3333,8 +3127,13 @@ function cleanupGhostPiece() {
  * Update path to king visualization with tetromino color
  * @param {Object} gameState - The current game state
  */
+let _pathVizLastPos = null;
+let _pathVizLastTime = 0;
+const PATH_VIZ_THROTTLE_MS = 250;
+
 export function updatePathVisualization(gameState) {
 	if (!gameState || !gameState.currentTetromino || !gameState.currentPlayer) {
+		highlightPathToKing(gameState, null);
 		return;
 	}
 
@@ -3343,18 +3142,25 @@ export function updatePathVisualization(gameState) {
 	const posX = Math.round(tetromino.position.x);
 	const posZ = Math.round(tetromino.position.z);
 
-	// First, we'll simulate placing the tetromino on the board to check connectivity
-	const simulatedBoard = JSON.parse(JSON.stringify(gameState.board || { cells: {} }));
-	if (!simulatedBoard.cells) simulatedBoard.cells = {};
-	
-	// Add the tetromino cells to the simulated board
+	const posKey = `${posX},${posZ}`;
+	const now = performance.now();
+	if (posKey === _pathVizLastPos && now - _pathVizLastTime < PATH_VIZ_THROTTLE_MS) {
+		return;
+	}
+	_pathVizLastPos = posKey;
+	_pathVizLastTime = now;
+
+	const srcCells = gameState.board?.cells || {};
+	const simulatedCells = {};
+	for (const key of Object.keys(srcCells)) {
+		simulatedCells[key] = srcCells[key];
+	}
+
 	for (let z = 0; z < shape.length; z++) {
 		for (let x = 0; x < shape[z].length; x++) {
 			if (shape[z][x] === 1) {
-				const boardX = posX + x;
-				const boardZ = posZ + z;
-				const key = `${boardX},${boardZ}`;
-				simulatedBoard.cells[key] = {
+				const key = `${posX + x},${posZ + z}`;
+				simulatedCells[key] = {
 					type: 'tetromino',
 					player: gameState.currentPlayer
 				};
@@ -3362,15 +3168,13 @@ export function updatePathVisualization(gameState) {
 		}
 	}
 
-	// Find any valid path from any cell of the tetromino
+	const simulatedBoard = { ...gameState.board, cells: simulatedCells };
 	let bestPath = null;
-	
+
 	for (let z = 0; z < shape.length; z++) {
 		for (let x = 0; x < shape[z].length; x++) {
 			if (shape[z][x] === 1) {
-				// Create a temporary gameState for path checking
 				const tempGameState = { ...gameState, board: simulatedBoard };
-				
 				const path = hasPathToKing(tempGameState, posX + x, posZ + z, gameState.currentPlayer);
 				if (path && (!bestPath || path.length < bestPath.length)) {
 					bestPath = path;
@@ -3379,7 +3183,6 @@ export function updatePathVisualization(gameState) {
 		}
 	}
 
-	// Update the visualization
 	highlightPathToKing(gameState, bestPath, getTetrominoColor(tetromino.type, gameState));
 }
 
@@ -3425,37 +3228,38 @@ function getTetrominoColor(tetrominoType, gameState) {
  * @param {Array} path - Array of coordinates forming the path
  * @param {number} color - The color to use for highlighting (hex)
  */
-export function highlightPathToKing(gameState, path, color = 0xffff00) {
+export function highlightPathToKing(gameState, path, color = 0x00ccff) {
+	if (!gameState) return;
 	const THREE = getTHREE();
-	
-	// Remove existing path highlights
+
 	if (gameState.pathHighlights) {
 		gameState.pathHighlights.forEach(highlight => {
-			gameState.scene.remove(highlight);
+			if (gameState.scene) gameState.scene.remove(highlight);
 			if (highlight.geometry) highlight.geometry.dispose();
 			if (highlight.material) highlight.material.dispose();
 		});
 	}
-	
+
 	gameState.pathHighlights = [];
-	
-	if (!path || path.length === 0) {
+
+	if (!path || path.length === 0 || !gameState.scene) {
 		return;
 	}
-	
-	// Create highlight material with the same color as the tetromino
+
 	const highlightMaterial = new THREE.MeshBasicMaterial({
 		color: color,
 		transparent: true,
-		opacity: 0.3,
-		side: THREE.DoubleSide
+		opacity: 0.25,
+		side: THREE.DoubleSide,
+		depthWrite: false,
 	});
-	
-	// Create highlights for each cell in the path
+
 	path.forEach(([x, z]) => {
-		const geometry = new THREE.BoxGeometry(1, 0.1, 1);
+		const geometry = new THREE.PlaneGeometry(0.9, 0.9);
+		geometry.rotateX(-Math.PI / 2);
 		const highlight = new THREE.Mesh(geometry, highlightMaterial);
-		highlight.position.set(x + 0.5, 0.1, z + 0.5);
+		highlight.position.set(x + 0.5, 0.12, z + 0.5);
+		highlight.renderOrder = 1;
 		gameState.scene.add(highlight);
 		gameState.pathHighlights.push(highlight);
 	});
