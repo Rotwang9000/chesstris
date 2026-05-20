@@ -11,7 +11,7 @@ import {
 } from './gameContext.js';
 import * as tetrominoModule from './tetromino.js';
 import { boardFunctions } from './boardFunctions.js';
-import { performRaycast } from './chessInteraction.js';
+import { performRaycast, clearChessSelection } from './chessInteraction.js';
 import { showToastMessage } from './showToastMessage.js';
 
 let _onTetrisPhaseClick = null;
@@ -104,6 +104,17 @@ function handleKeyDown(event) {
 		return;
 	}
 
+	if (event.key === 'Escape') {
+		// Always allow Escape to clear chess selection / dismiss the
+		// detonate button. This is the universal "get me out" key in
+		// case the click flow ever leaves us in a stuck state.
+		if (gameState.selectedChessPiece) {
+			clearChessSelection();
+			event.preventDefault();
+			return;
+		}
+	}
+
 	if (!gameState.currentTetromino) {
 		if (event.key === ' ' && gameState.turnPhase === 'chess') {
 			event.preventDefault();
@@ -143,9 +154,12 @@ function handleKeyDown(event) {
 
 	switch (event.key) {
 		case 'z': case 'Z':
+		case 'q': case 'Q':
 			tetrominoModule.rotateTetromino(-1);
 			break;
 		case 'x': case 'X':
+		case 'r': case 'R':
+		case 'e': case 'E':
 			tetrominoModule.rotateTetromino(1);
 			break;
 		case ' ':
@@ -156,29 +170,6 @@ function handleKeyDown(event) {
 }
 
 // ── Mouse ───────────────────────────────────────────────────────────────────
-
-function handleMouseDown(event) {
-	const containerElement = getContainerElement();
-	const mouse = getMouse();
-	const renderer = getRenderer();
-	const gameState = getGameState();
-
-	if (!containerElement || !mouse) return;
-
-	try {
-		const rect = renderer && renderer.domElement
-			? renderer.domElement.getBoundingClientRect()
-			: containerElement.getBoundingClientRect();
-
-		mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-		mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-
-		if (gameState.processingMove) return;
-		performRaycast();
-	} catch (error) {
-		console.warn("Error in handleMouseDown:", error);
-	}
-}
 
 function handleMouseMove(event) {
 	const mouse = getMouse();

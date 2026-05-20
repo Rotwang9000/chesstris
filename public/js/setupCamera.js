@@ -2,6 +2,47 @@ import { getTHREE } from './gameContext.js';
 import { findBoardCentreMarker, translatePosition } from './centreBoardMarker.js';
 import { boardFunctions } from './boardFunctions.js';
 
+/**
+ * Pull the camera back to a high-level overview of the entire board.
+ *
+ * Computes the bounding box of all populated cells and frames it so
+ * the whole island is visible. Falls back to a sensible default extent
+ * when the board is empty.
+ */
+export function setCameraToOverview(camera, controls, gameState) {
+	if (!camera || !controls) return;
+
+	const board = gameState?.board;
+	let centerX = 0, centerZ = 0, maxExtent = 50;
+
+	if (board && board.cells) {
+		const cellKeys = Object.keys(board.cells);
+		if (cellKeys.length > 0) {
+			let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+			for (const key of cellKeys) {
+				const [x, z] = key.split(',').map(Number);
+				if (x < minX) minX = x;
+				if (x > maxX) maxX = x;
+				if (z < minZ) minZ = z;
+				if (z > maxZ) maxZ = z;
+			}
+			centerX = (minX + maxX) / 2;
+			centerZ = (minZ + maxZ) / 2;
+			maxExtent = Math.max(maxX - minX, maxZ - minZ, 50);
+		}
+	}
+
+	const viewDistance = Math.max(60, maxExtent * 0.8);
+	camera.position.set(
+		centerX + viewDistance * 0.5,
+		viewDistance * 0.7,
+		centerZ + viewDistance * 0.5,
+	);
+	if (controls.target) controls.target.set(centerX, 0, centerZ);
+	camera.lookAt(centerX, 0, centerZ);
+	if (controls.update) controls.update();
+}
+
 const CAMERA_DEFAULTS = {
 	FOV: 50,
 	NEAR: 0.1,
@@ -120,23 +161,44 @@ export function resetCameraForGameplay(renderer, camera, controls, gameState, sc
 
 /**
  * Move the camera to view a player's home zone.
- * Returns true if it found the king, false otherwise.
+ *
+ * Falls back to the centre of the player's home zone if their king
+ * is missing from `gameState.chessPieces` (e.g. just captured) so the
+ * caller still gets a useful camera move instead of a silent no-op.
+ *
+ * @returns {boolean} True if a camera move was issued.
  */
 export function moveToPlayerZone(camera, controls, gameState, renderer, scene, animate = true, forceImmediate = false, onComplete, targetPlayerId) {
 	const playerId = targetPlayerId || gameState.localPlayerId;
 	if (!playerId) return false;
+	if (!camera || !controls) return false;
+
+	let boardPosition = null;
+	let orientation = 0;
 
 	const kingPiece = boardFunctions.getPlayersKing(gameState, playerId, false);
-	if (!kingPiece) {
-		console.warn('No king found for player', playerId, '— will retry');
+	if (kingPiece) {
+		boardPosition = kingPiece.position;
+		orientation = Number.isFinite(kingPiece.orientation) ? kingPiece.orientation : 0;
+	} else {
+		const zone = gameState.homeZones && gameState.homeZones[playerId];
+		if (zone && Number.isFinite(zone.x) && Number.isFinite(zone.z)) {
+			boardPosition = {
+				x: zone.x + (zone.width || 8) / 2,
+				z: zone.z + (zone.height || 2) / 2,
+			};
+			orientation = Number.isFinite(zone.orientation) ? zone.orientation : 0;
+		}
+	}
+
+	if (!boardPosition) {
+		console.warn('moveToPlayerZone: no king or home zone for player', playerId);
 		return false;
 	}
 
-	const boardPosition = kingPiece.position;
 	const position = translatePosition(boardPosition, gameState, true);
 	if (!position) return false;
 
-	const orientation = kingPiece.orientation || 0;
 	const dist = CAMERA_DEFAULTS.KING_VIEW_DISTANCE;
 	const height = dist * Math.sin(Math.PI / 4);
 
@@ -157,8 +219,6 @@ export function moveToPlayerZone(camera, controls, gameState, renderer, scene, a
 	};
 	const targetLookAt = { x: position.x, y: 0, z: position.z };
 
-	if (!camera || !controls) return false;
-
 	if (animate && !forceImmediate) {
 		flyToPosition(camera, controls, targetPosition, targetLookAt, renderer, scene, onComplete);
 	} else {
@@ -175,10 +235,15 @@ export function moveToPlayerZone(camera, controls, gameState, renderer, scene, a
 /**
  * Cancel any running fly animation
  */
+let activeFlyControlsRestore = null;
 function cancelFlyAnimation() {
 	if (activeFlyAnimation !== null) {
 		cancelAnimationFrame(activeFlyAnimation);
 		activeFlyAnimation = null;
+	}
+	if (typeof activeFlyControlsRestore === 'function') {
+		activeFlyControlsRestore();
+		activeFlyControlsRestore = null;
 	}
 }
 
@@ -190,7 +255,11 @@ function easeOutCubic(t) {
 }
 
 /**
- * Animate camera with a smooth flying arc to target position
+ * Animate camera with a smooth flying arc to target position.
+ *
+ * OrbitControls damping is disabled for the duration of the fly so the
+ * controls don't fight our per-frame position writes. The previous
+ * damping state is restored when the fly finishes (or is cancelled).
  */
 export function flyToPosition(camera, controls, targetPosition, targetLookAt, renderer, scene, onComplete) {
 	cancelFlyAnimation();
@@ -201,6 +270,20 @@ export function flyToPosition(camera, controls, targetPosition, targetLookAt, re
 		z: camera.position.z
 	};
 	const startLookAt = controls.target.clone();
+
+	// Snapshot and disable damping/auto-rotate while we drive the camera
+	// directly; otherwise OrbitControls smooths our writes a second time
+	// and the camera "stutters" or drifts past the target.
+	const dampingWas = controls.enableDamping === true;
+	const autoRotateWas = controls.autoRotate === true;
+	controls.enableDamping = false;
+	controls.autoRotate = false;
+
+	const restoreControls = () => {
+		controls.enableDamping = dampingWas;
+		controls.autoRotate = autoRotateWas;
+	};
+	activeFlyControlsRestore = restoreControls;
 
 	const duration = CAMERA_DEFAULTS.FLY_DURATION_MS;
 	const startTime = performance.now();
@@ -234,10 +317,19 @@ export function flyToPosition(camera, controls, targetPosition, targetLookAt, re
 
 		controls.update();
 
+		if (renderer && scene) {
+			try { renderer.render(scene, camera); } catch (_) { /* main loop will pick it up */ }
+		}
+
 		if (rawProgress < 1) {
 			activeFlyAnimation = requestAnimationFrame(tick);
 		} else {
 			activeFlyAnimation = null;
+			activeFlyControlsRestore = null;
+			camera.position.set(targetPosition.x, targetPosition.y, targetPosition.z);
+			controls.target.set(targetLookAt.x, targetLookAt.y, targetLookAt.z);
+			restoreControls();
+			controls.update();
 			if (typeof onComplete === 'function') onComplete();
 		}
 	}

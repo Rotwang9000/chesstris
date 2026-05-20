@@ -153,6 +153,471 @@ describe('BoardManager', () => {
 			// The non-home cells should be cleared
 			expect(boardManager.getCell(game.board, 5, 7)).toBeNull();
 		});
+
+		test('does NOT report a clear when all the run is bare home markers (no removable content)', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+
+			// 8 bare home markers in a row with no chess piece in the home
+			// zone — i.e. an unsafe / degraded home zone. Without the new
+			// "clearable content" filter the old code would report this as
+			// cleared even though `_clearLine` couldn't actually remove
+			// anything (home markers are always preserved). That was the
+			// "phantom clear" players complained about.
+			for (let x = 0; x < 8; x++) {
+				boardManager.setCell(game.board, x, 9, [
+					{ type: 'home', player: 'p1' },
+				]);
+			}
+
+			const { rows, cols } = boardManager.checkAndClearLines(game);
+			expect(rows).toHaveLength(0);
+			expect(cols).toHaveLength(0);
+
+			expect(boardManager.getCell(game.board, 0, 9)).not.toBeNull();
+		});
+
+		test('home cells count as empty space — a run broken by a home cell does NOT clear', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+
+			// 4 tetrominoes - home marker - 4 tetrominoes  ⇒ each side only 4
+			// in a row, so neither side reaches the 8-threshold. No clear.
+			for (let x = 0; x < 4; x++) {
+				boardManager.setCell(game.board, x, 20, [
+					{ type: 'tetromino', player: 'p1' },
+				]);
+			}
+			boardManager.setCell(game.board, 4, 20, [
+				{ type: 'home', player: 'p1' },
+			]);
+			for (let x = 5; x < 9; x++) {
+				boardManager.setCell(game.board, x, 20, [
+					{ type: 'tetromino', player: 'p1' },
+				]);
+			}
+
+			const { rows, cols } = boardManager.checkAndClearLines(game);
+			expect(rows).toHaveLength(0);
+			expect(cols).toHaveLength(0);
+
+			for (let x = 0; x < 9; x++) {
+				if (x === 4) continue;
+				expect(boardManager.getCell(game.board, x, 20)).not.toBeNull();
+			}
+		});
+
+		test('a full 8-run alongside a home cell still clears (cells on opposite sides counted independently)', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+
+			// home + 8 tetrominoes — the right-hand run reaches the threshold.
+			boardManager.setCell(game.board, 0, 30, [{ type: 'home', player: 'p1' }]);
+			for (let x = 1; x <= 8; x++) {
+				boardManager.setCell(game.board, x, 30, [{ type: 'tetromino', player: 'p1' }]);
+			}
+
+			const { rows } = boardManager.checkAndClearLines(game);
+			expect(rows).toContain(30);
+
+			// Home cell survives the clear (it was treated as empty all along).
+			const homeCell = boardManager.getCell(game.board, 0, 30);
+			expect(Array.isArray(homeCell)).toBe(true);
+			expect(homeCell.some(item => item.type === 'home')).toBe(true);
+
+			// All 8 tetromino cells are gone.
+			for (let x = 1; x <= 8; x++) {
+				expect(boardManager.getCell(game.board, x, 30)).toBeNull();
+			}
+		});
+
+		test('preserves chess-occupied cells during row clear (bible §15.2)', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+
+			// 7 tetromino cells plus one chess cell — 8 clearable cells in
+			// total. Per the bible, the chess piece's cell is *protected*
+			// from immediate removal so the player has a 30–60 s window to
+			// bridge before island decay catches the now-stranded piece.
+			// Without this protection a row clear could wipe a rook the
+			// instant another player completes a line through it (which is
+			// exactly the behaviour players complained about).
+			for (let x = 0; x < 7; x++) {
+				boardManager.setCell(game.board, x, 12, [
+					{ type: 'tetromino', player: 'p1' },
+				]);
+			}
+			boardManager.setCell(game.board, 7, 12, [
+				{ type: 'tetromino', player: 'p1' },
+				{ type: 'chess', player: 'p1', pieceId: 'pawn-1', pieceType: 'pawn' },
+			]);
+
+			const { rows } = boardManager.checkAndClearLines(game);
+			expect(rows).toContain(12);
+
+			for (let x = 0; x < 7; x++) {
+				expect(boardManager.getCell(game.board, x, 12)).toBeNull();
+			}
+			const chessCell = boardManager.getCell(game.board, 7, 12);
+			expect(Array.isArray(chessCell)).toBe(true);
+			expect(chessCell.some(item => item && item.type === 'chess')).toBe(true);
+		});
+	});
+
+	describe('findClearableLines / applyClearedLines split', () => {
+		test('findClearableLines reports cells the clear would actually touch', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+
+			for (let x = 0; x < 7; x++) {
+				boardManager.setCell(game.board, x, 40, [{ type: 'tetromino', player: 'p1' }]);
+			}
+			boardManager.setCell(game.board, 7, 40, [
+				{ type: 'tetromino', player: 'p1' },
+				{ type: 'chess', player: 'p1', pieceId: 'rook-1', pieceType: 'rook' },
+			]);
+
+			const { rows, cols, cells } = boardManager.findClearableLines(game);
+			expect(rows).toContain(40);
+			expect(cols).toHaveLength(0);
+
+			// Only the 7 tetromino-only cells should flash; the chess cell
+			// is preserved and shouldn't be in the list.
+			expect(cells).toHaveLength(7);
+			expect(cells.every(c => c.z === 40)).toBe(true);
+			expect(cells.some(c => c.x === 7)).toBe(false);
+		});
+
+		test('findClearableLines does NOT mutate the board', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+
+			for (let x = 0; x < 8; x++) {
+				boardManager.setCell(game.board, x, 50, [{ type: 'tetromino', player: 'p1' }]);
+			}
+
+			const snapshotBefore = JSON.stringify(game.board.cells);
+			boardManager.findClearableLines(game);
+			const snapshotAfter = JSON.stringify(game.board.cells);
+
+			expect(snapshotAfter).toBe(snapshotBefore);
+		});
+
+		test('applyClearedLines clears the supplied rows and cols and reports modified count', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+
+			for (let x = 0; x < 8; x++) {
+				boardManager.setCell(game.board, x, 60, [{ type: 'tetromino', player: 'p1' }]);
+			}
+
+			const applied = boardManager.applyClearedLines(game, [60], []);
+			expect(applied.rows).toEqual([60]);
+			expect(applied.cols).toEqual([]);
+			expect(applied.totalCellsCleared).toBe(8);
+
+			for (let x = 0; x < 8; x++) {
+				expect(boardManager.getCell(game.board, x, 60)).toBeNull();
+			}
+		});
+	});
+
+	describe('checkAndClearLines — dual axis', () => {
+		test('clears an x-column with 8 consecutive cells (column-axis clear)', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+
+			// 8 consecutive cells along z at constant x — i.e. an x-column.
+			for (let z = 0; z < 8; z++) {
+				boardManager.setCell(game.board, 5, z, [
+					{ type: 'tetromino', player: 'p1' },
+				]);
+			}
+
+			const { rows, cols } = boardManager.checkAndClearLines(game);
+			expect(rows).toHaveLength(0);
+			expect(cols).toContain(5);
+
+			for (let z = 0; z < 8; z++) {
+				expect(boardManager.getCell(game.board, 5, z)).toBeNull();
+			}
+		});
+
+		test('clears both a row and a column from a single placement', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+
+			for (let x = 0; x < 8; x++) {
+				boardManager.setCell(game.board, x, 4, [{ type: 'tetromino', player: 'p1' }]);
+			}
+			for (let z = 0; z < 8; z++) {
+				boardManager.setCell(game.board, 2, z, [{ type: 'tetromino', player: 'p1' }]);
+			}
+
+			const { rows, cols } = boardManager.checkAndClearLines(game);
+			expect(rows).toContain(4);
+			expect(cols).toContain(2);
+		});
+
+		test('gravity along x pulls cells towards king for an x-column clear', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+
+			// King at (0, 15) — far from the column clear so it doesn't form
+			// any z-row by accident.
+			boardManager.addToCellContents(game.board, 0, 15, {
+				type: 'chess', player: 'p1', pieceType: 'king', pieceId: 'p1-K',
+			});
+			game.chessPieces.push({
+				id: 'p1-K', type: 'KING', player: 'p1',
+				position: { x: 0, z: 15 }, hasMoved: false,
+			});
+
+			// One isolated trailing cell beyond the column-to-clear.
+			// Place it at z=20 so it is not on any z-row that could also clear.
+			boardManager.setCell(game.board, 11, 20, [{ type: 'tetromino', player: 'p1' }]);
+
+			// Stack an x-column at x=10 along z=0..7 to trigger an x-axis clear.
+			for (let z = 0; z < 8; z++) {
+				boardManager.setCell(game.board, 10, z, [{ type: 'tetromino', player: 'p1' }]);
+			}
+
+			const { rows, cols } = boardManager.checkAndClearLines(game);
+			expect(rows).toHaveLength(0);
+			expect(cols).toContain(10);
+
+			// x=11 should have shifted one step towards king (kingX=0 < 11) → x=10.
+			expect(boardManager.getCell(game.board, 11, 20)).toBeNull();
+			expect(boardManager.getCell(game.board, 10, 20)).not.toBeNull();
+		});
+	});
+
+	describe('gravity rules — bible §15.2', () => {
+		function setupKing(game, playerId, kingX, kingZ) {
+			boardManager.addToCellContents(game.board, kingX, kingZ, {
+				type: 'chess', player: playerId, pieceType: 'king',
+				pieceId: `${playerId}-K`,
+			});
+			game.chessPieces.push({
+				id: `${playerId}-K`, type: 'KING', player: playerId,
+				position: { x: kingX, z: kingZ }, hasMoved: false,
+			});
+		}
+
+		// Fill a z-row with clearable tetromino terrain so the row will
+		// actually clear when applyClearedLines runs — without this, the
+		// _clearLine helper returns 0 and gravity is skipped.
+		function fillClearableRow(game, playerId, z, xStart = 30) {
+			for (let x = xStart; x < xStart + 8; x++) {
+				boardManager.setCell(game.board, x, z, [{ type: 'tetromino', player: playerId }]);
+			}
+		}
+
+		test('single-owner cells slide one step closer to the king per cleared line', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+			setupKing(game, 'p1', 0, 0);
+
+			fillClearableRow(game, 'p1', 10);
+			// Trailing cell at z=20 should move to z=19 when z=10 clears.
+			boardManager.setCell(game.board, 0, 20, [{ type: 'tetromino', player: 'p1' }]);
+
+			boardManager.applyClearedLines(game, [10], []);
+			expect(boardManager.getCell(game.board, 0, 20)).toBeNull();
+			expect(boardManager.getCell(game.board, 0, 19)).not.toBeNull();
+		});
+
+		test('multi-owner cells do NOT move during gravity', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+			addPlayer(game, 'p2');
+			setupKing(game, 'p1', 0, 0);
+
+			fillClearableRow(game, 'p1', 10);
+			boardManager.setCell(game.board, 0, 20, [
+				{ type: 'tetromino', player: 'p1' },
+				{ type: 'tetromino', player: 'p2' },
+			]);
+
+			boardManager.applyClearedLines(game, [10], []);
+			expect(boardManager.getCell(game.board, 0, 20)).not.toBeNull();
+			expect(boardManager.getCell(game.board, 0, 19)).toBeNull();
+		});
+
+		test('chess-piece cell directly adjacent to a cleared row moves with the piece owner', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+			setupKing(game, 'p1', 0, 0);
+
+			fillClearableRow(game, 'p1', 10);
+			game.chessPieces.push({
+				id: 'p1-R', type: 'ROOK', player: 'p1',
+				position: { x: 0, z: 11 },
+			});
+			boardManager.setCell(game.board, 0, 11, [
+				{ type: 'chess', player: 'p1', pieceId: 'p1-R', pieceType: 'rook' },
+			]);
+
+			boardManager.applyClearedLines(game, [10], []);
+
+			expect(boardManager.getCell(game.board, 0, 11)).toBeNull();
+			expect(boardManager.getCell(game.board, 0, 10)).not.toBeNull();
+			const rook = game.chessPieces.find(p => p.id === 'p1-R');
+			expect(rook.position).toEqual({ x: 0, z: 10 });
+		});
+
+		test('chess-piece cell linked to a cleared row via sole-ownership cells moves', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+			setupKing(game, 'p1', 0, 0);
+
+			fillClearableRow(game, 'p1', 10);
+			// Unbroken sole-ownership chain at x=0, z=11..14.
+			for (let z = 11; z <= 14; z++) {
+				boardManager.setCell(game.board, 0, z, [{ type: 'tetromino', player: 'p1' }]);
+			}
+			game.chessPieces.push({
+				id: 'p1-R', type: 'ROOK', player: 'p1',
+				position: { x: 0, z: 15 },
+			});
+			boardManager.setCell(game.board, 0, 15, [
+				{ type: 'chess', player: 'p1', pieceId: 'p1-R', pieceType: 'rook' },
+			]);
+
+			boardManager.applyClearedLines(game, [10], []);
+
+			expect(boardManager.getCell(game.board, 0, 15)).toBeNull();
+			expect(boardManager.getCell(game.board, 0, 14)).not.toBeNull();
+			const rook = game.chessPieces.find(p => p.id === 'p1-R');
+			expect(rook.position).toEqual({ x: 0, z: 14 });
+		});
+
+		test('chess-piece cell stranded by a mixed-owner gap does NOT move', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+			addPlayer(game, 'p2');
+			setupKing(game, 'p1', 0, 0);
+
+			fillClearableRow(game, 'p1', 10);
+			// Chain to z=12 is fine, then z=13 is a multi-owner cell —
+			// the chain breaks. The chess piece at z=15 is on its own
+			// little island and shouldn't move.
+			boardManager.setCell(game.board, 0, 11, [{ type: 'tetromino', player: 'p1' }]);
+			boardManager.setCell(game.board, 0, 12, [{ type: 'tetromino', player: 'p1' }]);
+			boardManager.setCell(game.board, 0, 13, [
+				{ type: 'tetromino', player: 'p1' },
+				{ type: 'tetromino', player: 'p2' }, // multi-owner — link broken
+			]);
+			boardManager.setCell(game.board, 0, 14, [{ type: 'tetromino', player: 'p1' }]);
+			game.chessPieces.push({
+				id: 'p1-R', type: 'ROOK', player: 'p1',
+				position: { x: 0, z: 15 },
+			});
+			boardManager.setCell(game.board, 0, 15, [
+				{ type: 'chess', player: 'p1', pieceId: 'p1-R', pieceType: 'rook' },
+			]);
+
+			boardManager.applyClearedLines(game, [10], []);
+
+			// Rook stays put — the chain back to the cleared row was broken.
+			expect(boardManager.getCell(game.board, 0, 15)).not.toBeNull();
+			const rook = game.chessPieces.find(p => p.id === 'p1-R');
+			expect(rook.position).toEqual({ x: 0, z: 15 });
+		});
+
+		test('chess-piece cell on a fully isolated tile does NOT move', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+			setupKing(game, 'p1', 0, 0);
+
+			fillClearableRow(game, 'p1', 10);
+			// No chain at all — single chess cell way out at z=25.
+			game.chessPieces.push({
+				id: 'p1-R', type: 'ROOK', player: 'p1',
+				position: { x: 0, z: 25 },
+			});
+			boardManager.setCell(game.board, 0, 25, [
+				{ type: 'chess', player: 'p1', pieceId: 'p1-R', pieceType: 'rook' },
+			]);
+
+			boardManager.applyClearedLines(game, [10], []);
+
+			expect(boardManager.getCell(game.board, 0, 25)).not.toBeNull();
+			const rook = game.chessPieces.find(p => p.id === 'p1-R');
+			expect(rook.position).toEqual({ x: 0, z: 25 });
+		});
+
+		test('bare home cells do NOT move during gravity (they anchor the home zone)', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+			setupKing(game, 'p1', 0, 0);
+
+			fillClearableRow(game, 'p1', 10);
+			boardManager.setCell(game.board, 0, 20, [{ type: 'home', player: 'p1' }]);
+
+			boardManager.applyClearedLines(game, [10], []);
+			expect(boardManager.getCell(game.board, 0, 20)).not.toBeNull();
+			expect(boardManager.getCell(game.board, 0, 19)).toBeNull();
+		});
+
+		test('chess-piece cell on top of an enemy home is anchored to piece owner and moves when adjacent to the clear', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+			addPlayer(game, 'enemy');
+			setupKing(game, 'p1', 0, 0);
+
+			fillClearableRow(game, 'p1', 10);
+			// Adjacent to the clear, so the connectivity test passes.
+			game.chessPieces.push({
+				id: 'p1-R', type: 'ROOK', player: 'p1',
+				position: { x: 0, z: 11 },
+			});
+			boardManager.setCell(game.board, 0, 11, [
+				{ type: 'home', player: 'enemy' },
+				{ type: 'chess', player: 'p1', pieceId: 'p1-R', pieceType: 'rook' },
+			]);
+
+			boardManager.applyClearedLines(game, [10], []);
+
+			expect(boardManager.getCell(game.board, 0, 11)).toBeNull();
+			expect(boardManager.getCell(game.board, 0, 10)).not.toBeNull();
+		});
+
+		test('gravity handles a row clear AND a column clear in one tick without double-moving', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+			setupKing(game, 'p1', 0, 0);
+
+			// Trailing cell well beyond both clears.
+			boardManager.setCell(game.board, 20, 20, [{ type: 'tetromino', player: 'p1' }]);
+			// Trigger BOTH a row (z=10) and a column (x=10) clear. Use
+			// disjoint terrain so the row + column fills don't overlap
+			// and the gravity sweep has two cleared lines to process.
+			for (let x = 30; x < 38; x++) {
+				boardManager.setCell(game.board, x, 10, [{ type: 'tetromino', player: 'p1' }]);
+			}
+			for (let z = 30; z < 38; z++) {
+				boardManager.setCell(game.board, 10, z, [{ type: 'tetromino', player: 'p1' }]);
+			}
+
+			boardManager.applyClearedLines(game, [10], [10]);
+			expect(boardManager.getCell(game.board, 20, 20)).toBeNull();
+			expect(boardManager.getCell(game.board, 19, 19)).not.toBeNull();
+		});
+
+		test('two cleared rows pull a distant cell two steps towards the king', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+			setupKing(game, 'p1', 0, 0);
+
+			fillClearableRow(game, 'p1', 10, 30);
+			fillClearableRow(game, 'p1', 20, 30);
+			boardManager.setCell(game.board, 0, 30, [{ type: 'tetromino', player: 'p1' }]);
+
+			boardManager.applyClearedLines(game, [10, 20], []);
+			expect(boardManager.getCell(game.board, 0, 30)).toBeNull();
+			expect(boardManager.getCell(game.board, 0, 28)).not.toBeNull();
+		});
 	});
 	
 	describe('isCellInSafeHomeZone', () => {

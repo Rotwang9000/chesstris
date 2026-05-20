@@ -221,9 +221,13 @@ export default class NetworkManager {
 					this.emitEvent('turn_update', data);
 				});
 				
-				socket.on('chess_move', (data) => {
-					this.emitEvent('chess_move', data);
-				});
+			socket.on('chess_move', (data) => {
+				this.emitEvent('chess_move', data);
+			});
+
+			socket.on('chess_capture', (data) => {
+				this.emitEvent('chess_capture', data);
+			});
 				
 			socket.on('tetrominoFailed', (data) => {
 				this.emitEvent('tetrominoFailed', data);
@@ -248,9 +252,25 @@ export default class NetworkManager {
 			socket.on('king_detonation', (data) => {
 				this.emitEvent('king_detonation', data);
 			});
-			
+
+			socket.on('king_detonation_layer', (data) => {
+				this.emitEvent('king_detonation_layer', data);
+			});
+
 			socket.on('island_decay', (data) => {
 				this.emitEvent('island_decay', data);
+			});
+
+			socket.on('island_at_risk', (data) => {
+				this.emitEvent('island_at_risk', data);
+			});
+
+			socket.on('cells_clearing', (data) => {
+				this.emitEvent('cells_clearing', data);
+			});
+
+			socket.on('cascade_complete', (data) => {
+				this.emitEvent('cascade_complete', data);
 			});
 
 			socket.on('simultaneous_capture_resolved', (data) => {
@@ -276,7 +296,20 @@ export default class NetworkManager {
 			socket.on('king_duel_announced', (data) => {
 				this.emitEvent('king_duel_announced', data);
 			});
-				
+
+			// Activity log feed — the Recent Activity panel listens for
+			// these via `NetworkManager.on(...)`. Without these
+			// forwards the panel stayed empty even though the server
+			// was emitting events the whole time (the bug the user
+			// reported as "Recent activity is still empty btw").
+			socket.on('activity_event', (data) => {
+				this.emitEvent('activity_event', data);
+			});
+
+			socket.on('activity_log_snapshot', (data) => {
+				this.emitEvent('activity_log_snapshot', data);
+			});
+
 				socket.on('chessFailed', (data) => {
 					this.emitEvent('chessFailed', data);
 				});
@@ -751,10 +784,21 @@ export default class NetworkManager {
 						return;
 					}
 					
-					// Check if this is a validation error or a network error
+					// Check if this is a validation error or a network error.
+					// IMPORTANT: keep the server-supplied `reason` if present —
+					// callers (chess move handler, etc) need to distinguish
+					// `piece_gone` / `desync_repaired` from a generic
+					// validation_error so they can react properly. Previously
+					// every rejection was overwritten to `validation_error`,
+					// which is how the "knight just disappeared" stale-state
+					// bug went unhandled — the client never knew the server
+					// had told it the piece was already gone.
 					const errorText = String(response.error);
 					const errorLower = errorText.toLowerCase();
-					
+					const explicitReason = (typeof response.reason === 'string' && response.reason)
+						? response.reason
+						: null;
+
 					const isValidationError = (
 						errorLower.includes('invalid') ||
 						errorLower.includes('not allowed') ||
@@ -764,20 +808,15 @@ export default class NetworkManager {
 						errorLower.includes('cannot') ||
 						errorLower.includes('occupied')
 					);
-					
-					if (isValidationError) {
-						reject({
-							message: errorText,
-							reason: 'validation_error',
-							details: response
-						});
-					} else {
-						reject({
-							message: errorText,
-							reason: 'network_error',
-							details: response
-						});
-					}
+
+					const reason = explicitReason
+						|| (isValidationError ? 'validation_error' : 'network_error');
+
+					reject({
+						message: errorText,
+						reason,
+						details: response,
+					});
 				} else {
 					resolve(response);
 				}

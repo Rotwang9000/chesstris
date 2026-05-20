@@ -6,43 +6,8 @@
  */
 
 import * as NetworkManager from './utils/networkManager.js';
-
-// Import these if they exist, otherwise provide fallbacks
-let highlightPlayerPieces;
-let removePlayerPiecesHighlight;
-
-// Fallback functions in case import fails
-const fallbackHighlightPlayerPieces = (playerId) => {
-	console.log('Fallback: Highlight requested for player', playerId);
-	// Use gameCore functions if available
-	if (window.gameCore && window.gameCore.highlightPlayerPieces) {
-		window.gameCore.highlightPlayerPieces(playerId);
-	}
-};
-
-const fallbackRemovePlayerPiecesHighlight = () => {
-	console.log('Fallback: Removing highlights');
-	// Use gameCore functions if available
-	if (window.gameCore && window.gameCore.removePlayerPiecesHighlight) {
-		window.gameCore.removePlayerPiecesHighlight();
-	}
-};
-
-// Set initial fallbacks
-highlightPlayerPieces = fallbackHighlightPlayerPieces;
-removePlayerPiecesHighlight = fallbackRemovePlayerPiecesHighlight;
-
-// Try to load the real functions
-import('./pieceHighlightManager.js')
-	.then(module => {
-		console.log('Successfully imported pieceHighlightManager.js');
-		// Replace fallbacks with real functions
-		highlightPlayerPieces = module.highlightPlayerPieces;
-		removePlayerPiecesHighlight = module.removePlayerPiecesHighlight;
-	})
-	.catch(error => {
-		console.warn('Could not import pieceHighlightManager.js, using fallbacks:', error);
-	});
+import { highlightPlayerPieces, removePlayerPiecesHighlight } from './pieceHighlightManager.js';
+import { showToastMessage } from './showToastMessage.js';
 
 // State tracking variables
 let isBarVisible = false;
@@ -276,6 +241,7 @@ export function createUnifiedPlayerBar(gameState) {
 		overflowY: 'auto'
 	});
 	playerBar.appendChild(playerContainer);
+
 	
 	// Add World / Player session section
 	const gameIdSection = document.createElement('div');
@@ -646,12 +612,54 @@ function addPlayerToBar(playerBar, playerId, playerInfo, gameState) {
 		}
 	});
 	
-	// Click flies camera to that player's king
-	playerElement.addEventListener('click', () => {
+	// Click flies the camera to that player's king (or home zone if
+	// the king is missing).
+	//
+	// Notes:
+	//   - One listener per row, on `pointerdown` so mobile + desktop
+	//     behave identically and we don't queue up two animations from
+	//     a click that lands on a child element (the previous version
+	//     fired on both `click` and `touchstart`, which caused the
+	//     "laggy / does nothing" behaviour the user reported).
+	//   - A short cooldown stops rapid double-clicks from stacking
+	//     fly animations on top of each other.
+	playerElement.dataset.playerId = playerId;
+	playerElement.style.cursor = 'pointer';
+	playerElement.title = `Fly to ${playerInfo.name || playerId}`;
+	let lastFlyAt = 0;
+	const FLY_COOLDOWN_MS = 250;
+	const flyHandler = (event) => {
+		if (event && event.pointerType === 'mouse' && event.button !== 0) return;
+		event.preventDefault();
+		event.stopPropagation();
+		const now = Date.now();
+		if (now - lastFlyAt < FLY_COOLDOWN_MS) return;
+		lastFlyAt = now;
+
+		console.log('[player-bar] fly-to click for playerId=', playerId);
+
+		playerElement.style.transition = 'transform 120ms ease, background-color 120ms ease';
+		const previousBg = playerElement.style.backgroundColor;
+		playerElement.style.backgroundColor = 'rgba(255, 204, 0, 0.55)';
+		playerElement.style.transform = 'translateX(-5px) scale(1.04)';
+		setTimeout(() => {
+			playerElement.style.backgroundColor = previousBg;
+			playerElement.style.transform = 'translateX(-5px)';
+		}, 180);
+
 		if (window.gameCore && typeof window.gameCore.flyToPlayerKing === 'function') {
-			window.gameCore.flyToPlayerKing(playerId);
+			const moved = window.gameCore.flyToPlayerKing(playerId);
+			if (moved === false) {
+				showToastMessage(`Couldn't fly to ${playerInfo.name || playerId} — no king and no home zone found.`);
+			} else {
+				showToastMessage(`Flying to ${playerInfo.name || playerId}...`);
+			}
+		} else {
+			console.warn('[player-bar] flyToPlayerKing is not exposed on window.gameCore yet');
+			showToastMessage('Camera not ready — try again in a second.');
 		}
-	});
+	};
+	playerElement.addEventListener('pointerdown', flyHandler);
 
 	// Add touch events for mobile devices
 	playerElement.addEventListener('touchstart', (e) => {
@@ -776,13 +784,20 @@ export function updateUnifiedPlayerBar(gameState) {
 		};
 	}
 	
-	// Add each player
+	// Add each player. The local player is pinned to the top of the
+	// list — they're the user looking at this UI, and "Fly to my king"
+	// is by far the most common reason for opening the panel.
 	if (gameState.players && Object.keys(gameState.players).length > 0) {
 		console.log('Players in game state:', Object.keys(gameState.players).length);
-		Object.keys(gameState.players).forEach(playerId => {
+		const sortedIds = Object.keys(gameState.players).sort((a, b) => {
+			if (a === localPlayerId) return -1;
+			if (b === localPlayerId) return 1;
+			return 0;
+		});
+		sortedIds.forEach(playerId => {
 			const player = gameState.players[playerId];
 			if (!player) return;
-			
+
 			addPlayerToBar(
 				playerBar,
 				playerId,
@@ -815,22 +830,22 @@ export function updateUnifiedPlayerBar(gameState) {
  * Generate a deterministic color for a player ID
  */
 function generatePlayerColor(playerId) {
-	// Check if player is local
+	// Local player gets the same warm-wood swatch their chess pieces
+	// use in the scene, so the sidebar matches what they see on the
+	// board (was previously a misleading red).
 	if (NetworkManager && NetworkManager.getPlayerId && playerId === NetworkManager.getPlayerId()) {
-		return '#AA0000'; // Red for local player
+		return '#C4A265';
 	}
-	
-	// Generate deterministic color based on ID
+
 	let hash = 0;
 	const id = playerId || 'unknown';
 	for (let i = 0; i < id.length; i++) {
 		hash = id.charCodeAt(i) + ((hash << 5) - hash);
 	}
-	
-	// Generate blue/green-ish colors (keep red low)
-	const r = Math.abs(hash % 80); // Keep red low
-	const g = 100 + Math.abs((hash >> 4) % 155);
-	const b = 150 + Math.abs((hash >> 8) % 105);
-	
-	return `rgb(${r}, ${g}, ${b})`;
+
+	// Match the in-scene palette (greens/cyans/blues — h ∈ [120, 240]).
+	const h = 120 + (Math.abs(hash) % 120);
+	const s = 65 + (Math.abs(hash >> 8) % 35);
+	const l = 45 + (Math.abs(hash >> 16) % 20);
+	return `hsl(${h}, ${s}%, ${l}%)`;
 } 

@@ -305,14 +305,8 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 						piecesReused++;
 					}
 				} else {
-					// Create a new piece mesh
 					const pieceColor = getChessPieceColor(piece, gameState);
 					const pieceType = getChessPieceType(piece);
-					
-					// For debugging
-					console.log(`Creating chess piece: ${pieceType} for player ${piece.player}, color: ${pieceColor.toString(16)}, at position (${x}, ${z})`);
-					
-					// Generate a player identifier
 					const playerIdentifier = piece.player;
 					
 					// Try to use direct creation with color
@@ -516,18 +510,37 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 			}
 		});
 
-		// Remove any pieces that are no longer in the game
-		// Create a copy of the array to avoid modification during iteration
+		// Remove any pieces that are no longer in the game. Honour the
+		// in-flight optimistic move pin so a `game_update` arriving
+		// mid-animation can't yank the moving mesh out from underneath
+		// the tween — that race was the root cause of the user's
+		// "knight just disappeared" report. The pin is cleared once the
+		// move ack arrives (success or failure) by `chessInteraction.js`.
+		// We also stop pruning the piece for a short safety window so a
+		// failed ack still has time to revert visually.
+		const inFlight = gameState?.inFlightMove;
+		const inFlightId = inFlight?.pieceId ? String(inFlight.pieceId) : null;
+		const PIN_SAFETY_MS = 2000;
+		const inFlightStillValid = inFlight && (
+			!Number.isFinite(inFlight.startedAt)
+				|| (now - inFlight.startedAt) < PIN_SAFETY_MS
+		);
 		const currentPieces = [...chessPiecesGroup.children];
 		let piecesRemoved = 0;
 
 		currentPieces.forEach(pieceMesh => {
 			try {
 				if (pieceMesh && pieceMesh.userData && pieceMesh.userData.id) {
-					// If the piece is not in the processed set, remove it
 					if (!processedPieceIds.has(pieceMesh.userData.id)) {
+						if (inFlightStillValid
+							&& inFlightId
+							&& String(pieceMesh.userData.id) === inFlightId
+						) {
+							// Pinned — keep mesh, let the move flow drop or
+							// adopt it once the ack arrives.
+							return;
+						}
 						chessPiecesGroup.remove(pieceMesh);
-						// Dispose of geometries and materials
 						if (pieceMesh.geometry) pieceMesh.geometry.dispose();
 						if (pieceMesh.material) {
 							if (Array.isArray(pieceMesh.material)) {
@@ -539,7 +552,6 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 						piecesRemoved++;
 					}
 				} else {
-					// Remove any invalid pieces
 					chessPiecesGroup.remove(pieceMesh);
 					piecesRemoved++;
 				}

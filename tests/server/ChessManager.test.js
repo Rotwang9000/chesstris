@@ -233,6 +233,40 @@ describe('ChessManager', () => {
 			const rook = setUpBoardWithPiece('ROOK', { x: 0, z: 0 });
 			expect(chessManager.isValidChessMove(game, rook, 0, 5)).toBe(false);
 		});
+
+		// ── Orphan markers shouldn't block valid moves ──────────────────
+
+		test('orphan chess marker on destination does not block move', () => {
+			const rook = setUpBoardWithPiece('ROOK', { x: 0, z: 0 });
+			// Set up a destination cell with an orphan chess marker (no
+			// matching entry in chessPieces). The mover's `player` field
+			// is on the orphan marker — i.e. the marker LOOKS like the
+			// mover's own piece even though no live piece exists at it.
+			ensureBoardSquare(0, 1);
+			ensureBoardSquare(0, 2);
+			boardManager.setCell(game.board, 0, 3, [
+				{ type: 'tetromino', player: 'p1' },
+				{ type: 'chess', player: 'p1', pieceId: 'ghost-id', pieceType: 'pawn' },
+			]);
+			expect(chessManager.isValidChessMove(game, rook, 0, 3)).toBe(true);
+		});
+
+		test('orphan chess marker in path does not block bishop', () => {
+			const bishop = setUpBoardWithPiece('BISHOP', { x: 0, z: 0 });
+			ensureBoardSquare(2, 2);
+			boardManager.setCell(game.board, 1, 1, [
+				{ type: 'tetromino', player: 'p1' },
+				{ type: 'chess', player: 'p2', pieceId: 'ghost-orphan', pieceType: 'pawn' },
+			]);
+			expect(chessManager.isValidChessMove(game, bishop, 2, 2)).toBe(true);
+		});
+
+		test('LIVE chess piece (in chessPieces) still blocks bishop path', () => {
+			const bishop = setUpBoardWithPiece('BISHOP', { x: 0, z: 0 });
+			setUpBoardWithPiece('PAWN', { x: 1, z: 1 }, 'p2');
+			ensureBoardSquare(2, 2);
+			expect(chessManager.isValidChessMove(game, bishop, 2, 2)).toBe(false);
+		});
 	});
 
 	// ── Castling ────────────────────────────────────────────────────────────
@@ -465,10 +499,10 @@ describe('ChessManager', () => {
 
 			jest.runAllTimers();
 
-			expect(game.state.kingPrison).toBeDefined();
-			expect(game.state.kingPrison).toHaveLength(1);
-			expect(game.state.kingPrison[0].playerId).toBe('d');
-			expect(game.state.kingPrison[0].capturedBy).toBe('a');
+			expect(game.kingPrison).toBeDefined();
+			expect(game.kingPrison).toHaveLength(1);
+			expect(game.kingPrison[0].playerId).toBe('d');
+			expect(game.kingPrison[0].capturedBy).toBe('a');
 
 			jest.useRealTimers();
 		});
@@ -658,7 +692,17 @@ describe('ChessManager', () => {
 			expect(tet41.player).toBe('p1');
 
 			// (4,2) was connected to p2's king only through (4,1).
-			// Now (4,1) is p1's so (4,2) is a disconnected p2 island → removed.
+			// With the new grace-period rule the cell sits there decaying
+			// rather than being deleted immediately; pretend the
+			// disconnection happened long ago and re-run integrity to
+			// confirm it eventually collapses.
+			const IslandMgr = require('../../server/game/IslandManager');
+			expect(game.disconnectedSince?.['p2:4,2']).toEqual(
+				expect.objectContaining({ since: expect.any(Number) })
+			);
+			game.disconnectedSince['p2:4,2'].since -= IslandMgr.DISCONNECTED_TIME_LIMIT_MS + 1_000;
+			chessManager.islandManager.checkForIslandsAfterRowClear(game);
+
 			const cell42 = boardManager.getCell(game.board, 4, 2);
 			const hasP2Content = cell42 && cell42.some(item => item.player === 'p2');
 			expect(hasP2Content).toBeFalsy();
@@ -707,7 +751,22 @@ describe('ChessManager', () => {
 			// Cell at (2,0) should be gone
 			expect(boardManager.getCell(game.board, 2, 0)).toBeNull();
 
-			// (3,0) and (4,0) are now disconnected from king at (0,0)
+			// (3,0) and (4,0) are now disconnected — first pass marks them
+			// as decaying, they should stay visible until the grace
+			// period elapses.
+			expect(game.disconnectedSince?.['p1:3,0']).toEqual(
+				expect.objectContaining({ since: expect.any(Number) })
+			);
+			expect(game.disconnectedSince?.['p1:4,0']).toEqual(
+				expect.objectContaining({ since: expect.any(Number) })
+			);
+
+			const IslandMgrDetonate = require('../../server/game/IslandManager');
+			const aged = IslandMgrDetonate.DISCONNECTED_TIME_LIMIT_MS + 1_000;
+			game.disconnectedSince['p1:3,0'].since -= aged;
+			game.disconnectedSince['p1:4,0'].since -= aged;
+			chessManager.islandManager.checkForIslandsAfterRowClear(game);
+
 			expect(boardManager.getCell(game.board, 3, 0)).toBeNull();
 			expect(boardManager.getCell(game.board, 4, 0)).toBeNull();
 

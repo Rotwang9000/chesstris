@@ -9,7 +9,6 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { glob } = require('glob');
 
 const PUBLIC_JS_DIR = path.join(__dirname, '../../public/js');
 const PUBLIC_UTILS_DIR = path.join(__dirname, '../../public/utils');
@@ -32,6 +31,52 @@ function getClientJsFiles() {
 
 describe('Client-side ES module imports', () => {
 	const nodeModulesImportRe = /(?:import|export)\s.+from\s+['"]\/node_modules\//;
+
+	// Catches typos like `import x from './uiUtils.js'` where the target
+	// doesn't actually exist – these break the entire module graph in the
+	// browser and the user just sees a blank screen.
+	test('every relative import resolves to a file on disk', () => {
+		const files = getClientJsFiles();
+		expect(files.length).toBeGreaterThan(0);
+
+		const importRe = /(?:^|[\s;{])(?:import|export)\b[^'"`]*?from\s+['"]((?:\.\.?\/)[^'"`]+)['"]/gm;
+		const violations = [];
+
+		// Strip both /* */ block comments and // line comments so we don't
+		// flag commented-out import statements.
+		const stripComments = (src) => src
+			.replace(/\/\*[\s\S]*?\*\//g, '')
+			.replace(/^\s*\/\/.*$/gm, '');
+
+		for (const file of files) {
+			const content = stripComments(fs.readFileSync(file, 'utf8'));
+			const dir = path.dirname(file);
+			let m;
+			importRe.lastIndex = 0;
+			while ((m = importRe.exec(content)) !== null) {
+				const spec = m[1].split('?')[0].split('#')[0];
+				const resolved = path.resolve(dir, spec);
+				const tryPaths = [resolved];
+				if (!path.extname(resolved)) {
+					tryPaths.push(`${resolved}.js`, `${resolved}.mjs`, path.join(resolved, 'index.js'));
+				}
+				const ok = tryPaths.some(p => {
+					try { return fs.statSync(p).isFile(); } catch { return false; }
+				});
+				if (!ok) {
+					violations.push({
+						file: path.relative(path.join(__dirname, '../..'), file),
+						spec,
+					});
+				}
+			}
+		}
+
+		if (violations.length > 0) {
+			const detail = violations.map(v => `  ${v.file} → ${v.spec}`).join('\n');
+			throw new Error(`Broken relative import(s) detected:\n${detail}`);
+		}
+	});
 
 	test('no JS file imports from /node_modules/ (breaks behind nginx)', () => {
 		const files = getClientJsFiles();
@@ -56,7 +101,7 @@ describe('Client-side ES module imports', () => {
 			const detail = violations
 				.map((v) => `  ${v.file}:${v.line} → ${v.text}`)
 				.join('\n');
-			fail(
+			throw new Error(
 				`Found ${violations.length} client-side import(s) from /node_modules/ which will 404 through nginx:\n${detail}`
 			);
 		}

@@ -1,5 +1,9 @@
 /**
- * Game module exports
+ * Game module exports.
+ *
+ * Everything is exported from a single entry point so callers can do:
+ *   const { GameManager } = require('./server/game');
+ * without having to know the underlying file layout.
  */
 
 const GameManager = require('./GameManager');
@@ -13,12 +17,8 @@ const GameUtilities = require('./GameUtilities');
 const Constants = require('./Constants');
 const BoardUpdater = require('./BoardUpdater');
 
-// Import GameManagerWrapper after other modules to avoid circular reference
-const GameManagerWrapper = require('./GameManagerWrapper');
-
 module.exports = {
 	GameManager,
-	GameManagerWrapper,
 	BoardManager,
 	TetrominoManager,
 	ChessManager,
@@ -28,4 +28,4 @@ module.exports = {
 	GameUtilities,
 	Constants,
 	BoardUpdater
-}; 
+};

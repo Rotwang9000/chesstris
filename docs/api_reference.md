@@ -1,480 +1,185 @@
 # Shaktris API Reference
 
-## Overview
+This document describes the **actual** wire contract between Shaktris clients and the server.
 
-This document outlines the API endpoints and Socket.IO events used for communication between the Shaktris client and server.
+> Phase 3 (May 2026) consolidated server state into a single authoritative
+> `World` (`server/world/World.js`).  There is now exactly **one** game on
+> the server.  Gameplay actions flow through Socket.IO; the REST surface is
+> intentionally minimal and provides health, world summaries and
+> external-AI registration only.  The legacy multi-game REST sandbox has
+> been removed.
 
-## REST API Endpoints
+Coordinates are always sparse 3D: `{ x: number, z: number }` (with `y` reserved
+for vertical effects only). There is no fixed board width or height; cells are
+stored in `board.cells["x,z"]`.
 
-### Game Management
+---
 
-#### GET /api/games
+## 1. REST endpoints (Express)
 
-Retrieves a list of available game sessions.
+### 1.1 Auth & accounts (in `server.js`)
 
-**Response:**
+| Method | Path | Body | Description |
+|--------|------|------|-------------|
+| POST | `/api/auth/magic-link` | `{ email }` | Send a magic-link sign-in email. |
+| GET  | `/auth/verify`         | `?token=...` | Consume a magic-link token, sets the session. |
+| POST | `/api/auth/generate-game-key` | (auth) `{ label? }` | Issue a long-lived game key for headless clients. |
+
+### 1.2 World & external AI (`routes/api.js`, mounted at `/api`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET  | `/api`                              | Health check; lists supported endpoints + world id + player count |
+| GET  | `/api/world`                        | Read-only summary of the single authoritative world (bounds, player roster, cell count) |
+| GET  | `/api/world/visualization`          | ASCII / JSON debug view of the world |
+| POST | `/api/computer-players/register`    | Register an external AI; returns `{ playerId, apiToken }` (then connect via Socket.IO) |
+| GET  | `/api/computer-players`             | List registered external AIs |
+
+External AI bots register via REST to obtain an id + token, then join the
+world over Socket.IO like any other player.  There are no REST gameplay
+endpoints — that path used to keep a parallel game store with a stub 2D
+board and has been removed.
+
+### 1.3 Advertisers (`routes/advertisers.js`, mounted at `/api/advertisers`)
+
+Standard CRUD plus `/next`, `/:id/impression`, `/:id/click`, `/:id/stats`,
+`/ranking/current`. Used by the in-game ad rotator.
+
+---
+
+## 2. Socket.IO events
+
+The socket is the live multiplayer surface. All callbacks return
+`{ success: boolean, ... }`. A common rate-limit ack is
+`{ success:false, error:'rate_limited', retryAfterMs }`.
+
+### 2.1 Client → Server
+
+| Event | Payload | Notes |
+|-------|---------|-------|
+| `join_game`             | `(gameId, playerName, cb)` | Joins or auto-creates a game. |
+| `create_game`           | `(settings, cb)` | Explicit game creation. |
+| `request_game_state`    | `({ gameId? }, cb)` | Re-sync after reconnect. |
+| `get_game_state`        | `({ gameId? }, cb)` | Same as above, legacy name. |
+| `tetromino_placed`      | `({ tetromino:{ type, rotation, position:{x,z} } }, cb)` | Drop a tetromino. |
+| `request_tetromino`     | `(cb)` | Get the next tetromino from the 7-bag. |
+| `chess_move`            | `({ pieceId, targetPosition:{x,z} }, cb)` | Move a chess piece. |
+| `promote_pawn`          | `({ pawnId, promoteTo }, cb)` | Resolve a pending promotion. |
+| `detonate_pawn`         | `({ pawnId }, cb)` | Trigger the pawn-detonation sacrifice. |
+| `king_duel_response`    | `({ duelId, accept })` | Accept/decline a King's Duel. |
+| `restart_game`          | `(data)` | Host restarts the current game. |
+| `exit_game`             | `(data, cb)` | Leave the game cleanly. |
+| `disconnect_game`       | `(data, cb)` | Soft disconnect (keeps slot for reconnect). |
+| `request_spectate`      | `({ gameId })` | Begin spectating. |
+| `stop_spectating`       | `()` | End spectating. |
+
+### 2.2 Server → Client
+
+#### Session
+
+- `player_id` — `playerId` assigned on connect.
+- `set_session` — `{ playerId }` mirror for client-side persistence.
+
+#### Game lifecycle
+
+- `player_joined` / `player_left` — `{ playerId, playerName?, gameId, players }`.
+- `game_started` — `{ gameId, players, ... }`.
+- `game_over` — `{ winner, reason, ... }`.
+
+#### State sync
+
+- `game_state` — full snapshot (used after `request_game_state`).
+- `game_update` — either a full snapshot or a delta:
+  - Full: `{ ...state, fullUpdate:true, timestamp, boardBounds }`
+  - Delta: `{ fullUpdate:false, timestamp, boardChanges, removedCells, boardBounds, chessPieces, lastAction }`
+
+#### Tetromino phase
+
+- `new_tetromino` — `{ tetromino, queue? }` newly drawn from the 7-bag.
+- `row_cleared` — `{ rows:[z,...], cols:[x,...], playerId }`. Rows are
+  X-aligned lines, cols are Z-aligned lines. Either array may be empty; at
+  least one is non-empty when the event fires.
+- `tetrominoFailed` — `{ message, reason? }` placement was rejected.
+- `no_valid_chess_moves` — `{ playerId, message }` auto-skip chess phase.
+
+#### Chess phase
+
+- `chess_move` — `{ playerId, movedPiece, capturedPiece? }`.
+- `chessFailed` — `{ message }` invalid move.
+- `pawn_promotion_available` — `{ pawnId, allowedPromotions }`.
+- `king_captured` — `{ playerId, capturedKingPlayer }`.
+
+#### Specials
+
+- `island_decay` — `{ cells, ... }` cells removed by king-support decay.
+- `suicidal_pawn` — `{ pawnId, ... }`.
+- `king_detonation` — `{ playerId, position }`.
+- `king_duel_announced` / `king_duel_round_result` / `king_duel_result`.
+
+#### Spectator
+
+- `spectator_update` — `{ ...state }`.
+
+---
+
+## 3. Canonical data structures
+
+### Sparse board
+
 ```json
 {
-	"success": true,
-	"games": [
-		{
-			"id": "game-id-1",
-			"players": 2,
-			"maxPlayers": 4,
-			"status": "waiting",
-			"created": 1615482000000
-		},
-		{
-			"id": "game-id-2",
-			"players": 1,
-			"maxPlayers": 2,
-			"status": "playing",
-			"created": 1615482100000
-		}
-	]
+  "cells": {
+    "3,5": [
+      { "type": "home", "player": "p1", "color": 16711680 },
+      { "type": "chess", "player": "p1", "pieceId": "p1-KING", "pieceType": "king" }
+    ],
+    "4,5": [ { "type": "tetromino", "player": "p1", "placedAt": 1715000000000 } ]
+  },
+  "minX": 0, "maxX": 31,
+  "minZ": 0, "maxZ": 31
 }
 ```
 
-#### GET /api/games/:id
+A cell value is always an **array** of layered content items. The board never
+holds raw `0/1` markers.
 
-Retrieves information about a specific game session.
+### Chess piece
 
-**Response:**
 ```json
 {
-	"success": true,
-	"game": {
-		"id": "game-id-1",
-		"players": [
-			{
-				"id": "player-id-1",
-				"name": "Player1"
-			},
-			{
-				"id": "player-id-2",
-				"name": "Player2"
-			}
-		],
-		"maxPlayers": 4,
-		"status": "waiting",
-		"created": 1615482000000,
-		"settings": {
-			"gameMode": "standard",
-			"difficulty": "normal",
-			"startLevel": 1,
-			"boardSize": {
-				"width": 10,
-				"height": 20
-			},
-			"renderMode": "3d"
-		}
-	}
+  "id": "p1-KING-1",
+  "type": "KING",
+  "player": "p1",
+  "position": { "x": 4, "z": 5 },
+  "hasMoved": false
 }
 ```
 
-#### POST /api/games
+### Tetromino
 
-Creates a new game session.
-
-**Request:**
 ```json
 {
-	"maxPlayers": 2,
-	"gameMode": "standard",
-	"difficulty": "normal",
-	"startLevel": 1,
-	"boardSize": {
-		"width": 10,
-		"height": 20
-	},
-	"renderMode": "3d"
+  "type": "T",
+  "rotation": 0,
+  "position": { "x": 5, "z": 10 },
+  "shape": [[0,1,0],[1,1,1],[0,0,0]]
 }
 ```
 
-**Response:**
-```json
-{
-	"success": true,
-	"gameId": "game-id-1"
-}
-```
+Clients **may** send a `shape`, but the server replaces it with the canonical
+rotation lookup before validating.
 
-### Player Management
+---
 
-#### GET /api/players/:id
+## 4. Standard error codes (in `cb({ success:false, error })`)
 
-Retrieves information about a specific player.
-
-**Response:**
-```json
-{
-	"success": true,
-	"player": {
-		"id": "player-id-1",
-		"name": "Player1",
-		"gameId": "game-id-1",
-		"stats": {
-			"gamesPlayed": 10,
-			"gamesWon": 5,
-			"highScore": 1000
-		}
-	}
-}
-```
-
-#### PUT /api/players/:id
-
-Updates information about a specific player.
-
-**Request:**
-```json
-{
-	"name": "NewPlayerName"
-}
-```
-
-**Response:**
-```json
-{
-	"success": true,
-	"player": {
-		"id": "player-id-1",
-		"name": "NewPlayerName",
-		"gameId": "game-id-1"
-	}
-}
-```
-
-## Socket.IO Events
-
-### Connection Events
-
-#### connect
-
-Emitted when a client connects to the server.
-
-**Client Receives:**
-```json
-{
-	"message": "Connected to server"
-}
-```
-
-#### disconnect
-
-Emitted when a client disconnects from the server.
-
-**Client Receives:**
-```json
-{
-	"message": "Disconnected from server"
-}
-```
-
-#### error
-
-Emitted when an error occurs.
-
-**Client Receives:**
-```json
-{
-	"message": "Error message",
-	"code": "ERROR_CODE"
-}
-```
-
-### Player Events
-
-#### player_id
-
-Emitted when a player ID is assigned to a client.
-
-**Client Receives:**
-```
-"player-id-1"
-```
-
-#### player_joined
-
-Emitted when a player joins a game.
-
-**Client Receives:**
-```json
-{
-	"playerId": "player-id-1",
-	"playerName": "Player1",
-	"gameId": "game-id-1",
-	"players": [
-		{
-			"id": "player-id-1",
-			"name": "Player1"
-		},
-		{
-			"id": "player-id-2",
-			"name": "Player2"
-		}
-	]
-}
-```
-
-#### player_left
-
-Emitted when a player leaves a game.
-
-**Client Receives:**
-```json
-{
-	"playerId": "player-id-1",
-	"gameId": "game-id-1",
-	"players": [
-		{
-			"id": "player-id-2",
-			"name": "Player2"
-		}
-	]
-}
-```
-
-### Game Events
-
-#### join_game
-
-Emitted when a player wants to join a game.
-
-**Client Sends:**
-```json
-"game-id-1", "Player1", callback
-```
-
-**Client Receives (via callback):**
-```json
-{
-	"success": true,
-	"gameId": "game-id-1"
-}
-```
-
-#### create_game
-
-Emitted when a player wants to create a new game.
-
-**Client Sends:**
-```json
-{
-	"maxPlayers": 2,
-	"gameMode": "standard",
-	"difficulty": "normal",
-	"startLevel": 1,
-	"boardSize": {
-		"width": 10,
-		"height": 20
-	},
-	"renderMode": "3d"
-}, callback
-```
-
-**Client Receives (via callback):**
-```json
-{
-	"success": true,
-	"gameId": "game-id-1"
-}
-```
-
-#### game_update
-
-Emitted when the game state is updated.
-
-**Client Sends:**
-```json
-{
-	"board": [...],
-	"chessPieces": [...],
-	"score": 1000,
-	"level": 2,
-	"lines": 10
-}
-```
-
-**Client Receives:**
-```json
-{
-	"board": [...],
-	"chessPieces": [...],
-	"score": 1000,
-	"level": 2,
-	"lines": 10
-}
-```
-
-#### tetromino_placed
-
-Emitted when a player places a tetromino.
-
-**Client Sends:**
-```json
-{
-	"board": [...],
-	"piece": {
-		"type": "T",
-		"position": { "x": 5, "y": 10 },
-		"rotation": 0
-	},
-	"score": 100
-}
-```
-
-**Client Receives:**
-```json
-{
-	"playerId": "player-id-1",
-	"board": [...],
-	"piece": {
-		"type": "T",
-		"position": { "x": 5, "y": 10 },
-		"rotation": 0
-	},
-	"score": 100
-}
-```
-
-#### chess_move
-
-Emitted when a player moves a chess piece.
-
-**Client Sends:**
-```json
-{
-	"chessPieces": [...],
-	"piece": {
-		"type": "pawn",
-		"from": { "x": 1, "y": 1 },
-		"to": { "x": 1, "y": 2 }
-	},
-	"captured": null
-}
-```
-
-**Client Receives:**
-```json
-{
-	"playerId": "player-id-1",
-	"chessPieces": [...],
-	"piece": {
-		"type": "pawn",
-		"from": { "x": 1, "y": 1 },
-		"to": { "x": 1, "y": 2 }
-	},
-	"captured": null
-}
-```
-
-#### game_over
-
-Emitted when a game ends.
-
-**Client Receives:**
-```json
-{
-	"winner": "player-id-1",
-	"reason": "king_captured"
-}
-```
-
-## Data Structures
-
-### Game State
-
-```json
-{
-	"board": [
-		[0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-		[0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-		...
-	],
-	"chessPieces": [
-		{
-			"id": "piece-id-1",
-			"type": "pawn",
-			"player": "player-id-1",
-			"position": { "x": 1, "y": 1 },
-			"hasMoved": false
-		},
-		...
-	],
-	"players": [
-		{
-			"id": "player-id-1",
-			"name": "Player1",
-			"score": 1000,
-			"level": 2,
-			"lines": 10,
-			"nextPiece": "T",
-			"heldPiece": "L"
-		},
-		...
-	],
-	"gameMode": "standard",
-	"difficulty": "normal",
-	"startLevel": 1,
-	"boardSize": {
-		"width": 10,
-		"height": 20
-	},
-	"renderMode": "3d",
-	"status": "playing",
-	"lastAction": {
-		"type": "chess_move",
-		"playerId": "player-id-1",
-		"data": {
-			"piece": {
-				"type": "pawn",
-				"from": { "x": 1, "y": 1 },
-				"to": { "x": 1, "y": 2 }
-			},
-			"captured": null
-		}
-	}
-}
-```
-
-### Tetromino Piece
-
-```json
-{
-	"type": "T",
-	"position": { "x": 5, "y": 10 },
-	"rotation": 0,
-	"blocks": [
-		{ "x": 0, "y": 0 },
-		{ "x": -1, "y": 0 },
-		{ "x": 1, "y": 0 },
-		{ "x": 0, "y": 1 }
-	]
-}
-```
-
-### Chess Piece
-
-```json
-{
-	"id": "piece-id-1",
-	"type": "pawn",
-	"player": "player-id-1",
-	"position": { "x": 1, "y": 1 },
-	"hasMoved": false,
-	"isPromoted": false
-}
-```
-
-## Error Codes
-
-| Code | Description |
-|------|-------------|
-| `GAME_NOT_FOUND` | The requested game was not found |
-| `GAME_FULL` | The game is already at maximum capacity |
-| `INVALID_MOVE` | The requested move is invalid |
-| `INVALID_PLACEMENT` | The requested tetromino placement is invalid |
-| `PLAYER_NOT_FOUND` | The requested player was not found |
-| `SERVER_ERROR` | An internal server error occurred |
-| `UNAUTHORIZED` | The client is not authorized to perform the requested action | 
+| Code | Meaning |
+|------|---------|
+| `GAME_NOT_FOUND`     | The requested game does not exist. |
+| `GAME_FULL`          | At `MAX_PLAYERS_PER_GAME` already. |
+| `INVALID_MOVE`       | Chess move is illegal. |
+| `INVALID_PLACEMENT`  | Tetromino placement failed validation. |
+| `PLAYER_NOT_FOUND`   | Player not registered. |
+| `RATE_LIMITED`       | Action issued before its cooldown expired. |
+| `UNAUTHORIZED`       | Missing/invalid session. |
+| `SERVER_ERROR`       | Unexpected server-side error. |

@@ -5,6 +5,7 @@
 
 const { BOARD_SETTINGS, GAME_RULES } = require('./Constants');
 const { validateCoordinates, log } = require('./GameUtilities');
+const cells = require('./cells');
 
 class BoardManager {
 	/**
@@ -109,23 +110,28 @@ class BoardManager {
 	 */
 	addToCellContents(board, x, z, cellObject) {
 		const key = `${x},${z}`;
-		
-		// Update board boundaries if necessary
+
 		if (x < board.minX) board.minX = x;
 		if (x > board.maxX) board.maxX = x;
 		if (z < board.minZ) board.minZ = z;
 		if (z > board.maxZ) board.maxZ = z;
-		
-		// Update width and height
+
 		board.width = board.maxX - board.minX + 1;
 		board.height = board.maxZ - board.minZ + 1;
-		
-		// Add the object to the cell array
-		if (!board.cells[key]) {
-			board.cells[key] = [];
+
+		// Legacy save snapshots sometimes wrote single objects (not arrays)
+		// for the centre marker cell. Make sure we always end up with an
+		// array so the rest of the codebase can rely on `Array.isArray`.
+		const existing = board.cells[key];
+		if (!existing) {
+			board.cells[key] = [cellObject];
+			return;
 		}
-		
-		board.cells[key].push(cellObject);
+		if (Array.isArray(existing)) {
+			existing.push(cellObject);
+			return;
+		}
+		board.cells[key] = [existing, cellObject];
 	}
 	
 	/**
@@ -231,69 +237,58 @@ class BoardManager {
 	 * @returns {boolean} True if the cell is in a safe home zone
 	 */
 	isCellInSafeHomeZone(game, x, z) {
-		if (!game || !game.homeZones) {
-			log(`isCellInSafeHomeZone: Game or homeZones object is undefined`);
-			return false;
+		if (!game || !game.homeZones) return false;
+
+		// A home zone is only "safe" when it still backs at least one *live*
+		// chess piece. We cross-reference against `game.chessPieces` rather
+		// than trusting cell-level chess markers in isolation, because a
+		// stale marker left behind by a partial clean-up would otherwise
+		// keep the zone deceptively safe.
+		const livePieceIds = new Set();
+		if (Array.isArray(game.chessPieces)) {
+			for (const piece of game.chessPieces) {
+				if (piece && piece.id != null) livePieceIds.add(String(piece.id));
+			}
 		}
-		
-		// Debug output for cell checking
-		let isInHomeZone = false;
-		let homeZoneOwner = null;
-		
+		const isLiveOwnedChessMarker = (item, playerId) => {
+			if (!item || item.type !== 'chess') return false;
+			if (String(item.player) !== String(playerId)) return false;
+			if (item.pieceId == null) return true;
+			return livePieceIds.has(String(item.pieceId));
+		};
+
 		for (const playerId in game.homeZones) {
 			const homeZone = game.homeZones[playerId];
-			
-			// Skip if no home zone data
-			if (!homeZone) {
-				continue;
-			}
-			
-			const { x: homeX, z: homeZ } = homeZone;
-			
-			// Get home zone dimensions from the home zone object
+			if (!homeZone) continue;
+			if (homeZone.isDegraded) continue;
+
+			const homeX = homeZone.x;
+			const homeZ = homeZone.z;
 			const homeWidth = homeZone.width || 8;
 			const homeHeight = homeZone.height || 2;
-			
-			// Check if coordinates are within this home zone
-			if (x >= homeX && x < homeX + homeWidth && 
-				z >= homeZ && z < homeZ + homeHeight) {
-				if (homeZone.isDegraded) continue;
-				
-				const currentCellContents = this.getCell(game.board, x, z);
-				const hasActiveHomeMarkerAtCell = Array.isArray(currentCellContents) && currentCellContents.some(
+
+			const inBounds = x >= homeX && x < homeX + homeWidth
+				&& z >= homeZ && z < homeZ + homeHeight;
+			if (!inBounds) continue;
+
+			const currentCellContents = this.getCell(game.board, x, z);
+			const hasActiveHomeMarkerAtCell = Array.isArray(currentCellContents)
+				&& currentCellContents.some(
 					item => item && item.type === 'home' && String(item.player) === String(playerId)
 				);
-				
-				if (!hasActiveHomeMarkerAtCell) continue;
-				
-				isInHomeZone = true;
-				homeZoneOwner = playerId;
-				
-				// Check if this home zone has at least one piece
-				let hasPiece = false;
-				for (let hz = homeZ; hz < homeZ + homeHeight; hz++) {
-					for (let hx = homeX; hx < homeX + homeWidth; hx++) {
-						const cellContents = this.getCell(game.board, hx, hz);
-						if (cellContents) {
-							// Look for chess pieces in the cell array
-							for (const item of cellContents) {
-								if (item && item.type === 'chess' && item.player === playerId) {
-								hasPiece = true;
-								break;
-								}
-							}
-							if (hasPiece) break;
-						}
+			if (!hasActiveHomeMarkerAtCell) continue;
+
+			for (let hz = homeZ; hz < homeZ + homeHeight; hz++) {
+				for (let hx = homeX; hx < homeX + homeWidth; hx++) {
+					const cellContents = this.getCell(game.board, hx, hz);
+					if (!Array.isArray(cellContents)) continue;
+					for (const item of cellContents) {
+						if (isLiveOwnedChessMarker(item, playerId)) return true;
 					}
-					if (hasPiece) break;
 				}
-				
-			if (hasPiece) {
-				return true;
 			}
 		}
-	}
-		
+
 		return false;
 	}
 	
@@ -341,203 +336,594 @@ class BoardManager {
 	}
 	
 	/**
-	 * Check and clear completed rows on the board
-	 * @param {Object} game - The game object
-	 * @returns {Array} The indices of cleared rows
+	 * Does the cell at (x, z) contain a home marker? Per the bible's
+	 * "home cells count as empty space" rule, any cell with a home marker
+	 * acts as a gap during line-scan and is never touched by a clear,
+	 * **regardless of whether the home zone is currently 'safe'**. A
+	 * degraded home zone — which no longer has home markers, only
+	 * `home_converted` tetromino terrain — is *not* protected by this
+	 * rule; those cells clear like any other tetromino.
+	 *
+	 * @param {Object} board
+	 * @param {number} x
+	 * @param {number} z
+	 * @returns {boolean}
 	 */
-	checkAndClearRows(game) {
-		const clearedRows = [];
-		const requiredCellsForClearing = GAME_RULES.REQUIRED_CELLS_FOR_ROW_CLEARING;
-		
-		// Get the range of z-coordinates to check
-		const minZ = game.board.minZ;
-		const maxZ = game.board.maxZ;
-		
-		// Check each row (on Z-axis, which is vertical on the board)
-		for (let z = minZ; z <= maxZ; z++) {
-			// We need to track consecutive filled cells, not just total count
-			let maxConsecutive = 0;
-			let currentConsecutive = 0;
-			let skippedHomeCells = 0;
-			
-			// Check cells across the x-axis for this z-coordinate
-			for (let x = game.board.minX; x <= game.board.maxX; x++) {
-				const cellContents = this.getCell(game.board, x, z);
-				
-				// Check if this cell is in a home zone
-				const isHomeCellSafe = this.isCellInSafeHomeZone(game, x, z);
-				
-				if (isHomeCellSafe) {
-					// Home cells break the consecutive sequence
-					skippedHomeCells++;
-					currentConsecutive = 0;
-				} else if (cellContents && cellContents.length > 0) {
-					// Cell is filled and not a home cell
-					currentConsecutive++;
-					// Update the maximum consecutive count
-					maxConsecutive = Math.max(maxConsecutive, currentConsecutive);
-				} else {
-					// Empty cell breaks the consecutive sequence
-					currentConsecutive = 0;
+	cellHasHomeMarker(board, x, z) {
+		return cells.hasHome(this.getCell(board, x, z));
+	}
+
+	/**
+	 * Does the cell at (x, z) contain a live chess piece? Chess cells are
+	 * preserved through row clears so the player has a grace window to
+	 * bridge back if the surrounding terrain disappears (bible §15.2).
+	 */
+	cellHasChessMarker(board, x, z) {
+		return cells.hasChess(this.getCell(board, x, z));
+	}
+
+	/**
+	 * Will a row/column clear actually take anything off this cell?
+	 * Used to decide which cells should pre-flash and which would be a
+	 * no-op (so we don't broadcast a "Line cleared!" toast for a run
+	 * whose entire content was home / chess / specialMarkers).
+	 */
+	wouldClearAffectCell(board, x, z) {
+		return cells.isClearable(this.getCell(board, x, z));
+	}
+
+	/**
+	 * The owner of this cell for gravity / decay purposes. Returns null
+	 * for empty, multi-owner, or home-only cells. See {@link cells.getOwner}.
+	 */
+	getCellOwner(board, x, z) {
+		return cells.getOwner(this.getCell(board, x, z));
+	}
+
+	/**
+	 * Strip everything a line-clear would remove from this cell, keeping
+	 * home / chess / centre / special markers in place.
+	 */
+	stripClearableFromCell(board, x, z) {
+		const key = `${x},${z}`;
+		const current = board.cells[key];
+		if (!Array.isArray(current) || current.length === 0) return 0;
+		if (!cells.isClearable(current)) return 0;
+		const preserved = cells.stripClearable(current);
+		if (preserved.length === current.length) return 0;
+		if (preserved.length > 0) {
+			board.cells[key] = preserved;
+		} else {
+			delete board.cells[key];
+		}
+		return 1;
+	}
+
+	/**
+	 * Pure detector — does NOT mutate the board. Walks both axes, returns
+	 * the cleared row/col indices and the de-duplicated list of cells
+	 * that would actually lose content. Use this when you want to
+	 * pre-flash the affected cells before the destructive
+	 * `applyClearedLines` step.
+	 *
+	 * @param {Object} game
+	 * @returns {{ rows: number[], cols: number[], cells: Array<{x:number,z:number}> }}
+	 */
+	findClearableLines(game) {
+		const rows = this._findClearableLines(game, 'z');
+		const cols = this._findClearableLines(game, 'x');
+
+		const cellsMap = new Map();
+		const collect = (axis, indices) => {
+			const start = axis === 'z' ? game.board.minX : game.board.minZ;
+			const end = axis === 'z' ? game.board.maxX : game.board.maxZ;
+			for (const idx of indices) {
+				for (let scan = start; scan <= end; scan++) {
+					const [x, z] = axis === 'z' ? [scan, idx] : [idx, scan];
+					if (!this.wouldClearAffectCell(game.board, x, z)) continue;
+					const key = `${x},${z}`;
+					if (!cellsMap.has(key)) cellsMap.set(key, { x, z });
 				}
 			}
-			
-			
-			
-			// If the row has at least the required number of consecutive filled cells, clear it
-			if (maxConsecutive >= requiredCellsForClearing) {
-				// Clear the row
-				this.clearRow(game, z);
-				clearedRows.push(z);
-				
-				// Log the row clearing
-				log(`Cleared row ${z} with ${maxConsecutive} consecutive filled cells (skipped ${skippedHomeCells} home cells)`);
+		};
+		collect('z', rows);
+		collect('x', cols);
+
+		// Drop candidate rows/cols that wouldn't actually modify anything
+		// (entirely chess- or home-protected runs). Keeps the report
+		// honest for callers that broadcast a "line cleared" toast.
+		const rowsTouched = rows.filter(z => {
+			const start = game.board.minX;
+			const end = game.board.maxX;
+			for (let x = start; x <= end; x++) {
+				if (cellsMap.has(`${x},${z}`)) return true;
+			}
+			return false;
+		});
+		const colsTouched = cols.filter(x => {
+			const start = game.board.minZ;
+			const end = game.board.maxZ;
+			for (let z = start; z <= end; z++) {
+				if (cellsMap.has(`${x},${z}`)) return true;
+			}
+			return false;
+		});
+
+		return {
+			rows: rowsTouched,
+			cols: colsTouched,
+			cells: [...cellsMap.values()],
+		};
+	}
+
+	/**
+	 * Mutating step that pairs with `findClearableLines`. Clears the
+	 * given rows / cols, applies gravity, and recalculates bounds.
+	 *
+	 * @param {Object} game
+	 * @param {number[]} rows
+	 * @param {number[]} cols
+	 * @returns {{ rows: number[], cols: number[], totalCellsCleared: number }}
+	 */
+	applyClearedLines(game, rows, cols) {
+		const clearedRows = [];
+		const clearedCols = [];
+		let totalCellsCleared = 0;
+
+		for (const z of rows || []) {
+			const n = this._clearLine(game, 'z', z);
+			if (n > 0) { clearedRows.push(z); totalCellsCleared += n; }
+		}
+		for (const x of cols || []) {
+			const n = this._clearLine(game, 'x', x);
+			if (n > 0) { clearedCols.push(x); totalCellsCleared += n; }
+		}
+
+		// Both axes shift together — moving a cell once with the
+		// combined delta avoids overshoot when a clear happens on a row
+		// AND a column the same tick.
+		if (clearedRows.length > 0 || clearedCols.length > 0) {
+			this._applyGravityTowardsKing(game, clearedRows, clearedCols);
+			this.recalculateBoardBoundaries(game.board);
+		}
+
+		return { rows: clearedRows, cols: clearedCols, totalCellsCleared };
+	}
+
+	/**
+	 * Scan the board for clearable lines along **both** axes and clear any
+	 * that qualify. Returns a structured report so the caller can broadcast
+	 * the right thing to clients.
+	 *
+	 * A line clears when it contains `GAME_RULES.REQUIRED_CELLS_FOR_ROW_CLEARING`
+	 * consecutive filled, non-home cells. Safe home-zone cells break the
+	 * count (cells on either side count separately).
+	 *
+	 * After all lines are removed, cells gravitate towards each owner's king
+	 * along the axis of the cleared line.
+	 *
+	 * @param {Object} game
+	 * @returns {{ rows: number[], cols: number[] }} Cleared z-rows and x-cols
+	 */
+	checkAndClearLines(game) {
+		const { rows: candidateRows, cols: candidateCols } = this.findClearableLines(game);
+		const { rows, cols } = this.applyClearedLines(game, candidateRows, candidateCols);
+		return { rows, cols };
+	}
+
+	/**
+	 * Backwards-compatible wrapper that returns the cleared z-row indices,
+	 * because most existing call sites only consider z-rows. New callers
+	 * should prefer `checkAndClearLines` so they can react to both axes.
+	 *
+	 * @param {Object} game
+	 * @returns {number[]} z-row indices that were cleared
+	 */
+	checkAndClearRows(game) {
+		return this.checkAndClearLines(game).rows;
+	}
+
+	/**
+	 * Find all indices along `axis` that have at least
+	 * `REQUIRED_CELLS_FOR_ROW_CLEARING` consecutive filled non-home cells.
+	 *
+	 * @param {Object} game
+	 * @param {'x'|'z'} axis  The fixed axis (i.e. 'z' = z-rows, scan along x)
+	 * @returns {number[]} indices ready to be cleared
+	 * @private
+	 */
+	_findClearableLines(game, axis) {
+		const threshold = GAME_RULES.REQUIRED_CELLS_FOR_ROW_CLEARING;
+		const cleared = [];
+
+		const fixedStart = axis === 'z' ? game.board.minZ : game.board.minX;
+		const fixedEnd   = axis === 'z' ? game.board.maxZ : game.board.maxX;
+		const scanStart  = axis === 'z' ? game.board.minX : game.board.minZ;
+		const scanEnd    = axis === 'z' ? game.board.maxX : game.board.maxZ;
+
+		for (let fixed = fixedStart; fixed <= fixedEnd; fixed++) {
+			let consecutive = 0;
+			let maxConsecutive = 0;
+			let runStart = null;
+			let bestRunStart = null;
+			let bestRunEnd = null;
+
+			for (let scan = scanStart; scan <= scanEnd; scan++) {
+				const [x, z] = axis === 'z' ? [scan, fixed] : [fixed, scan];
+
+				// Per the bible, home cells are treated as empty space for
+				// clear purposes: they break the run and aren't touched by
+				// the clear. This applies to *any* cell carrying a home
+				// marker, not just "safe" home zones.
+				if (this.cellHasHomeMarker(game.board, x, z)) {
+					consecutive = 0;
+					runStart = null;
+					continue;
+				}
+
+				if (this._cellHasClearableContent(game.board, x, z)) {
+					if (consecutive === 0) runStart = scan;
+					consecutive++;
+					if (consecutive > maxConsecutive) {
+						maxConsecutive = consecutive;
+						bestRunStart = runStart;
+						bestRunEnd = scan;
+					}
+				} else {
+					consecutive = 0;
+					runStart = null;
+				}
+			}
+
+			if (maxConsecutive >= threshold) {
+				cleared.push(fixed);
+				log(
+					`Found clearable ${axis}-line at ${axis}=${fixed} ` +
+					`(${maxConsecutive} consecutive filled cells from ` +
+					`${axis === 'z' ? 'x' : 'z'}=${bestRunStart} ` +
+					`to ${axis === 'z' ? 'x' : 'z'}=${bestRunEnd}; ` +
+					`threshold=${threshold})`
+				);
 			}
 		}
-		
-		// After clearing rows, make pieces fall towards their respective kings
-		if (clearedRows.length > 0) {
-			this._makePiecesFallTowardsKing(game, clearedRows);
-		}
-		
-		return clearedRows;
+
+		return cleared;
 	}
-	
+
 	/**
-	 * Clear a row on the board
-	 * @param {Object} game - The game object
-	 * @param {number} rowIndex - The index of the row to clear
+	 * A cell counts as "filled" for line-clearing purposes only when it has
+	 * content that the clear would actually remove. Bare home markers (in
+	 * degraded / unsafe home zones), board-centre markers, and other special
+	 * markers don't count, because preserving them through `_clearLine`
+	 * would leave the cell visibly unchanged. Without this filter the server
+	 * would emit "Line cleared!" toasts for runs that have no clearable
+	 * content, which players reported as confusing phantom clears.
+	 *
+	 * @param {Object} board
+	 * @param {number} x
+	 * @param {number} z
+	 * @returns {boolean}
+	 * @private
 	 */
-	clearRow(game, rowIndex) {
-		for (let x = game.board.minX; x <= game.board.maxX; x++) {
-			const key = `${x},${rowIndex}`;
+	_cellHasClearableContent(board, x, z) {
+		const cellContents = this.getCell(board, x, z);
+		if (!Array.isArray(cellContents) || cellContents.length === 0) return false;
+		// For *line scanning* a chess-occupied cell still counts as
+		// "filled" — the piece itself sits on something a tetromino put
+		// there. We only strip the tetromino content during the
+		// destructive step (`_clearLine`), and only after the integrity
+		// pass has had a chance to mark stranded chess cells for decay.
+		return cellContents.some(item => {
+			if (!item) return false;
+			return !(item.type === cells.HOME_TYPE
+				|| item.type === cells.SPECIAL_TYPE
+				|| item.type === cells.CENTRE_TYPE);
+		});
+	}
+
+	/**
+	 * Strip removable terrain from every cell along the given line.
+	 *
+	 * Per the bible:
+	 *   • §8 cells in a cleared line lose their non-home terrain.
+	 *   • §15.2 chess pieces themselves are removed via island decay
+	 *     after a 30s grace window, **not** directly by the row-clear.
+	 *     This gives the player a chance to bridge back to their king
+	 *     before the piece is lost.
+	 *
+	 * Concretely:
+	 *   • Safe home-zone cells: untouched.
+	 *   • Cells with at least one chess marker: untouched (the piece is
+	 *     preserved; the cell will become an island candidate once the
+	 *     surrounding terrain is gone, and disposed of by island decay).
+	 *   • Otherwise: strip everything except home / specialMarker /
+	 *     boardCentre items.
+	 *
+	 * @param {Object} game
+	 * @param {'x'|'z'} axis
+	 * @param {number} index
+	 * @returns {number} number of cells actually modified
+	 * @private
+	 */
+	_clearLine(game, axis, index) {
+		const start = axis === 'z' ? game.board.minX : game.board.minZ;
+		const end   = axis === 'z' ? game.board.maxX : game.board.maxZ;
+
+		let modified = 0;
+
+		for (let scan = start; scan <= end; scan++) {
+			const [x, z] = axis === 'z' ? [scan, index] : [index, scan];
+			const key = `${x},${z}`;
 			const cellContents = game.board.cells[key];
-			if (!cellContents || cellContents.length === 0) continue;
+			if (!Array.isArray(cellContents) || cellContents.length === 0) continue;
 
-			if (this.isCellInSafeHomeZone(game, x, rowIndex)) continue;
+			// Home cells are gaps; chess cells are shielded until island
+			// decay catches up (bible §15.2). `isClearable` enforces both.
+			if (!cells.isClearable(cellContents)) continue;
 
-			const hasChessPiece = cellContents.some(
-				item => item && item.type === 'chess'
-			);
-			if (hasChessPiece) continue;
+			const preserved = cells.stripClearable(cellContents);
+			if (preserved.length === cellContents.length) continue;
 
-			const homeZoneMarkers = cellContents.filter(item =>
-				item && item.type === 'home'
-			);
+			modified++;
 
-			if (homeZoneMarkers.length > 0) {
-				game.board.cells[key] = homeZoneMarkers;
+			if (preserved.length > 0) {
+				game.board.cells[key] = preserved;
 			} else {
 				delete game.board.cells[key];
 			}
 		}
 
-		log(`Cleared row ${rowIndex}`);
+		if (modified > 0) {
+			log(`Cleared ${axis}-line at ${axis}=${index} (${modified} cell${modified === 1 ? '' : 's'} modified)`);
+		}
+
+		return modified;
 	}
-	
+
 	/**
-	 * Make pieces fall towards their respective kings after row clearing
-	 * @param {Object} game - The game object
-	 * @param {Array} clearedRows - The indices of cleared rows
+	 * Tetris-style gravity: every cell that the engine considers part of
+	 * a *single* player's territory drifts one step closer to that
+	 * player's king for each cleared line that sat between them.
+	 *
+	 * Bible rules in force here (§8):
+	 *   • Only **single-owner** cells move. A cell with mixed owners
+	 *     (multiple players' tetromino content) stays put — the engine
+	 *     refuses to guess which way it should go.
+	 *   • A cell carrying a **chess piece** only moves if it's either
+	 *     directly adjacent to a cleared line OR linked to one by an
+	 *     unbroken 4-connected chain of single-owner cells of the same
+	 *     player. Pieces stranded by mixed-owner gaps or floating
+	 *     beyond a broken chain stay where they are.
+	 *   • Bare home cells don't move — the home overlay is anchored
+	 *     to its spawn coordinates.
+	 *   • Both axes shift simultaneously so a corner clear (one row
+	 *     **and** one column at the same tick) doesn't double-process
+	 *     a cell.
+	 *
+	 * @param {Object} game
+	 * @param {number[]} clearedRows  z-row indices that were cleared.
+	 * @param {number[]} clearedCols  x-col indices that were cleared.
 	 * @private
 	 */
-	_makePiecesFallTowardsKing(game, clearedRows) {
-		if (!clearedRows || clearedRows.length === 0) return;
+	_applyGravityTowardsKing(game, clearedRows, clearedCols) {
+		const rowSet = new Set(clearedRows || []);
+		const colSet = new Set(clearedCols || []);
+		const playerKing = this._collectPlayerKingCoords(game);
 
-		const clearedSet = new Set(clearedRows);
+		const computeShift = (kingCoord, here, clearedIndices) => {
+			if (kingCoord === undefined || kingCoord === here) return 0;
+			if (kingCoord < here) {
+				let shift = 0;
+				for (const ci of clearedIndices) {
+					if (ci > kingCoord && ci < here) shift++;
+				}
+				return -shift;
+			}
+			let shift = 0;
+			for (const ci of clearedIndices) {
+				if (ci < kingCoord && ci > here) shift++;
+			}
+			return shift;
+		};
 
-		const playerKingZ = {};
+		// Build the per-player view of movable cells (single-owner) so
+		// the connectivity BFS below has the right substrate. Chess
+		// cells get a separate set: they need the connectivity check.
+		const moveableSoleByPlayer = new Map();
+		const moveableChessByPlayer = new Map();
 		for (const [key, contents] of Object.entries(game.board.cells)) {
-			if (!Array.isArray(contents)) continue;
-			for (const item of contents) {
-				if (item && item.type === 'chess' && item.pieceType?.toLowerCase() === 'king') {
-					const [, zStr] = key.split(',');
-					playerKingZ[item.player] = Number(zStr);
+			if (!Array.isArray(contents) || contents.length === 0) continue;
+			const anchor = cells.gravityAnchor(contents);
+			if (!anchor.movable) continue;
+			if (cells.hasChess(contents)) {
+				const set = moveableChessByPlayer.get(anchor.owner) || new Set();
+				set.add(key);
+				moveableChessByPlayer.set(anchor.owner, set);
+			} else {
+				const set = moveableSoleByPlayer.get(anchor.owner) || new Set();
+				set.add(key);
+				moveableSoleByPlayer.set(anchor.owner, set);
+			}
+		}
+
+		// Bible §8 / §15.2 — a cell carrying a chess piece only travels
+		// with gravity when it is **directly adjacent** to a cleared
+		// line or **linked** to one through an unbroken 4-connected
+		// chain of single-owner cells of the same player. The BFS
+		// expands only through the player's sole-ownership cells and
+		// stops at chess cells (marking them but not propagating
+		// through them — the link itself has to be made of terrain).
+		const eligibleChess = new Set();
+		for (const [playerId, chessSet] of moveableChessByPlayer) {
+			const soleSet = moveableSoleByPlayer.get(playerId) || new Set();
+
+			const queue = [];
+			const visited = new Set();
+			const seed = (key) => {
+				if (visited.has(key)) return;
+				visited.add(key);
+				queue.push(key);
+			};
+
+			// Seed: every sole or chess cell of this player whose
+			// orthogonal neighbour was on a cleared line. The cleared
+			// line's coordinates themselves are virtual sources — the
+			// cell at z=N+1 is "directly next to" the clear at z=N.
+			for (const key of [...soleSet, ...chessSet]) {
+				const [x, z] = key.split(',').map(Number);
+				if (rowSet.has(z - 1) || rowSet.has(z + 1)
+					|| colSet.has(x - 1) || colSet.has(x + 1)) {
+					seed(key);
+				}
+			}
+
+			while (queue.length > 0) {
+				const key = queue.shift();
+				if (chessSet.has(key)) {
+					eligibleChess.add(key);
+					// Chess cells are sinks — the linking chain must be
+					// made of single-owner cells, so don't propagate
+					// through chess.
+					continue;
+				}
+				const [x, z] = key.split(',').map(Number);
+				for (const [nx, nz] of [[x - 1, z], [x + 1, z], [x, z - 1], [x, z + 1]]) {
+					const nkey = `${nx},${nz}`;
+					if (visited.has(nkey)) continue;
+					if (soleSet.has(nkey) || chessSet.has(nkey)) {
+						seed(nkey);
+					}
 				}
 			}
 		}
 
-		const cellsToMove = [];
+		const moves = [];
 
 		for (const [key, contents] of Object.entries(game.board.cells)) {
 			if (!Array.isArray(contents) || contents.length === 0) continue;
 			const [xStr, zStr] = key.split(',');
-			const cellZ = Number(zStr);
-			if (clearedSet.has(cellZ)) continue;
+			const x = Number(xStr);
+			const z = Number(zStr);
 
-			const owner = contents.find(c => c && c.player)?.player;
-			if (!owner) continue;
-			const kingZ = playerKingZ[owner];
-			if (kingZ === undefined) continue;
+			// Cells that sat *on* a cleared line have either gone away
+			// or been preserved (home / chess). Either way, leave them.
+			if (rowSet.has(z) || colSet.has(x)) continue;
 
-			let shift = 0;
-			if (kingZ < cellZ) {
-				for (const cz of clearedRows) {
-					if (cz > kingZ && cz < cellZ) shift++;
-				}
-				if (shift > 0) {
-					cellsToMove.push({ x: Number(xStr), z: cellZ, delta: -shift, contents });
-				}
-			} else if (kingZ > cellZ) {
-				for (const cz of clearedRows) {
-					if (cz < kingZ && cz > cellZ) shift++;
-				}
-				if (shift > 0) {
-					cellsToMove.push({ x: Number(xStr), z: cellZ, delta: shift, contents });
-				}
-			}
+			const anchor = cells.gravityAnchor(contents);
+			if (!anchor.movable) continue;
+			const king = playerKing[anchor.owner];
+			if (!king) continue;
+
+			// Chess cell stranded from the cleared line → don't move.
+			if (cells.hasChess(contents) && !eligibleChess.has(key)) continue;
+
+			const dx = computeShift(king.x, x, clearedCols);
+			const dz = computeShift(king.z, z, clearedRows);
+			if (dx === 0 && dz === 0) continue;
+
+			moves.push({ x, z, dx, dz, contents, owner: anchor.owner });
 		}
 
-		cellsToMove.sort((a, b) => {
-			if (a.delta < 0 && b.delta < 0) return a.z - b.z;
-			if (a.delta > 0 && b.delta > 0) return b.z - a.z;
-			return a.delta - b.delta;
+		// Process moves in dependency order so a cell never lands on top
+		// of another not-yet-moved cell. For each axis the rule is:
+		// move cells trailing the train first, so the spot in front
+		// clears before they slide forward. With combined moves we sort
+		// by "distance left to travel" so further-from-king cells move
+		// last (they have furthest to go and shouldn't overtake closer
+		// cells).
+		moves.sort((a, b) => {
+			const aKey = Math.abs(a.dx) + Math.abs(a.dz);
+			const bKey = Math.abs(b.dx) + Math.abs(b.dz);
+			return aKey - bKey;
 		});
 
-		for (const cell of cellsToMove) {
+		for (const cell of moves) {
 			const oldKey = `${cell.x},${cell.z}`;
-			const newZ = cell.z + cell.delta;
-			const newKey = `${cell.x},${newZ}`;
+			const newX = cell.x + cell.dx;
+			const newZ = cell.z + cell.dz;
+			const newKey = `${newX},${newZ}`;
 
-			if (game.board.cells[newKey] && game.board.cells[newKey].length > 0) continue;
+			const occupant = game.board.cells[newKey];
+			if (Array.isArray(occupant) && occupant.length > 0) {
+				// Collision: leave this cell where it is rather than
+				// destroy or merge. The integrity sweep will catch any
+				// resulting island.
+				continue;
+			}
 
 			game.board.cells[newKey] = cell.contents;
 			delete game.board.cells[oldKey];
 
 			for (const item of cell.contents) {
-				if (item && item.position) {
+				if (!item) continue;
+				if (item.position) {
+					item.position.x = newX;
 					item.position.z = newZ;
 				}
+				if (item.x !== undefined) item.x = newX;
+				if (item.z !== undefined) item.z = newZ;
 			}
 		}
 
-		// Also update top-level chessPieces array positions
+		// Mirror the shift on the top-level chessPieces array so
+		// positions stay in lock-step with the board (the cell-array
+		// chess marker is moved above, but the canonical piece record
+		// lives on `game.chessPieces`). Only pieces whose cell was
+		// eligible per the connectivity check above get to ride along
+		// — pieces stranded by mixed-owner gaps or broken chains stay
+		// where they are.
 		if (Array.isArray(game.chessPieces)) {
 			for (const piece of game.chessPieces) {
 				if (!piece || !piece.position) continue;
-				const pid = piece.player;
-				const kingZ = playerKingZ[pid];
-				if (kingZ === undefined) continue;
-				const pz = piece.position.z;
-				if (clearedSet.has(pz)) continue;
-
-				let shift = 0;
-				if (kingZ < pz) {
-					for (const cz of clearedRows) {
-						if (cz > kingZ && cz < pz) shift++;
-					}
-					if (shift > 0) piece.position.z -= shift;
-				} else if (kingZ > pz) {
-					for (const cz of clearedRows) {
-						if (cz < kingZ && cz > pz) shift++;
-					}
-					if (shift > 0) piece.position.z += shift;
-				}
+				if (rowSet.has(piece.position.z) || colSet.has(piece.position.x)) continue;
+				const pieceKey = `${piece.position.x},${piece.position.z}`;
+				if (!eligibleChess.has(pieceKey)) continue;
+				const king = playerKing[piece.player];
+				if (!king) continue;
+				const dx = computeShift(king.x, piece.position.x, clearedCols);
+				const dz = computeShift(king.z, piece.position.z, clearedRows);
+				if (dx) piece.position.x += dx;
+				if (dz) piece.position.z += dz;
 			}
 		}
 
-		this.recalculateBoardBoundaries(game.board);
-		log(`Shifted cells towards kings after clearing rows: ${[...clearedSet].join(', ')}`);
+		if (moves.length > 0) {
+			log(
+				`Applied gravity: ${moves.length} cell${moves.length === 1 ? '' : 's'} ` +
+				`moved towards kings (rows=[${clearedRows.join(',')}] cols=[${clearedCols.join(',')}])`
+			);
+		}
+	}
+
+	/**
+	 * Map each player ID to `{ x, z }` of their king. Driven from
+	 * `game.chessPieces` (the canonical record) with a board-cell
+	 * fallback for engines that haven't fully populated `chessPieces`.
+	 * @private
+	 */
+	_collectPlayerKingCoords(game) {
+		const out = {};
+		if (Array.isArray(game.chessPieces)) {
+			for (const piece of game.chessPieces) {
+				if (!piece) continue;
+				if (String(piece.type || '').toUpperCase() !== 'KING') continue;
+				const pos = piece.position;
+				if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.z)) continue;
+				out[piece.player] = { x: pos.x, z: pos.z };
+			}
+		}
+		if (Object.keys(out).length === 0) {
+			for (const [key, contents] of Object.entries(game.board.cells)) {
+				if (!Array.isArray(contents)) continue;
+				for (const item of contents) {
+					if (!item || item.type !== cells.CHESS_TYPE) continue;
+					if (String(item.pieceType || '').toLowerCase() !== 'king') continue;
+					const [xStr, zStr] = key.split(',');
+					out[item.player] = { x: Number(xStr), z: Number(zStr) };
+				}
+			}
+		}
+		return out;
 	}
 }
 

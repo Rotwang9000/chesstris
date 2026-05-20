@@ -1,0 +1,103 @@
+/**
+ * Per-socket connection wiring.  Resolves the player id from the cookie,
+ * registers all event handlers, and arms a disconnect grace timer that
+ * either welcomes the player back on reconnect or, after the grace
+ * period, fully removes them.
+ */
+
+const { v4: uuidv4 } = require('uuid');
+
+const World = require('../world/World');
+const Sessions = require('../world/Sessions');
+const Disconnects = require('../world/Disconnects');
+const { parseCookies } = require('../utils/cookies');
+
+const { registerJoinHandlers } = require('./join');
+const { registerTetrominoHandlers } = require('./tetromino');
+const { registerChessHandlers } = require('./chess');
+const { registerDuelHandlers } = require('./duels');
+const { registerStateHandlers } = require('./state');
+const { registerSpectateHandlers } = require('./spectate');
+const { registerLifecycleHandlers } = require('./lifecycle');
+
+const PLAYER_ID_COOKIE = 'shaktris_player_id';
+
+function createConnectionHandler(services) {
+	const { io, lifecycleService, spectatorRegistry } = services;
+	if (!io) throw new Error('createConnectionHandler: io required');
+	if (!lifecycleService) throw new Error('createConnectionHandler: lifecycleService required');
+	if (!spectatorRegistry) throw new Error('createConnectionHandler: spectatorRegistry required');
+
+	return function handleConnection(socket) {
+		const playerId = resolvePlayerIdForSocket(socket, services);
+		Sessions.bind(socket, playerId);
+
+		socket.emit('player_id', playerId);
+		socket.emit('set_session', { playerId });
+
+		const handlerCtx = { ...services, playerId, socket };
+
+		registerJoinHandlers(socket, handlerCtx);
+		registerTetrominoHandlers(socket, handlerCtx);
+		registerChessHandlers(socket, handlerCtx);
+		registerDuelHandlers(socket, handlerCtx);
+		registerStateHandlers(socket, handlerCtx);
+		registerSpectateHandlers(socket, handlerCtx);
+		registerLifecycleHandlers(socket, handlerCtx);
+
+		socket.on('disconnect', () => {
+			handleDisconnect(socket, playerId, services);
+		});
+	};
+}
+
+function resolvePlayerIdForSocket(socket, services) {
+	const { lifecycleService } = services;
+	const cookies = parseCookies(socket.handshake.headers.cookie);
+	let playerId = cookies[PLAYER_ID_COOKIE];
+
+	const existingRecord = playerId ? World.getPlayer(playerId) : null;
+	const wasEliminated = !!existingRecord?.eliminated;
+
+	if (existingRecord && !wasEliminated) {
+		console.log(`Player reconnecting: ${playerId} (socket ${socket.id})`);
+		Disconnects.clear(playerId);
+		existingRecord.lastActiveAt = Date.now();
+		World.markDirty();
+		socket.join(World.getWorldId());
+		return playerId;
+	}
+
+	if (existingRecord && wasEliminated) {
+		console.log(`Eliminated player ${playerId} refreshed; issuing a fresh player identity.`);
+		Disconnects.clear(playerId);
+		lifecycleService.removePlayerCompletely(playerId);
+	}
+
+	const freshId = uuidv4();
+	console.log(`New player connected: ${freshId} (socket ${socket.id})`);
+	World.upsertPlayer(freshId, {
+		name: `Player_${freshId.substring(0, 6)}`,
+		lastActiveAt: Date.now(),
+	});
+	return freshId;
+}
+
+function handleDisconnect(socket, playerId, services) {
+	const { lifecycleService, spectatorRegistry } = services;
+	console.log(`Player disconnected: ${playerId} (grace period ${Disconnects.DEFAULT_GRACE_MS / 1000}s)`);
+
+	Sessions.unbind(socket.id);
+	spectatorRegistry.stop(playerId);
+
+	if (World.getPlayer(playerId)) {
+		Disconnects.arm(playerId, () => {
+			console.log(`Grace period expired for ${playerId}, removing from world`);
+			lifecycleService.removePlayerCompletely(playerId);
+		});
+	} else {
+		lifecycleService.removePlayerCompletely(playerId);
+	}
+}
+
+module.exports = { createConnectionHandler, PLAYER_ID_COOKIE };

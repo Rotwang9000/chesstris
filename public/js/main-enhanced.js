@@ -10,6 +10,7 @@ import * as NetworkManager from './utils/networkManager.js';
 import * as NetworkStatusManager from './utils/networkStatusManager.js';
 import { createNetworkStatusDisplay } from './createNetworkStatusDisplay.js';
 import { createUnifiedPlayerBar, updateUnifiedPlayerBar, showPlayerBar } from './unifiedPlayerBar.js';
+import { showToastMessage as showToastNotification } from './showToastMessage.js';
 import './boardFunctions.js'; // Import the updated board functions
 import gameState from './utils/gameState.js';
 import * as tetrominoModule from './tetromino.js'; // Import tetromino module for socket events
@@ -177,6 +178,18 @@ async function init() {
 		// Check THREE.js status
 		if (!diagnostics.threeStatus || !diagnostics.threeStatus.isLoaded) {
 			throw new Error('THREE.js not available. Please check your internet connection.');
+		}
+
+		// If the browser cannot create any WebGL context, fail fast and
+		// surface the same overlay that the deeper renderer code uses.
+		// This avoids a confusing chain of "module errors" deep in
+		// `enhanced-gameCore.js`.
+		if (diagnostics.webglStatus && !diagnostics.webglStatus.hasWebGL && !diagnostics.webglStatus.hasWebGL2) {
+			if (typeof gameCore.showWebglUnavailableOverlay === 'function') {
+				gameCore.showWebglUnavailableOverlay('No WebGL context available at startup');
+			}
+			hideLoadingScreen();
+			throw new Error('WebGL unavailable: hardware acceleration disabled or unsupported.');
 		}
 		
 		
@@ -786,73 +799,6 @@ async function initializeNetworkWithRetry() {
 	}
 	
 	return false;
-}
-
-/**
- * Show toast notification with Russian theme
- * @param {string} message - Message to display
- */
-function showToastNotification(message) {
-	// Create toast container if it doesn't exist
-	let toastContainer = document.getElementById('toast-container');
-	if (!toastContainer) {
-		toastContainer = document.createElement('div');
-		toastContainer.id = 'toast-container';
-		
-		// Style container
-		Object.assign(toastContainer.style, {
-			position: 'fixed',
-			bottom: '20px',
-			left: '50%',
-			transform: 'translateX(-50%)',
-			zIndex: '1000',
-			pointerEvents: 'none'
-		});
-		
-		document.body.appendChild(toastContainer);
-	}
-	
-	// Create toast element with Russian theme
-	const toast = document.createElement('div');
-	
-	// Style toast with Russian theme
-	Object.assign(toast.style, {
-		backgroundColor: 'rgba(0, 0, 0, 0.8)',
-		color: '#ffcc00',
-		padding: '10px 20px',
-		borderRadius: '5px',
-		marginBottom: '10px',
-		boxShadow: '0 0 10px rgba(255, 204, 0, 0.3)',
-		fontFamily: 'Times New Roman, serif',
-		border: '1px solid #ffcc00',
-		opacity: '0',
-		transform: 'translateY(20px)',
-		transition: 'opacity 0.3s, transform 0.3s'
-	});
-	
-	// Set message
-	toast.textContent = message;
-	
-	// Add to container
-	toastContainer.appendChild(toast);
-	
-	// Animate in
-	setTimeout(() => {
-		toast.style.opacity = '1';
-		toast.style.transform = 'translateY(0)';
-	}, 10);
-	
-	// Remove after 3 seconds
-	setTimeout(() => {
-		toast.style.opacity = '0';
-		toast.style.transform = 'translateY(-20px)';
-		
-		setTimeout(() => {
-			if (toast.parentNode) {
-				toast.parentNode.removeChild(toast);
-			}
-		}, 300);
-	}, 3000);
 }
 
 // Helper function to ensure loading screen is always hidden

@@ -18,6 +18,37 @@ import { translatePosition } from './centreBoardMarker.js';
 import * as NetworkManager from './utils/networkManager.js';
 import { updateGameStatusDisplay } from './createLoadingIndicator.js';
 import * as tetrominoModule from './tetromino.js';
+import {
+	cancelSkipChessTimer,
+	ensureActionStack,
+	positionUnderNextPiece,
+} from './skipChessButton.js';
+import { updateNextPieceHint } from './tetromino/nextPiece.js';
+import { showToastMessage } from './showToastMessage.js';
+
+/**
+ * In-flight chess move tracker.
+ *
+ * Set when the user clicks to move (and the optimistic animation starts),
+ * cleared when the server ack arrives (success or failure) or the move is
+ * abandoned via `chessFailed`.
+ *
+ * The `updateChessPieces` reconciler reads this from `gameState` so it
+ * can keep the moving piece's mesh visible during the optimistic
+ * animation even if a concurrent `game_update` removes the piece from
+ * `chessPieces`. Without this protection the mesh blinked out the
+ * moment the server-side capture arrived, which is the "knight just
+ * disappeared" symptom the user reported.
+ */
+export function setInFlightMove(gameState, move) {
+	if (!gameState) return;
+	gameState.inFlightMove = move || null;
+}
+
+export function clearInFlightMove(gameState) {
+	if (!gameState) return;
+	gameState.inFlightMove = null;
+}
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -119,8 +150,22 @@ export function performRaycast() {
 	} else if (cellHit) {
 		const cellPosition = cellHit.userData.position;
 		if (gameState.selectedChessPiece && !gameState.processingMove) {
-			moveChessPieceToCell(cellPosition.x, cellPosition.z);
+			const isValidMove = (gameState.validMoves || []).some(
+				m => m.x === cellPosition.x && m.z === cellPosition.z,
+			);
+			if (isValidMove) {
+				moveChessPieceToCell(cellPosition.x, cellPosition.z);
+			} else {
+				// Clicking an empty / non-target cell while a piece is
+				// selected should cancel the selection (and dismiss any
+				// pending detonate button), so the player isn't locked
+				// out of clicking elsewhere on the board.
+				clearChessSelection();
+			}
 		}
+	} else if (gameState.selectedChessPiece && !gameState.processingMove) {
+		// Click on empty space (sky / off-board) — treat as deselect.
+		clearChessSelection();
 	}
 }
 
@@ -335,8 +380,9 @@ export function moveChessPieceToCell(x, z) {
 	if (!isValidMove) return;
 
 	const piece = gameState.selectedChessPiece;
+	const pieceId = piece.userData.id || `piece_${Date.now()}`;
 	const pieceData = {
-		id: piece.userData.id || `piece_${Date.now()}`,
+		id: pieceId,
 		type: piece.userData.pieceType || piece.userData.type,
 		player: piece.userData.player,
 		x: piece.userData.position?.x || 0,
@@ -347,7 +393,22 @@ export function moveChessPieceToCell(x, z) {
 	const originalZ = pieceData.z;
 	gameState.processingMove = true;
 
-	removeValidMoveHighlights();
+	// Track the in-flight optimistic move so `updateChessPieces` doesn't
+	// rip the moving mesh out from underneath us if a `game_update`
+	// arrives while the tween is running. This was the root cause of
+	// the user's "knight just disappeared" report — an enemy capture
+	// landed mid-animation and the mesh was removed before the user
+	// even saw it move.
+	setInFlightMove(gameState, {
+		pieceId,
+		fromX: originalX,
+		fromZ: originalZ,
+		toX: x,
+		toZ: z,
+		startedAt: Date.now(),
+	});
+
+	clearMoveHighlights();
 
 	animateChessPieceMove(piece, originalX, originalZ, x, z, () => {
 		sendChessMoveToServer(pieceData, x, z, (success, responseData) => {
@@ -357,7 +418,9 @@ export function moveChessPieceToCell(x, z) {
 			if (success) {
 				updateGameStateAfterChessMove(pieceData, x, z);
 				gameState.turnPhase = 'tetris';
+				cancelSkipChessTimer();
 				updateGameStatusDisplay();
+				updateNextPieceHint(gameState);
 
 				if (!gameState.currentTetromino) {
 					const spawned = tetrominoModule.initializeNextTetromino(gameState);
@@ -368,29 +431,107 @@ export function moveChessPieceToCell(x, z) {
 					}
 				}
 
+				clearInFlightMove(gameState);
 				showTemporaryMessage('Move successful.', 'success');
-			} else {
-				animateChessPieceMove(piece, x, z, originalX, originalZ, () => {
-					const reason = responseData?.reason;
-					const retryAfterMs = Number(responseData?.retryAfterMs || 0);
-
-					if (reason === 'rate_limited' || responseData?.error === 'rate_limited') {
-						const seconds = retryAfterMs > 0 ? Math.max(0.1, Math.ceil(retryAfterMs / 100) / 10) : null;
-						showTemporaryMessage(
-							seconds ? `Too fast. Try again in ${seconds}s.` : 'Too fast. Please wait a moment.',
-							'error'
-						);
-						return;
-					}
-
-					const errorMessage = responseData?.error
-						? `Move failed: ${responseData.error}`
-						: 'Move failed. Please try again.';
-					showTemporaryMessage(errorMessage, 'error');
-				});
+				return;
 			}
+
+			handleChessMoveRejection({
+				gameState,
+				piece,
+				pieceId,
+				originalX,
+				originalZ,
+				attemptedX: x,
+				attemptedZ: z,
+				responseData,
+			});
 		});
 	});
+}
+
+/**
+ * Robust rejection handler — called when the server ack returns
+ * `success: false`. Cleans up the optimistic state, surfaces a clear
+ * message, and either reverts the visual or surrenders to the server
+ * snapshot (when the piece is already gone). Centralised so the rules
+ * are visible in one place instead of being scattered across the
+ * promise chain.
+ */
+function handleChessMoveRejection({
+	gameState, piece, pieceId, originalX, originalZ,
+	attemptedX, attemptedZ, responseData,
+}) {
+	const reason = responseData?.reason || (responseData?.error === 'rate_limited' ? 'rate_limited' : null);
+	const retryAfterMs = Number(responseData?.retryAfterMs || 0);
+
+	if (reason === 'rate_limited') {
+		// Rate-limited rejections still hold the piece at the destination
+		// briefly while the user reads the warning; we revert *and* clear
+		// the in-flight pin so the next legitimate move starts clean.
+		animateChessPieceMove(piece, attemptedX, attemptedZ, originalX, originalZ, () => {
+			clearInFlightMove(gameState);
+		});
+		const seconds = retryAfterMs > 0 ? Math.max(0.1, Math.ceil(retryAfterMs / 100) / 10) : null;
+		showTemporaryMessage(
+			seconds ? `Too fast. Try again in ${seconds}s.` : 'Too fast. Please wait a moment.',
+			'error',
+		);
+		return;
+	}
+
+	const pieceIsStillKnown = Array.isArray(gameState?.chessPieces)
+		&& gameState.chessPieces.some(p => p && String(p.id) === String(pieceId));
+
+	if (reason === 'piece_gone' || !pieceIsStillKnown) {
+		// The piece has been removed from world.chessPieces server-side
+		// (captured or decayed) — there's nothing to revert to. Drop the
+		// optimistic mesh by clearing the in-flight pin and letting
+		// updateChessPieces sync to the canonical server state.
+		clearInFlightMove(gameState);
+		gameState._forceUpdate = true;
+		try { showToastMessage(
+			'That piece was already gone — the board has been refreshed.',
+			{ variant: 'alert', duration: 4500 },
+		); } catch (_) { /* toast best-effort */ }
+		return;
+	}
+
+	if (reason === 'desync_repaired' || reason === 'destination_missing') {
+		// Server has restored the source cell or removed the target
+		// from under us; revert visually and force a fresh board so
+		// the user's next click isn't against the stale highlight.
+		animateChessPieceMove(piece, attemptedX, attemptedZ, originalX, originalZ, () => {
+			clearInFlightMove(gameState);
+			gameState._forceUpdate = true;
+		});
+		const message = reason === 'destination_missing'
+			? 'That square is gone — board refreshed. Please pick a different target.'
+			: (responseData?.error || 'Move could not be applied — please try again.');
+		try { showToastMessage(message, { duration: 4500 }); } catch (_) { /* toast best-effort */ }
+		return;
+	}
+
+	// Generic validation failure — revert in place.
+	animateChessPieceMove(piece, attemptedX, attemptedZ, originalX, originalZ, () => {
+		clearInFlightMove(gameState);
+	});
+	// Translate stable reason codes into friendly toasts so the user
+	// has some idea WHY a move was refused beyond the catch-all
+	// "Invalid chess move". The same reasons are also recorded in the
+	// Recent Activity panel server-side.
+	const reasonToText = {
+		bad_geometry: 'That square isn\'t reachable for this piece.',
+		path_blocked: 'Path is blocked by another piece.',
+		path_off_board: 'Path passes through empty space.',
+		friendly_blocker: 'That square has one of your own pieces.',
+		same_square: 'Cannot move to the same square.',
+		not_your_piece: 'That piece belongs to someone else.',
+	};
+	const friendly = reason && reasonToText[reason];
+	const errorMessage = friendly
+		|| (responseData?.error ? `Move failed: ${responseData.error}` : 'Move failed. Please try again.');
+	showTemporaryMessage(errorMessage, 'error');
 }
 
 export function animateChessPieceMove(piece, _fromX, _fromZ, toX, toZ, onComplete) {
@@ -487,23 +628,15 @@ function showDetonateButton(piece) {
 	hideDetonateButton();
 	const btn = document.createElement('button');
 	btn.id = 'pawn-detonate-btn';
-	const nextPiecePanel = document.getElementById('next-tetromino-display');
-	const panelBottom = nextPiecePanel
-		? Math.max(20, Math.round(nextPiecePanel.getBoundingClientRect().bottom + 12))
-		: 20;
 
 	Object.assign(btn.style, {
-		position: 'fixed',
-		top: `${panelBottom}px`,
-		right: '20px',
-		padding: '8px 20px',
+		padding: '8px 12px',
 		background: 'rgba(220,50,50,0.9)', color: '#fff',
 		border: '2px solid #ff6666', borderRadius: '6px',
-		fontSize: '15px', fontWeight: 'bold', cursor: 'pointer',
-		zIndex: '1001', boxShadow: '0 0 12px rgba(255,50,50,0.6)',
-		fontFamily: 'Arial, sans-serif', letterSpacing: '1px',
+		fontSize: '13px', fontWeight: 'bold', cursor: 'pointer',
+		boxShadow: '0 0 12px rgba(255,50,50,0.6)',
+		fontFamily: 'serif', letterSpacing: '1px',
 		textTransform: 'uppercase',
-		width: 'max-content',
 		pointerEvents: 'auto',
 	});
 	const pieceType = String(piece?.userData?.pieceType || piece?.userData?.type || '').toUpperCase();
@@ -515,7 +648,9 @@ function showDetonateButton(piece) {
 		clearChessSelection();
 		requestPawnDetonation(id);
 	});
-	document.body.appendChild(btn);
+	const stack = ensureActionStack();
+	positionUnderNextPiece(stack);
+	stack.appendChild(btn);
 }
 
 function hideDetonateButton() {

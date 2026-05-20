@@ -4,6 +4,10 @@
  */
 
 const crypto = require('crypto');
+const BoardGenerator = require('../boardGenerator');
+const { BOARD_SETTINGS } = require('./Constants');
+
+const { HOME_ZONE_WIDTH, HOME_ZONE_HEIGHT } = BOARD_SETTINGS;
 
 /**
  * Generate a random game ID
@@ -73,11 +77,6 @@ function generateRandomColor() {
  * @returns {Object|null} Home zone position or null if not found
  */
 function findHomeZonePosition(game) {
-	// Import the BoardGenerator module that has our improved home zone placement logic
-	const BoardGenerator = require('../boardGenerator');
-	const { HOME_ZONE_WIDTH, HOME_ZONE_HEIGHT } = require('./Constants').BOARD_SETTINGS;
-	
-	// Get the playerIndex based on the number of existing home zones
 	const playerIndex = Object.keys(game.homeZones).length;
 	
 	// Use the improved calculateHomePosition function from BoardGenerator

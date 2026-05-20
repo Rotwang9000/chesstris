@@ -95,7 +95,9 @@ The server is authoritative; clients submit actions and receive state via Socket
 - `game_update` (full or delta)
   - Full: `{ ...state, fullUpdate:true, timestamp, boardBounds }`
   - Delta: `{ fullUpdate:false, timestamp, boardChanges, removedCells, boardBounds, chessPieces, lastAction }`
-- `row_cleared` `{ rows:[z,...], playerId }`
+- `row_cleared` `{ rows:[z,...], cols:[x,...], playerId }`
+  - `rows` are z-row indices (X-aligned lines), `cols` are x-column indices (Z-aligned lines)
+  - Either array may be empty; at least one will be non-empty when the event is emitted
 - `player_joined` / `player_left`
 
 ### Notes on deltas

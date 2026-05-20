@@ -1,151 +1,142 @@
-# Shaktris Game Rules
+# Shaktris Game Rules — Short Summary
 
-> For the definitive reference, see `docs/players-bible.md`. This file is a
-> shorter summary.
+> **Definitive reference:** `docs/players-bible.md`. This file is a quick
+> tabular summary. Whenever they disagree, the bible is authoritative.
 
 ## Overview
 
-Shaktris is a real-time multiplayer game that fuses chess and Tetris on a
-dynamically expanding board. Players grow territory by placing tetromino
-pieces and use chess tactics to capture enemy pieces and kings.
+Shaktris is a real-time multiplayer fusion of chess and Tetris on a
+dynamically expanding board. Each player starts with a standard chess set on
+an 8×2 home zone. Place tetrominoes to grow territory; move chess pieces to
+capture enemies and their kings.
 
-The default mode is a **single continuous game** — players join and leave
-freely; the world persists.
+The default mode is a **single continuous shared world** that persists across
+server restarts.
 
-## Game Setup
+## Core mechanics
 
-1. **Board**: Sparse, coordinate-based — no fixed size. Expands as players
-   place pieces.
-2. **Home zone**: Each player receives an 8×2 home zone with chess pieces
-   arranged in the standard starting formation.
-3. **Tetromino queue**: Each player has their own queue of upcoming tetromino
-   pieces (7 standard shapes: I, O, T, S, Z, J, L).
+### Tetromino placement
+1. Seven standard shapes (I, O, T, S, Z, J, L), each with four rotations.
+2. **No overlap** — every cell of the piece must land on an empty coordinate.
+3. **Adjacency** — at least one cell must be **orthogonally adjacent**
+   (up/down/left/right; **no** diagonals) to an existing cell owned by the
+   same player.
+4. **Connectivity to king** — the adjacent owned cell must have a contiguous
+   path back to the player's king (BFS, orthogonal-only). The very first
+   placement of each player is exempt.
+5. If a tetromino cannot be placed it is lost — explode on collision,
+   dissolve on missed connection. Play proceeds to chess phase if valid
+   moves exist; otherwise a new tetromino is issued immediately.
 
-## Core Mechanics
+### Tetromino generation
 
-### Tetromino Placement
+Each player has their own **7-bag**: a shuffled bag containing one of each
+shape is consumed before being refilled and reshuffled. This guarantees fair
+piece distribution (no long droughts of a single shape).
 
-1. Seven standard shapes, each with 4 rotations.
-2. **No overlap** — every cell must land on an empty coordinate.
-3. **Adjacency** — at least one cell must be adjacent (including diagonals)
-   to an existing cell owned by the same player.
-4. **Connectivity to king** — the adjacent cell must have a contiguous path
-   back to the player's king (BFS, 8-directional).
-5. If a tetromino cannot be placed, it "explodes" — the piece is lost. Play
-   proceeds to chess phase if valid moves exist; otherwise a new tetromino
-   is given.
-
-### Chess Movement
-
-1. All standard chess movement rules apply.
+### Chess movement
+1. Standard chess movement rules apply.
 2. Pieces can **only move to cells that exist** on the board. Empty space is
    not traversable.
-3. Path obstruction checks only consider other chess pieces, not cell content.
-4. When a piece moves, the underlying cell content is preserved.
-5. **No check/checkmate** — only king capture. Moving into check is legal.
-6. **No en passant**.
+3. Path obstruction checks only consider other chess pieces, **not** cell
+   content like tetrominoes.
+4. When a piece moves the underlying cell content is preserved at the source
+   and the chess marker is appended at the destination.
+5. **Cell ownership transfer** — landing on an enemy cell claims its non-home
+   content for the mover; island decay then runs on the previous owner.
+6. **No check / checkmate** — only king capture. Moving into check is legal.
+7. **No en passant**.
 
-### Pawn Specifics
-
-- **First move**: may advance 1 or 2 squares forward.
-- **Diagonal capture**: one square diagonally forward.
-- **Promotion**: after 9 squares net forward distance
-  (`PAWN_PROMOTION_DISTANCE = 9`), the player chooses Queen, Rook, Bishop,
-  or Knight. Auto-promotes to Queen after 15 seconds.
+### Pawn specifics
+- First move may advance one or two squares forward (orientation-aware).
+- Diagonal capture one square forward.
+- **Promotion** at `PAWN_PROMOTION_DISTANCE = 9` squares net forward distance:
+  the player chooses Queen, Rook, Bishop, or Knight. Auto-promotes to Queen
+  after 15 seconds.
 
 ### Castling
+Standard rules: neither king nor rook has moved; all cells between them exist
+and are free of chess pieces. The king moves two squares towards the rook;
+the rook jumps to the square the king crossed. Works along any axis according
+to the player's orientation.
 
-- Standard rules: neither king nor rook has moved; all cells between them
-  exist and are free of chess pieces.
-- King moves 2 squares towards the rook; rook jumps over.
-- Works along any axis (orientation-dependent).
+### Turn cadence
 
-### Turn Structure
-
-The game is **real-time** — all players act simultaneously. Server-side
-cooldowns prevent spamming:
+Real-time. The server enforces per-action cooldowns:
 
 | Action | Cooldown |
-|--------|----------|
-| Chess move | 750 ms |
-| Tetromino placement | 1 500 ms |
+|--------|---------:|
+| Chess move | 500 ms |
+| Tetromino placement | 800 ms |
 
 After placing a tetromino the client transitions to chess phase. If the
-player has no valid chess moves, it skips straight back to tetromino phase.
+player has no valid chess moves, the server skips straight back to tetromino
+phase.
 
-## Row Clearing
+## Row clearing
 
-After every tetromino placement the server checks all z-rows:
+After every tetromino placement the server scans **both** axes for clearable
+lines.
 
-- **Threshold**: 8 consecutive filled cells in a single z-row.
-- **Home-zone handling**: Safe home-zone cells (containing at least one
-  chess piece) **break** the consecutive count — it resets to zero.
-- **What is removed**: All non-home cell content in the cleared segment.
+| Rule | Detail |
+|------|--------|
+| Threshold | 8 consecutive filled cells in one axis (X-row or Z-row) |
+| Home-zone handling | Safe home-zone cells (still containing at least one chess piece) **break** the consecutive count — it resets to zero. Cells on either side of a home zone are counted independently. |
+| What is removed | All non-home cell content in the cleared segment. Home markers stay put. |
 
-After a row is cleared:
-1. **Gravity towards king** — cells shift one step toward the gap.
-2. **Island decay** — disconnected groups of cells (no path to king) are
-   removed along with any chess pieces on them.
+After a clear:
+1. **Gravity towards king** — cells on the far side of the gap shift towards
+   the gap (axis matches the cleared line's axis).
+2. **Island decay** — disconnected groups (no orthogonal path to king) are
+   removed, taking any chess pieces with them.
 
-## King Capture
+## King capture
 
-Capturing an opponent's king triggers:
-
-1. Non-pawn chess pieces **transfer** to the captor.
-2. Defeated player's pawns become **suicidal** — after a 3-second delay,
-   they self-destruct one every 0.5 s, each destroying its cell.
+Capturing an opponent's king:
+1. Non-pawn pieces transfer to the captor.
+2. The defeated player's pawns become **suicidal** — after a 3 s pause they
+   self-destruct one every 0.5 s, each destroying its cell.
 3. Island decay runs after all pawns detonate.
 4. Remaining territory transfers to the captor.
-5. The captured king goes to prison.
-6. The defeated player is eliminated.
+5. The captured king is sent to prison; the defeated player is eliminated.
 
-### Simultaneous Capture — "King's Duel"
+### Simultaneous capture — "King's Duel"
 
-If two players capture each other's kings within 1 second, a **King's
-Duel** mini-game starts:
+If two players capture each other's kings within 1 s a knight hide-and-seek
+mini-game decides the winner: each player hides a knight on a 4×2 grid, then
+guesses the opponent's cell. Up to 5 rounds, 10 s per round.
 
-- 4×2 grid, each player hides a knight and guesses the opponent's position.
-- Exactly one correct guess wins the round.
-- Max 5 rounds; 10-second timeout per round.
-
-## Home Zone
+## Home zone
 
 | Setting | Value |
-|---------|-------|
+|---------|------:|
 | Width | 8 cells |
 | Height | 2 cells |
-| Degradation interval | 2.5 minutes (if no pieces remain) |
+| Distance from centre | 8–12 cells (spiral placement, 4 orientations) |
+| Degradation interval (idle) | 2.5 min |
 
-Safe home-zone cells (with at least one piece) are never cleared by row
-clearing and break the consecutive-cell count.
+Safe home-zone cells are never cleared by row clearing. After degradation
+the markers convert to normal owned terrain (cells and pieces are preserved).
 
-## Island Decay
+## Island decay
 
-After any row clear or tetromino placement, a BFS groups all cells into
-connected components per player. Any island without its player's king is
-removed, along with chess pieces sitting on those cells.
+After any row clear, tetromino placement, chess move, or pawn detonation a
+BFS groups each player's cells into orthogonally connected islands. Any
+island without its player's king is removed, along with the chess pieces
+sitting on it.
 
-## AI Opponents
+## AI opponents
 
 | Difficulty | Move interval |
-|------------|--------------|
+|------------|--------------:|
 | Easy | 15 s |
 | Medium | 10 s |
 | Hard | 5 s |
 
-## Scoring
-
-| Event | Points |
-|-------|--------|
-| Tetromino placement | Base points |
-| Row clearing | Bonus per row |
-| Chess capture | Varies by piece value |
-| King capture | Large bonus + inherited pieces |
-
-## Piece Prices (Purchasable Reinforcements)
+## Piece prices (purchasable reinforcements)
 
 | Piece | Cost (SOL) |
-|-------|-----------|
+|-------|-----------:|
 | Pawn | 0.1 |
 | Rook | 0.5 |
 | Knight | 0.5 |
@@ -153,14 +144,13 @@ removed, along with chess pieces sitting on those cells.
 | Queen | 1.0 |
 | King | Not purchasable |
 
-## Visual Themes
+A purchased piece must land on an owned cell with a path to the king and not
+inside an opponent's safe home zone.
 
-| Theme | Description |
-|-------|-------------|
-| Normal | Daylight scene, Russian-styled 3D pieces, cream/sage board |
-| Cute | 8-bit space theme, pixelated rendering, starfield |
-| Retro | 1980s CRT terminal, green phosphor, Cyrillic text sprites |
+## Visual themes
 
-## Game Modes
-
-Primary mode: continuous open world. Future modes: Timed, Survival, Arena.
+| Theme | Look |
+|-------|------|
+| Normal | Daylight, Russian-styled 3D pieces, cream/sage board |
+| Cute | 8-bit space theme, pixelated, voxel pieces |
+| Retro | 1980s CRT, green/amber phosphor, letter-sprite pieces |

@@ -1,15 +1,59 @@
 /**
- * TetrominoManager.js - Handles tetromino placement, validation, and related logic
- * This module contains functionality for tetromino operations in the XZ-Y coordinate system
+ * TetrominoManager.js — Tetromino placement, validation and 7-bag generation.
+ *
+ * Coordinates use the XZ-Y system (XZ on the board surface, Y is the
+ * dropping axis). See `docs/players-bible.md` §7 for placement rules.
  */
 
-const { TETROMINO_SHAPES } = require('./Constants');
+const { TETROMINO_SHAPES, TETROMINO_TYPES } = require('./Constants');
 const { log } = require('./GameUtilities');
+const cells = require('./cells');
+
+/**
+ * Fisher-Yates shuffle in place. Pure utility, but tests can mock
+ * `Math.random` when they need deterministic bags.
+ * @param {Array} arr
+ * @returns {Array} the same array, shuffled
+ */
+function shuffleInPlace(arr) {
+	for (let i = arr.length - 1; i > 0; i--) {
+		const j = Math.floor(Math.random() * (i + 1));
+		[arr[i], arr[j]] = [arr[j], arr[i]];
+	}
+	return arr;
+}
 
 class TetrominoManager {
 	constructor(boardManager, islandManager) {
 		this.boardManager = boardManager;
 		this.islandManager = islandManager;
+	}
+
+	/**
+	 * Draw the next tetromino type for `playerId` from their personal 7-bag.
+	 *
+	 * The 7-bag is a standard Tetris randomiser: a bag contains one of each
+	 * of the seven shapes; pieces are drawn without replacement; when the
+	 * bag is empty it is refilled and reshuffled. This guarantees fair
+	 * distribution — no long droughts of a single shape.
+	 *
+	 * @param {Object} game - The game object
+	 * @param {string} playerId - The player's ID
+	 * @returns {string} A tetromino piece type ('I', 'O', 'T', 'S', 'Z', 'J', 'L')
+	 */
+	drawFromBag(game, playerId) {
+		const player = game?.players?.[playerId];
+		if (!player) {
+			// Fall back to a fresh bag if the player record is missing —
+			// keeps test fixtures happy without changing the public API.
+			return shuffleInPlace([...TETROMINO_TYPES])[0];
+		}
+
+		if (!Array.isArray(player.tetrominoBag) || player.tetrominoBag.length === 0) {
+			player.tetrominoBag = shuffleInPlace([...TETROMINO_TYPES]);
+		}
+
+		return player.tetrominoBag.shift();
 	}
 	
 	/**
@@ -65,14 +109,14 @@ class TetrominoManager {
 					const cellContents = this.boardManager.getCell(game.board, posX, posZ);
 					
 					if (cellContents && cellContents.length > 0) {
-						// Check if cell has any non-home content (which would block placement).
-						// Metadata markers (e.g. centre marker) should not block placement.
-						const hasNonHomeContent = cellContents.some(item => {
+						const blocking = cellContents.some(item => {
 							if (!item) return true;
-							return !(item.type === 'home' || item.type === 'specialMarker' || item.type === 'boardCentre');
+							return !(item.type === cells.HOME_TYPE
+								|| item.type === cells.SPECIAL_TYPE
+								|| item.type === cells.CENTRE_TYPE);
 						});
-						
-						if (hasNonHomeContent) {
+
+						if (blocking) {
 							return {
 								valid: false,
 								reason: 'occupied',
@@ -86,6 +130,23 @@ class TetrominoManager {
 		
 		const pid = String(playerId);
 		const isFirstPlacement = !game.players?.[playerId] || !game.players[playerId].lastTetrominoPlacement;
+
+		// Build the set of live chess piece IDs so we can ignore stranded
+		// chess markers when judging whether an adjacent cell actually
+		// belongs to the player. Without this a stale marker can make a
+		// connected drop register as "no path to king".
+		const livePieceIds = new Set();
+		if (Array.isArray(game.chessPieces)) {
+			for (const piece of game.chessPieces) {
+				if (piece && piece.id != null) livePieceIds.add(String(piece.id));
+			}
+		}
+		const itemIsLiveOwnedContent = (item) => {
+			if (!item || String(item.player) !== pid) return false;
+			if (item.type !== 'chess') return true;            // home / tetromino markers
+			if (item.pieceId == null) return true;             // legacy marker — accept
+			return livePieceIds.has(String(item.pieceId));      // live chess marker
+		};
 
 		let sawAdjacentPlayerContent = false;
 
@@ -107,10 +168,7 @@ class TetrominoManager {
 					const adjacentCell = this.boardManager.getCell(game.board, pos.x, pos.z);
 					if (!adjacentCell || adjacentCell.length === 0) continue;
 
-					const hasPlayerContent = adjacentCell.some(
-						item => item && String(item.player) === pid
-					);
-
+					const hasPlayerContent = adjacentCell.some(itemIsLiveOwnedContent);
 					if (!hasPlayerContent) continue;
 					sawAdjacentPlayerContent = true;
 
@@ -152,28 +210,28 @@ class TetrominoManager {
 	}
 	
 	/**
-	 * Generate an array of available tetrominos for a player
+	 * Build the next `count` tetrominoes for `playerId`, drawing from their
+	 * personal 7-bag for fairness. Each tetromino gets a random rotation
+	 * (so players can't game the bag by counting rotations alone).
+	 *
 	 * @param {Object} game - The game object
 	 * @param {string} playerId - The player's ID
-	 * @returns {Array} Array of available tetrominos
+	 * @param {number} [count=3] - How many to generate
+	 * @returns {Array<Object>} Array of `{ id, pieceType, rotation, shape }`
 	 */
-	generateTetrominos(game, playerId) {
-		const pieceTypes = ['I', 'O', 'T', 'S', 'Z', 'J', 'L'];
+	generateTetrominos(game, playerId, count = 3) {
 		const tetrominos = [];
-		
-		// Generate a random set of tetrominos
-		for (let i = 0; i < 3; i++) {
-			const pieceType = pieceTypes[Math.floor(Math.random() * pieceTypes.length)];
+		const now = Date.now();
+		for (let i = 0; i < count; i++) {
+			const pieceType = this.drawFromBag(game, playerId);
 			const rotation = Math.floor(Math.random() * 4);
-			
 			tetrominos.push({
-				id: `${playerId}-tetromino-${Date.now()}-${i}`,
+				id: `${playerId}-tetromino-${now}-${i}`,
 				pieceType,
 				rotation,
-				shape: this.getTetrisPieceShape(pieceType, rotation)
+				shape: this.getTetrisPieceShape(pieceType, rotation),
 			});
 		}
-		
 		return tetrominos;
 	}
 	
@@ -258,33 +316,31 @@ class TetrominoManager {
 				if (shape[i][j]) {
 					const posX = x + j;
 					const posZ = z + i;
-					
-					// Create a new tetromino cell object
+
 					const tetrominoCell = {
-						type: 'tetromino',
+						type: cells.TETROMINO_TYPE,
 						pieceType: pieceType,
 						player: playerId,
-						placedAt: Date.now()
+						placedAt: Date.now(),
 					};
-					
-					// Preserve any existing home zone markers
+
+					// Preserve any existing home / centre / special markers
+					// — these are gameplay-overlay items that survive a
+					// tetromino landing on them (e.g. the board centre,
+					// safe-home indicators).
 					const cellContents = this.boardManager.getCell(game.board, posX, posZ);
-					const homeMarkers = cellContents ? 
-						cellContents.filter(item => item && item.type === 'home') : 
-						[];
-					
-					// Combine home markers with the new tetromino cell
-					const newCellContents = [...homeMarkers, tetrominoCell];
-					
-					// Set the cell contents
-					this.boardManager.setCell(game.board, posX, posZ, newCellContents);
-					
-					// Add to placed cells for tracking
-					placedCells.push({
-						x: posX,
-						z: posZ,
-						cell: tetrominoCell
-					});
+					const preserved = Array.isArray(cellContents)
+						? cellContents.filter(item =>
+							item && (
+								item.type === cells.HOME_TYPE
+								|| item.type === cells.SPECIAL_TYPE
+								|| item.type === cells.CENTRE_TYPE
+							)
+						)
+						: [];
+
+					this.boardManager.setCell(game.board, posX, posZ, [...preserved, tetrominoCell]);
+					placedCells.push({ x: posX, z: posZ, cell: tetrominoCell });
 				}
 			}
 		}

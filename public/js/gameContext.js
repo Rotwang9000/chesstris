@@ -107,12 +107,6 @@ const PLAYER_COLORS = Object.freeze({
 
 export function getPlayerColors() { return PLAYER_COLORS; }
 
-const _models = { pieces: {}, board: null, defaultPieces: {} };
-export function getModels() { return _models; }
-
-const _textures = { board: null, cells: [], skybox: null };
-export function getTextures() { return _textures; }
-
 // Axis helper constants
 export const AXIS_LENGTH = 20;
 export const AXIS_LABEL_SIZE = 1.0;
