@@ -735,7 +735,7 @@ export function updateUnifiedPlayerBar(gameState) {
 		currentHash = Object.keys(gameState.players).map(playerId => {
 			const player = gameState.players[playerId];
 			if (!player) return '';
-			return `${playerId}-${player.name || ''}-${player.score || 0}-${player.isActive ? 1 : 0}-${player.color || ''}`;
+			return `${playerId}-${player.name || ''}-${player.score || 0}-${player.isActive ? 1 : 0}-${player.eliminated ? 1 : 0}-${player.color || ''}`;
 		}).sort().join('|');
 		
 		// Add current player to hash
@@ -787,9 +787,23 @@ export function updateUnifiedPlayerBar(gameState) {
 	// Add each player. The local player is pinned to the top of the
 	// list — they're the user looking at this UI, and "Fly to my king"
 	// is by far the most common reason for opening the panel.
+	// Eliminated players are filtered out entirely because the user
+	// asked: "players that have been totally beaten are staying in the
+	// system... they are all apearing in the left menu". Keeping them
+	// would also bias the spawn algorithm towards dead-king coords.
 	if (gameState.players && Object.keys(gameState.players).length > 0) {
-		console.log('Players in game state:', Object.keys(gameState.players).length);
-		const sortedIds = Object.keys(gameState.players).sort((a, b) => {
+		const visibleIds = Object.keys(gameState.players).filter(pid => {
+			const player = gameState.players[pid];
+			if (!player) return false;
+			// Always show the local player even if a stale flag claims
+			// they're eliminated — we'd rather show a wrong row than
+			// hide the user from their own UI.
+			if (pid === localPlayerId) return true;
+			return !player.eliminated;
+		});
+		console.log('Players in game state:', Object.keys(gameState.players).length,
+			'visible:', visibleIds.length);
+		const sortedIds = visibleIds.sort((a, b) => {
 			if (a === localPlayerId) return -1;
 			if (b === localPlayerId) return 1;
 			return 0;
@@ -809,6 +823,18 @@ export function updateUnifiedPlayerBar(gameState) {
 				gameState
 			);
 		});
+		if (sortedIds.length === 0) {
+			const noOneMessage = document.createElement('div');
+			noOneMessage.textContent = 'No active opponents — you have the world to yourself.';
+			Object.assign(noOneMessage.style, {
+				textAlign: 'center',
+				color: '#ffcc00',
+				padding: '20px',
+				fontStyle: 'italic',
+			});
+			const container = document.getElementById('unified-player-container');
+			if (container) container.appendChild(noOneMessage);
+		}
 	} else {
 		// Show waiting message
 		const waitingMessage = document.createElement('div');

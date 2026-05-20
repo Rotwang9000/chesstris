@@ -295,8 +295,17 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 						const absPos = translatePosition({x, z}, gameState, true);
 						const adjustX = absPos.x;
 						const adjustZ = absPos.z;
-						
-						if (existingPiece.position.x !== adjustX || existingPiece.position.z !== adjustZ || existingPiece.position.y !== 0.5) {
+
+						// Don't yank pieces that are currently airborne
+						// (wings rule). The wing animation owns their
+						// Y position and the surrounding XZ until the
+						// settle phase removes the airborne flag.
+						const isAirborne = existingPiece.userData && existingPiece.userData.airborne;
+						if (!isAirborne && (
+							existingPiece.position.x !== adjustX
+							|| existingPiece.position.z !== adjustZ
+							|| existingPiece.position.y !== 0.5
+						)) {
 							existingPiece.position.set(adjustX, 0.5, adjustZ);
 						}
 
@@ -538,6 +547,13 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 						) {
 							// Pinned — keep mesh, let the move flow drop or
 							// adopt it once the ack arrives.
+							return;
+						}
+						// Airborne pieces own their own removal animation
+						// (wings flap, then fall into the water). Skip
+						// the standard prune so we don't snip the mesh
+						// mid-fall.
+						if (pieceMesh.userData.airborne) {
 							return;
 						}
 						chessPiecesGroup.remove(pieceMesh);

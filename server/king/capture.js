@@ -26,6 +26,16 @@ function createKingCaptureService({ io, gameManager, broadcaster, activityLog = 
 		const defeatedPlayer = World.getPlayer(defeatedId) || {};
 		console.log(`King captured: ${captorId} takes ${defeatedId}'s forces`);
 
+		// Mark the defeated player as eliminated so the sidebar can
+		// hide them and the home-zone allocator skips their coords on
+		// the next join (otherwise we keep anchoring fresh players to
+		// the corpse-king position forever).
+		const defeatedRecord = world.players && world.players[defeatedId];
+		if (defeatedRecord) {
+			defeatedRecord.eliminated = true;
+			defeatedRecord.eliminatedAt = Date.now();
+		}
+
 		if (!Array.isArray(world.kingPrison)) world.kingPrison = [];
 		world.kingPrison.push({
 			originalOwner: defeatedId,

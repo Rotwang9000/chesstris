@@ -231,17 +231,19 @@ describe('BoardManager', () => {
 			}
 		});
 
-		test('preserves chess-occupied cells during row clear (bible §15.2)', () => {
+		test('lifts chess pieces off cleared cells; orphaned pieces fall into the water (bible §15.2 wings rule)', () => {
 			const game = createGame(boardManager);
 			addPlayer(game, 'p1');
+			game.chessPieces = [
+				{ id: 'pawn-1', type: 'PAWN', player: 'p1', position: { x: 7, z: 12 } },
+			];
 
-			// 7 tetromino cells plus one chess cell — 8 clearable cells in
-			// total. Per the bible, the chess piece's cell is *protected*
-			// from immediate removal so the player has a 30–60 s window to
-			// bridge before island decay catches the now-stranded piece.
-			// Without this protection a row clear could wipe a rook the
-			// instant another player completes a line through it (which is
-			// exactly the behaviour players complained about).
+			// 7 tetromino cells plus one chess cell — 8 clearable cells.
+			// Under the wings rule the chess marker is stripped along
+			// with everything else; the piece becomes airborne and
+			// settles afterwards. With no terrain underneath the piece
+			// falls (no cell to land on), removing it from
+			// `game.chessPieces`.
 			for (let x = 0; x < 7; x++) {
 				boardManager.setCell(game.board, x, 12, [
 					{ type: 'tetromino', player: 'p1' },
@@ -252,20 +254,68 @@ describe('BoardManager', () => {
 				{ type: 'chess', player: 'p1', pieceId: 'pawn-1', pieceType: 'pawn' },
 			]);
 
-			const { rows } = boardManager.checkAndClearLines(game);
+			const { rows, settleOutcomes } = boardManager.checkAndClearLines(game);
 			expect(rows).toContain(12);
 
-			for (let x = 0; x < 7; x++) {
+			for (let x = 0; x <= 7; x++) {
 				expect(boardManager.getCell(game.board, x, 12)).toBeNull();
 			}
-			const chessCell = boardManager.getCell(game.board, 7, 12);
-			expect(Array.isArray(chessCell)).toBe(true);
-			expect(chessCell.some(item => item && item.type === 'chess')).toBe(true);
+			expect(settleOutcomes).toEqual([
+				expect.objectContaining({ pieceId: 'pawn-1', outcome: 'fell' }),
+			]);
+			expect(game.chessPieces.find(p => p.id === 'pawn-1')).toBeUndefined();
+		});
+
+		test('an airborne piece survives when gravity drags a supporting cell back under it', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+			// King anchors gravity direction at (0, 0).
+			boardManager.setCell(game.board, 0, 0, [
+				{ type: 'home', player: 'p1' },
+				{ type: 'chess', player: 'p1', pieceId: 'king-1', pieceType: 'king' },
+			]);
+			game.chessPieces = [
+				{ id: 'king-1', type: 'KING', player: 'p1', position: { x: 0, z: 0 } },
+				{ id: 'rook-1', type: 'ROOK', player: 'p1', position: { x: 4, z: 12 } },
+			];
+
+			// Cleared row z=12: 7 tetromino cells + rook cell. The
+			// column x=4 only has two cells (z=12 and z=13) so it is
+			// not itself clearable — gravity should still pull (4, 13)
+			// one step towards the king and into (4, 12), giving the
+			// rook a fresh cell to land on.
+			for (let x = 0; x < 8; x++) {
+				if (x === 4) {
+					boardManager.setCell(game.board, x, 12, [
+						{ type: 'tetromino', player: 'p1' },
+						{ type: 'chess', player: 'p1', pieceId: 'rook-1', pieceType: 'rook' },
+					]);
+				} else {
+					boardManager.setCell(game.board, x, 12, [
+						{ type: 'tetromino', player: 'p1' },
+					]);
+				}
+			}
+			boardManager.setCell(game.board, 4, 13, [{ type: 'tetromino', player: 'p1' }]);
+
+			const { rows, settleOutcomes } = boardManager.checkAndClearLines(game);
+			expect(rows).toContain(12);
+
+			// The rook should have landed back at its original square
+			// because gravity dropped a terrain cell underneath it.
+			expect(settleOutcomes).toEqual([
+				expect.objectContaining({ pieceId: 'rook-1', outcome: 'landed' }),
+			]);
+			expect(game.chessPieces.find(p => p.id === 'rook-1')).toBeDefined();
+			const restoredCell = boardManager.getCell(game.board, 4, 12);
+			expect(Array.isArray(restoredCell)).toBe(true);
+			expect(restoredCell.some(item => item && item.type === 'chess'
+				&& String(item.pieceId) === 'rook-1')).toBe(true);
 		});
 	});
 
 	describe('findClearableLines / applyClearedLines split', () => {
-		test('findClearableLines reports cells the clear would actually touch', () => {
+		test('findClearableLines reports all cells the clear would actually touch (including chess)', () => {
 			const game = createGame(boardManager);
 			addPlayer(game, 'p1');
 
@@ -281,11 +331,12 @@ describe('BoardManager', () => {
 			expect(rows).toContain(40);
 			expect(cols).toHaveLength(0);
 
-			// Only the 7 tetromino-only cells should flash; the chess cell
-			// is preserved and shouldn't be in the list.
-			expect(cells).toHaveLength(7);
+			// All 8 cells should flash under the wings rule — the chess
+			// cell flashes too so the client can grow wings on the rook
+			// before the clear lifts it.
+			expect(cells).toHaveLength(8);
 			expect(cells.every(c => c.z === 40)).toBe(true);
-			expect(cells.some(c => c.x === 7)).toBe(false);
+			expect(cells.some(c => c.x === 7)).toBe(true);
 		});
 
 		test('findClearableLines does NOT mutate the board', () => {

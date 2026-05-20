@@ -102,6 +102,11 @@ function createBroadcaster({ io, persistence }) {
 				id,
 				name: record?.name || `Player_${String(id).substring(0, 6)}`,
 				isComputer: !!record?.isComputer,
+				// Client uses this to hide eliminated players from the
+				// sidebar — the user reported beaten kings cluttering
+				// the menu and pushing new joiners away from active
+				// players in the spawn algorithm.
+				eliminated: !!record?.eliminated,
 			};
 		});
 	}

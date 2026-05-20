@@ -77,7 +77,16 @@ function generateRandomColor() {
  * @returns {Object|null} Home zone position or null if not found
  */
 function findHomeZonePosition(game) {
-	const playerIndex = Object.keys(game.homeZones).length;
+	// Count only zones whose owner is still in the game and not
+	// eliminated. Treating dead players as "existing" used to push
+	// new joiners way out into the void; the user flagged this when
+	// fresh games ended up nowhere near any active player.
+	const players = (game && game.players) || {};
+	const livingZoneCount = Object.keys(game.homeZones || {}).filter(pid => {
+		const p = players[pid];
+		return !(p && p.eliminated);
+	}).length;
+	const playerIndex = livingZoneCount;
 	
 	// Use the improved calculateHomePosition function from BoardGenerator
 	// No longer pass board width and height as we're using a boundless board model

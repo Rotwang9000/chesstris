@@ -27,6 +27,10 @@ import {
 import { updateGameStatusDisplay } from '../createLoadingIndicator.js';
 import * as tetrominoModule from '../tetromino.js';
 import { flashCellsBeforeClear, showChessCaptureAnimation } from '../tetromino/animations.js';
+import {
+	liftAirbornePieces,
+	settleAirbornePieces,
+} from '../wingAnimations.js';
 import { cancelSkipChessTimer, cancelSkipDropTimer } from '../skipChessButton.js';
 import { updateNextPieceHint } from '../tetromino/nextPiece.js';
 import { getChessPiecesGroup } from '../gameContext.js';
@@ -79,7 +83,14 @@ function normalisePlayersArrayToMap(playersArray) {
 	if (!Array.isArray(playersArray)) return map;
 	for (const p of playersArray) {
 		if (!p || !p.id) continue;
-		map[p.id] = { id: p.id, name: p.name || p.id, isComputer: !!p.isComputer };
+		map[p.id] = {
+			id: p.id,
+			name: p.name || p.id,
+			isComputer: !!p.isComputer,
+			// Forwarded so the sidebar can hide beaten players and
+			// the spacing helpers can ignore them.
+			eliminated: !!p.eliminated,
+		};
 	}
 	return map;
 }
@@ -127,6 +138,12 @@ function handleRowCleared(payload) {
 		const rows = Array.isArray(payload?.rows) ? payload.rows : [];
 		const cols = Array.isArray(payload?.cols) ? payload.cols : [];
 		if (rows.length === 0 && cols.length === 0) return;
+		// Even when the clear was triggered by someone else, settle our
+		// own airborne meshes — pieces on those cells need to land or
+		// fall regardless of who finished the line.
+		if (Array.isArray(payload?.settleOutcomes)) {
+			settleAirbornePieces(payload.settleOutcomes);
+		}
 		if (!payload?.playerId || String(payload.playerId) !== String(gameState.localPlayerId)) return;
 		const parts = [];
 		if (rows.length) parts.push(`row${rows.length === 1 ? '' : 's'} ${rows.join(', ')}`);
@@ -143,6 +160,12 @@ function handleCellsClearing(payload) {
 	try {
 		if (!payload || !Array.isArray(payload.cells) || payload.cells.length === 0) return;
 		flashCellsBeforeClear(payload.cells, payload.durationMs, gameState);
+		// Pieces that are about to be lifted off cleared squares grow
+		// wings and hover until the row_cleared / game_update arrives
+		// with the settle outcomes.
+		if (Array.isArray(payload.airbornePieceIds) && payload.airbornePieceIds.length > 0) {
+			liftAirbornePieces(payload.airbornePieceIds);
+		}
 	} catch (e) {
 		console.error('Error handling cells_clearing:', e);
 	}

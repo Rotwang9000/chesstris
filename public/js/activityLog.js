@@ -21,8 +21,53 @@ let bodyElement = null;
 let badgeElement = null;
 let panelElement = null;
 let toggleButton = null;
+let filterToggleEl = null;
 let lastSeenEventId = 0;
 let isOpen = false;
+// `false` = show every event, `true` = only events involving the local
+// player. The user asked for "a filter so we can select just what
+// happened to our own player".
+let filterMineOnly = false;
+const FILTER_PREF_KEY = 'shaktris.activityLog.mineOnly';
+try {
+	filterMineOnly = window.localStorage?.getItem(FILTER_PREF_KEY) === '1';
+} catch (_) { /* localStorage unavailable — fine */ }
+
+/**
+ * The canonical source of the local player's id lives on
+ * `window.gameState.localPlayerId` (set in `enhanced-gameCore.js`).
+ * This module deliberately stays out of gameState lifecycle so it
+ * keeps working in headless / pre-join states; we just look up the
+ * id at filter-time.
+ */
+function getLocalPlayerId() {
+	const gs = typeof window !== 'undefined' ? window.gameState : null;
+	if (!gs) return null;
+	return gs.localPlayerId || gs.myPlayerId || null;
+}
+
+/**
+ * `true` when the event mentions the local player in any role.
+ * Captures the obvious `playerId` plus the cross-player flavours
+ * (`territory_captured`'s from/to, `chess_piece_captured`'s captor).
+ */
+function isLocalPlayerEvent(ev) {
+	const localId = getLocalPlayerId();
+	if (!localId) return false;
+	const me = String(localId);
+	const p = ev.payload || {};
+	if (p.playerId != null && String(p.playerId) === me) return true;
+	if (p.fromPlayerId != null && String(p.fromPlayerId) === me) return true;
+	if (p.toPlayerId != null && String(p.toPlayerId) === me) return true;
+	if (p.capturedBy && p.capturedBy.playerId != null
+		&& String(p.capturedBy.playerId) === me) return true;
+	return false;
+}
+
+function passesFilter(ev) {
+	if (!filterMineOnly) return true;
+	return isLocalPlayerEvent(ev);
+}
 
 function fmtTimeAgo(t) {
 	const diffMs = Date.now() - t;
@@ -175,6 +220,8 @@ function describeEvent(ev) {
 				king_detonation_collateral: 'caught in king detonation',
 				player_left: 'lost — player left',
 				world_reset: 'lost — world reset',
+				fell_to_water: 'wings failed — fell into the water',
+				knocked_off: 'knocked off the board by a landing piece',
 			};
 			const reason = reasonLabels[ev.payload.reason] || ev.payload.reason || 'lost';
 			const at = Number.isFinite(ev.payload.x)
@@ -260,6 +307,7 @@ function flyTo(target) {
 
 function renderEvent(ev) {
 	if (!listElement) return;
+	if (!passesFilter(ev)) return;
 	const { icon, color, text, target } = describeEvent(ev);
 
 	const row = document.createElement('div');
@@ -319,13 +367,44 @@ function tickRelativeTimes() {
 
 function updateUnreadBadge() {
 	if (!badgeElement) return;
-	const unread = eventBuffer.filter(e => e.id > lastSeenEventId).length;
+	const unread = eventBuffer.filter(
+		e => e.id > lastSeenEventId && passesFilter(e)
+	).length;
 	if (unread === 0 || isOpen) {
 		badgeElement.style.display = 'none';
 	} else {
 		badgeElement.style.display = 'inline-block';
 		badgeElement.textContent = unread > 99 ? '99+' : String(unread);
 	}
+}
+
+/**
+ * Re-render the visible list using the current filter.  Used when the
+ * filter toggle changes, since the existing DOM rows may now be a
+ * mismatched subset.
+ */
+function rerenderList() {
+	if (!listElement) return;
+	listElement.innerHTML = '';
+	// Render newest first to match the live insert order (insertBefore
+	// at the top of the list).
+	const ordered = [...eventBuffer].sort((a, b) => a.id - b.id);
+	for (const ev of ordered) renderEvent(ev);
+	updateUnreadBadge();
+}
+
+function setFilterMineOnly(value) {
+	const next = !!value;
+	if (next === filterMineOnly) return;
+	filterMineOnly = next;
+	try { window.localStorage?.setItem(FILTER_PREF_KEY, next ? '1' : '0'); } catch (_) {}
+	if (filterToggleEl) {
+		filterToggleEl.checked = next;
+		filterToggleEl.parentElement.title = next
+			? 'Showing only events involving you — click to see everyone.'
+			: 'Showing all events — click to filter to just you.';
+	}
+	rerenderList();
 }
 
 export function pushActivityEvent(event) {
@@ -348,11 +427,7 @@ export function loadActivityLogSnapshot(snapshot) {
 	eventBuffer.sort((a, b) => a.id - b.id);
 	while (eventBuffer.length > MAX_EVENTS) eventBuffer.shift();
 
-	if (listElement) {
-		listElement.innerHTML = '';
-		for (const ev of eventBuffer) renderEvent(ev);
-	}
-	updateUnreadBadge();
+	rerenderList();
 }
 
 function openPanel() {
@@ -413,6 +488,29 @@ export function ensureActivityLogUI() {
 	title.textContent = 'Recent activity';
 	Object.assign(title.style, { color: '#ffcc00', fontWeight: 'bold', fontSize: '14px' });
 
+	// "Only mine" filter — the user asked for a way to show only events
+	// involving their own player so the panel doesn't drown them in
+	// other people's bot activity. The state is persisted via
+	// localStorage so it survives reloads.
+	const filterLabel = document.createElement('label');
+	Object.assign(filterLabel.style, {
+		display: 'flex', alignItems: 'center', gap: '4px',
+		color: '#fc6', fontSize: '11px', cursor: 'pointer',
+		userSelect: 'none',
+	});
+	filterLabel.title = filterMineOnly
+		? 'Showing only events involving you — click to see everyone.'
+		: 'Showing all events — click to filter to just you.';
+	filterToggleEl = document.createElement('input');
+	filterToggleEl.type = 'checkbox';
+	filterToggleEl.checked = filterMineOnly;
+	filterToggleEl.style.cursor = 'pointer';
+	filterToggleEl.addEventListener('change', () => setFilterMineOnly(filterToggleEl.checked));
+	const filterText = document.createElement('span');
+	filterText.textContent = 'Only mine';
+	filterLabel.appendChild(filterToggleEl);
+	filterLabel.appendChild(filterText);
+
 	const closeBtn = document.createElement('button');
 	closeBtn.textContent = '\u00D7';
 	Object.assign(closeBtn.style, {
@@ -422,6 +520,7 @@ export function ensureActivityLogUI() {
 	closeBtn.addEventListener('click', closePanel);
 
 	header.appendChild(title);
+	header.appendChild(filterLabel);
 	header.appendChild(closeBtn);
 
 	bodyElement = document.createElement('div');
@@ -488,8 +587,7 @@ export function ensureActivityLogUI() {
 	});
 	toggleButton.appendChild(badgeElement);
 
-	for (const ev of eventBuffer) renderEvent(ev);
-	updateUnreadBadge();
+	rerenderList();
 
 	setInterval(tickRelativeTimes, 15000);
 

@@ -48,6 +48,12 @@ const REMOVAL_REASONS = Object.freeze({
 	PLAYER_LEFT: 'player_left',
 	// Bulk teardown — world snapshot restore wiped the player.
 	WORLD_RESET: 'world_reset',
+	// A row-clear-airborne piece had no cell to land on after gravity
+	// settled — it falls "into the water" per bible §15.2 (new rule).
+	FELL_TO_WATER: 'fell_to_water',
+	// A landing airborne piece collided with an existing piece on the
+	// target cell — the existing piece is knocked off.
+	KNOCKED_OFF: 'knocked_off',
 });
 
 const KING_TYPE = 'KING';

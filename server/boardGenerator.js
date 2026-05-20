@@ -101,11 +101,23 @@ function makeFirstPlayerHomePosition() {
 	return { x, z, orientation };
 }
 
+/**
+ * Collect home zones the placement engine should respect.
+ *
+ * Eliminated players' zones are skipped so a fresh joiner isn't
+ * anchored to dead-king corpses scattered around the world (the
+ * user flagged this — new games were spawning far from anyone
+ * alive because long-dead players still owned home zones).
+ */
 function collectExistingHomeZones(gameState) {
 	const zones = [];
 	if (!gameState || !gameState.homeZones) return zones;
+	const players = (gameState && gameState.players) || {};
 	for (const playerId in gameState.homeZones) {
-		if (gameState.homeZones[playerId]) zones.push(gameState.homeZones[playerId]);
+		if (!gameState.homeZones[playerId]) continue;
+		const player = players[playerId];
+		if (player && player.eliminated) continue;
+		zones.push(gameState.homeZones[playerId]);
 	}
 	return zones;
 }

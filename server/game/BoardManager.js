@@ -6,6 +6,7 @@
 const { BOARD_SETTINGS, GAME_RULES } = require('./Constants');
 const { validateCoordinates, log } = require('./GameUtilities');
 const cells = require('./cells');
+const pieceLifecycle = require('./pieces');
 
 class BoardManager {
 	/**
@@ -369,7 +370,12 @@ class BoardManager {
 	 * whose entire content was home / chess / specialMarkers).
 	 */
 	wouldClearAffectCell(board, x, z) {
-		return cells.isClearable(this.getCell(board, x, z));
+		// New rule (bible §15.2): chess cells *are* affected by line
+		// clears — the piece is lifted off rather than the cell being
+		// shielded. The animation layer needs to know about these
+		// cells so it can flash them and grow wings on the resident
+		// piece, hence the switch to `isLineClearTarget`.
+		return cells.isLineClearTarget(this.getCell(board, x, z));
 	}
 
 	/**
@@ -469,13 +475,14 @@ class BoardManager {
 		const clearedRows = [];
 		const clearedCols = [];
 		let totalCellsCleared = 0;
+		const airbornePieces = [];
 
 		for (const z of rows || []) {
-			const n = this._clearLine(game, 'z', z);
+			const n = this._clearLine(game, 'z', z, airbornePieces);
 			if (n > 0) { clearedRows.push(z); totalCellsCleared += n; }
 		}
 		for (const x of cols || []) {
-			const n = this._clearLine(game, 'x', x);
+			const n = this._clearLine(game, 'x', x, airbornePieces);
 			if (n > 0) { clearedCols.push(x); totalCellsCleared += n; }
 		}
 
@@ -487,7 +494,12 @@ class BoardManager {
 			this.recalculateBoardBoundaries(game.board);
 		}
 
-		return { rows: clearedRows, cols: clearedCols, totalCellsCleared };
+		return {
+			rows: clearedRows,
+			cols: clearedCols,
+			totalCellsCleared,
+			airbornePieces,
+		};
 	}
 
 	/**
@@ -507,8 +519,18 @@ class BoardManager {
 	 */
 	checkAndClearLines(game) {
 		const { rows: candidateRows, cols: candidateCols } = this.findClearableLines(game);
-		const { rows, cols } = this.applyClearedLines(game, candidateRows, candidateCols);
-		return { rows, cols };
+		const applied = this.applyClearedLines(game, candidateRows, candidateCols);
+		// Resolve airborne pieces synchronously so legacy / test paths
+		// that bypass `LineClearService` still see settled state at the
+		// end of the call. Without this the cell-stripped pieces would
+		// linger in `game.chessPieces` with no board marker, which the
+		// integrity sweep would then misclassify as a no-supporting-cell
+		// drop instead of an honest "fell into water".
+		const settleOutcomes = this.settleAirbornePieces(
+			game,
+			applied.airbornePieces || [],
+		);
+		return { rows: applied.rows, cols: applied.cols, settleOutcomes };
 	}
 
 	/**
@@ -622,30 +644,29 @@ class BoardManager {
 	}
 
 	/**
-	 * Strip removable terrain from every cell along the given line.
+	 * Strip removable terrain from every cell along the given line and
+	 * lift any chess pieces off cleared cells.
 	 *
-	 * Per the bible:
-	 *   • §8 cells in a cleared line lose their non-home terrain.
-	 *   • §15.2 chess pieces themselves are removed via island decay
-	 *     after a 30s grace window, **not** directly by the row-clear.
-	 *     This gives the player a chance to bridge back to their king
-	 *     before the piece is lost.
-	 *
-	 * Concretely:
-	 *   • Safe home-zone cells: untouched.
-	 *   • Cells with at least one chess marker: untouched (the piece is
-	 *     preserved; the cell will become an island candidate once the
-	 *     surrounding terrain is gone, and disposed of by island decay).
+	 * Per the bible's revised §15.2 (the "wings" rule):
+	 *   • Safe home-zone cells: untouched (home overlay still anchors
+	 *     whatever sits on it).
+	 *   • Cells with a chess marker but no home: chess marker stripped
+	 *     so the piece becomes "airborne". The piece's lifecycle entry
+	 *     stays put on `game.chessPieces`; it will be re-anchored,
+	 *     bumped, or removed by `_settleAirbornePieces` after gravity.
 	 *   • Otherwise: strip everything except home / specialMarker /
 	 *     boardCentre items.
 	 *
 	 * @param {Object} game
 	 * @param {'x'|'z'} axis
 	 * @param {number} index
+	 * @param {Array} [airbornePieces]  Out-parameter; pushes a
+	 *   `{ pieceId, x, z, player }` record for each chess marker
+	 *   stripped, so the caller can settle them after gravity.
 	 * @returns {number} number of cells actually modified
 	 * @private
 	 */
-	_clearLine(game, axis, index) {
+	_clearLine(game, axis, index, airbornePieces) {
 		const start = axis === 'z' ? game.board.minX : game.board.minZ;
 		const end   = axis === 'z' ? game.board.maxX : game.board.maxZ;
 
@@ -657,14 +678,31 @@ class BoardManager {
 			const cellContents = game.board.cells[key];
 			if (!Array.isArray(cellContents) || cellContents.length === 0) continue;
 
-			// Home cells are gaps; chess cells are shielded until island
-			// decay catches up (bible §15.2). `isClearable` enforces both.
-			if (!cells.isClearable(cellContents)) continue;
+			// Home cells are still gaps — the home overlay protects
+			// everything sat on it, including any king sitting there.
+			if (cells.hasHome(cellContents)) continue;
+			if (!cells.isLineClearTarget(cellContents)) continue;
 
-			const preserved = cells.stripClearable(cellContents);
-			if (preserved.length === cellContents.length) continue;
+			const { preserved, lifted } = cells.stripForLineClear(cellContents);
+			if (preserved.length === cellContents.length && !lifted) continue;
 
 			modified++;
+
+			if (lifted && Array.isArray(airbornePieces)) {
+				const pieceId = lifted.pieceId != null
+					? lifted.pieceId
+					: (lifted.chessPiece && lifted.chessPiece.id != null
+						? lifted.chessPiece.id
+						: null);
+				if (pieceId != null) {
+					airbornePieces.push({
+						pieceId: String(pieceId),
+						x,
+						z,
+						player: lifted.player != null ? String(lifted.player) : null,
+					});
+				}
+			}
 
 			if (preserved.length > 0) {
 				game.board.cells[key] = preserved;
@@ -678,6 +716,123 @@ class BoardManager {
 		}
 
 		return modified;
+	}
+
+	/**
+	 * Resolve the fate of each airborne piece after gravity has
+	 * shifted cells around. The rules (per user spec):
+	 *
+	 *   • If no cell exists at the piece's `(x, z)` → piece falls
+	 *     into the water (removed, reason `fell_to_water`).
+	 *   • If a cell exists and is empty of other chess pieces →
+	 *     piece lands safely; we re-add its chess marker.
+	 *   • If a cell exists with another chess piece on it → the
+	 *     landing piece bumps the existing one off (existing piece
+	 *     removed with reason `knocked_off`); the new piece lands.
+	 *
+	 * Returns an outcomes array so the caller can stream the result
+	 * to the client for the wing-and-land animation, in the form:
+	 *   `{ pieceId, x, z, outcome: 'landed' | 'fell' | 'bumped',
+	 *      bumpedPieceId?: string }`.
+	 *
+	 * @param {Object} game
+	 * @param {Array} airbornePieces  `{ pieceId, x, z, player }` list
+	 *   produced by `_clearLine`.
+	 * @param {Object} [options]
+	 * @param {Object} [options.activityLog]  Optional activity log to
+	 *   record fall/bump events against.
+	 * @returns {Array<Object>}  Outcomes (see above).
+	 */
+	settleAirbornePieces(game, airbornePieces, options = {}) {
+		const outcomes = [];
+		if (!Array.isArray(airbornePieces) || airbornePieces.length === 0) return outcomes;
+		if (!game || !Array.isArray(game.chessPieces)) return outcomes;
+
+		const { activityLog = null } = options;
+
+		for (const airborne of airbornePieces) {
+			const piece = game.chessPieces.find(
+				p => p && String(p.id) === String(airborne.pieceId)
+			);
+			if (!piece) {
+				// Piece was already removed by some other system
+				// (rare, but possible during heavy cascades).
+				outcomes.push({
+					pieceId: airborne.pieceId,
+					x: airborne.x,
+					z: airborne.z,
+					outcome: 'gone',
+				});
+				continue;
+			}
+
+			// The piece's position is the canonical destination; gravity
+			// never moves a piece on a cleared line (it's airborne) so
+			// this should still be `airborne.{x,z}` — guard anyway.
+			const targetX = Number.isFinite(piece.position?.x) ? piece.position.x : airborne.x;
+			const targetZ = Number.isFinite(piece.position?.z) ? piece.position.z : airborne.z;
+			const key = `${targetX},${targetZ}`;
+			const cellContents = game.board.cells[key];
+
+			if (!Array.isArray(cellContents) || cellContents.length === 0) {
+				// No cell beneath — fall into the water.
+				pieceLifecycle.removePiece(game, piece, {
+					reason: pieceLifecycle.REMOVAL_REASONS.FELL_TO_WATER,
+					activityLog,
+				});
+				outcomes.push({
+					pieceId: airborne.pieceId,
+					x: targetX,
+					z: targetZ,
+					outcome: 'fell',
+				});
+				continue;
+			}
+
+			// Look for an existing chess marker that ISN'T us. If
+			// found, that piece is knocked off.
+			const blockerMarker = cellContents.find(item =>
+				item && item.type === cells.CHESS_TYPE
+				&& String(item.pieceId || item?.chessPiece?.id || '') !== String(piece.id)
+			);
+
+			let bumpedPieceId = null;
+			if (blockerMarker) {
+				const blockerId = blockerMarker.pieceId != null
+					? String(blockerMarker.pieceId)
+					: (blockerMarker.chessPiece && blockerMarker.chessPiece.id != null
+						? String(blockerMarker.chessPiece.id)
+						: null);
+				if (blockerId) {
+					const blockerPiece = game.chessPieces.find(
+						p => p && String(p.id) === blockerId
+					);
+					if (blockerPiece) {
+						pieceLifecycle.removePiece(game, blockerPiece, {
+							reason: pieceLifecycle.REMOVAL_REASONS.KNOCKED_OFF,
+							activityLog,
+							note: `knocked off by ${piece.id}`,
+						});
+						bumpedPieceId = blockerId;
+					}
+				}
+			}
+
+			// Re-add (or refresh) our chess marker on the cell. Strip
+			// any stale marker for our own id first so we end up with
+			// at most one chess entry.
+			pieceLifecycle.relocatePiece(game, piece, { x: targetX, z: targetZ });
+
+			outcomes.push({
+				pieceId: airborne.pieceId,
+				x: targetX,
+				z: targetZ,
+				outcome: 'landed',
+				...(bumpedPieceId ? { bumpedPieceId } : {}),
+			});
+		}
+
+		return outcomes;
 	}
 
 	/**

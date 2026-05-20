@@ -58,24 +58,31 @@ function createLineClearService({ io, gameManager, broadcaster, integrityService
 	 * cannot await (legacy tests, server-restore replay). Skips the flash
 	 * animation entirely.
 	 *
-	 * @returns {{ rows: number[], cols: number[], iterations: number }}
+	 * @returns {{ rows: number[], cols: number[], iterations: number, settleOutcomes: Array }}
 	 */
 	function runImmediate(world, options = {}) {
 		const triggeredBy = options.triggeredBy || null;
 		const allRows = [];
 		const allCols = [];
+		const allSettleOutcomes = [];
 		let iterations = 0;
 		while (iterations < MAX_CASCADE_ITERATIONS) {
 			const { rows, cols } = boardManager.findClearableLines(world);
 			if (rows.length === 0 && cols.length === 0) break;
 			const applied = boardManager.applyClearedLines(world, rows, cols);
 			if (applied.rows.length === 0 && applied.cols.length === 0) break;
+			const settleOutcomes = boardManager.settleAirbornePieces(
+				world,
+				applied.airbornePieces || [],
+				{ activityLog }
+			);
 			allRows.push(...applied.rows);
 			allCols.push(...applied.cols);
+			allSettleOutcomes.push(...settleOutcomes);
 			if (triggeredBy) recordRowsCleared(world, triggeredBy, applied);
 			iterations++;
 		}
-		return { rows: allRows, cols: allCols, iterations };
+		return { rows: allRows, cols: allCols, iterations, settleOutcomes: allSettleOutcomes };
 	}
 
 	/**
@@ -90,6 +97,7 @@ function createLineClearService({ io, gameManager, broadcaster, integrityService
 	async function runCascade({ world, playerId, animate = true }) {
 		const allRows = [];
 		const allCols = [];
+		const allSettleOutcomes = [];
 		const worldId = world && world.id ? world.id : World.getWorldId();
 		let iterations = 0;
 
@@ -98,12 +106,28 @@ function createLineClearService({ io, gameManager, broadcaster, integrityService
 			if (rows.length === 0 && cols.length === 0) break;
 			if (cells.length === 0) break;
 
+			// Identify the chess pieces that are about to grow wings so
+			// the client can flap them in sync with the flash.  This
+			// uses the same cell list the server is about to strip and
+			// only includes pieces actually on those squares.
+			const airbornePieceIds = [];
+			if (Array.isArray(world.chessPieces)) {
+				const cellKeys = new Set(cells.map(c => `${c.x},${c.z}`));
+				for (const piece of world.chessPieces) {
+					if (!piece || !piece.position) continue;
+					if (cellKeys.has(`${piece.position.x},${piece.position.z}`)) {
+						airbornePieceIds.push(String(piece.id));
+					}
+				}
+			}
+
 			if (animate) {
 				io.to(worldId).emit('cells_clearing', {
 					playerId,
 					rows,
 					cols,
 					cells,
+					airbornePieceIds,
 					durationMs: FLASH_DURATION_MS,
 					iteration: iterations,
 				});
@@ -118,6 +142,16 @@ function createLineClearService({ io, gameManager, broadcaster, integrityService
 			// loop and bogus toast.
 			if (applied.rows.length === 0 && applied.cols.length === 0) break;
 
+			// Resolve airborne pieces: land safely, get knocked off, or
+			// fall into the water depending on what's under them after
+			// gravity moved cells back.
+			const settleOutcomes = boardManager.settleAirbornePieces(
+				world,
+				applied.airbornePieces || [],
+				{ activityLog }
+			);
+			allSettleOutcomes.push(...settleOutcomes);
+
 			allRows.push(...applied.rows);
 			allCols.push(...applied.cols);
 
@@ -131,6 +165,8 @@ function createLineClearService({ io, gameManager, broadcaster, integrityService
 				rows: applied.rows,
 				cols: applied.cols,
 				cellsCleared: applied.totalCellsCleared,
+				airbornePieceIds,
+				settleOutcomes,
 				playerId,
 				iteration: iterations,
 			});
@@ -152,7 +188,7 @@ function createLineClearService({ io, gameManager, broadcaster, integrityService
 			);
 		}
 
-		return { rows: allRows, cols: allCols, iterations };
+		return { rows: allRows, cols: allCols, iterations, settleOutcomes: allSettleOutcomes };
 	}
 
 	return {

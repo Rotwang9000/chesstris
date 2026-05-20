@@ -120,11 +120,14 @@ function getChessOwner(items) {
 }
 
 /**
- * Will the line-clear actually strip anything from this cell? Used to
- * decide which cells should flash before a clear and which would be a
- * no-op. Home and chess cells are protected; centre / special markers
+ * Will the **legacy** line-clear actually strip anything from this cell?
+ * Used by `BoardManager.stripClearableFromCell` and other internal
+ * helpers that haven't been migrated to the new chess-lift behaviour
+ * yet. Home and chess cells are protected; centre / special markers
  * are also preserved. Anything else (tetromino terrain, `home_converted`
  * tetrominos) counts.
+ *
+ * Prefer `isLineClearTarget` for the new airborne-piece-aware behaviour.
  */
 function isClearable(items) {
 	if (hasHome(items)) return false;
@@ -135,6 +138,50 @@ function isClearable(items) {
 			&& item.type !== SPECIAL_TYPE
 			&& item.type !== CENTRE_TYPE;
 	});
+}
+
+/**
+ * Would the **new** line-clear modify this cell?  Per the bible's
+ * updated §15.2, chess cells are *no longer* shielded — when a row
+ * clears they lose their chess marker and the piece becomes airborne
+ * (it grows wings, hovers, then attempts to land — see the bible for
+ * the full rule).  Home / centre / special markers are still
+ * preserved.  Anything else (tetromino terrain, chess markers, etc.)
+ * makes this cell a clear target.
+ *
+ * Always returns false for cells carrying a home marker because the
+ * home overlay still breaks runs and protects whatever sits on it.
+ */
+function isLineClearTarget(items) {
+	if (hasHome(items)) return false;
+	return asArray(items).some(item => {
+		if (!item) return false;
+		return item.type !== HOME_TYPE
+			&& item.type !== SPECIAL_TYPE
+			&& item.type !== CENTRE_TYPE;
+	});
+}
+
+/**
+ * Strip terrain **and chess markers** for the new line-clear behaviour.
+ * Returns `{ preserved, lifted }` where `preserved` is the cell's new
+ * contents (home / centre / special only) and `lifted` is the chess
+ * marker that was removed (or null).
+ */
+function stripForLineClear(items) {
+	const preserved = [];
+	let lifted = null;
+	for (const item of asArray(items)) {
+		if (!item) continue;
+		if (item.type === HOME_TYPE || item.type === SPECIAL_TYPE || item.type === CENTRE_TYPE) {
+			preserved.push(item);
+			continue;
+		}
+		if (item.type === CHESS_TYPE && !lifted) {
+			lifted = item;
+		}
+	}
+	return { preserved, lifted };
 }
 
 /**
@@ -215,6 +262,7 @@ module.exports = {
 	hasTerrain,
 	hasBoardCentre,
 	isClearable,
+	isLineClearTarget,
 
 	getOwner,
 	getHomeOwner,
@@ -224,4 +272,5 @@ module.exports = {
 	gravityAnchor,
 	transferOwnership,
 	stripClearable,
+	stripForLineClear,
 };

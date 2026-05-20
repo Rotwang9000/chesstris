@@ -49,6 +49,8 @@ import {
 	showTutorialMessage
 } from './createLoadingIndicator.js';
 import { resetCameraForGameplay, moveToPlayerZone, setCameraToOverview as setCameraToOverviewExtracted, flyToPosition } from './setupCamera.js';
+import { initCameraControlsHelp } from './cameraControlsHelp.js';
+import { setChessPiecesGroup as setWingsChessGroup } from './wingAnimations.js';
 import { preserveCentreMarker, translatePosition } from './centreBoardMarker.js';
 import { updateChessPieces } from './updateChessPieces.js';
 import chessPieceCreator from './chessPieceCreator.js';
@@ -295,6 +297,7 @@ function initializeScene() {
 		setChessPiecesGroup(chessPiecesGroup);
 		setPieceHighlightGroup(chessPiecesGroup);
 	}
+	setWingsChessGroup(chessPiecesGroup);
 
 	const raycaster = new THREE.Raycaster();
 	const mouse = new THREE.Vector2();
@@ -717,6 +720,11 @@ export function exposeHighlightFunctionsGlobally() {
 
 	const resetBtn = document.getElementById('reset-camera-btn');
 	if (resetBtn) resetBtn.addEventListener('click', () => resetCamera(true));
+
+	// Keyboard camera shortcuts + the "Controls" help overlay. Without
+	// these touchpad users have no way to zoom (the user explicitly hit
+	// this; see public/js/cameraControlsHelp.js for details).
+	initCameraControlsHelp(getControls, getCamera, resetCamera);
 
 	function wireExitButton() {
 		const exitBtn = document.getElementById('exit-game-sidebar-btn');
