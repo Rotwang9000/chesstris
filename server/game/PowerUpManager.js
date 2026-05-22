@@ -55,10 +55,11 @@ const MIN_TOTAL_ORBS = 0;
 const MAX_TOTAL_ORBS = 4;
 const SPAWN_PROBABILITY_PER_TICK = 0.35;
 
-// Keep orbs on the growing front (one step beyond existing cells),
-// not 6+ cells out in empty sky.
-const MIN_SPAWN_DISTANCE = 1;
-const MAX_SPAWN_DISTANCE = 12;
+// Orbs deliberately spawn in empty sky to create "bridge to me" goals.
+// Distance is from the target player's home zone, randomised so the
+// orbs spread across the world rather than clumping next to one base.
+const MIN_SPAWN_DISTANCE = 4;
+const MAX_SPAWN_DISTANCE = 14;
 const MAX_SPAWN_ATTEMPTS = 40;
 
 const PIECE_TYPE_WEIGHTS = Object.freeze({
@@ -152,33 +153,11 @@ function createPowerUpManager({
 		return Number.isFinite(n) ? Math.round(n) : NaN;
 	}
 
-	function isAdjacentToExistingBoard(world, x, z) {
-		for (const [dx, dz] of ORTHO_DIRS) {
-			const nx = x + dx;
-			const nz = z + dz;
-			const key = `${nx},${nz}`;
-			const cell = world.board?.cells?.[key];
-			if (Array.isArray(cell) && cell.length > 0) return true;
-			for (const piece of (world.chessPieces || [])) {
-				if (!piece) continue;
-				const pos = piece.position || piece;
-				if (pos && normalizeCoord(pos.x) === nx && normalizeCoord(pos.z) === nz) {
-					return true;
-				}
-			}
-		}
-		return false;
-	}
-
 	function isCellAvailableForOrb(world, x, z) {
 		const key = `${x},${z}`;
 		const cellContents = world.board?.cells?.[key];
-		// Empty host cell — first tetromino (or adjacent bridge) wins.
+		// Empty host cell — first tetromino to bridge wins.
 		if (Array.isArray(cellContents) && cellContents.length > 0) return false;
-		// Must touch existing structure so the orb is reachable in one
-		// placement; void orbs in the sky were the main "nothing happens"
-		// complaint.
-		if (!isAdjacentToExistingBoard(world, x, z)) return false;
 		const orbs = world.powerUps || [];
 		for (const orb of orbs) {
 			if (orb && normalizeCoord(orb.x) === x && normalizeCoord(orb.z) === z) return false;
@@ -189,20 +168,17 @@ function createPowerUpManager({
 	function findSpawnLocation(world, target) {
 		if (!target || !target.zone) return null;
 		const centre = homeZoneCentre(target.zone);
-		const candidates = [];
-		for (let dx = -MAX_SPAWN_DISTANCE; dx <= MAX_SPAWN_DISTANCE; dx++) {
-			for (let dz = -MAX_SPAWN_DISTANCE; dz <= MAX_SPAWN_DISTANCE; dz++) {
-				const dist = Math.hypot(dx, dz);
-				if (dist < MIN_SPAWN_DISTANCE || dist > MAX_SPAWN_DISTANCE) continue;
-				const x = Math.round(centre.x + dx);
-				const z = Math.round(centre.z + dz);
-				if (isCellAvailableForOrb(world, x, z)) {
-					candidates.push({ x, z });
-				}
+		for (let attempt = 0; attempt < MAX_SPAWN_ATTEMPTS; attempt++) {
+			const angle = Math.random() * Math.PI * 2;
+			const distance = MIN_SPAWN_DISTANCE
+				+ Math.random() * (MAX_SPAWN_DISTANCE - MIN_SPAWN_DISTANCE);
+			const x = Math.round(centre.x + Math.cos(angle) * distance);
+			const z = Math.round(centre.z + Math.sin(angle) * distance);
+			if (isCellAvailableForOrb(world, x, z)) {
+				return { x, z };
 			}
 		}
-		if (candidates.length === 0) return null;
-		return candidates[Math.floor(Math.random() * candidates.length)];
+		return null;
 	}
 
 	function maxActiveOrbs(world) {
@@ -292,34 +268,10 @@ function createPowerUpManager({
 		return orb;
 	}
 
-	function pruneUnreachable(world) {
-		const orbs = ensurePowerUps(world);
-		if (orbs.length === 0) return [];
-		const removed = [];
-		const kept = [];
-		for (const orb of orbs) {
-			if (!orb) continue;
-			const x = normalizeCoord(orb.x);
-			const z = normalizeCoord(orb.z);
-			if (!Number.isFinite(x) || !Number.isFinite(z)
-				|| !isAdjacentToExistingBoard(world, x, z)) {
-				removed.push(orb);
-			} else {
-				kept.push(orb);
-			}
-		}
-		if (removed.length > 0) {
-			world.powerUps = kept;
-			persistence.markDirty();
-		}
-		return removed;
-	}
-
 	function tick({ now = Date.now() } = {}) {
 		const world = World.getWorld();
 		if (!world) return { spawned: null, expired: [] };
 		const expired = pruneExpired(world, now);
-		pruneUnreachable(world);
 		const spawned = trySpawnOne(world, now);
 		return { spawned, expired };
 	}
@@ -435,21 +387,12 @@ function createPowerUpManager({
 		return Array.isArray(world?.powerUps) ? world.powerUps.slice() : [];
 	}
 
-	function pruneStaleOrbs(now = Date.now()) {
-		const world = World.getWorld();
-		if (!world) return { expired: [], unreachable: [] };
-		const expired = pruneExpired(world, now);
-		const unreachable = pruneUnreachable(world);
-		return { expired, unreachable };
-	}
-
 	return {
 		tick,
 		tryClaimAtCell,
 		claimAcrossPlacement,
 		listOrbs,
 		reset,
-		pruneStaleOrbs,
 		// Exposed for tests / inspection.
 		PIECE_TYPE_WEIGHTS,
 		ORB_LIFETIME_MS,
@@ -463,11 +406,9 @@ function createPowerUpManager({
 			pickTargetPlayer,
 			findSpawnLocation,
 			isCellAvailableForOrb,
-			isAdjacentToExistingBoard,
 			normalizeCoord,
 			maxActiveOrbs,
 			pruneExpired,
-			pruneUnreachable,
 			trySpawnOne,
 			countPiecesByPlayer,
 		},

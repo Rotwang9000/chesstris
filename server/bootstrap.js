@@ -41,6 +41,7 @@ const { createGhostPlayerSweepService } = require('./world/ghostPlayerSweep');
 const { createKingCaptureService } = require('./king/capture');
 const { createKingDuelService } = require('./king/duels');
 const { createKingDetonationService } = require('./king/detonation');
+const { createKingLifeService } = require('./king/kingLives');
 const { createLoneKingSweepService } = require('./king/loneKingSweep');
 const { createActivityLogService } = require('./world/activityLog');
 const { createLineClearService } = require('./game/LineClearService');
@@ -142,6 +143,21 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		activityLog,
 	});
 
+	const kingLifeService = createKingLifeService({
+		io,
+		broadcaster,
+		persistence,
+		activityLog,
+	});
+	// Expose the king-life service on the GameManager so the deep
+	// removePiece callers (BoardManager.settleAirbornePieces,
+	// IslandManager.checkForIslandsAfterRowClear, integrity sweep)
+	// can pass it into pieces.removePiece without us threading a
+	// fresh constructor parameter through five layers of classes.
+	gameManager.kingLifeService = kingLifeService;
+	gameManager.boardManager.kingLifeService = kingLifeService;
+	gameManager.islandManager.kingLifeService = kingLifeService;
+
 	const lineClearService = createLineClearService({
 		io,
 		gameManager,
@@ -164,15 +180,6 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		persistence,
 		activityLog,
 	});
-	if (typeof powerUpManager.pruneStaleOrbs === 'function') {
-		const pruned = powerUpManager.pruneStaleOrbs();
-		if (pruned.unreachable?.length || pruned.expired?.length) {
-			logger.info(
-				{ expired: pruned.expired.length, unreachable: pruned.unreachable.length },
-				'[PowerUp] pruned stale orbs on boot'
-			);
-		}
-	}
 
 	const aiActions = createAiActions({
 		io,

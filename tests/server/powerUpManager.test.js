@@ -83,9 +83,6 @@ describe('PowerUpManager', () => {
 
 		const manager = createPowerUpManager({ io, broadcaster, persistence, activityLog });
 		const world = World.getWorld();
-		// Give each home zone a board foothold so spawn locations are reachable.
-		world.board.cells['4,1'] = [{ type: 'tetromino', player: 'p1', placedAt: Date.now() }];
-		world.board.cells['44,1'] = [{ type: 'tetromino', player: 'p2', placedAt: Date.now() }];
 
 		const randomSpy = jest.spyOn(Math, 'random').mockReturnValue(0.1);
 		const spawned = manager._internals.trySpawnOne(world);
@@ -223,19 +220,6 @@ describe('PowerUpManager', () => {
 		// With weights 1/(1+12) vs 1/(1+1) — p2 should win ~87% of the
 		// time. Use a generous threshold so we don't flake.
 		expect(p2Wins).toBeGreaterThan(samples * 0.6);
-	});
-
-	test('orbs do not spawn in empty void — must neighbour existing board cells', () => {
-		const world = seedWorld();
-		const io = makeIo();
-		const manager = createPowerUpManager({
-			io, broadcaster: makeBroadcaster(), persistence: makePersistence(),
-		});
-
-		expect(manager._internals.isCellAvailableForOrb(world, 99, 99)).toBe(false);
-		world.board.cells['10,10'] = [{ type: 'tetromino', player: 'p1', placedAt: Date.now() }];
-		expect(manager._internals.isCellAvailableForOrb(world, 10, 10)).toBe(false);
-		expect(manager._internals.isCellAvailableForOrb(world, 11, 10)).toBe(true);
 	});
 
 	test('orbs do not spawn on top of existing occupied cells', () => {

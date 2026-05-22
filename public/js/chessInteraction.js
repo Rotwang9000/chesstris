@@ -14,6 +14,7 @@ import {
 import { boardFunctions } from './boardFunctions.js';
 import { highlightSinglePiece, clearSinglePieceHighlight } from './pieceHighlightManager.js';
 import { updateUnifiedPlayerBar } from './unifiedPlayerBar.js';
+import { setSelectedPiece as setInfoCardPiece } from './selectedPieceCard.js';
 import { translatePosition } from './centreBoardMarker.js';
 import * as NetworkManager from './utils/networkManager.js';
 import { updateGameStatusDisplay } from './createLoadingIndicator.js';
@@ -235,6 +236,7 @@ export function selectChessPiece(piece) {
 	highlightSinglePiece(piece, { mode: 'selected' });
 	showValidMoves(piece);
 	updateUnifiedPlayerBar(gameState);
+	try { setInfoCardPiece(piece); } catch (_e) { /* card is non-critical */ }
 
 	const pieceType = String(piece.userData.pieceType || piece.userData.type || '').toUpperCase();
 	const isOwn = String(piece.userData.player) === String(gameState.currentPlayer);
@@ -368,6 +370,7 @@ export function clearChessSelection() {
 	gameState.validMoves = [];
 	clearMoveHighlights();
 	hideDetonateButton();
+	try { setInfoCardPiece(null); } catch (_e) { /* card is non-critical */ }
 }
 
 // ── Movement ────────────────────────────────────────────────────────────────

@@ -775,10 +775,12 @@ class BoardManager {
 			const cellContents = game.board.cells[key];
 
 			if (!Array.isArray(cellContents) || cellContents.length === 0) {
-				// No cell beneath — fall into the water.
+				// No cell beneath — fall into the water.  Kings get a
+				// chance to spend a life and respawn at home first.
 				pieceLifecycle.removePiece(game, piece, {
 					reason: pieceLifecycle.REMOVAL_REASONS.FELL_TO_WATER,
 					activityLog,
+					kingLifeService: this.kingLifeService || null,
 				});
 				outcomes.push({
 					pieceId: airborne.pieceId,
@@ -811,6 +813,7 @@ class BoardManager {
 						pieceLifecycle.removePiece(game, blockerPiece, {
 							reason: pieceLifecycle.REMOVAL_REASONS.KNOCKED_OFF,
 							activityLog,
+							kingLifeService: this.kingLifeService || null,
 							note: `knocked off by ${piece.id}`,
 						});
 						bumpedPieceId = blockerId;

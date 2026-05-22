@@ -561,6 +561,69 @@ function handleKingCaptured(payload) {
 	}
 }
 
+function handleKingRespawned(payload) {
+	try {
+		if (!payload || !payload.playerId) return;
+		const isLocal = String(payload.playerId) === String(gameState.localPlayerId);
+		const remaining = Number(payload.remainingLives);
+		const total = Number(payload.totalLives) || 3;
+		const safeRemaining = Number.isFinite(remaining) ? remaining : (total - 1);
+		const reason = String(payload.reason || 'unknown').replace(/_/g, ' ');
+		const livesWord = safeRemaining === 1 ? 'life' : 'lives';
+
+		if (isLocal) {
+			showToastMessage(
+				`Your king fell (${reason})! ${safeRemaining} ${livesWord} left.`,
+				{ variant: 'alert', duration: 6500 }
+			);
+		} else {
+			showToastMessage(
+				`${payload.playerName || 'A player'}'s king fell — ${safeRemaining} ${livesWord} left.`,
+				{ duration: 4500 }
+			);
+		}
+		try { playSound('kingFall', { gain: isLocal ? 1 : 0.55 }); }
+		catch (_e) { /* sound is best-effort */ }
+
+		// Sync local state so the player bar + sidebar reflect the
+		// remaining lives without waiting for the next full game_update.
+		if (gameState.players && gameState.players[payload.playerId]) {
+			gameState.players[payload.playerId].kingLives = safeRemaining;
+		}
+
+		if (typeof window.updateBoardVisuals === 'function') {
+			try { window.updateBoardVisuals(); } catch (_e) { /* best-effort */ }
+		}
+	} catch (e) {
+		console.error('Error handling king_respawned:', e);
+	}
+}
+
+function handleKingEliminated(payload) {
+	try {
+		if (!payload || !payload.playerId) return;
+		const isLocal = String(payload.playerId) === String(gameState.localPlayerId);
+		if (gameState.players && gameState.players[payload.playerId]) {
+			gameState.players[payload.playerId].eliminated = true;
+			gameState.players[payload.playerId].kingLives = 0;
+		}
+		if (isLocal) {
+			showToastMessage(
+				'Your king has fallen for the last time. Game over!',
+				{ variant: 'alert', duration: 8000 }
+			);
+		} else {
+			showToastMessage(
+				`${payload.playerName || 'A player'} has been eliminated.`,
+				{ duration: 4500 }
+			);
+		}
+		try { playSound('kingFall'); } catch (_e) { /* sound is best-effort */ }
+	} catch (e) {
+		console.error('Error handling king_eliminated:', e);
+	}
+}
+
 function handleSuicidalPawn(payload) {
 	try {
 		const { x, z, remaining } = payload || {};
@@ -672,6 +735,8 @@ export function setupNetworkEvents(hooks = {}) {
 	NetworkManager.on('new_tetromino', (payload) => handleNewTetromino(payload, hooks));
 	NetworkManager.on('pawn_promotion_available', handlePawnPromotionAvailable);
 	NetworkManager.on('king_captured', handleKingCaptured);
+	NetworkManager.on('king_respawned', handleKingRespawned);
+	NetworkManager.on('king_eliminated', handleKingEliminated);
 	NetworkManager.on('suicidal_pawn', handleSuicidalPawn);
 	NetworkManager.on('king_duel_start', handleKingDuelStart);
 	NetworkManager.on('king_duel_round_result', safe('king_duel_round_result', handleDuelRoundResult));

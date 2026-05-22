@@ -171,6 +171,18 @@ function removePiece(world, pieceOrId, ctx = {}) {
 	const piece = world.chessPieces[idx];
 	const pos = piecePosition(piece);
 
+	// Give kings a chance to spend a life instead of dying.  The hook
+	// is opt-in (callers pass `ctx.kingLifeService`) so unit tests and
+	// non-king flows are unaffected.  If the king is respawned, the
+	// piece object has been re-positioned and re-anchored in place —
+	// we must NOT splice it out of `world.chessPieces`.
+	if (ctx.kingLifeService && typeof ctx.kingLifeService.handleKingDeath === 'function') {
+		const outcome = ctx.kingLifeService.handleKingDeath(piece, { reason });
+		if (outcome && outcome.respawned) {
+			return null;
+		}
+	}
+
 	stripChessMarker(world, piece);
 	world.chessPieces.splice(idx, 1);
 
@@ -313,6 +325,17 @@ function removePiecesAtCells(world, playerId, cells, ctx = {}) {
 		if (!pos) continue;
 		if (!cellSet.has(`${pos.x},${pos.z}`)) continue;
 		if (typeof ctx.protect === 'function' && ctx.protect(piece, pos)) continue;
+
+		// Give kings a chance to spend a life and respawn at home
+		// instead of being deleted with the island.  When the king
+		// survives, leave it in `chessPieces` (the service already
+		// re-anchored it) and skip the splice.
+		if (ctx.kingLifeService
+			&& isKing(piece)
+			&& typeof ctx.kingLifeService.handleKingDeath === 'function') {
+			const outcome = ctx.kingLifeService.handleKingDeath(piece, { reason });
+			if (outcome && outcome.respawned) continue;
+		}
 
 		stripChessMarker(world, piece);
 		world.chessPieces.splice(i, 1);

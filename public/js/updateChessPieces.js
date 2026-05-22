@@ -431,6 +431,13 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 					pieceMesh.userData.color = getChessPieceColor(piece, gameState);
 					pieceMesh.userData.hasMoved = !!piece.hasMoved;
 					pieceMesh.userData.orientation = orientationVal;
+					// Mirror per-piece stats so the selected-piece info
+					// card can render immediately on click without
+					// re-querying gameState.
+					pieceMesh.userData.moveCount = Number.isFinite(piece.moveCount) ? piece.moveCount : 0;
+					pieceMesh.userData.captureCount = Number.isFinite(piece.captureCount) ? piece.captureCount : 0;
+					pieceMesh.userData.distanceTravelled = Number.isFinite(piece.distanceTravelled) ? piece.distanceTravelled : 0;
+					pieceMesh.userData.forwardDistance = Number.isFinite(piece.forwardDistance) ? piece.forwardDistance : 0;
 					
 					// Add an invisible, larger hitbox so clicks reliably register on pieces (esp. from far camera angles)
 					try {

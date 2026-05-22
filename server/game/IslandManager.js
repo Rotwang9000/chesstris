@@ -408,6 +408,7 @@ class IslandManager {
 				{
 					reason: pieces.REMOVAL_REASONS.ISLAND_DECAY,
 					activityLog: this.activityLog || null,
+					kingLifeService: this.kingLifeService || null,
 					protect: (_piece, pos) => isProtectedHomeCell(playerId, pos.x, pos.z),
 				}
 			);

@@ -336,12 +336,45 @@ step-by-step "ship tetches.com on 95.216.77.237" runbook.
   (0.94³, matching board cells) plus wireframe + tether beam;
   `translatePosition` keeps orbs aligned with the board grid.
   Claims fire when a tetromino lands on the orb cell **or** on an
-  adjacent cell; spawns only beside existing board structure; caps
-  lowered (max 4 orbs, ~35% spawn chance / 45 s tick).
+  adjacent cell. Orbs spawn in empty sky 4–14 cells from the
+  target home zone — players bridge to them. Caps lowered (max 4
+  orbs, ~35% spawn chance / 45 s tick).
 - **Code shape + bundle.** `NetworkManagerClass` →
   `socketEventBridge` + `eventBus`; `ChessManager` →
   `chess/moveValidation.js`; `npm run build:client` →
   `public/dist/app.bundle.js` (served via `indexHtmlBundleSwap`).
+
+### King lives + selected-piece info card (May 2026)
+
+- **King lives.** Each player gets `KING_INITIAL_LIVES = 3`.
+  When a king is about to be removed for an unintentional reason
+  (row-clear → `fell_to_water`, island decay, knocked off by a
+  landing piece) `server/king/kingLives.js` consumes one life,
+  re-anchors the king at the home-zone centre on a fresh
+  `king_anchor` cell, and emits `king_respawned` (with
+  `remainingLives` + reason). On the last life the player is
+  marked eliminated and `king_eliminated` fires for the existing
+  game-over flow. Intentional removals (`captured`, `detonated`,
+  `king_detonation_collateral`, `suicidal_pawn`, `player_left`,
+  `world_reset`) bypass the service. Hooked into
+  `BoardManager.settleAirbornePieces`,
+  `IslandManager.checkForIslandsAfterRowClear`, and
+  `pieces.removePiece` via an opt-in `kingLifeService` ctx field
+  so unit tests stay unaffected. Tests:
+  `tests/server/kingLives.test.js` (5).
+
+- **Selected-piece info card.**
+  `public/js/selectedPieceCard.js` shows a small bottom-right
+  panel whenever the local player has a chess piece selected.
+  Reads `moveCount`, `captureCount`, `distanceTravelled` and
+  `forwardDistance` (pawns only) plus `kingLives` (kings only)
+  from `gameState.chessPieces`, refreshing every 500 ms so
+  numbers update after server-confirmed moves. The server now
+  bumps `piece.distanceTravelled` (Manhattan delta) and
+  `piece.captureCount` in `ChessManager.executeChessMove`; the
+  mesh `userData` carries the same fields so the card draws
+  immediately on click without waiting for the next
+  `game_update`.
 
 **Still on the list:**
 

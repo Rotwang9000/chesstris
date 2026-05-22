@@ -547,11 +547,17 @@ class ChessManager {
 				delete game.board.cells[fromKey];
 			}
 			
-			// Update the piece position
+			// Update the piece position + per-piece move/capture stats
+			// (used by the selected-piece info card on the client).
+			const fromDist = Math.abs(toX - fromX) + Math.abs(toZ - fromZ);
 			piece.position.x = toX;
 			piece.position.z = toZ;
 			piece.hasMoved = true;
 			piece.moveCount = (piece.moveCount || 0) + 1;
+			piece.distanceTravelled = (piece.distanceTravelled || 0) + fromDist;
+			if (capture) {
+				piece.captureCount = (piece.captureCount || 0) + 1;
+			}
 
 			// Track net forward distance for pawn promotion
 			if (piece.type === 'PAWN') {

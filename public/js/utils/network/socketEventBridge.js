@@ -39,6 +39,8 @@ const SIMPLE_FORWARD_EVENTS = Object.freeze([
 	'chessFailed',
 	'pawn_promotion_available',
 	'king_captured',
+	'king_respawned',
+	'king_eliminated',
 	'suicidal_pawn',
 	'pawn_detonation',
 	'king_detonation',
