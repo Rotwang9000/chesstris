@@ -435,12 +435,21 @@ function createPowerUpManager({
 		return Array.isArray(world?.powerUps) ? world.powerUps.slice() : [];
 	}
 
+	function pruneStaleOrbs(now = Date.now()) {
+		const world = World.getWorld();
+		if (!world) return { expired: [], unreachable: [] };
+		const expired = pruneExpired(world, now);
+		const unreachable = pruneUnreachable(world);
+		return { expired, unreachable };
+	}
+
 	return {
 		tick,
 		tryClaimAtCell,
 		claimAcrossPlacement,
 		listOrbs,
 		reset,
+		pruneStaleOrbs,
 		// Exposed for tests / inspection.
 		PIECE_TYPE_WEIGHTS,
 		ORB_LIFETIME_MS,

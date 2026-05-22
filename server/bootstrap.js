@@ -164,6 +164,15 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		persistence,
 		activityLog,
 	});
+	if (typeof powerUpManager.pruneStaleOrbs === 'function') {
+		const pruned = powerUpManager.pruneStaleOrbs();
+		if (pruned.unreachable?.length || pruned.expired?.length) {
+			logger.info(
+				{ expired: pruned.expired.length, unreachable: pruned.unreachable.length },
+				'[PowerUp] pruned stale orbs on boot'
+			);
+		}
+	}
 
 	const aiActions = createAiActions({
 		io,
