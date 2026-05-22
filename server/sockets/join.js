@@ -61,6 +61,19 @@ function registerJoinHandlers(socket, ctx) {
 
 			broadcaster.emitFullStateTo(socket);
 
+			// Send the captured-piece basket so reconnects + first
+			// joins both see what they already hold. We don't bake
+			// this into `game_update` because the basket is per-player
+			// private state.
+			if (typeof broadcaster.emitCapturedBasket === 'function') {
+				try { broadcaster.emitCapturedBasket(playerId); }
+				catch (basketErr) { console.warn('[Join] basket emit failed:', basketErr.message); }
+			}
+			if (typeof broadcaster.emitPromotionCredits === 'function') {
+				try { broadcaster.emitPromotionCredits(playerId); }
+				catch (creditErr) { console.warn('[Join] credits emit failed:', creditErr.message); }
+			}
+
 			if (callback) {
 				callback({
 					success: true,

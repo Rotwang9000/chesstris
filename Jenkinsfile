@@ -3,8 +3,8 @@ pipeline {
 
 	environment {
 		NODE_VERSION = '21'
-		STAGING_DIR  = '/var/www/shaktris.staging'
-		PROD_DIR     = '/var/www/shaktris.live'
+		STAGING_DIR  = '/var/www/tetches.staging'
+		PROD_DIR     = '/var/www/tetches.live'
 		STAGING_PORT = '3661'
 		PROD_PORT    = '3666'
 	}
@@ -37,6 +37,11 @@ pipeline {
 
 		stage('Lint Check') {
 			steps {
+				// Full ESLint pass on the server-side codebase. The
+				// public/js bundle still has its old syntax-only
+				// check below as a placeholder until that pass is
+				// migrated to ESLint too.
+				sh 'npm run lint'
 				sh 'node --input-type=module --check < public/js/gameContext.js'
 				sh 'node --input-type=module --check < public/js/enhanced-gameCore.js'
 				sh 'node --input-type=module --check < public/js/rendererManager.js'
@@ -89,7 +94,7 @@ pipeline {
 			}
 			post {
 				success {
-					echo 'Staging deployment complete: https://staging.shaktris.com'
+					echo 'Staging deployment complete: https://staging.tetches.com'
 				}
 				failure {
 					echo 'Staging deployment FAILED'
@@ -102,14 +107,14 @@ pipeline {
 				branch 'main'
 			}
 			steps {
-				input message: 'Deploy to production (shaktris.com)?', ok: 'Deploy'
+				input message: 'Deploy to production (tetches.com)?', ok: 'Deploy'
 				sh '''
 					bash scripts/deploy.sh production
 				'''
 			}
 			post {
 				success {
-					echo 'Production deployment complete: https://shaktris.com'
+					echo 'Production deployment complete: https://tetches.com'
 				}
 				failure {
 					echo 'Production deployment FAILED'

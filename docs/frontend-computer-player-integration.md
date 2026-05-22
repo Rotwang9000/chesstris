@@ -1,10 +1,10 @@
 # Frontend Computer Player Integration Guide
 
-This document outlines how the frontend should integrate with the computer player system in Shaktris.
+This document outlines how the frontend should integrate with the computer player system in Tetches.
 
 ## Overview
 
-The Shaktris game supports two types of computer players:
+The Tetches game supports two types of computer players:
 1. **Built-in computer players** - Run directly on the server
 2. **External computer players** - Connect via the RESTful API
 

@@ -9,7 +9,7 @@ function ensureGameOverPulseStyles() {
 	const style = document.createElement('style');
 	style.id = 'game-over-pulse-style';
 	style.textContent = `
-		@keyframes shaktrisGameOverPulse {
+		@keyframes tetchesGameOverPulse {
 			0% { transform: translate(-50%, -50%) scale(1); opacity: 0.85; }
 			50% { transform: translate(-50%, -50%) scale(1.12); opacity: 1; }
 			100% { transform: translate(-50%, -50%) scale(1); opacity: 0.85; }
@@ -39,7 +39,7 @@ export function showGameOverPulseOverlay(message = 'GAME OVER') {
 			pointerEvents: 'none',
 			userSelect: 'none',
 			textTransform: 'uppercase',
-			animation: 'shaktrisGameOverPulse 1s ease-in-out infinite',
+			animation: 'tetchesGameOverPulse 1s ease-in-out infinite',
 		});
 		document.body.appendChild(overlay);
 	}

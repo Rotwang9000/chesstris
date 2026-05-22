@@ -1,6 +1,6 @@
 {
-	"short_name": "Shaktris",
-	"name": "Shaktris - Chess meets Tetris",
+	"short_name": "Tetches",
+	"name": "Tetches - Chess meets Tetris",
 	"icons": [
 		{
 			"src": "img/favicon-16x16.png",

@@ -1,6 +1,6 @@
-# Shaktris API Reference
+# Tetches API Reference
 
-This document describes the **actual** wire contract between Shaktris clients and the server.
+This document describes the **actual** wire contract between Tetches clients and the server.
 
 > Phase 3 (May 2026) consolidated server state into a single authoritative
 > `World` (`server/world/World.js`).  There is now exactly **one** game on

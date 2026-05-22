@@ -192,7 +192,7 @@ export default class NetworkManager {
 
 			socket.on('set_session', (data) => {
 				if (data && data.playerId) {
-					document.cookie = `shaktris_player_id=${data.playerId};path=/;max-age=${60 * 60 * 24 * 30};SameSite=Lax`;
+					document.cookie = `tetches_player_id=${data.playerId};path=/;max-age=${60 * 60 * 24 * 30};SameSite=Lax`;
 					console.log('NetworkManager: Session cookie set for', data.playerId);
 				}
 			});
@@ -308,6 +308,44 @@ export default class NetworkManager {
 
 			socket.on('activity_log_snapshot', (data) => {
 				this.emitEvent('activity_log_snapshot', data);
+			});
+
+			// Per-player captured-piece basket. Targets a single
+			// socket (the basket owner), not a broadcast — see
+			// `broadcasts.emitCapturedBasket`. Forwarded here so the
+			// game-core listener can surface it in the UI.
+			socket.on('captured_basket', (data) => {
+				this.emitEvent('captured_basket', data);
+			});
+
+			// Power-up orbs (struggling-player aid pickups). Server
+			// fans out `powerup_spawned` / `powerup_claimed` /
+			// `powerup_expired` as the orb lifecycle progresses; the
+			// game-core listener mutates `gameState.powerUps` so the
+			// renderer can draw / remove the floating spheres.
+			socket.on('powerup_spawned', (data) => {
+				this.emitEvent('powerup_spawned', data);
+			});
+			socket.on('powerup_claimed', (data) => {
+				this.emitEvent('powerup_claimed', data);
+			});
+			socket.on('powerup_expired', (data) => {
+				this.emitEvent('powerup_expired', data);
+			});
+
+			// Promotion credits. Server pushes the full list on join /
+			// after every credit lifecycle event; individual events
+			// (`promotion_credit_added` / `_redeemed`) are also forwarded
+			// so the UI can toast + animate without needing a full
+			// `promotion_credits` payload.
+			socket.on('promotion_credits', (data) => {
+				this.emitEvent('promotion_credits', data);
+			});
+			socket.on('promotion_credit_added', (data) => {
+				this.emitEvent('promotion_credit_added', data);
+			});
+			socket.on('promotion_credit_redeemed', (data) => {
+				this.emitEvent('promotion_credit_redeemed', data);
 			});
 
 				socket.on('chessFailed', (data) => {
@@ -722,11 +760,11 @@ export default class NetworkManager {
 	}
 
 	_clearSession() {
-		document.cookie = 'shaktris_player_id=;path=/;max-age=0';
+		document.cookie = 'tetches_player_id=;path=/;max-age=0';
 		this.state.gameId = null;
 		this.state.hasJoinedGame = false;
 		this.state.playerId = null;
-		localStorage.removeItem('shaktris_game_key');
+		localStorage.removeItem('tetches_game_key');
 	}
 
 	/**
@@ -735,8 +773,43 @@ export default class NetworkManager {
 	 * @param {string} chosenType - QUEEN, ROOK, BISHOP, or KNIGHT
 	 * @returns {Promise<Object>}
 	 */
-	promotePawn(pieceId, chosenType) {
-		return this.sendMessage('promote_pawn', { pieceId, chosenType });
+	/**
+	 * Bank a promotion credit for `pieceId` (the pawn must already have
+	 * walked the full promotion distance). The server-side chess_move
+	 * handler now auto-banks credits the moment a pawn finishes its
+	 * walk; this method exists for legacy clients and explicit
+	 * "promote now" buttons that want to convert before the next move.
+	 *
+	 * Use `redeemPromotion(...)` afterwards to spend the credit against
+	 * a captured-piece basket entry.
+	 */
+	promotePawn(pieceId) {
+		return this.sendMessage('promote_pawn', { pieceId });
+	}
+
+	/**
+	 * Redeem a banked promotion credit by spawning a captured piece
+	 * at the credit's original cell (or nearest-to-king if the cell
+	 * is gone). Consumes one matching basket entry. Uses an explicit
+	 * callback so the caller's UI can react to success / failure
+	 * without waiting on a full state broadcast.
+	 *
+	 * @param {string} capturedType  'QUEEN' | 'ROOK' | 'BISHOP' | 'KNIGHT'
+	 * @param {string} [creditId]    Specific credit to redeem; defaults to oldest.
+	 * @param {Function} callback    Invoked with the server ack payload.
+	 */
+	redeemPromotion(capturedType, creditId, callback) {
+		if (!this.isConnected() || !this.socket) {
+			if (typeof callback === 'function') {
+				callback({ success: false, error: 'Not connected' });
+			}
+			return;
+		}
+		const payload = { capturedType };
+		if (creditId) payload.creditId = creditId;
+		this.socket.emit('redeem_promotion', payload, (ack) => {
+			if (typeof callback === 'function') callback(ack);
+		});
 	}
 
 	/**

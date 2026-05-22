@@ -1,5 +1,5 @@
 /**
- * Centralised game constants for Shaktris.
+ * Centralised game constants for Tetches.
  *
  * `docs/players-bible.md` is the canonical reference for the *meaning* of these
  * values. When changing a tunable here, update the bible too.

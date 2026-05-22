@@ -42,7 +42,7 @@ function waitFor(conditionFn, timeoutMs = 8000, intervalMs = 50) {
 }
 
 function parseServerPortFromOutput(output) {
-	const match = output.match(/Shaktris server running on port\s+(\d+)/i);
+	const match = output.match(/Tetches server running on port\s+(\d+)/i);
 	if (!match) return null;
 	return Number(match[1]);
 }

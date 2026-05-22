@@ -1,6 +1,6 @@
-# Shaktris Computer Player API Troubleshooting Guide
+# Tetches Computer Player API Troubleshooting Guide
 
-This document provides solutions to common issues encountered when working with the Shaktris Computer Player API.
+This document provides solutions to common issues encountered when working with the Tetches Computer Player API.
 
 ## API Connection Issues
 
@@ -8,7 +8,7 @@ This document provides solutions to common issues encountered when working with 
 
 If you're receiving 404 errors when trying to access API endpoints:
 
-1. **Check the server is running**: Ensure the Shaktris server is running with `npm run dev`
+1. **Check the server is running**: Ensure the Tetches server is running with `npm run dev`
 2. **Verify API URL**: Make sure you're using the correct API URL (default: `http://localhost:3020/api`)
 3. **Check endpoint paths**: Verify that you're using the correct endpoint paths as documented in `docs/computer-player-api.md`
 4. **API routes loaded**: Ensure the API routes are properly loaded in the server.js file
@@ -137,7 +137,7 @@ If you continue to experience issues after trying these troubleshooting steps:
 
 1. Check the GitHub repository issues section
 2. Join our Discord community for real-time support
-3. Contact support@shaktris.com with details of your issue
+3. Contact support@tetches.com with details of your issue
 
 Remember to include:
 - Error messages

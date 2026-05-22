@@ -1,5 +1,5 @@
 /**
- * Shaktris World — the single source of truth for the live game on the
+ * Tetches World — the single source of truth for the live game on the
  * server. Everything else (sockets, AI tick loops, persistence, REST API)
  * derives from or mutates this one object.
  *
@@ -111,6 +111,13 @@ function freshWorld(id = GLOBAL_WORLD_ID) {
 		// Most recent globally-broadcast action (small enough to be safely
 		// included in `game_update` deltas).
 		lastAction: null,
+
+		// Active power-up orbs (struggling-player aid pickups). Spawned
+		// by `PowerUpManager` and claimed when a tetromino lands on the
+		// orb cell. Deliberately mutable in-place: persistence captures
+		// them on the next save, but a server-restart that drops them is
+		// harmless (they regenerate within a minute).
+		powerUps: [],
 	};
 }
 
@@ -139,6 +146,23 @@ function createPlayerRecord(playerId, overrides = {}) {
 
 		balance: 0,
 		capturedStyles: [],
+
+		// Pieces captured from opponents (other than pawns). Each entry
+		// records { type, originalOwner, originalOwnerName, capturedAt }.
+		// Used by the promotion-redeem flow: a pawn that walks the full
+		// promotion distance becomes a credit; the player can later
+		// spend a credit + one matching basket entry to deploy that
+		// captured piece.
+		capturedBasket: [],
+
+		// Banked promotion credits — one entry per pawn that completed
+		// the promotion walk. Format:
+		//   { id, originalX, originalZ, createdAt }
+		// Redeemed via `redeem_promotion { creditId, capturedType }`
+		// which spawns the chosen captured piece at the original cell
+		// (or the nearest owned cell to the king if the original is
+		// gone). Persistent across sessions.
+		promotionCredits: [],
 
 		// Cooldowns
 		lastTetrominoPlacement: null,
@@ -281,13 +305,24 @@ function restoreWorldFromSnapshot(snapshot) {
 		throw new Error('restoreWorldFromSnapshot: snapshot missing required fields');
 	}
 	const fresh = freshWorld(snapshot.id);
+	const players = snapshot.players || {};
+	// Backfill new player-record fields onto restored records so we
+	// don't have to scatter null-guards across the server when a new
+	// field is introduced. Cheap (constant time per player on boot).
+	for (const pid of Object.keys(players)) {
+		const p = players[pid];
+		if (!p) continue;
+		if (!Array.isArray(p.capturedBasket)) p.capturedBasket = [];
+		if (!Array.isArray(p.promotionCredits)) p.promotionCredits = [];
+		if (!Array.isArray(p.capturedStyles)) p.capturedStyles = [];
+	}
 	world = {
 		...fresh,
 		...snapshot,
 		board: snapshot.board,
 		chessPieces: Array.isArray(snapshot.chessPieces) ? snapshot.chessPieces : [],
 		islands: Array.isArray(snapshot.islands) ? snapshot.islands : [],
-		players: snapshot.players || {},
+		players,
 		homeZones: snapshot.homeZones || {},
 		currentTurns: snapshot.currentTurns || {},
 		kingPrison: Array.isArray(snapshot.kingPrison) ? snapshot.kingPrison : [],
@@ -297,6 +332,7 @@ function restoreWorldFromSnapshot(snapshot) {
 			: {},
 		activityLog: Array.isArray(snapshot.activityLog) ? snapshot.activityLog : [],
 		_activityLogNextId: Number.isFinite(snapshot._activityLogNextId) ? snapshot._activityLogNextId : 1,
+		powerUps: Array.isArray(snapshot.powerUps) ? snapshot.powerUps : [],
 	};
 	dirty = false;
 }

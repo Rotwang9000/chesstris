@@ -4,7 +4,7 @@ This document outlines the visual upgrade process from the minimal game core to 
 
 ## Overview
 
-The enhanced version of Shaktris features a Russian/Byzantine visual theme with:
+The enhanced version of Tetches features a Russian/Byzantine visual theme with:
 
 1. Stylized chess pieces with onion domes and Russian architectural elements
 2. A light blue sky with wispy clouds

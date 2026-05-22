@@ -480,7 +480,7 @@ export function setupLights(scene, options = {}) {
 	const DECORATION_NAMES = new Set([
 		'starfield', 'cuteShapes', 'cloudBed', 'clouds',
 		'sunDecoration', 'skyClouds', 'distantMountains', 'birds',
-		'ambientParticles', 'shaktris-water', 'shaktris-water-glow',
+		'ambientParticles', 'tetches-water', 'tetches-water-glow',
 	]);
 	if (scene && Array.isArray(scene.children)) {
 		[...scene.children].forEach(child => {
@@ -604,14 +604,14 @@ export function setupLights(scene, options = {}) {
  * so the floating-island board reads as actually floating on a sea
  * rather than just suspended in space.
  *
- * The mesh is named "shaktris-water" so {@link setupLights} can sweep
+ * The mesh is named "tetches-water" so {@link setupLights} can sweep
  * it away when the render profile changes (cute / retro switch).
  *
  * @param {THREE.Scene} scene
  * @param {Object} THREE
  */
 function addWaterPlane(scene, THREE) {
-	const existing = scene.getObjectByName('shaktris-water');
+	const existing = scene.getObjectByName('tetches-water');
 	if (existing) scene.remove(existing);
 
 	const geometry = new THREE.PlaneGeometry(1200, 1200, 64, 64);
@@ -639,7 +639,7 @@ function addWaterPlane(scene, THREE) {
 	});
 
 	const water = new THREE.Mesh(geometry, material);
-	water.name = 'shaktris-water';
+	water.name = 'tetches-water';
 	water.position.y = -2.2;
 	water.receiveShadow = true;
 	water.userData.isWaterPlane = true;
@@ -658,7 +658,7 @@ function addWaterPlane(scene, THREE) {
 		side: THREE.DoubleSide,
 	});
 	const glow = new THREE.Mesh(glowGeo, glowMat);
-	glow.name = 'shaktris-water-glow';
+	glow.name = 'tetches-water-glow';
 	glow.position.y = -2.1;
 	scene.add(glow);
 }
@@ -671,7 +671,7 @@ function addWaterPlane(scene, THREE) {
  */
 export function updateWaterPlane(scene) {
 	if (!scene) return;
-	const water = scene.getObjectByName('shaktris-water');
+	const water = scene.getObjectByName('tetches-water');
 	if (!water || !water.geometry) return;
 	const base = water.userData.baseHeights;
 	if (!base) return;
@@ -687,7 +687,7 @@ export function updateWaterPlane(scene) {
 	}
 	positions.needsUpdate = true;
 
-	const glow = scene.getObjectByName('shaktris-water-glow');
+	const glow = scene.getObjectByName('tetches-water-glow');
 	if (glow) glow.rotation.y = t * 0.03;
 }
 

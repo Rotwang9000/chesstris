@@ -1,0 +1,389 @@
+/**
+ * Power-up orbs.
+ *
+ * Implements the user's "Cells that appear randomly which have an orb
+ * above them" feature request. An orb floats above an empty board cell
+ * and contains a chess piece type. The first player to extend their
+ * tetromino territory to cover that cell wins the orb: the cell becomes
+ * theirs and the contained chess piece materialises on it.
+ *
+ * Spawn rules:
+ *   • Every `SPAWN_TICK_MS` we may spawn one orb (probabilistic, capped
+ *     at `MAX_ACTIVE_ORBS_PER_PLAYER * livingPlayerCount`).
+ *   • Location is biased toward **struggling** players (fewer chess
+ *     pieces → higher weight) so power-ups help the player who needs
+ *     them most.
+ *   • Distance from the target player's home zone is randomised between
+ *     `MIN_SPAWN_DISTANCE` and `MAX_SPAWN_DISTANCE`, picking the first
+ *     empty cell we find in that band.
+ *
+ * Piece-type distribution (weights, sum doesn't have to be 100):
+ *     PAWN   65  — common, fuels the pawn-promotion → basket loop
+ *     KNIGHT 12
+ *     BISHOP 10
+ *     ROOK    8
+ *     QUEEN   5  — rare jackpot
+ *
+ * Lifecycle:
+ *   • Orbs expire after `ORB_LIFETIME_MS` if nobody claims them, so the
+ *     board doesn't fill up with stale glowing balls.
+ *   • Persisted in `world.powerUps`; lost on a fresh world but will
+ *     regenerate within `SPAWN_TICK_MS` of the first tick.
+ *
+ * Claim flow:
+ *   `tryClaimAtCell(world, playerId, x, z)` is called by the tetromino
+ *   socket handler for every cell the placement covers. If an orb sits
+ *   on that exact cell, the orb is consumed, a chess piece appears via
+ *   `pieces.addPiece`, and a `powerup_claimed` activity event fires.
+ *
+ * Why this lives in `server/game/` rather than `server/world/`:
+ *   It mutates `world.chessPieces` and the board, so it's logically a
+ *   game-rules service sitting next to `BoardManager` and
+ *   `TetrominoManager`, not a generic world bookkeeping helper.
+ */
+
+const { v4: uuidv4 } = require('uuid');
+
+const World = require('../world/World');
+const pieces = require('./pieces');
+
+const SPAWN_TICK_MS = 20 * 1000;
+const ORB_LIFETIME_MS = 4 * 60 * 1000;
+
+const MAX_ACTIVE_ORBS_PER_PLAYER = 2;
+const MIN_TOTAL_ORBS = 1;
+const MAX_TOTAL_ORBS = 8;
+const SPAWN_PROBABILITY_PER_TICK = 0.6;
+
+const MIN_SPAWN_DISTANCE = 6;
+const MAX_SPAWN_DISTANCE = 18;
+const MAX_SPAWN_ATTEMPTS = 40;
+
+const PIECE_TYPE_WEIGHTS = Object.freeze({
+	PAWN: 65,
+	KNIGHT: 12,
+	BISHOP: 10,
+	ROOK: 8,
+	QUEEN: 5,
+});
+
+function createPowerUpManager({
+	io,
+	broadcaster,
+	persistence,
+	activityLog = null,
+} = {}) {
+	if (!io) throw new Error('createPowerUpManager: io required');
+	if (!broadcaster) throw new Error('createPowerUpManager: broadcaster required');
+	if (!persistence) throw new Error('createPowerUpManager: persistence required');
+
+	function ensurePowerUps(world) {
+		if (!world) return null;
+		if (!Array.isArray(world.powerUps)) world.powerUps = [];
+		return world.powerUps;
+	}
+
+	function getEligiblePlayers(world) {
+		const out = [];
+		const players = world && world.players ? world.players : {};
+		for (const pid of Object.keys(players)) {
+			const player = players[pid];
+			if (!player || player.eliminated) continue;
+			const zone = world.homeZones ? world.homeZones[pid] : null;
+			if (!zone) continue;
+			out.push({ id: pid, player, zone });
+		}
+		return out;
+	}
+
+	function countPiecesByPlayer(world) {
+		const counts = new Map();
+		for (const piece of (world.chessPieces || [])) {
+			if (!piece || !piece.player) continue;
+			const k = String(piece.player);
+			counts.set(k, (counts.get(k) || 0) + 1);
+		}
+		return counts;
+	}
+
+	function pickWeighted(weightedItems) {
+		const total = weightedItems.reduce((sum, item) => sum + Math.max(0, item.weight), 0);
+		if (total <= 0) return null;
+		let r = Math.random() * total;
+		for (const item of weightedItems) {
+			r -= Math.max(0, item.weight);
+			if (r <= 0) return item;
+		}
+		return weightedItems[weightedItems.length - 1];
+	}
+
+	function pickPieceType() {
+		const items = Object.entries(PIECE_TYPE_WEIGHTS)
+			.map(([type, weight]) => ({ type, weight }));
+		return pickWeighted(items).type;
+	}
+
+	function homeZoneCentre(zone) {
+		return {
+			x: (zone.x || 0) + (zone.width || 8) / 2,
+			z: (zone.z || 0) + (zone.height || 2) / 2,
+		};
+	}
+
+	function pickTargetPlayer(world) {
+		const eligible = getEligiblePlayers(world);
+		if (eligible.length === 0) return null;
+		const counts = countPiecesByPlayer(world);
+		const weighted = eligible.map(entry => ({
+			...entry,
+			weight: 1 / (1 + (counts.get(String(entry.id)) || 0)),
+		}));
+		return pickWeighted(weighted);
+	}
+
+	function isCellAvailableForOrb(world, x, z) {
+		const key = `${x},${z}`;
+		const cellContents = world.board?.cells?.[key];
+		// We need an EMPTY cell (no tetromino / home / chess marker) so
+		// a claim moment is unambiguous — the very first tetromino to
+		// land on it wins. Cells with content are skipped.
+		if (Array.isArray(cellContents) && cellContents.length > 0) return false;
+		const orbs = world.powerUps || [];
+		for (const orb of orbs) {
+			if (orb && orb.x === x && orb.z === z) return false;
+		}
+		return true;
+	}
+
+	function findSpawnLocation(world, target) {
+		if (!target || !target.zone) return null;
+		const centre = homeZoneCentre(target.zone);
+		for (let attempt = 0; attempt < MAX_SPAWN_ATTEMPTS; attempt++) {
+			const angle = Math.random() * Math.PI * 2;
+			const distance = MIN_SPAWN_DISTANCE
+				+ Math.random() * (MAX_SPAWN_DISTANCE - MIN_SPAWN_DISTANCE);
+			const x = Math.round(centre.x + Math.cos(angle) * distance);
+			const z = Math.round(centre.z + Math.sin(angle) * distance);
+			if (isCellAvailableForOrb(world, x, z)) {
+				return { x, z };
+			}
+		}
+		return null;
+	}
+
+	function maxActiveOrbs(world) {
+		const livingCount = getEligiblePlayers(world).length;
+		const computed = Math.max(MIN_TOTAL_ORBS, livingCount * MAX_ACTIVE_ORBS_PER_PLAYER);
+		return Math.min(MAX_TOTAL_ORBS, computed);
+	}
+
+	function pruneExpired(world, now = Date.now()) {
+		const orbs = ensurePowerUps(world);
+		if (orbs.length === 0) return [];
+		const expired = [];
+		const kept = [];
+		for (const orb of orbs) {
+			if (!orb) continue;
+			const spawnedAt = Number(orb.spawnedAt) || now;
+			if (now - spawnedAt >= ORB_LIFETIME_MS) {
+				expired.push(orb);
+			} else {
+				kept.push(orb);
+			}
+		}
+		world.powerUps = kept;
+		if (expired.length === 0) return [];
+
+		for (const orb of expired) {
+			try {
+				io.to(World.getWorldId()).emit('powerup_expired', { orbId: orb.id });
+				if (activityLog && typeof activityLog.recordPowerupExpired === 'function') {
+					activityLog.recordPowerupExpired({
+						orbId: orb.id, x: orb.x, z: orb.z, pieceType: orb.pieceType,
+					});
+				}
+			} catch (err) {
+				console.warn('[PowerUp] expiry emit failed:', err.message);
+			}
+		}
+		persistence.markDirty();
+		return expired;
+	}
+
+	function trySpawnOne(world, now = Date.now()) {
+		const orbs = ensurePowerUps(world);
+		if (orbs.length >= maxActiveOrbs(world)) return null;
+		if (Math.random() > SPAWN_PROBABILITY_PER_TICK) return null;
+
+		const target = pickTargetPlayer(world);
+		if (!target) return null;
+
+		const location = findSpawnLocation(world, target);
+		if (!location) return null;
+
+		const orb = {
+			id: `orb-${uuidv4().substring(0, 8)}`,
+			x: location.x,
+			z: location.z,
+			pieceType: pickPieceType(),
+			spawnedAt: now,
+			expiresAt: now + ORB_LIFETIME_MS,
+			// Recorded so the client can highlight orbs that lean
+			// toward the local player (UX nicety — "this one's for you").
+			targetPlayerId: target.id,
+		};
+		orbs.push(orb);
+
+		try {
+			io.to(World.getWorldId()).emit('powerup_spawned', orb);
+			if (activityLog && typeof activityLog.recordPowerupSpawned === 'function') {
+				activityLog.recordPowerupSpawned({
+					orbId: orb.id, x: orb.x, z: orb.z,
+					pieceType: orb.pieceType,
+					targetPlayerId: target.id,
+					targetPlayerName: target.player.username
+						|| target.player.name
+						|| target.id,
+				});
+			}
+		} catch (err) {
+			console.warn('[PowerUp] spawn emit failed:', err.message);
+		}
+
+		persistence.markDirty();
+		console.log(
+			`[PowerUp] Spawned ${orb.pieceType} orb (${orb.id}) at (${orb.x}, ${orb.z}) `
+			+ `near ${target.player.name || target.id}`
+		);
+		return orb;
+	}
+
+	function tick({ now = Date.now() } = {}) {
+		const world = World.getWorld();
+		if (!world) return { spawned: null, expired: [] };
+		const expired = pruneExpired(world, now);
+		const spawned = trySpawnOne(world, now);
+		return { spawned, expired };
+	}
+
+	/**
+	 * Claim a power-up if `(x, z)` matches one. Spawns the contained
+	 * chess piece for `playerId` and removes the orb. Returns the
+	 * claim outcome (or null if no orb at that cell).
+	 *
+	 * Caller is responsible for ensuring the player has actually
+	 * placed a tetromino covering the cell — we don't double-check
+	 * here so AI and human flows can use a single helper.
+	 */
+	function tryClaimAtCell(world, playerId, x, z) {
+		if (!world || !playerId) return null;
+		const orbs = ensurePowerUps(world);
+		const idx = orbs.findIndex(o => o && o.x === x && o.z === z);
+		if (idx < 0) return null;
+		const orb = orbs[idx];
+		orbs.splice(idx, 1);
+
+		const piece = pieces.addPiece(world, {
+			type: orb.pieceType,
+			player: playerId,
+			x, z,
+			reason: 'powerup',
+			activityLog: null,
+		});
+		if (!piece) {
+			console.warn(`[PowerUp] tryClaimAtCell: pieces.addPiece failed for orb ${orb.id}`);
+			return null;
+		}
+
+		try {
+			const player = world.players ? world.players[playerId] : null;
+			const playerName = (player && (player.username || player.name)) || playerId;
+			io.to(World.getWorldId()).emit('powerup_claimed', {
+				orbId: orb.id,
+				playerId,
+				playerName,
+				pieceType: orb.pieceType,
+				pieceId: piece.id,
+				x, z,
+			});
+			if (activityLog && typeof activityLog.recordPowerupClaimed === 'function') {
+				activityLog.recordPowerupClaimed({
+					playerId,
+					playerName,
+					orbId: orb.id,
+					pieceType: orb.pieceType,
+					pieceId: piece.id,
+					x, z,
+				});
+			}
+		} catch (err) {
+			console.warn('[PowerUp] claim emit failed:', err.message);
+		}
+
+		persistence.markDirty();
+		return { orb, piece };
+	}
+
+	/**
+	 * Sweep every cell touched by a tetromino placement and claim any
+	 * orbs hidden under those cells. Returns the array of claim
+	 * outcomes (in order of placement).
+	 */
+	function claimAcrossPlacement(world, playerId, placedCells) {
+		if (!Array.isArray(placedCells) || placedCells.length === 0) return [];
+		const claimed = [];
+		for (const cell of placedCells) {
+			if (!cell || !Number.isFinite(cell.x) || !Number.isFinite(cell.z)) continue;
+			const outcome = tryClaimAtCell(world, playerId, cell.x, cell.z);
+			if (outcome) claimed.push(outcome);
+		}
+		return claimed;
+	}
+
+	function reset() {
+		const world = World.getWorld();
+		if (!world) return;
+		world.powerUps = [];
+		persistence.markDirty();
+	}
+
+	function listOrbs() {
+		const world = World.getWorld();
+		return Array.isArray(world?.powerUps) ? world.powerUps.slice() : [];
+	}
+
+	return {
+		tick,
+		tryClaimAtCell,
+		claimAcrossPlacement,
+		listOrbs,
+		reset,
+		// Exposed for tests / inspection.
+		PIECE_TYPE_WEIGHTS,
+		ORB_LIFETIME_MS,
+		SPAWN_TICK_MS,
+		MIN_SPAWN_DISTANCE,
+		MAX_SPAWN_DISTANCE,
+		MAX_TOTAL_ORBS,
+		MAX_ACTIVE_ORBS_PER_PLAYER,
+		// Helpers usable from tests; not part of the public lifecycle.
+		_internals: {
+			pickTargetPlayer,
+			findSpawnLocation,
+			isCellAvailableForOrb,
+			maxActiveOrbs,
+			pruneExpired,
+			trySpawnOne,
+			countPiecesByPlayer,
+		},
+	};
+}
+
+module.exports = {
+	createPowerUpManager,
+	PIECE_TYPE_WEIGHTS,
+	ORB_LIFETIME_MS,
+	SPAWN_TICK_MS,
+	MIN_SPAWN_DISTANCE,
+	MAX_SPAWN_DISTANCE,
+};

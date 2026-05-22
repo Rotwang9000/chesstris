@@ -1,5 +1,5 @@
 /**
- * Jest configuration for Shaktris project
+ * Jest configuration for Tetches project
  */
 
 module.exports = {
@@ -73,12 +73,6 @@ module.exports = {
 
 	// The maximum amount of workers used to run your tests
 	maxWorkers: "50%",
-	
-	// Ensure security tests are included
-	testPathIgnorePatterns: [
-		"/node_modules/",
-		"/tests\\.old/"
-	],
 	
 	// Add specific configuration for security tests
 	projects: [

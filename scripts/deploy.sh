@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# deploy.sh — Deploy Shaktris to staging or production.
+# deploy.sh — Deploy Tetches to staging or production.
 #
 # Usage:
 #   bash scripts/deploy.sh staging
@@ -12,13 +12,13 @@ ENVIRONMENT="${1:-}"
 
 case "$ENVIRONMENT" in
 	staging)
-		DEPLOY_DIR="/var/www/shaktris.staging"
-		PM2_NAME="shaktris-staging"
+		DEPLOY_DIR="/var/www/tetches.staging"
+		PM2_NAME="tetches-staging"
 		PORT=3661
 		;;
 	production)
-		DEPLOY_DIR="/var/www/shaktris.live"
-		PM2_NAME="shaktris-production"
+		DEPLOY_DIR="/var/www/tetches.live"
+		PM2_NAME="tetches-production"
 		PORT=3666
 		;;
 	*)

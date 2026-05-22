@@ -125,12 +125,12 @@ describe('Disconnects — grace timers', () => {
 });
 
 describe('Persistence — load/save round-trip', () => {
-	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'shaktris-world-'));
-	const originalEnvData = process.env.SHAKTRIS_DATA_DIR;
+	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tetches-world-'));
+	const originalEnvData = process.env.TETCHES_DATA_DIR;
 
 	afterAll(() => {
 		try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
-		if (originalEnvData !== undefined) process.env.SHAKTRIS_DATA_DIR = originalEnvData;
+		if (originalEnvData !== undefined) process.env.TETCHES_DATA_DIR = originalEnvData;
 	});
 
 	test('v1 legacy snapshot migrates to v2 unified world', () => {

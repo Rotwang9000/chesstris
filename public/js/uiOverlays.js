@@ -9,41 +9,107 @@ import * as NetworkManager from './utils/networkManager.js';
 import { getGameState } from './gameContext.js';
 import { showToastMessage } from './showToastMessage.js';
 
-// ── Pawn Promotion ──────────────────────────────────────────────────────────
+// ── Promotion Redeem (spend a credit + captured piece to deploy) ───────────
 
-export function showPawnPromotionDialog(pieceId, _position) {
+/**
+ * Show a dialog letting the local player spend a banked promotion
+ * credit. They pick one of their captured pieces; the server deploys
+ * it at the credit's original cell (or nearest-to-king if the cell
+ * is gone). Pawns that complete the promotion walk become credits;
+ * credits are NOT free Queens — they have to be redeemed against a
+ * captured piece (or, later, a piece bought from the shop).
+ *
+ * @param {Object} [opts]
+ * @param {Object} [opts.summary]  Aggregated `{ QUEEN: n, ROOK: n, ... }`
+ *                                 from the local player's basket. If
+ *                                 omitted we read it from `gameState`.
+ * @param {Array}  [opts.credits]  Local player's credit list.
+ */
+export function showPromotionRedeemDialog(opts = {}) {
+	const choices = ['QUEEN', 'ROOK', 'BISHOP', 'KNIGHT'];
+	const SYMBOLS = { QUEEN: '\u265B', ROOK: '\u265C', BISHOP: '\u265D', KNIGHT: '\u265E' };
+	const gameState = getGameState();
+	const credits = Array.isArray(opts.credits)
+		? opts.credits
+		: (Array.isArray(gameState?.promotionCredits) ? gameState.promotionCredits : []);
+	if (credits.length === 0) {
+		showToastMessage('No promotion credits to redeem yet. Walk a pawn 9 cells forward first.', 3500);
+		return;
+	}
+	let summary = opts.summary;
+	if (!summary) {
+		const basket = Array.isArray(gameState?.capturedBasket) ? gameState.capturedBasket : [];
+		summary = basket.reduce((acc, item) => {
+			const t = String(item?.type || '').toUpperCase();
+			if (choices.includes(t)) acc[t] = (acc[t] || 0) + 1;
+			return acc;
+		}, {});
+	}
+	const available = choices.filter(t => Number(summary?.[t] || 0) > 0);
+
 	const overlay = document.createElement('div');
 	overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:10000;display:flex;align-items:center;justify-content:center;';
+	overlay.addEventListener('click', (e) => {
+		if (e.target === overlay) overlay.remove();
+	});
 
 	const dialog = document.createElement('div');
-	dialog.style.cssText = 'background:#1a1a2e;border:2px solid #d4af37;border-radius:12px;padding:24px;text-align:center;color:#fff;font-family:"Playfair Display",serif;min-width:280px;';
-	dialog.innerHTML = '<h3 style="margin:0 0 16px;color:#d4af37;">Pawn Promotion</h3><p style="margin:0 0 16px;font-size:14px;">Choose your new piece:</p>';
+	dialog.style.cssText = 'background:#1a1a2e;border:2px solid #d4af37;border-radius:12px;padding:24px;text-align:center;color:#fff;font-family:"Playfair Display",serif;min-width:340px;max-width:460px;';
 
-	const choices = ['QUEEN', 'ROOK', 'BISHOP', 'KNIGHT'];
-	const symbols = { QUEEN: '\u265B', ROOK: '\u265C', BISHOP: '\u265D', KNIGHT: '\u265E' };
+	const oldest = credits[0];
+	const oldestPos = (Number.isFinite(oldest.originalX) && Number.isFinite(oldest.originalZ))
+		? `(${oldest.originalX}, ${oldest.originalZ})`
+		: 'an unrecorded cell';
+	dialog.innerHTML = `
+		<h3 style="margin:0 0 6px;color:#d4af37;">Redeem Promotion</h3>
+		<p style="margin:0 0 12px;font-size:13px;opacity:0.85;">
+			${credits.length} credit${credits.length === 1 ? '' : 's'} ready. The oldest deploys at ${oldestPos}
+			(or nearest cell to your king if it's gone).
+		</p>
+	`;
 
-	choices.forEach(type => {
-		const btn = document.createElement('button');
-		btn.textContent = `${symbols[type]} ${type}`;
-		btn.style.cssText = 'margin:4px;padding:10px 20px;background:#2a1a3e;color:#d4af37;border:1px solid #d4af37;border-radius:6px;cursor:pointer;font-size:16px;font-family:inherit;';
-		btn.addEventListener('mouseenter', () => { btn.style.background = '#3a2a4e'; });
-		btn.addEventListener('mouseleave', () => { btn.style.background = '#2a1a3e'; });
-		btn.addEventListener('click', () => {
-			NetworkManager.promotePawn(pieceId, type);
-			overlay.remove();
+	if (available.length === 0) {
+		const note = document.createElement('div');
+		note.textContent = 'No captured pieces in basket yet. Capture a rook, bishop, knight or queen and the credit will be ready to spend.';
+		note.style.cssText = 'padding:14px;font-size:13px;color:#ffd97a;border:1px dashed rgba(212,175,55,0.4);border-radius:6px;';
+		dialog.appendChild(note);
+	} else {
+		const row = document.createElement('div');
+		row.style.cssText = 'display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin-bottom:12px;';
+		available.forEach(type => {
+			const count = Number(summary[type] || 0);
+			const btn = document.createElement('button');
+			btn.textContent = `${SYMBOLS[type]} ${type} \u00D7${count}`;
+			btn.style.cssText = 'padding:10px 16px;background:#1a3e2a;color:#a8e6a3;border:1px solid #4caf50;border-radius:6px;cursor:pointer;font-size:15px;font-family:inherit;';
+			btn.addEventListener('mouseenter', () => { btn.style.background = '#244e34'; });
+			btn.addEventListener('mouseleave', () => { btn.style.background = '#1a3e2a'; });
+			btn.addEventListener('click', () => {
+				btn.disabled = true;
+				btn.style.opacity = '0.6';
+				NetworkManager.redeemPromotion(type, oldest.id, (result) => {
+					if (result && result.success) {
+						overlay.remove();
+					} else {
+						const err = (result && result.error) || 'Redeem failed';
+						showToastMessage(`Redeem failed: ${err}`, 3000);
+						btn.disabled = false;
+						btn.style.opacity = '1';
+					}
+				});
+			});
+			row.appendChild(btn);
 		});
-		dialog.appendChild(btn);
-	});
+		dialog.appendChild(row);
+	}
+
+	const cancel = document.createElement('button');
+	cancel.textContent = 'Close';
+	cancel.style.cssText = 'padding:6px 14px;background:transparent;color:#ccc;border:1px solid #555;border-radius:6px;cursor:pointer;font-size:13px;font-family:inherit;';
+	cancel.addEventListener('click', () => overlay.remove());
+	dialog.appendChild(cancel);
 
 	overlay.appendChild(dialog);
 	document.body.appendChild(overlay);
-
-	setTimeout(() => {
-		if (overlay.parentNode) {
-			NetworkManager.promotePawn(pieceId, 'QUEEN');
-			overlay.remove();
-		}
-	}, 15000);
 }
 
 // ── King Battle ─────────────────────────────────────────────────────────────

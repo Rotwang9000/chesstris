@@ -1,10 +1,10 @@
-# Security Testing in Shaktris
+# Security Testing in Tetches
 
-This document outlines the security testing approach and anti-cheat mechanisms implemented in Shaktris.
+This document outlines the security testing approach and anti-cheat mechanisms implemented in Tetches.
 
 ## Overview
 
-Shaktris incorporates comprehensive security testing to ensure that the game is resistant to common attack vectors, including:
+Tetches incorporates comprehensive security testing to ensure that the game is resistant to common attack vectors, including:
 
 1. **Anti-cheat mechanisms** to prevent players from manipulating the game state
 2. **Authentication security** to protect user accounts and sessions
@@ -48,7 +48,7 @@ These tests verify that all user inputs are properly validated and sanitized:
 
 ## Anti-Cheat Mechanisms
 
-Shaktris implements several anti-cheat mechanisms to ensure fair play:
+Tetches implements several anti-cheat mechanisms to ensure fair play:
 
 ### Chess Piece Validation
 
@@ -120,4 +120,4 @@ When working with security-sensitive code:
 
 ## Security Reporting
 
-If you discover a security vulnerability, please report it to the team via email at security@shaktris.com rather than opening a public issue. 
+If you discover a security vulnerability, please report it to the team via email at security@tetches.com rather than opening a public issue. 

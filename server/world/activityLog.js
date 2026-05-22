@@ -178,9 +178,21 @@ function createActivityLogService({ io, persistence, maxEvents = DEFAULT_MAX_EVE
 		});
 	}
 
-	function recordPiecePromoted({ playerId, playerName, pieceId, fromType, toType, x, z }) {
+	function recordPiecePromoted({ playerId, playerName, pieceId, fromType, toType, x, z, fromBasket }) {
 		return record('chess_piece_promoted', {
 			playerId, playerName, pieceId, fromType, toType, x, z,
+			fromBasket: !!fromBasket,
+		});
+	}
+
+	// A brand-new piece appeared (currently only via power-up orb
+	// claim or basket-driven pawn-spawn). Pawn promotions stay on
+	// their own `chess_piece_promoted` event because they're a
+	// transformation, not a spawn.
+	function recordPieceSpawned({ playerId, playerName, pieceType, pieceId, x, z, reason }) {
+		return record('chess_piece_spawned', {
+			playerId, playerName, pieceType, pieceId, x, z,
+			reason: reason || 'powerup',
 		});
 	}
 
@@ -190,6 +202,64 @@ function createActivityLogService({ io, persistence, maxEvents = DEFAULT_MAX_EVE
 
 	function recordPlayerLeft({ playerId, playerName, reason }) {
 		return record('player_left', { playerId, playerName, reason: reason || 'disconnect' });
+	}
+
+	// A player record was reaped by the ghost-player sweep (king gone,
+	// 0 chess pieces, no respawn pending, no live socket) so the
+	// sidebar / spawn algorithm can stop being misled by their corpse.
+	function recordPlayerReaped({ playerId, playerName, reason, hadPieces }) {
+		return record('player_reaped', {
+			playerId, playerName,
+			reason: reason || 'ghost_sweep',
+			hadPieces: !!hadPieces,
+		});
+	}
+
+	// A power-up orb materialised on the board. Carries `pieceType`
+	// (what the orb contains) so the activity feed can advertise it
+	// to other players ("a rook power-up spawned near you").
+	function recordPowerupSpawned({ orbId, x, z, pieceType, targetPlayerId, targetPlayerName }) {
+		return record('powerup_spawned', {
+			orbId, x, z, pieceType,
+			targetPlayerId: targetPlayerId || null,
+			targetPlayerName: targetPlayerName || null,
+		});
+	}
+
+	function recordPowerupClaimed({ playerId, playerName, orbId, x, z, pieceType, pieceId }) {
+		return record('powerup_claimed', {
+			playerId, playerName, orbId, x, z, pieceType, pieceId,
+		});
+	}
+
+	function recordPowerupExpired({ orbId, x, z, pieceType }) {
+		return record('powerup_expired', { orbId, x, z, pieceType });
+	}
+
+	// A pawn completed its forward march and earned a promotion credit
+	// (the pawn itself is consumed; the credit sits in the player's
+	// `promotionCredits` array waiting to be redeemed against a captured
+	// piece via `redeem_promotion`).
+	function recordPawnPromotedToCredit({ playerId, playerName, creditId, x, z }) {
+		return record('pawn_promoted_to_credit', {
+			playerId, playerName, creditId, x, z,
+		});
+	}
+
+	// A banked promotion credit was redeemed: a captured piece was
+	// deployed at `(x, z)` (either the credit's original cell, or the
+	// fallback nearest-to-king cell if the original was gone).
+	function recordPromotionRedeemed({
+		playerId, playerName, creditId,
+		capturedType, pieceId, x, z,
+		originalX, originalZ, fallback,
+	}) {
+		return record('promotion_redeemed', {
+			playerId, playerName, creditId,
+			capturedType, pieceId,
+			x, z, originalX, originalZ,
+			fallback: !!fallback,
+		});
 	}
 
 	function recordChat({ playerId, playerName, message }) {
@@ -213,8 +283,15 @@ function createActivityLogService({ io, persistence, maxEvents = DEFAULT_MAX_EVE
 		recordPieceCaptured,
 		recordPieceDetonated,
 		recordPiecePromoted,
+		recordPieceSpawned,
 		recordPlayerJoined,
 		recordPlayerLeft,
+		recordPlayerReaped,
+		recordPowerupSpawned,
+		recordPowerupClaimed,
+		recordPowerupExpired,
+		recordPawnPromotedToCredit,
+		recordPromotionRedeemed,
 		recordChat,
 		maxEvents,
 	};

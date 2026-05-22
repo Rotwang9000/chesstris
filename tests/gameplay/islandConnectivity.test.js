@@ -1,8 +1,8 @@
 /**
  * Island Connectivity Test
- * Tests the mechanics of island connectivity validation in Shaktris
+ * Tests the mechanics of island connectivity validation in Tetches
  * 
- * In Shaktris, cells must have a path back to the player's king to be valid.
+ * In Tetches, cells must have a path back to the player's king to be valid.
  * This test ensures that the island connectivity validation works correctly.
  */
 

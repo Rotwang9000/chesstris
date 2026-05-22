@@ -1,4 +1,4 @@
-# Shaktris - Player's Bible
+# Tetches - Player's Bible
 
 > Definitive game-rules reference. This is the single source of truth - if the
 > code disagrees with this document, the code is wrong.
@@ -8,7 +8,7 @@
 
 ## 1. Overview
 
-Shaktris is a real-time multiplayer game that fuses **Tetris** with **chess** on a
+Tetches is a real-time multiplayer game that fuses **Tetris** with **chess** on a
 dynamically expanding board. Each player begins with a standard chess set placed
 on a small home zone. Players grow their territory by placing tetromino pieces
 and use chess tactics to capture enemy pieces and kings.
@@ -72,7 +72,7 @@ Home zones now degrade by converting to normal terrain (not by deleting cells):
 
 ## 4. Session and Identity
 
-Players are identified by a **session cookie** (`shaktris_player_id`) that
+Players are identified by a **session cookie** (`tetches_player_id`) that
 persists across browser reloads. On reconnection the server matches the cookie
 to the existing player record and restores their game state. There is a
 **5-minute grace period** after disconnect before the player is removed.
@@ -286,7 +286,7 @@ Standard chess set arranged on the home zone:
 
 ### Movement rules
 
-All standard chess movement rules apply, with these Shaktris-specific
+All standard chess movement rules apply, with these Tetches-specific
 conditions:
 
 - Pieces can **only move to cells that exist** on the board (i.e. coordinates
@@ -304,7 +304,7 @@ conditions:
   their territory. This is a key strategic mechanic: moving pieces onto enemy
   cells claims them for your empire.
 - **Moving into check is permitted.** There is no check/checkmate concept in
-  Shaktris - only king capture. Moving your king into danger is legal but
+  Tetches - only king capture. Moving your king into danger is legal but
   unwise.
 
 ### Castling

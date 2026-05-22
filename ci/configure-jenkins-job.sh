@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# configure-jenkins-job.sh — Installs plugins and creates the shaktris pipeline.
+# configure-jenkins-job.sh — Installs plugins and creates the tetches pipeline.
 # Run as root: sudo bash ci/configure-jenkins-job.sh
 #
 set -euo pipefail
@@ -13,7 +13,7 @@ echo "=== Configuring Jenkins Pipeline ==="
 
 echo ""
 echo "--- Installing plugins (this may take a minute) ---"
-docker exec shaktris-jenkins bash -c '
+docker exec tetches-jenkins bash -c '
 	jenkins-plugin-cli --verbose --plugins \
 		git \
 		workflow-aggregator \
@@ -40,9 +40,9 @@ docker exec shaktris-jenkins bash -c '
 
 echo ""
 echo "--- Copying pipeline creation script ---"
-docker exec shaktris-jenkins mkdir -p /var/jenkins_home/init.groovy.d
+docker exec tetches-jenkins mkdir -p /var/jenkins_home/init.groovy.d
 docker cp "${REPO_DIR}/ci/create-pipeline-job.groovy" \
-	shaktris-jenkins:/var/jenkins_home/init.groovy.d/create-pipeline-job.groovy
+	tetches-jenkins:/var/jenkins_home/init.groovy.d/create-pipeline-job.groovy
 
 echo "Groovy init script copied"
 
@@ -50,7 +50,7 @@ echo "Groovy init script copied"
 
 echo ""
 echo "--- Restarting Jenkins ---"
-docker restart shaktris-jenkins
+docker restart tetches-jenkins
 
 echo "Waiting for Jenkins..."
 for i in $(seq 1 90); do
@@ -69,19 +69,19 @@ echo ""
 
 sleep 10
 echo "--- Checking for pipeline job ---"
-docker exec shaktris-jenkins bash -c '
-	if [ -d /var/jenkins_home/jobs/shaktris ]; then
-		echo "SUCCESS: shaktris pipeline job exists"
+docker exec tetches-jenkins bash -c '
+	if [ -d /var/jenkins_home/jobs/tetches ]; then
+		echo "SUCCESS: tetches pipeline job exists"
 	else
 		echo "Job not auto-created (plugins may need a UI restart)."
 		echo ""
 		echo "To create manually:"
 		echo "  1. Open http://<server>:8090"
 		echo "  2. Click New Item"
-		echo "  3. Name: shaktris"
+		echo "  3. Name: tetches"
 		echo "  4. Type: Multibranch Pipeline"
 		echo "  5. Branch Source: Git"
-		echo "  6. Repo URL: https://github.com/Rotwang9000/chesstris.git"
+		echo "  6. Repo URL: https://github.com/Rotwang9000/tetches.git"
 		echo "  7. Build Config: by Jenkinsfile"
 		echo "  8. Scan trigger: 2 minutes"
 		echo "  9. Save"

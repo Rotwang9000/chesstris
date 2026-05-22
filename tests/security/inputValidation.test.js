@@ -1,5 +1,5 @@
 /**
- * Input Validation Tests for Shaktris
+ * Input Validation Tests for Tetches
  * 
  * These tests verify that all user inputs are properly validated and sanitized
  * to prevent injection attacks, buffer overflows, and other security issues.

@@ -1,5 +1,5 @@
 /**
- * Jest configuration for Shaktris security tests
+ * Jest configuration for Tetches security tests
  */
 
 module.exports = {

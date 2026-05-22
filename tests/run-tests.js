@@ -1,7 +1,7 @@
 /**
- * Main test runner for Chesstris game
+ * Main test runner for Tetches game
  * 
- * This script runs all Node.js tests for the Chesstris game using Node's native
+ * This script runs all Node.js tests for the Tetches game using Node's native
  * assert module. It avoids the complexity of Jest and provides a simple way to
  * test core gameplay mechanics without depending on complex testing frameworks.
  * 
@@ -109,7 +109,7 @@ function runTest(testFile) {
  * Main function - runs all tests and prints a summary
  */
 function main() {
-	console.log(`${colors.magenta}=== Chesstris Test Runner ===${colors.reset}`);
+	console.log(`${colors.magenta}=== Tetches Test Runner ===${colors.reset}`);
 	console.log(`Running ${testFiles.length} tests...\n`);
 	
 	// Run each test file sequentially

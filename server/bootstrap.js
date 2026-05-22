@@ -16,7 +16,17 @@ const http = require('http');
 const socketIO = require('socket.io');
 
 const persistence = require('./persistence');
+const { parseAllowedOrigins, isOriginAllowed } = require('./security/origins');
+const metrics = require('./observability/metrics');
+const logger = require('./observability/logger');
+const sentry = require('./observability/sentry');
 const World = require('./world/World');
+
+// Initialise Sentry first so anything that fails during the rest of
+// the bootstrap gets reported. Safe to call early — does nothing if
+// SENTRY_DSN isn't set.
+sentry.initSentry();
+sentry.installProcessHandlers();
 const Sessions = require('./world/Sessions');
 const Disconnects = require('./world/Disconnects');
 
@@ -27,12 +37,14 @@ const { createIntegrityService } = require('./world/integrity');
 const { createHomeZoneDegradationService } = require('./world/homeZones');
 const { createLifecycleService } = require('./world/lifecycle');
 const { createWorldGravityService, GRAVITY_TICK_MS } = require('./world/gravity');
+const { createGhostPlayerSweepService } = require('./world/ghostPlayerSweep');
 const { createKingCaptureService } = require('./king/capture');
 const { createKingDuelService } = require('./king/duels');
 const { createKingDetonationService } = require('./king/detonation');
 const { createLoneKingSweepService } = require('./king/loneKingSweep');
 const { createActivityLogService } = require('./world/activityLog');
 const { createLineClearService } = require('./game/LineClearService');
+const { createPowerUpManager } = require('./game/PowerUpManager');
 const { createAiActions } = require('./ai/actions');
 const { createAiRunner } = require('./ai/runner');
 const { createConnectionHandler } = require('./sockets/connection');
@@ -42,11 +54,36 @@ const { createApp } = require('./app');
 const HOME_ZONE_DEGRADATION_CHECK_MS = 30000;
 const WORLD_INTEGRITY_CHECK_MS = 10000;
 const LONE_KING_SWEEP_MS = 15000;
+const GHOST_PLAYER_SWEEP_MS = 20000;
+const POWER_UP_TICK_MS = 20000;
+const METRICS_TICK_MS = 5000;
 
 function bootstrap({ projectRoot = process.cwd() } = {}) {
 	const app = createApp({ projectRoot });
 	const server = http.createServer(app);
-	const io = socketIO(server);
+
+	// Same allowlist as the Express CORS layer. In production the
+	// browser refuses Socket.IO handshakes from origins not in this
+	// list; in development localhost on any port is allowed so the
+	// dev tools work without `ALLOWED_ORIGIN` being set.
+	const isDevelopment = process.env.NODE_ENV !== 'production';
+	const allowedOrigins = parseAllowedOrigins(process.env.ALLOWED_ORIGIN);
+	const io = socketIO(server, {
+		cors: {
+			origin(origin, callback) {
+				if (!origin) return callback(null, true);
+				if (isOriginAllowed(origin, allowedOrigins, { allowLocalhost: isDevelopment })) {
+					return callback(null, true);
+				}
+				return callback(new Error(`Origin not allowed: ${origin}`), false);
+			},
+			credentials: true,
+		},
+		// Trim runaway clients: don't keep a half-open transport
+		// alive forever.
+		pingInterval: 25_000,
+		pingTimeout: 20_000,
+	});
 
 	const gameManager = new GameManager();
 
@@ -121,6 +158,13 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		activityLog,
 	});
 
+	const powerUpManager = createPowerUpManager({
+		io,
+		broadcaster,
+		persistence,
+		activityLog,
+	});
+
 	const aiActions = createAiActions({
 		io,
 		gameManager,
@@ -128,6 +172,7 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		integrityService,
 		spectatorRegistry,
 		lineClearService,
+		powerUpManager,
 	});
 
 	const aiRunner = createAiRunner({
@@ -154,6 +199,14 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		activityLog,
 	});
 
+	const ghostPlayerSweep = createGhostPlayerSweepService({
+		broadcaster,
+		persistence,
+		lifecycleService,
+		aiRunner,
+		activityLog,
+	});
+
 	// ── World restore ──────────────────────────────────────────────────────
 	const snapshot = persistence.loadWorld();
 	if (snapshot) {
@@ -167,6 +220,13 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		lifecycleService.applyWorldSettings({});
 	}
 
+	// Eagerly reap any persisted-yet-dead players right at boot so the
+	// first joiner doesn't get pushed miles away by a corpse the
+	// previous session never cleaned up. The user reported this
+	// directly: "I spawn into a new game and was miles away from any
+	// other player". Has to happen BEFORE ensureRoster so the topped-up
+	// AI roster doesn't get its slots stolen by ghost AI records.
+	ghostPlayerSweep.reapImmediately();
 	aiRunner.ensureRoster();
 	integrityService.processWorldIntegrityMaintenance({ emitAnimation: false, broadcast: false });
 
@@ -181,12 +241,17 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		kingDuelService,
 		kingDetonationService,
 		lineClearService,
+		powerUpManager,
 		aiRunner,
 		spectatorRegistry,
 		persistence,
 		activityLog,
 	});
-	io.on('connection', handleConnection);
+	io.on('connection', socket => {
+		metrics.setSocketCount(io.engine.clientsCount);
+		socket.on('disconnect', () => metrics.setSocketCount(io.engine.clientsCount));
+		handleConnection(socket);
+	});
 
 	// ── Timers ────────────────────────────────────────────────────────────
 	const timers = [
@@ -200,6 +265,12 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		),
 		setInterval(() => worldGravity.tick(), GRAVITY_TICK_MS),
 		setInterval(() => loneKingSweep.tick(), LONE_KING_SWEEP_MS),
+		setInterval(() => ghostPlayerSweep.tick(), GHOST_PLAYER_SWEEP_MS),
+		setInterval(() => powerUpManager.tick(), POWER_UP_TICK_MS),
+		setInterval(() => {
+			try { metrics.refreshWorldGauges(World.getWorld()); }
+			catch (err) { logger.warn({ err: err.message }, 'metrics tick failed'); }
+		}, METRICS_TICK_MS),
 	];
 	persistence.startAutoSave();
 
@@ -214,6 +285,8 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		kingDuelService.reset();
 		homeZoneDegradation.reset();
 		loneKingSweep.reset();
+		ghostPlayerSweep.reset();
+		powerUpManager.reset();
 		Sessions.clearAll && Sessions.clearAll();
 		process.exit(0);
 	}

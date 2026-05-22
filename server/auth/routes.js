@@ -10,14 +10,47 @@
  * `/api` prefix) because that's the URL embedded in magic-link emails.
  */
 
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const magicLinkModule = require('./magicLink');
 const emailServiceModule = require('./emailService');
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Magic-link is the only endpoint that can spend real money (SendGrid
+// credits) per request. Default of 5 attempts / 10 min / IP is
+// generous for humans, brutal for bots. The verify endpoint is read-
+// only but still rate-limited to defeat token-bruteforce attempts.
+const magicLinkLimiter = rateLimit({
+	windowMs: 10 * 60 * 1000,
+	max: 5,
+	standardHeaders: true,
+	legacyHeaders: false,
+	keyGenerator(req) {
+		// Bucket per-IP+email so a shared NAT can't exhaust a victim's
+		// quota by spamming their email — and so a single bad actor
+		// can't whack many victims from one IP. ipKeyGenerator
+		// normalises IPv6 ranges so a /64 doesn't bypass the limit.
+		const email = (req.body && req.body.email ? String(req.body.email) : '').toLowerCase();
+		return `${ipKeyGenerator(req.ip)}|${email}`;
+	},
+	message: {
+		success: false,
+		error: 'rate_limited',
+		message: 'Too many magic-link requests; try again in a few minutes.',
+	},
+});
+
+const verifyLimiter = rateLimit({
+	windowMs: 60 * 1000,
+	max: 30,
+	standardHeaders: true,
+	legacyHeaders: false,
+	message: { success: false, error: 'rate_limited' },
+});
+
 function mountAuthRoutes(app) {
-	app.post('/api/auth/magic-link', handleRequestMagicLink);
-	app.get('/auth/verify', handleVerify);
+	app.post('/api/auth/magic-link', magicLinkLimiter, handleRequestMagicLink);
+	app.get('/auth/verify', verifyLimiter, handleVerify);
 	app.post('/api/auth/generate-game-key', handleGenerateGameKey);
 }
 

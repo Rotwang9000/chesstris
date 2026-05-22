@@ -1,5 +1,5 @@
 /**
- * Jenkins init script — auto-creates the Shaktris multibranch pipeline.
+ * Jenkins init script — auto-creates the Tetches multibranch pipeline.
  * Placed in $JENKINS_HOME/init.groovy.d/ and runs once on startup.
  * Deletes itself after successful execution so it only runs once.
  */
@@ -12,22 +12,22 @@ import com.cloudbees.hudson.plugins.folder.computed.*
 
 def jenkins = Jenkins.instance
 
-if (jenkins.getItem('shaktris') != null) {
-	println '[init] shaktris job already exists — skipping'
+if (jenkins.getItem('tetches') != null) {
+	println '[init] tetches job already exists — skipping'
 	return
 }
 
-println '[init] Creating shaktris multibranch pipeline...'
+println '[init] Creating tetches multibranch pipeline...'
 
 try {
 	def mbp = jenkins.createProject(
 		org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject,
-		'shaktris'
+		'tetches'
 	)
 
 	def gitSource = new GitSCMSource(
-		'shaktris-git',
-		'https://github.com/Rotwang9000/chesstris.git',
+		'tetches-git',
+		'https://github.com/Rotwang9000/tetches.git',
 		'',
 		'*',
 		'',
@@ -46,7 +46,7 @@ try {
 	// Trigger initial scan
 	mbp.scheduleBuild2(0)
 
-	println '[init] shaktris multibranch pipeline created and scan triggered'
+	println '[init] tetches multibranch pipeline created and scan triggered'
 } catch (Exception e) {
 	println "[init] Could not create pipeline automatically: ${e.message}"
 	println '[init] This may be because required plugins are not yet installed.'

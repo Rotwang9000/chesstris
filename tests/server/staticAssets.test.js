@@ -77,7 +77,7 @@ describe('Core static assets', () => {
 	test('serves index.html at root', async () => {
 		const res = await get('/');
 		expect(res.status).toBe(200);
-		expect(res.body).toContain('Shaktris');
+		expect(res.body).toContain('Tetches');
 	});
 
 	test.each([

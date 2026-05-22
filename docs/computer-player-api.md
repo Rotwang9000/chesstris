@@ -1,10 +1,10 @@
-# Shaktris Computer Player API
+# Tetches Computer Player API
 
-This document provides a comprehensive guide to creating computer players for Shaktris using the external computer player API.
+This document provides a comprehensive guide to creating computer players for Tetches using the external computer player API.
 
 ## Overview
 
-Shaktris allows developers to create their own computer players (AI bots) that can play the game through a RESTful API. This enables you to implement custom strategies and algorithms without having to modify the core game code.
+Tetches allows developers to create their own computer players (AI bots) that can play the game through a RESTful API. This enables you to implement custom strategies and algorithms without having to modify the core game code.
 
 ## Getting Started
 
@@ -17,10 +17,10 @@ Shaktris allows developers to create their own computer players (AI bots) that c
 
 ### Installation
 
-1. Clone the Shaktris repository:
+1. Clone the Tetches repository:
    ```
-   git clone https://github.com/yourusername/shaktris.git
-   cd shaktris
+   git clone https://github.com/yourusername/tetches.git
+   cd tetches
    ```
 
 2. Install dependencies:
@@ -273,7 +273,7 @@ main().catch(console.error);
 
 ## Support
 
-If you have any questions or issues with the API, please contact support@shaktris.com or open an issue on the GitHub repository.
+If you have any questions or issues with the API, please contact support@tetches.com or open an issue on the GitHub repository.
 
 ## Turn Sequence
 

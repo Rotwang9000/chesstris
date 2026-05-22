@@ -16,6 +16,8 @@ import { animateClouds } from './textures.js';
 import { updateUnifiedPlayerBar } from './unifiedPlayerBar.js';
 import { updateChessPieces } from './updateChessPieces.js';
 import { handleMouseHover } from './chessInteraction.js';
+import { syncPowerUps, animatePowerUps } from './powerUpRenderer.js';
+import { syncNameplates, animateNameplates } from './nameplateRenderer.js';
 
 // ── Timing state ────────────────────────────────────────────────────────────
 
@@ -291,6 +293,37 @@ function animate(time) {
 					try { if (_updateBoardVisuals) _updateBoardVisuals(); } catch (e) { console.error('Error updating chess pieces:', e); }
 				}
 				lastUiUpdate = time;
+			}
+
+			// Power-ups: reconcile each frame (cheap O(n) of active
+			// orbs which is at most a handful) so newly-spawned /
+			// expired orbs appear without waiting for the heavier
+			// `updateChessPieces` pulse.
+			try {
+				syncPowerUps(Array.isArray(gameState.powerUps) ? gameState.powerUps : []);
+			} catch (e) {
+				console.error('Error syncing power-ups:', e);
+			}
+			try {
+				animatePowerUps(time * 0.001);
+			} catch (e) {
+				console.error('Error animating power-ups:', e);
+			}
+
+			// Player nameplates above each king. Captures-strip
+			// shows only when the local player is observing — the
+			// HUD already displays it for active players.
+			try {
+				const pieces = Array.isArray(gameState.chessPieces) ? gameState.chessPieces : [];
+				const players = gameState.players || {};
+				const isSpectator = !!(gameState.isObserver || gameState.spectator || gameState.spectatingPlayer);
+				syncNameplates(pieces, players, {
+					showCaptures: isSpectator,
+					gameState,
+				});
+				animateNameplates(time * 0.001);
+			} catch (e) {
+				console.error('Error syncing nameplates:', e);
 			}
 		}
 

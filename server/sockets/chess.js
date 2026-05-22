@@ -13,6 +13,115 @@ const { PLAYER_SETTINGS, GAME_RULES } = require('../game/Constants');
 const { getCooldownRemainingMs } = require('../utils/cooldowns');
 const cells = require('../game/cells');
 const pieces = require('../game/pieces');
+const territory = require('../game/territory');
+
+/**
+ * Remove a pawn from the board and add a promotion credit to the
+ * owner's bank. Idempotent: if a credit for this pawn already exists
+ * (because the chess_move auto-bank fired first), the explicit
+ * `promote_pawn` socket call returns the existing one instead of
+ * double-counting.
+ */
+function bankPromotionCredit(world, playerId, pawn, { broadcaster, activityLog, io }) {
+	const player = world.players?.[playerId];
+	if (!player) throw new Error('Player not found while banking promotion');
+	if (!Array.isArray(player.promotionCredits)) player.promotionCredits = [];
+
+	// Idempotency: only one credit per pawn — if the chess_move
+	// handler already banked it, the legacy promote_pawn socket
+	// should be a no-op.
+	const existing = player.promotionCredits.find(c => c && c.fromPieceId === pawn.id);
+	if (existing) return existing;
+
+	const originalX = pawn.position?.x ?? null;
+	const originalZ = pawn.position?.z ?? null;
+	const creditId = `credit-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+	pieces.removePiece(world, pawn.id, {
+		reason: 'promoted_to_credit',
+		activityLog,
+		silent: true,
+	});
+
+	const credit = {
+		id: creditId,
+		fromPieceId: pawn.id,
+		originalX,
+		originalZ,
+		createdAt: Date.now(),
+	};
+	player.promotionCredits.push(credit);
+	World.markDirty();
+
+	if (activityLog && typeof activityLog.recordPawnPromotedToCredit === 'function') {
+		try {
+			activityLog.recordPawnPromotedToCredit({
+				playerId,
+				playerName: player.username || player.name || playerId,
+				creditId,
+				x: originalX,
+				z: originalZ,
+			});
+		} catch (logErr) {
+			console.warn('[Chess] promotion-credit log failed:', logErr.message);
+		}
+	}
+
+	if (io && world?.id) {
+		try {
+			io.to(world.id).emit('promotion_credit_added', {
+				playerId,
+				creditId,
+				originalX,
+				originalZ,
+				createdAt: credit.createdAt,
+			});
+		} catch (emitErr) {
+			console.warn('[Chess] promotion_credit_added emit failed:', emitErr.message);
+		}
+	}
+
+	try { broadcaster && broadcaster.broadcastGameUpdate(); }
+	catch (broadcastErr) { console.warn('[Chess] broadcast failed:', broadcastErr.message); }
+	if (broadcaster && typeof broadcaster.emitPromotionCredits === 'function') {
+		try { broadcaster.emitPromotionCredits(playerId); }
+		catch (emitErr) { console.warn('[Chess] credits emit failed:', emitErr.message); }
+	}
+
+	console.log(
+		`Player ${playerId} banked promotion credit ${creditId} ` +
+		`(pawn ${pawn.id} at ${originalX},${originalZ})`
+	);
+	return credit;
+}
+
+/**
+ * Where should a redeemed captured piece land?
+ *
+ *   1. If the credit's original cell still belongs to the player AND
+ *      has no chess piece on it → spawn there. This is the "natural"
+ *      promotion location.
+ *   2. Otherwise → nearest owned cell to the king (preferring empty
+ *      ones). The user's rule: "If the cell the pawn got promoted on
+ *      has gone then it goes on the one nearest to the king".
+ *
+ * Returns `null` if the player has no owned cells at all.
+ */
+function resolveRedeemSpawnCell(world, playerId, credit) {
+	const { originalX, originalZ } = credit || {};
+	const hasOriginal = Number.isFinite(originalX) && Number.isFinite(originalZ);
+	if (hasOriginal
+		&& territory.isOwnedTerritory(world, originalX, originalZ, playerId)
+		&& !territory.cellHasChessPiece(world, originalX, originalZ)
+	) {
+		return { x: originalX, z: originalZ, fallback: false };
+	}
+	const fallback = territory.findNearestOwnedCell(world, playerId, {
+		skip: (x, z) => territory.cellHasChessPiece(world, x, z),
+	});
+	if (!fallback) return null;
+	return { ...fallback, fallback: true };
+}
 
 function registerChessHandlers(socket, ctx) {
 	const {
@@ -194,6 +303,34 @@ function registerChessHandlers(socket, ctx) {
 								z: targetPosition.z,
 							},
 						};
+
+						// Drop the captured piece into the captor's
+						// "basket". Pawns are too common to be
+						// strategically valuable here, and kings
+						// trigger the standalone king-capture flow,
+						// so we limit the basket to the four
+						// promotable types. The basket is later
+						// surfaced in the UI and offered as an
+						// alternative on pawn promotion.
+						const promotableTypes = new Set(['ROOK', 'KNIGHT', 'BISHOP', 'QUEEN']);
+						const capturedType = String(target.type || '').toUpperCase();
+						if (promotableTypes.has(capturedType)) {
+							const captorRecord = world.players?.[playerId];
+							if (captorRecord) {
+								if (!Array.isArray(captorRecord.capturedBasket)) {
+									captorRecord.capturedBasket = [];
+								}
+								captorRecord.capturedBasket.push({
+									type: capturedType,
+									originalOwner: capturedPieceSnapshot.player,
+									originalOwnerName: world.players?.[capturedPieceSnapshot.player]?.name
+										|| capturedPieceSnapshot.player,
+									originalColor: world.players?.[capturedPieceSnapshot.player]?.color,
+									capturedAt: Date.now(),
+								});
+							}
+						}
+
 						pieces.removePiece(world, target, {
 							reason: pieces.REMOVAL_REASONS.CAPTURED,
 							activityLog,
@@ -335,6 +472,14 @@ function registerChessHandlers(socket, ctx) {
 					},
 					t: Date.now(),
 				});
+
+				// Tell the captor about their updated basket so the
+				// UI can render the new total and (eventually) offer
+				// the new piece for redeployment on promotion.
+				if (typeof broadcaster.emitCapturedBasket === 'function') {
+					try { broadcaster.emitCapturedBasket(playerId); }
+					catch (basketErr) { console.warn('[Chess] basket emit failed:', basketErr.message); }
+				}
 			}
 
 			if (capturedPiece && capturedPiece.type === 'KING') {
@@ -345,11 +490,23 @@ function registerChessHandlers(socket, ctx) {
 				return;
 			}
 
-			if (piece.type === 'PAWN' && (piece.moveCount || 0) >= GAME_RULES.PAWN_PROMOTION_DISTANCE) {
-				socket.emit('pawn_promotion_available', {
-					pieceId: piece.id,
-					position: piece.position,
-				});
+			// Auto-bank a promotion credit if this pawn has walked the
+			// full promotion distance. The pawn is consumed; the
+			// player redeems the credit later via `redeem_promotion`
+			// against a captured-piece basket entry. We use
+			// `forwardDistance` (net forward progress) rather than
+			// `moveCount` so capture-shuffling and lateral moves don't
+			// trigger a fake promotion.
+			if (piece.type === 'PAWN'
+				&& (piece.forwardDistance || 0) >= GAME_RULES.PAWN_PROMOTION_DISTANCE
+			) {
+				try {
+					bankPromotionCredit(world, playerId, piece, {
+						broadcaster, activityLog, io,
+					});
+				} catch (bankErr) {
+					console.warn('[Chess] auto-bank promotion failed:', bankErr.message);
+				}
 			}
 
 			spectatorRegistry.broadcastUpdate(playerId, world);
@@ -360,10 +517,17 @@ function registerChessHandlers(socket, ctx) {
 		}
 	});
 
+	// promote_pawn is now a *banking* operation only. When a pawn
+	// completes the promotion walk (forwardDistance >= PAWN_PROMOTION_DISTANCE)
+	// the chess_move handler auto-banks a credit; this handler exists
+	// for legacy clients (or manual triggers) that send the request
+	// explicitly. The pawn is removed and a credit is added to
+	// `player.promotionCredits` at the pawn's current cell. Players
+	// later spend credits via `redeem_promotion`.
 	socket.on('promote_pawn', (data, callback) => {
 		try {
 			const world = World.getWorld();
-			const { pieceId, chosenType } = data || {};
+			const { pieceId } = data || {};
 			const piece = (world.chessPieces || []).find(
 				p => p && p.id === pieceId && p.player === playerId && p.type === 'PAWN'
 			);
@@ -371,44 +535,166 @@ function registerChessHandlers(socket, ctx) {
 				if (callback) callback({ success: false, error: 'Pawn not found' });
 				return;
 			}
+			const distance = piece.forwardDistance || 0;
+			if (distance < GAME_RULES.PAWN_PROMOTION_DISTANCE) {
+				if (callback) callback({
+					success: false,
+					error: `Pawn has not advanced far enough (need ${GAME_RULES.PAWN_PROMOTION_DISTANCE}, has ${distance})`,
+				});
+				return;
+			}
+			const credit = bankPromotionCredit(world, playerId, piece, {
+				broadcaster, activityLog, io,
+			});
+			if (callback) callback({ success: true, creditId: credit.id });
+		} catch (error) {
+			console.error('Error banking promotion credit:', error);
+			if (callback) callback({ success: false, error: error.message });
+		}
+	});
 
-			const validTypes = ['QUEEN', 'ROOK', 'BISHOP', 'KNIGHT'];
-			const promotionType = validTypes.includes(String(chosenType).toUpperCase())
-				? String(chosenType).toUpperCase()
-				: 'QUEEN';
-			const fromType = String(piece.type || '').toLowerCase();
-			piece.type = promotionType;
-
-			const cellContents = gameManager.boardManager.getCell(world.board, piece.position.x, piece.position.z);
-			if (Array.isArray(cellContents)) {
-				const chessItem = cellContents.find(item => item && item.type === 'chess' && item.pieceId === pieceId);
-				if (chessItem) chessItem.pieceType = promotionType.toLowerCase();
+	// redeem_promotion: spend one banked credit + one matching basket
+	// entry to deploy that captured piece on the board. The deploy
+	// cell is the credit's `originalX/Z` if it still belongs to the
+	// player and has no chess piece on it; otherwise it's the nearest
+	// owned cell to the player's king (the user's "if the cell got
+	// cleared, fall back to nearest-to-king" rule).
+	socket.on('redeem_promotion', (data, callback) => {
+		try {
+			const world = World.getWorld();
+			const player = World.getPlayer(playerId);
+			if (!player) {
+				if (callback) callback({ success: false, error: 'Not registered' });
+				return;
+			}
+			if (player.eliminated) {
+				if (callback) callback({ success: false, error: 'Player is eliminated' });
+				return;
 			}
 
-			World.markDirty();
-			console.log(`Pawn ${pieceId} promoted to ${promotionType}`);
+			const validTypes = ['QUEEN', 'ROOK', 'BISHOP', 'KNIGHT'];
+			const requestedType = String((data && data.capturedType) || '').toUpperCase();
+			if (!validTypes.includes(requestedType)) {
+				if (callback) callback({ success: false, error: 'Invalid captured type for redeem' });
+				return;
+			}
 
-			if (activityLog) {
+			const credits = Array.isArray(player.promotionCredits) ? player.promotionCredits : null;
+			if (!credits || credits.length === 0) {
+				if (callback) callback({ success: false, error: 'No promotion credits to redeem' });
+				return;
+			}
+			// If the client supplied a specific creditId honour it;
+			// otherwise consume the oldest (FIFO so credits don't
+			// stack indefinitely without UX feedback).
+			const creditId = data && data.creditId;
+			const creditIdx = creditId
+				? credits.findIndex(c => c && c.id === creditId)
+				: 0;
+			if (creditIdx < 0) {
+				if (callback) callback({ success: false, error: 'Promotion credit not found' });
+				return;
+			}
+			const credit = credits[creditIdx];
+
+			const basket = Array.isArray(player.capturedBasket) ? player.capturedBasket : null;
+			const basketIdx = basket
+				? basket.findIndex(item => String(item?.type || '').toUpperCase() === requestedType)
+				: -1;
+			if (basketIdx < 0) {
+				if (callback) callback({
+					success: false,
+					error: `No captured ${requestedType} in basket`,
+				});
+				return;
+			}
+
+			const spawnCell = resolveRedeemSpawnCell(world, playerId, credit);
+			if (!spawnCell) {
+				if (callback) callback({
+					success: false,
+					error: 'No owned cell available to deploy the piece',
+				});
+				return;
+			}
+
+			const piece = pieces.addPiece(world, {
+				type: requestedType,
+				player: playerId,
+				x: spawnCell.x,
+				z: spawnCell.z,
+				orientation: world.homeZones?.[playerId]?.orientation || 0,
+				reason: 'promotion_redeem',
+				activityLog,
+			});
+			if (!piece) {
+				if (callback) callback({ success: false, error: 'Failed to spawn piece' });
+				return;
+			}
+
+			basket.splice(basketIdx, 1);
+			credits.splice(creditIdx, 1);
+			World.markDirty();
+
+			if (activityLog && typeof activityLog.recordPromotionRedeemed === 'function') {
 				try {
-					const player = World.getPlayer(playerId);
-					activityLog.recordPiecePromoted({
+					activityLog.recordPromotionRedeemed({
 						playerId,
-						playerName: player?.username || player?.name || playerId,
-						pieceId,
-						fromType,
-						toType: promotionType.toLowerCase(),
-						x: piece.position?.x,
-						z: piece.position?.z,
+						playerName: player.username || player.name || playerId,
+						creditId: credit.id,
+						capturedType: requestedType.toLowerCase(),
+						pieceId: piece.id,
+						x: spawnCell.x,
+						z: spawnCell.z,
+						originalX: credit.originalX,
+						originalZ: credit.originalZ,
+						fallback: spawnCell.fallback,
 					});
-				} catch (logError) {
-					console.warn('[Chess] activity log failed (promote):', logError.message);
+				} catch (logErr) {
+					console.warn('[Chess] redeem log failed:', logErr.message);
 				}
 			}
 
+			try {
+				io.to(world.id).emit('promotion_credit_redeemed', {
+					playerId,
+					creditId: credit.id,
+					pieceId: piece.id,
+					pieceType: requestedType,
+					x: spawnCell.x,
+					z: spawnCell.z,
+					originalX: credit.originalX,
+					originalZ: credit.originalZ,
+					fallback: spawnCell.fallback,
+				});
+			} catch (emitErr) {
+				console.warn('[Chess] promotion_credit_redeemed emit failed:', emitErr.message);
+			}
+
 			broadcaster.broadcastGameUpdate();
-			if (callback) callback({ success: true, pieceType: promotionType });
+			if (typeof broadcaster.emitCapturedBasket === 'function') {
+				try { broadcaster.emitCapturedBasket(playerId); }
+				catch (basketErr) { console.warn('[Chess] basket emit failed:', basketErr.message); }
+			}
+			if (typeof broadcaster.emitPromotionCredits === 'function') {
+				try { broadcaster.emitPromotionCredits(playerId); }
+				catch (emitErr) { console.warn('[Chess] credits emit failed:', emitErr.message); }
+			}
+
+			console.log(
+				`Player ${playerId} redeemed promotion credit ${credit.id} → ${requestedType} at ` +
+				`(${spawnCell.x}, ${spawnCell.z})${spawnCell.fallback ? ' (fallback near king)' : ''}`
+			);
+
+			if (callback) callback({
+				success: true,
+				pieceId: piece.id,
+				pieceType: requestedType,
+				position: { x: spawnCell.x, z: spawnCell.z },
+				fallback: spawnCell.fallback,
+			});
 		} catch (error) {
-			console.error('Error promoting pawn:', error);
+			console.error('Error processing redeem_promotion:', error);
 			if (callback) callback({ success: false, error: error.message });
 		}
 	});

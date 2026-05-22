@@ -333,6 +333,174 @@ function removePiecesAtCells(world, playerId, cells, ctx = {}) {
 }
 
 /**
+ * Add a freshly-spawned chess piece to the world.
+ *
+ * Used by power-up orb claims and any future "appear out of thin
+ * air" mechanic. Pushes onto `world.chessPieces`, stamps the
+ * supporting cell with a chess marker that respects existing
+ * tetromino / home overlays already in the cell, and (optionally)
+ * records a `chess_piece_spawned` activity event.
+ *
+ * Returns the new piece object (with a generated `id` if none was
+ * supplied) or null if the inputs were invalid.
+ *
+ * @param {Object} world
+ * @param {Object} spec
+ * @param {string} spec.type        e.g. "PAWN" / "ROOK" / "QUEEN"
+ * @param {string} spec.player      Owner player id
+ * @param {number} spec.x
+ * @param {number} spec.z
+ * @param {number} [spec.orientation]
+ * @param {string} [spec.color]
+ * @param {string} [spec.id]
+ * @param {string} [spec.reason]    Logged in `chess_piece_spawned`
+ * @param {Object} [spec.activityLog]
+ */
+function addPiece(world, spec = {}) {
+	if (!world || !world.board) return null;
+	if (!Array.isArray(world.chessPieces)) world.chessPieces = [];
+	if (!world.board.cells || typeof world.board.cells !== 'object') {
+		world.board.cells = {};
+	}
+
+	const type = String(spec.type || '').toUpperCase();
+	if (!type) return null;
+	const x = Number(spec.x);
+	const z = Number(spec.z);
+	if (!Number.isFinite(x) || !Number.isFinite(z)) return null;
+	if (!spec.player) return null;
+
+	const pieceId = spec.id
+		|| `piece-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+	const ownerColor = spec.color
+		|| (world.players && world.players[spec.player] && world.players[spec.player].color)
+		|| null;
+	const orientation = Number.isFinite(spec.orientation)
+		? spec.orientation
+		: ((world.homeZones && world.homeZones[spec.player] && world.homeZones[spec.player].orientation) || 0);
+
+	const piece = {
+		id: pieceId,
+		type,
+		player: spec.player,
+		position: { x, z },
+		orientation,
+		hasMoved: false,
+		moveCount: 0,
+		forwardDistance: 0,
+	};
+	if (ownerColor !== null) piece.color = ownerColor;
+
+	world.chessPieces.push(piece);
+
+	const key = `${x},${z}`;
+	const existing = Array.isArray(world.board.cells[key]) ? world.board.cells[key].slice() : [];
+	const marker = {
+		type: 'chess',
+		pieceType: type.toLowerCase(),
+		player: spec.player,
+		color: ownerColor,
+		pieceId,
+		orientation,
+	};
+	const withoutOldChess = existing.filter(item => !item || item.type !== 'chess');
+	withoutOldChess.push(marker);
+	world.board.cells[key] = withoutOldChess;
+
+	if (spec.activityLog) {
+		try {
+			if (typeof spec.activityLog.recordPieceSpawned === 'function') {
+				spec.activityLog.recordPieceSpawned({
+					playerId: spec.player,
+					playerName: playerName(world, spec.player),
+					pieceType: pieceLabel(piece),
+					pieceId,
+					x, z,
+					reason: spec.reason || 'spawned',
+				});
+			} else if (typeof spec.activityLog.record === 'function') {
+				spec.activityLog.record('chess_piece_spawned', {
+					playerId: spec.player,
+					playerName: playerName(world, spec.player),
+					pieceType: pieceLabel(piece),
+					pieceId,
+					x, z,
+					reason: spec.reason || 'spawned',
+				});
+			}
+		} catch (err) {
+			console.warn('[pieces] addPiece activity log failed:', err.message);
+		}
+	}
+
+	return piece;
+}
+
+/**
+ * Find an empty pawn-row slot inside a player's home zone, suitable
+ * for spawning a fresh pawn into (basket-deploy redeployment etc.).
+ *
+ * The pawn row depends on home-zone orientation — pawns sit in front
+ * of the back-rank pieces. We deliberately only scan the pawn row,
+ * because dropping a pawn into the back rank would clobber a king
+ * or rook slot once an existing piece moves out. The function
+ * returns `null` when every pawn slot is occupied (by another
+ * piece or any non-home cell content).
+ *
+ * @param {Object} world
+ * @param {string} playerId
+ * @returns {{x:number, z:number} | null}
+ */
+function findEmptyPawnSlot(world, playerId) {
+	if (!world || !world.homeZones || !playerId) return null;
+	const homeZone = world.homeZones[playerId];
+	if (!homeZone) return null;
+
+	const orientation = Number.isFinite(homeZone.orientation) ? homeZone.orientation : 0;
+	const width = Number.isFinite(homeZone.width) ? homeZone.width : 8;
+	const height = Number.isFinite(homeZone.height) ? homeZone.height : 2;
+
+	const isHorizontal = orientation === 0 || orientation === 2;
+	const slots = [];
+	if (isHorizontal) {
+		// Pawn row depends on orientation:
+		//   0 (facing up)   → pawns sit at z + 1 (in front of back rank at z)
+		//   2 (facing down) → pawns sit at z       (in front of back rank at z + 1)
+		const pawnZ = orientation === 0 ? homeZone.z + 1 : homeZone.z;
+		for (let i = 0; i < width; i++) {
+			slots.push({ x: homeZone.x + i, z: pawnZ });
+		}
+	} else {
+		// Vertical: pawns to one side of the back rank column.
+		//   1 (facing right) → pawns at x + 1
+		//   3 (facing left)  → pawns at x
+		const pawnX = orientation === 1 ? homeZone.x + 1 : homeZone.x;
+		for (let i = 0; i < height; i++) {
+			slots.push({ x: pawnX, z: homeZone.z + i });
+		}
+	}
+
+	for (const slot of slots) {
+		const key = `${slot.x},${slot.z}`;
+		const cell = world.board.cells ? world.board.cells[key] : null;
+		const occupiedByChess = Array.isArray(cell)
+			? cell.some(item => item && item.type === 'chess')
+			: false;
+		if (occupiedByChess) continue;
+		// Don't drop into a cell currently hosting another player's
+		// tetromino — that'd be a free territory grab.
+		const foreignContent = Array.isArray(cell)
+			? cell.some(item => item
+				&& item.type !== 'home'
+				&& String(item.player || '') !== String(playerId))
+			: false;
+		if (foreignContent) continue;
+		return slot;
+	}
+	return null;
+}
+
+/**
  * Update a piece's `position` field and move its chess marker on the
  * board accordingly. Used by line-clear gravity and centroid gravity.
  *
@@ -380,9 +548,11 @@ module.exports = {
 	findPieceIndexById,
 	findPiecesByPlayer,
 
+	addPiece,
 	removePiece,
 	removeAllPlayerPieces,
 	removePiecesAtCells,
 	relocatePiece,
 	stripChessMarker,
+	findEmptyPawnSlot,
 };

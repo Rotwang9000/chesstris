@@ -28,7 +28,7 @@ let isOpen = false;
 // player. The user asked for "a filter so we can select just what
 // happened to our own player".
 let filterMineOnly = false;
-const FILTER_PREF_KEY = 'shaktris.activityLog.mineOnly';
+const FILTER_PREF_KEY = 'tetches.activityLog.mineOnly';
 try {
 	filterMineOnly = window.localStorage?.getItem(FILTER_PREF_KEY) === '1';
 } catch (_) { /* localStorage unavailable — fine */ }
@@ -105,10 +105,16 @@ function describeEvent(ev) {
 		}
 		case 'tetromino_dissolved': {
 			const at = ev.payload && Number.isFinite(ev.payload.x) ? `(${ev.payload.x}, ${ev.payload.z})` : '';
-			const reason = ev.payload && ev.payload.reason
-				? (ev.payload.reason === 'no_path_to_king'
-					? 'no path to king'
-					: ev.payload.reason.replace(/_/g, ' '))
+			const dissolveReasonLabels = {
+				no_path_to_king: 'no path to king',
+				no_connection: 'no connection',
+				not_adjacent: 'not touching your territory',
+				occupied: 'space already occupied',
+				invalid_placement: 'invalid placement',
+			};
+			const rawReason = ev.payload && ev.payload.reason;
+			const reason = rawReason
+				? (dissolveReasonLabels[rawReason] || rawReason.replace(/_/g, ' '))
 				: 'no connection';
 			return {
 				icon: '\u26A1',
@@ -271,10 +277,84 @@ function describeEvent(ev) {
 		case 'chess_piece_promoted': {
 			const at = Number.isFinite(ev.payload.x)
 				? ` (${ev.payload.x}, ${ev.payload.z})` : '';
+			const viaBasket = ev.payload.fromBasket ? ' (from basket)' : '';
 			return {
 				icon: '\u2606',
 				color: '#cf9',
-				text: `${who}'s ${ev.payload.fromType || 'pawn'}${at} promoted to ${ev.payload.toType || 'queen'}`,
+				text: `${who}'s ${ev.payload.fromType || 'pawn'}${at} promoted to ${ev.payload.toType || 'queen'}${viaBasket}`,
+				target: Number.isFinite(ev.payload.x)
+					? { x: ev.payload.x, z: ev.payload.z } : null,
+			};
+		}
+		case 'chess_piece_spawned': {
+			const at = Number.isFinite(ev.payload.x)
+				? ` at (${ev.payload.x}, ${ev.payload.z})` : '';
+			const piece = String(ev.payload.pieceType || 'piece').toLowerCase();
+			const reasonLabel = ev.payload.reason === 'powerup' ? ' from a power-up' : '';
+			return {
+				icon: '\u2728',
+				color: '#ffe066',
+				text: `${who} gained a ${piece}${at}${reasonLabel}`,
+				target: Number.isFinite(ev.payload.x)
+					? { x: ev.payload.x, z: ev.payload.z } : null,
+			};
+		}
+		case 'powerup_spawned': {
+			const at = Number.isFinite(ev.payload.x)
+				? ` at (${ev.payload.x}, ${ev.payload.z})` : '';
+			const piece = String(ev.payload.pieceType || 'piece').toLowerCase();
+			const target = ev.payload.targetPlayerName
+				? ` (near ${ev.payload.targetPlayerName})` : '';
+			return {
+				icon: '\uD83D\uDD2E',
+				color: '#cdaaff',
+				text: `A ${piece} power-up appeared${at}${target}`,
+				target: Number.isFinite(ev.payload.x)
+					? { x: ev.payload.x, z: ev.payload.z } : null,
+			};
+		}
+		case 'powerup_claimed': {
+			const piece = String(ev.payload.pieceType || 'piece').toLowerCase();
+			const at = Number.isFinite(ev.payload.x)
+				? ` at (${ev.payload.x}, ${ev.payload.z})` : '';
+			return {
+				icon: '\uD83C\uDF1F',
+				color: '#ffcc66',
+				text: `${who} claimed a ${piece} power-up${at}`,
+				target: Number.isFinite(ev.payload.x)
+					? { x: ev.payload.x, z: ev.payload.z } : null,
+			};
+		}
+		case 'powerup_expired': {
+			const piece = String(ev.payload.pieceType || 'piece').toLowerCase();
+			return {
+				icon: '\u29bf',
+				color: '#888',
+				text: `A ${piece} power-up faded away`,
+				target: Number.isFinite(ev.payload.x)
+					? { x: ev.payload.x, z: ev.payload.z } : null,
+			};
+		}
+		case 'pawn_promoted_to_credit': {
+			const at = Number.isFinite(ev.payload.x)
+				? ` at (${ev.payload.x}, ${ev.payload.z})` : '';
+			return {
+				icon: '\u2605',
+				color: '#a8e6a3',
+				text: `${who} banked a promotion credit${at}`,
+				target: Number.isFinite(ev.payload.x)
+					? { x: ev.payload.x, z: ev.payload.z } : null,
+			};
+		}
+		case 'promotion_redeemed': {
+			const piece = String(ev.payload.capturedType || 'piece').toLowerCase();
+			const at = Number.isFinite(ev.payload.x)
+				? ` at (${ev.payload.x}, ${ev.payload.z})` : '';
+			const fallback = ev.payload.fallback ? ' (original cell gone — placed near king)' : '';
+			return {
+				icon: '\u2654',
+				color: '#a8e6a3',
+				text: `${who} redeemed a credit for a ${piece}${at}${fallback}`,
 				target: Number.isFinite(ev.payload.x)
 					? { x: ev.payload.x, z: ev.payload.z } : null,
 			};
@@ -283,6 +363,17 @@ function describeEvent(ev) {
 			return { icon: '\u2795', color: '#9fc', text: `${who} joined`, target: null };
 		case 'player_left':
 			return { icon: '\u2796', color: '#bbb', text: `${who} left`, target: null };
+		case 'player_reaped': {
+			const reason = ev.payload.reason === 'boot_sweep'
+				? 'cleared from a previous session'
+				: 'cleared (no pieces left)';
+			return {
+				icon: '\u2620',
+				color: '#888',
+				text: `${who} ${reason}`,
+				target: null,
+			};
+		}
 		case 'chat':
 			return { icon: '\uD83D\uDCAC', color: '#fff', text: `${who}: ${ev.payload.message}`, target: null };
 		default:

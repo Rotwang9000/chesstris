@@ -1,5 +1,5 @@
 /**
- * Tetromino public API for Shaktris (Phase-4 refactored).
+ * Tetromino public API for Tetches (Phase-4 refactored).
  *
  * The bulk of the tetromino logic now lives in the `./tetromino/*`
  * sub-modules. This file remains as the legacy entry point used by the
@@ -7,7 +7,7 @@
  * the public surface as both named exports and the historical
  * `tetrominoModule` object.
  *
- * Shaktris 3D coordinate system
+ * Tetches 3D coordinate system
  * =============================
  * - X-axis: left → right (right is positive)
  * - Y-axis: down → up (up is positive); Y = 0 is the board surface

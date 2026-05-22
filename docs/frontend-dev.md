@@ -1,8 +1,8 @@
-# Frontend Developer Guide for Shaktris
+# Frontend Developer Guide for Tetches
 
 ## Overview
 
-This guide provides essential information for frontend developers working on the Shaktris project. Shaktris is a multiplayer game combining elements of chess and Tetris with a 3D/2D rendering system.
+This guide provides essential information for frontend developers working on the Tetches project. Tetches is a multiplayer game combining elements of chess and Tetris with a 3D/2D rendering system.
 
 ## Project Architecture
 

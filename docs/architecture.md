@@ -1,8 +1,8 @@
-# Shaktris Architecture
+# Tetches Architecture
 
 ## Overview
 
-Shaktris follows a modular architecture with clear separation of concerns. The game is built using modern web technologies and follows a component-based design pattern.
+Tetches follows a modular architecture with clear separation of concerns. The game is built using modern web technologies and follows a component-based design pattern.
 
 ## Core Components
 

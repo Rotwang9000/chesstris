@@ -27,7 +27,7 @@ export function showWebglUnavailableOverlay(reason = '') {
 			border-radius: 12px; padding: 22px 24px; background: rgba(0,0,0,0.5);">
 			<h2 style="margin: 0 0 12px;">WebGL is unavailable</h2>
 			<p style="margin: 0 0 12px;">
-				Shaktris needs WebGL (3D acceleration) to run. Your browser couldn't
+				Tetches needs WebGL (3D acceleration) to run. Your browser couldn't
 				create a WebGL context, usually because hardware acceleration is
 				disabled at the system or browser level.
 			</p>

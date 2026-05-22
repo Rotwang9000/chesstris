@@ -105,7 +105,7 @@ export function handleChessPhaseClick() {
 // ── Initialisation ──────────────────────────────────────────────────────────
 
 export function initGame(container, options = {}) {
-	console.log("Initialising Shaktris game...");
+	console.log("Initialising Tetches game...");
 
 	try {
 		let THREE = getTHREE();
@@ -188,7 +188,7 @@ export function initGame(container, options = {}) {
 			if (!renderer.domElement.id) renderer.domElement.id = 'game-canvas';
 			renderer.domElement.__renderer = renderer;
 			renderer.domElement.setAttribute('role', 'img');
-			renderer.domElement.setAttribute('aria-label', 'Shaktris game board');
+			renderer.domElement.setAttribute('aria-label', 'Tetches game board');
 			renderer.domElement.tabIndex = 0;
 		} catch (_) { /* best-effort accessibility */ }
 
@@ -223,9 +223,9 @@ export function initGame(container, options = {}) {
 
 		setTimeout(() => {
 			if (gameState.inProgress) return;
-			window.startShaktrisGame = startPlayingGame;
+			window.startTetchesGame = startPlayingGame;
 			setCameraToOverview();
-			showTutorialMessage(window.startShaktrisGame);
+			showTutorialMessage(window.startTetchesGame);
 		}, 500);
 
 		// Register callbacks that avoid circular imports
@@ -546,7 +546,7 @@ export function startPlayingGame(gameKey = null) {
 	console.log('Entering world...', gameKey ? `with key: ${gameKey}` : 'default shared world');
 
 	if (gameKey) {
-		localStorage.setItem('shaktris_game_key', gameKey);
+		localStorage.setItem('tetches_game_key', gameKey);
 		gameState.gameKey = gameKey;
 	}
 

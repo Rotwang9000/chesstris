@@ -86,7 +86,7 @@ function verifyMagicLink(token) {
  */
 function generatePlayerKey(email) {
 	const hash = crypto.createHash('sha256');
-	hash.update(email.toLowerCase().trim() + ':shaktris');
+	hash.update(email.toLowerCase().trim() + ':tetches');
 	return 'player_' + hash.digest('hex').substring(0, 16);
 }
 

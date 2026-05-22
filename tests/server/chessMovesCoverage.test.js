@@ -321,7 +321,7 @@ describe('king movement', () => {
 	});
 });
 
-// ── Pawn (Shaktris orientation 0/1/2/3) ────────────────────────────
+// ── Pawn (Tetches orientation 0/1/2/3) ────────────────────────────
 
 describe('pawn movement — each orientation', () => {
 	function setUpPawn(orientation) {
@@ -430,7 +430,7 @@ describe('client move generator agrees with server validator', () => {
 		for (const cell of server) {
 			expect(client).toContain(cell);
 		}
-		// In Shaktris the client must offer at least one move when the
+		// In Tetches the client must offer at least one move when the
 		// server would let the piece move at all — otherwise the user
 		// is locked out of a legal action.
 		expect(client.size).toBeGreaterThanOrEqual(server.size);

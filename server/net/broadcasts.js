@@ -98,6 +98,39 @@ function createBroadcaster({ io, persistence }) {
 		const players = world && world.players ? world.players : {};
 		return Object.keys(players).map(id => {
 			const record = players[id];
+			// Summarise the captured-piece basket so the client UI can
+			// show "3 captured" / piece icons without us streaming the
+			// whole basket on every broadcast. The full basket is
+			// included for the local player only, via a separate
+			// per-socket event when it changes.
+			const basket = Array.isArray(record?.capturedBasket) ? record.capturedBasket : [];
+			const basketSummary = basket.reduce((acc, item) => {
+				const t = String(item?.type || '').toUpperCase();
+				if (!t) return acc;
+				acc[t] = (acc[t] || 0) + 1;
+				return acc;
+			}, {});
+			// Per-piece breakdown that preserves the original owner's
+			// colour so the player bar / nameplate can render each
+			// captured-piece icon in the colour of the player whose
+			// piece it was. Cap at a sane upper bound to keep the
+			// payload tidy — 99% of baskets sit under 12 items.
+			const capturedBreakdown = (() => {
+				const counts = new Map();
+				for (const item of basket) {
+					const t = String(item?.type || '').toUpperCase();
+					if (!t) continue;
+					const colour = item?.originalColor;
+					const key = `${t}|${colour}`;
+					const entry = counts.get(key);
+					if (entry) entry.count += 1;
+					else counts.set(key, { type: t, color: colour, count: 1 });
+				}
+				return Array.from(counts.values());
+			})();
+			const credits = Array.isArray(record?.promotionCredits)
+				? record.promotionCredits
+				: [];
 			return {
 				id,
 				name: record?.name || `Player_${String(id).substring(0, 6)}`,
@@ -107,6 +140,18 @@ function createBroadcaster({ io, persistence }) {
 				// the menu and pushing new joiners away from active
 				// players in the spawn algorithm.
 				eliminated: !!record?.eliminated,
+				// Total count + per-type summary of captured pieces.
+				// Used by the sidebar to render "Captured: 4 ♜" etc.
+				capturedCount: basket.length,
+				capturedSummary: basketSummary,
+				// Per-piece breakdown with original owner colour for
+				// the "cosmetic captured-piece colours" feature — see
+				// `unifiedPlayerBar.js`.
+				capturedBreakdown,
+				// Banked promotion credits — each represents a pawn that
+				// walked the full promotion distance and is waiting to
+				// be redeemed against a captured-piece basket entry.
+				promotionCreditCount: credits.length,
 			};
 		});
 	}
@@ -147,6 +192,10 @@ function createBroadcaster({ io, persistence }) {
 			startTime: world.startTime,
 			maxPlayers: world.maxPlayers,
 			homeZoneDistance: world.homeZoneDistance,
+			// Active power-up orbs. Always streamed in full — the array
+			// is tiny (a handful of orbs at most) and clients need it
+			// to draw glowing floating spheres at the right cells.
+			powerUps: Array.isArray(world.powerUps) ? world.powerUps : [],
 			gameId: world.id,
 		};
 	}
@@ -190,6 +239,7 @@ function createBroadcaster({ io, persistence }) {
 			lastAction: world.lastAction,
 			disconnectedSince: world.disconnectedSince || {},
 			players: playersList,
+			powerUps: Array.isArray(world.powerUps) ? world.powerUps : [],
 		});
 	}
 
@@ -243,6 +293,34 @@ function createBroadcaster({ io, persistence }) {
 		}
 	}
 
+	/**
+	 * Push the full captured-piece basket to a player. We don't fold
+	 * this into `game_update` because the basket is private (only the
+	 * owning player should see exactly what they hold) and rarely
+	 * changes, so spamming it on every broadcast would be wasteful.
+	 */
+	function emitCapturedBasket(playerId) {
+		const world = World.getWorld();
+		if (!world) return false;
+		const record = world.players?.[playerId];
+		const basket = Array.isArray(record?.capturedBasket) ? record.capturedBasket : [];
+		return emitToPlayer(playerId, 'captured_basket', { basket });
+	}
+
+	/**
+	 * Push the full promotion-credit list to a player. Like the basket
+	 * this is per-player private state — the credit's `originalX/Z` tells
+	 * the client where the pawn promoted, which is useful information
+	 * to the owner but irrelevant to other players.
+	 */
+	function emitPromotionCredits(playerId) {
+		const world = World.getWorld();
+		if (!world) return false;
+		const record = world.players?.[playerId];
+		const credits = Array.isArray(record?.promotionCredits) ? record.promotionCredits : [];
+		return emitToPlayer(playerId, 'promotion_credits', { credits });
+	}
+
 	function clearDeltaCache(worldId = World.getWorldId()) {
 		boardDeltaCache.delete(worldId);
 	}
@@ -252,6 +330,8 @@ function createBroadcaster({ io, persistence }) {
 		emitFullStateTo,
 		emitIslandDecayAnimation,
 		emitToPlayer,
+		emitCapturedBasket,
+		emitPromotionCredits,
 		buildPlayersList,
 		buildBoardBounds,
 		buildGameStatePayload,

@@ -1,5 +1,5 @@
 /**
- * Shaktris Game Server — thin entrypoint.
+ * Tetches Game Server — thin entrypoint.
  *
  * Everything game-related lives in `server/`.  This file only:
  *
@@ -28,7 +28,7 @@ const { server } = bootstrap({ projectRoot: PROJECT_ROOT });
 server.listen(PORT, () => {
 	const address = server.address();
 	const actualPort = address && address.port ? address.port : PORT;
-	console.log(`Shaktris server running on port ${actualPort}`);
+	console.log(`Tetches server running on port ${actualPort}`);
 	console.log(`- Game:    http://localhost:${actualPort}/`);
 	console.log(`- 2D Mode: http://localhost:${actualPort}/2d`);
 	console.log(`- API:     http://localhost:${actualPort}/api`);

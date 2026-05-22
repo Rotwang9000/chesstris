@@ -15,6 +15,7 @@ function registerTetrominoHandlers(socket, ctx) {
 		integrityService,
 		spectatorRegistry,
 		lineClearService,
+		powerUpManager,
 		activityLog,
 	} = ctx;
 
@@ -63,7 +64,19 @@ function registerTetrominoHandlers(socket, ctx) {
 			);
 			if (!validation.valid) {
 				const reason = validation.reason || 'invalid_placement';
-				if (activityLog && (reason === 'no_path_to_king' || reason === 'no_connection')) {
+				// Log every dissolve / rejection reason — including
+				// `not_adjacent`, which used to be silent. The user
+				// reported "It says the rotated piece isn't connected
+				// when it clearly is" and there was nothing in
+				// Recent Activity to corroborate it.
+				const loggableReasons = new Set([
+					'no_path_to_king',
+					'no_connection',
+					'not_adjacent',
+					'occupied',
+					'invalid_placement',
+				]);
+				if (activityLog && loggableReasons.has(reason)) {
 					try {
 						activityLog.recordTetrominoDissolved({
 							playerId,
@@ -82,15 +95,36 @@ function registerTetrominoHandlers(socket, ctx) {
 				return;
 			}
 
-			gameManager.tetrominoManager.placeTetromino(
+			const placedCells = gameManager.tetrominoManager.placeTetromino(
 				world, tetromino, tetromino.position.x, tetromino.position.z, playerId
 			);
+
+			// Claim any power-up orbs sitting on the cells we just
+			// covered. The orb's piece spawns under the captor on the
+			// same cell that the tetromino occupies, so the player
+			// gets immediate value out of extending toward the orb.
+			let powerUpClaims = [];
+			if (powerUpManager && typeof powerUpManager.claimAcrossPlacement === 'function') {
+				try {
+					powerUpClaims = powerUpManager.claimAcrossPlacement(world, playerId, placedCells);
+				} catch (claimErr) {
+					console.warn('[Tetromino] power-up claim failed:', claimErr.message);
+				}
+			}
+
 			integrityService.runIslandIntegrityPass({ emitAnimation: false });
 
 			world.lastAction = {
 				type: 'tetromino_placed',
 				playerId,
 				data: { ...data },
+				powerUpClaims: powerUpClaims.map(c => ({
+					orbId: c.orb.id,
+					pieceId: c.piece.id,
+					pieceType: c.orb.pieceType,
+					x: c.orb.x,
+					z: c.orb.z,
+				})),
 			};
 			player.lastTetrominoPlacementAt = Date.now();
 			player.lastTetrominoPlacement = world.players?.[playerId]?.lastTetrominoPlacement

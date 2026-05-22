@@ -72,6 +72,14 @@ export function detonatePawn(pieceId) {
 	return networkManagerInstance.detonatePawn(pieceId);
 }
 
+export function promotePawn(pieceId) {
+	return networkManagerInstance.promotePawn(pieceId);
+}
+
+export function redeemPromotion(capturedType, creditId, callback) {
+	return networkManagerInstance.redeemPromotion(capturedType, creditId, callback);
+}
+
 export function getStatus() {
 	if (networkManagerInstance && typeof networkManagerInstance.getStatus === 'function') {
 		return networkManagerInstance.getStatus();

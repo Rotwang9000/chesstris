@@ -13,6 +13,9 @@ import * as tetrominoModule from './tetromino.js';
 import { boardFunctions } from './boardFunctions.js';
 import { performRaycast, clearChessSelection } from './chessInteraction.js';
 import { showToastMessage } from './showToastMessage.js';
+import { playSound, initSoundManager } from './audio/soundManager.js';
+import { setupKeyboardChess } from './keyboardChess.js';
+import { setupTouchGestures } from './touchGestures.js';
 
 let _onTetrisPhaseClick = null;
 
@@ -40,7 +43,13 @@ export function setupInputHandlers() {
 
 	console.log('Setting up enhanced input handlers...');
 
+	// Web Audio needs a user gesture before it'll play. We let the
+	// first keydown / click / touchstart be that gesture by calling
+	// initSoundManager (idempotent) from each handler.
 	document.addEventListener('keydown', handleKeyDown);
+	document.addEventListener('keydown', () => initSoundManager(), { once: true });
+	document.addEventListener('click', () => initSoundManager(), { once: true });
+	document.addEventListener('touchstart', () => initSoundManager(), { once: true });
 
 	document.addEventListener('click', function (e) {
 		if (!renderer || !renderer.domElement || !getMouse()) return;
@@ -87,6 +96,13 @@ export function setupInputHandlers() {
 	containerElement.addEventListener('touchstart', handleTouchStart, { passive: false });
 	containerElement.addEventListener('touchmove', handleTouchMove, { passive: false });
 	containerElement.addEventListener('touchend', handleTouchEnd, { passive: false });
+
+	// Keyboard-only chess (Tab/arrows/Enter) and touch-only gestures
+	// (swipe/double-tap/long-press) layer cleanly on top of the
+	// existing handlers. Each is a no-op if its target phase isn't
+	// active, so no further coordination is needed.
+	setupKeyboardChess();
+	setupTouchGestures();
 }
 
 // ── Keyboard ────────────────────────────────────────────────────────────────
@@ -156,15 +172,18 @@ function handleKeyDown(event) {
 		case 'z': case 'Z':
 		case 'q': case 'Q':
 			tetrominoModule.rotateTetromino(-1);
+			try { playSound('tick'); } catch (_e) { /* sound is best-effort */ }
 			break;
 		case 'x': case 'X':
 		case 'r': case 'R':
 		case 'e': case 'E':
 			tetrominoModule.rotateTetromino(1);
+			try { playSound('tick'); } catch (_e) { /* sound is best-effort */ }
 			break;
 		case ' ':
 			event.preventDefault();
 			tetrominoModule.hardDropTetromino();
+			try { playSound('hardDrop'); } catch (_e) { /* sound is best-effort */ }
 			break;
 	}
 }

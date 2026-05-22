@@ -1,4 +1,4 @@
-# Shaktris CI/CD Setup
+# Tetches CI/CD Setup
 
 ## Architecture
 
@@ -16,15 +16,15 @@
     ┌──────▼──────┐          ┌───────▼───────┐
     │   Staging   │          │  Production   │
     │  port 3661  │          │  port 3666    │
-    │ staging.    │          │ shaktris.com  │
-    │ shaktris.com│          │               │
+    │ staging.    │          │ tetches.com  │
+    │ tetches.com│          │               │
     └─────────────┘          └───────────────┘
 ```
 
 ### How deployment works
 
 1. Jenkins (in Docker) runs tests, then rsyncs files to a **mounted volume**
-   (`/var/www/shaktris.staging` or `/var/www/shaktris.live`) using
+   (`/var/www/tetches.staging` or `/var/www/tetches.live`) using
    `--no-times --omit-dir-times --no-perms --no-owner --no-group` to avoid
    Docker-volume permission failures when syncing metadata
 2. When running inside Docker, deploy writes a **trigger file** to
@@ -37,7 +37,7 @@
 
 ```bash
 # Run as root on the server
-cd /home/rotwang/chesstris
+cd /home/rotwang/tetches
 sudo bash ci/jenkins-setup.sh
 ```
 
@@ -57,15 +57,15 @@ This will:
 | Lint Check | Every push | Syntax-checks key ES modules |
 | Test — Server | Every push | `npx jest --selectProjects server tests/server/` (must pass) |
 | Test — Other | Every push | Runs stable non-server tests; non-blocking |
-| Deploy Staging | Develop branch | Syncs to `/var/www/shaktris.staging`, triggers PM2 restart |
-| Deploy Production | main branch | Manual approval, then deploys to `/var/www/shaktris.live` |
+| Deploy Staging | Develop branch | Syncs to `/var/www/tetches.staging`, triggers PM2 restart |
+| Deploy Production | main branch | Manual approval, then deploys to `/var/www/tetches.live` |
 
 ## Environments
 
 | Environment | Directory | Port | URL |
 |-------------|-----------|------|-----|
-| Staging | `/var/www/shaktris.staging` | 3661 | https://staging.shaktris.com |
-| Production | `/var/www/shaktris.live` | 3666 | https://shaktris.com |
+| Staging | `/var/www/tetches.staging` | 3661 | https://staging.tetches.com |
+| Production | `/var/www/tetches.live` | 3666 | https://tetches.com |
 
 ## Manual Deployment
 
@@ -78,10 +78,10 @@ bash scripts/deploy.sh production
 
 ```bash
 # Trigger watcher manually on the host
-/opt/shaktris/deploy-watcher.sh
+/opt/tetches/deploy-watcher.sh
 
 # Check watcher output
-tail -n 100 /var/log/shaktris-deploy.log
+tail -n 100 /var/log/tetches-deploy.log
 
 # Verify the app is listening
 ss -ltnp | grep ':3661\|:3666'
@@ -95,13 +95,13 @@ The game requires correct nginx config to work behind a reverse proxy. Key point
 - Static file regex should use `try_files $uri @backend` as a fallback
 
 Updated configs are in the repo:
-- `ci/nginx-staging.conf` → copy to `/etc/nginx/sites-available/staging.shaktris.com.conf`
-- `ci/nginx-production.conf` → copy to `/etc/nginx/sites-available/shaktris.com.conf`
+- `ci/nginx-staging.conf` → copy to `/etc/nginx/sites-available/staging.tetches.com.conf`
+- `ci/nginx-production.conf` → copy to `/etc/nginx/sites-available/tetches.com.conf`
 
 ```bash
 # As root:
-cp ci/nginx-staging.conf /etc/nginx/sites-available/staging.shaktris.com.conf
-cp ci/nginx-production.conf /etc/nginx/sites-available/shaktris.com.conf
+cp ci/nginx-staging.conf /etc/nginx/sites-available/staging.tetches.com.conf
+cp ci/nginx-production.conf /etc/nginx/sites-available/tetches.com.conf
 nginx -t && systemctl reload nginx
 ```
 
@@ -109,17 +109,17 @@ nginx -t && systemctl reload nginx
 
 ```bash
 pm2 list
-pm2 logs shaktris-staging
-pm2 logs shaktris-production
-pm2 restart shaktris-staging
-pm2 start ecosystem.config.cjs --only shaktris-staging
+pm2 logs tetches-staging
+pm2 logs tetches-production
+pm2 restart tetches-staging
+pm2 start ecosystem.config.cjs --only tetches-staging
 ```
 
 ## Docker Commands
 
 ```bash
 # View Jenkins logs
-docker logs -f shaktris-jenkins
+docker logs -f tetches-jenkins
 
 # Restart Jenkins
 docker compose -f docker-compose.jenkins.yml restart
@@ -131,7 +131,7 @@ docker compose -f docker-compose.jenkins.yml up -d --build
 docker compose -f docker-compose.jenkins.yml down
 
 # Get initial admin password
-docker exec shaktris-jenkins cat /var/jenkins_home/secrets/initialAdminPassword
+docker exec tetches-jenkins cat /var/jenkins_home/secrets/initialAdminPassword
 ```
 
 ## Files

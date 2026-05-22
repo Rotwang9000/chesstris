@@ -229,6 +229,15 @@ function processRotate(dir) {
 	}
 
 	gameState.currentTetromino.shape = newShape;
+	// Keep the rotation index in lockstep with the matrix mutation so
+	// the server (which rebuilds the shape from `(type, rotation)`)
+	// validates the same cells the player sees. `dir === 1` is a CW
+	// turn matching the `TETROMINO_SHAPES[type][rotation+1]` step.
+	const previousRotation = Number.isInteger(gameState.currentTetromino.rotation)
+		? gameState.currentTetromino.rotation
+		: 0;
+	const step = dir === 1 ? 1 : 3;
+	gameState.currentTetromino.rotation = (previousRotation + step) % 4;
 	gameState.pendingRender = true;
 }
 

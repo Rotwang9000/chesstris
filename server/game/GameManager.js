@@ -4,7 +4,7 @@
  * Historically this class owned its own `this.games` Map.  That was the
  * primary source of the dual-state bug: the socket layer kept its own
  * `games` Map AND the GameManager kept another, and persistence wrote
- * BOTH.  The current Shaktris design has a **single** authoritative
+ * BOTH.  The current Tetches design has a **single** authoritative
  * world (see `server/world/World.js`).  This class is now just a
  * convenience wrapper that exposes the per-domain managers (board,
  * chess, tetromino, islands, players, AI) and resolves `getGame(id)`

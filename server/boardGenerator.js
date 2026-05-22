@@ -1,5 +1,5 @@
 /**
- * Board Generator - Server-side implementation for Shaktris
+ * Board Generator - Server-side implementation for Tetches
  * Handles generation of the board layout including home zone positioning
  * 
  * This module is responsible for:

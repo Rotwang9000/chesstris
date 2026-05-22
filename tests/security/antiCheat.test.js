@@ -1,5 +1,5 @@
 /**
- * Anti-Cheat Tests for Shaktris
+ * Anti-Cheat Tests for Tetches
  * 
  * These tests verify that the game properly validates moves, prevents cheating,
  * and maintains game state integrity.

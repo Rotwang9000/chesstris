@@ -35,13 +35,15 @@ import { cancelSkipChessTimer, cancelSkipDropTimer } from '../skipChessButton.js
 import { updateNextPieceHint } from '../tetromino/nextPiece.js';
 import { getChessPiecesGroup } from '../gameContext.js';
 import {
-	showPawnPromotionDialog,
+	showPromotionRedeemDialog,
 	showKingBattleOverlay,
 	showKingDuelOverlay,
 	handleDuelRoundResult,
 	handleDuelNewRound,
 	showKingDuelResult,
 } from '../uiOverlays.js';
+import { playSound } from '../audio/soundManager.js';
+import { mountMuteButton } from '../audio/muteButton.js';
 
 // `king_detonation` and `island_decay` cap how many simultaneous
 // particle animations we'll spawn so a 100×100 detonation doesn't pin
@@ -90,6 +92,13 @@ function normalisePlayersArrayToMap(playersArray) {
 			// Forwarded so the sidebar can hide beaten players and
 			// the spacing helpers can ignore them.
 			eliminated: !!p.eliminated,
+			// Captured-piece basket summary (public count + per-type
+			// totals). The full basket only goes to the owning
+			// player via a separate `captured_basket` event.
+			capturedCount: Number(p.capturedCount) || 0,
+			capturedSummary: p.capturedSummary && typeof p.capturedSummary === 'object'
+				? { ...p.capturedSummary }
+				: {},
 		};
 	}
 	return map;
@@ -138,13 +147,18 @@ function handleRowCleared(payload) {
 		const rows = Array.isArray(payload?.rows) ? payload.rows : [];
 		const cols = Array.isArray(payload?.cols) ? payload.cols : [];
 		if (rows.length === 0 && cols.length === 0) return;
+		// Audible cue for every row-clear we see, not just our own.
+		// Quieter for other players' clears so the local action stays
+		// dominant in the mix.
+		const isLocalActor = payload?.playerId && String(payload.playerId) === String(gameState.localPlayerId);
+		try { playSound('lineClear', { gain: isLocalActor ? 1 : 0.6 }); } catch (_e) { /* sound is best-effort */ }
 		// Even when the clear was triggered by someone else, settle our
 		// own airborne meshes — pieces on those cells need to land or
 		// fall regardless of who finished the line.
 		if (Array.isArray(payload?.settleOutcomes)) {
 			settleAirbornePieces(payload.settleOutcomes);
 		}
-		if (!payload?.playerId || String(payload.playerId) !== String(gameState.localPlayerId)) return;
+		if (!isLocalActor) return;
 		const parts = [];
 		if (rows.length) parts.push(`row${rows.length === 1 ? '' : 's'} ${rows.join(', ')}`);
 		if (cols.length) parts.push(`col${cols.length === 1 ? '' : 's'} ${cols.join(', ')}`);
@@ -221,6 +235,8 @@ function handleChessCapture(payload) {
 		const z = Number(payload.at.z);
 		if (!Number.isFinite(x) || !Number.isFinite(z)) return;
 
+		try { playSound('capture'); } catch (_e) { /* sound is best-effort */ }
+
 		let pieceMesh = null;
 		const capturedId = payload?.capturedPiece?.id;
 		if (capturedId) {
@@ -262,6 +278,10 @@ function handleChessFailed(payload) {
 	try {
 		const reason = payload && typeof payload.reason === 'string' ? payload.reason : null;
 		const message = payload && payload.message ? String(payload.message) : 'Move could not be completed';
+
+		// Rejected moves get an error cue so the player notices even
+		// if they're not looking at the toast.
+		try { playSound('error'); } catch (_e) { /* sound is best-effort */ }
 
 		switch (reason) {
 			case 'piece_gone':
@@ -522,19 +542,19 @@ function handleNewTetromino(payload, { renderCurrentTetromino }) {
 }
 
 function handlePawnPromotionAvailable(payload) {
-	try {
-		const { pieceId, position } = payload || {};
-		if (!pieceId) return;
-		showPawnPromotionDialog(pieceId, position);
-	} catch (e) {
-		console.error('Error handling pawn_promotion_available:', e);
-	}
+	// Legacy handler — the server no longer fires this event for new
+	// games (the chess_move handler auto-banks a credit instead and
+	// emits `promotion_credit_added`). Kept as a no-op so older
+	// rolling servers behind the live client don't spam console
+	// errors.
+	void payload;
 }
 
 function handleKingCaptured(payload) {
 	try {
 		const { captorId, captorName, defeatedId, defeatedName, defeatedColor, inheritedPawnCount } = payload || {};
 		if (!captorId || !defeatedId) return;
+		try { playSound('kingFall'); } catch (_e) { /* sound is best-effort */ }
 		showKingBattleOverlay(captorId, captorName, defeatedId, defeatedName, defeatedColor, inheritedPawnCount);
 	} catch (e) {
 		console.error('Error handling king_captured:', e);
@@ -658,11 +678,154 @@ export function setupNetworkEvents(hooks = {}) {
 	NetworkManager.on('king_duel_new_round', safe('king_duel_new_round', handleDuelNewRound));
 	NetworkManager.on('king_duel_result', safe('king_duel_result', showKingDuelResult));
 	NetworkManager.on('king_duel_announced', handleKingDuelAnnounced);
-	NetworkManager.on('activity_event', (payload) => pushActivityEvent(payload));
+	NetworkManager.on('activity_event', (payload) => {
+		// Cheap audio hooks for activity events that don't have a
+		// dedicated handler. The cues are quieter when the actor
+		// isn't the local player so a busy world doesn't drown the
+		// player's own action out.
+		try {
+			const type = payload && payload.type ? String(payload.type) : '';
+			const isLocal = payload && payload.playerId
+				&& String(payload.playerId) === String(gameState.localPlayerId);
+			const gain = isLocal ? 1 : 0.5;
+			switch (type) {
+				case 'tetromino_placed':
+					playSound('drop', { gain });
+					break;
+				case 'pawn_promoted_to_credit':
+					playSound('promotion', { gain });
+					break;
+				default:
+					break;
+			}
+		} catch (_e) { /* sound is best-effort */ }
+		pushActivityEvent(payload);
+	});
 	NetworkManager.on('activity_log_snapshot', (payload) => loadActivityLogSnapshot(payload));
+
+	// Private per-player captured-piece basket. The server emits this
+	// on join, capture, and promotion-from-basket. Stored on the
+	// game state so the promotion dialog can offer the right options.
+	NetworkManager.on('captured_basket', (payload) => {
+		const basket = Array.isArray(payload?.basket) ? payload.basket : [];
+		dispatchGameUpdate({ capturedBasket: basket });
+	});
+
+	// Power-up orbs. Each event is small — single orb id + position
+	// + piece type. We mutate `gameState.powerUps` in place and let
+	// the renderer pick it up on the next frame. The full set is
+	// also delivered with every `game_update`, so this just gives us
+	// snappier reaction times for "first to connect wins" moments.
+	NetworkManager.on('powerup_spawned', (payload) => {
+		if (!payload || !payload.id) return;
+		const list = Array.isArray(gameState.powerUps) ? gameState.powerUps : [];
+		const filtered = list.filter(o => o && o.id !== payload.id);
+		filtered.push({
+			id: payload.id,
+			x: payload.x,
+			z: payload.z,
+			pieceType: payload.pieceType,
+			spawnedAt: payload.spawnedAt,
+			expiresAt: payload.expiresAt,
+			targetPlayerId: payload.targetPlayerId || null,
+		});
+		gameState.powerUps = filtered;
+		dispatchGameUpdate({ powerUps: filtered.slice() });
+	});
+
+	NetworkManager.on('powerup_claimed', (payload) => {
+		if (!payload || !payload.orbId) return;
+		const list = Array.isArray(gameState.powerUps) ? gameState.powerUps : [];
+		gameState.powerUps = list.filter(o => o && o.id !== payload.orbId);
+		dispatchGameUpdate({ powerUps: gameState.powerUps.slice() });
+
+		try {
+			const isLocal = payload.playerId && payload.playerId === gameState.localPlayerId;
+			const label = String(payload.pieceType || 'piece').toLowerCase();
+			const message = isLocal
+				? `Power-up claimed: ${label}!`
+				: `${payload.playerName || 'A player'} claimed a ${label} power-up`;
+			showToastMessage(message, 3000);
+			try { playSound('orbClaim', { gain: isLocal ? 1 : 0.6 }); } catch (_e) { /* sound is best-effort */ }
+		} catch (toastErr) {
+			console.warn('[powerup_claimed] toast failed:', toastErr);
+		}
+	});
+
+	NetworkManager.on('powerup_expired', (payload) => {
+		if (!payload || !payload.orbId) return;
+		const list = Array.isArray(gameState.powerUps) ? gameState.powerUps : [];
+		gameState.powerUps = list.filter(o => o && o.id !== payload.orbId);
+		dispatchGameUpdate({ powerUps: gameState.powerUps.slice() });
+	});
+
+	// Promotion credits — the local player only. The server pushes the
+	// full list on join (and after every credit lifecycle event); we
+	// also handle the individual `_added` / `_redeemed` events so we
+	// can show a toast immediately without waiting for the full list.
+	NetworkManager.on('promotion_credits', (payload) => {
+		const credits = Array.isArray(payload?.credits) ? payload.credits : [];
+		gameState.promotionCredits = credits.slice();
+		dispatchGameUpdate({ promotionCredits: credits.slice() });
+	});
+
+	NetworkManager.on('promotion_credit_added', (payload) => {
+		if (!payload || !payload.creditId) return;
+		const isLocal = payload.playerId && payload.playerId === gameState.localPlayerId;
+		try { playSound('promotion', { gain: isLocal ? 1 : 0.55 }); } catch (_e) { /* sound is best-effort */ }
+		if (isLocal) {
+			const list = Array.isArray(gameState.promotionCredits) ? gameState.promotionCredits : [];
+			if (!list.some(c => c && c.id === payload.creditId)) {
+				list.push({
+					id: payload.creditId,
+					originalX: payload.originalX,
+					originalZ: payload.originalZ,
+					createdAt: payload.createdAt,
+				});
+				gameState.promotionCredits = list.slice();
+				dispatchGameUpdate({ promotionCredits: gameState.promotionCredits.slice() });
+			}
+			// If they already have captured pieces, the redeem dialog
+			// is immediately useful — pop it open. Otherwise just toast
+			// so they know a credit's been banked.
+			const basket = Array.isArray(gameState.capturedBasket) ? gameState.capturedBasket : [];
+			const hasRedeemableCapture = basket.some(item => {
+				const t = String(item?.type || '').toUpperCase();
+				return ['QUEEN', 'ROOK', 'BISHOP', 'KNIGHT'].includes(t);
+			});
+			try {
+				if (hasRedeemableCapture) {
+					showPromotionRedeemDialog();
+				} else {
+					showToastMessage('Pawn promoted! Capture a piece to redeem this credit.', 3500);
+				}
+			} catch (uiErr) {
+				console.warn('[promotion_credit_added] UI failed:', uiErr);
+			}
+		}
+	});
+
+	NetworkManager.on('promotion_credit_redeemed', (payload) => {
+		if (!payload || !payload.creditId) return;
+		const isLocal = payload.playerId && payload.playerId === gameState.localPlayerId;
+		if (isLocal) {
+			const list = Array.isArray(gameState.promotionCredits) ? gameState.promotionCredits : [];
+			gameState.promotionCredits = list.filter(c => c && c.id !== payload.creditId);
+			dispatchGameUpdate({ promotionCredits: gameState.promotionCredits.slice() });
+			try {
+				const where = payload.fallback
+					? `near your king (original cell gone)`
+					: `at (${payload.x}, ${payload.z})`;
+				showToastMessage(`${payload.pieceType || 'piece'} deployed ${where}`, 3500);
+			} catch (toastErr) {
+				console.warn('[promotion_credit_redeemed] toast failed:', toastErr);
+			}
+		}
+	});
 
 	try {
 		ensureActivityLogUI();
+		mountMuteButton();
 		window.gameCore = window.gameCore || {};
 		window.gameCore.toggleActivityLog = toggleActivityLog;
 	} catch (error) {

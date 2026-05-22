@@ -1,4 +1,4 @@
-# Chesstris Deployment Checklist
+# Tetches Deployment Checklist
 
 ## Pre-Deployment Tasks
 

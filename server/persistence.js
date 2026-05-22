@@ -1,5 +1,5 @@
 /**
- * World Persistence for Shaktris
+ * World Persistence for Tetches
  *
  * Saves and restores **the** single authoritative world (see
  * `server/world/World.js`) so that server restarts, code upgrades and
@@ -26,21 +26,85 @@ const path = require('path');
 
 const { BOARD_SETTINGS } = require('./game/Constants');
 const World = require('./world/World');
+// metrics is a fire-and-forget side-effect; load it lazily so test
+// environments that mock the persistence module don't pull in the
+// Prometheus registry.
+let _metrics = null;
+function metrics() {
+	if (_metrics === null) {
+		try { _metrics = require('./observability/metrics'); }
+		catch (_e) { _metrics = false; }
+	}
+	return _metrics;
+}
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const STATE_FILE = path.join(DATA_DIR, 'world.json');
 const BACKUP_FILE = STATE_FILE + '.bak';
+const ROLLING_BACKUP_DIR = path.join(DATA_DIR, 'backups');
 
 const CURRENT_VERSION = 2;
 const SAVE_INTERVAL_MS = 30000;
 const SAVE_THROTTLE_MS = 10000;
+// Take a snapshot copy at most once per hour, keep this many.
+// Restoring from a rolling backup is a manual `mv` — we're not
+// trying to be a full DB, just buying ourselves an "oh god the
+// world.json got corrupt" rewind.
+const ROLLING_BACKUP_INTERVAL_MS = 60 * 60 * 1000;
+const ROLLING_BACKUP_KEEP = 6;
 
 let _lastSaveTs = 0;
+let _lastRollingBackupTs = 0;
 let _saveTimer = null;
 
 function ensureDataDir() {
 	if (!fs.existsSync(DATA_DIR)) {
 		fs.mkdirSync(DATA_DIR, { recursive: true });
+	}
+}
+
+function ensureBackupDir() {
+	if (!fs.existsSync(ROLLING_BACKUP_DIR)) {
+		fs.mkdirSync(ROLLING_BACKUP_DIR, { recursive: true });
+	}
+}
+
+/**
+ * Copy the current state file into the rolling-backup directory if
+ * we haven't done so recently. Cheap, idempotent, and keeps at most
+ * `ROLLING_BACKUP_KEEP` files by mtime (oldest gets pruned).
+ *
+ * Called from the auto-save tick so the backup cadence is bounded
+ * by the save cadence and not a separate timer.
+ */
+function maybeRollBackup() {
+	if (!fs.existsSync(STATE_FILE)) return;
+	const now = Date.now();
+	if (now - _lastRollingBackupTs < ROLLING_BACKUP_INTERVAL_MS) return;
+	try {
+		ensureBackupDir();
+		const stamp = new Date(now)
+			.toISOString()
+			.replace(/[:.]/g, '-')
+			.replace(/T/, '_')
+			.replace(/Z$/, '');
+		const target = path.join(ROLLING_BACKUP_DIR, `world.${stamp}.json`);
+		fs.copyFileSync(STATE_FILE, target);
+		_lastRollingBackupTs = now;
+		// Prune by mtime — leave the newest `ROLLING_BACKUP_KEEP`.
+		const entries = fs.readdirSync(ROLLING_BACKUP_DIR)
+			.filter(f => f.startsWith('world.') && f.endsWith('.json'))
+			.map(f => {
+				const full = path.join(ROLLING_BACKUP_DIR, f);
+				return { full, mtimeMs: fs.statSync(full).mtimeMs };
+			})
+			.sort((a, b) => b.mtimeMs - a.mtimeMs);
+		for (const { full } of entries.slice(ROLLING_BACKUP_KEEP)) {
+			try { fs.unlinkSync(full); }
+			catch (_err) { /* best-effort */ }
+		}
+	} catch (err) {
+		console.warn('[Persistence] Rolling backup failed:', err.message);
 	}
 }
 
@@ -67,6 +131,11 @@ function buildSnapshot() {
 			eliminated: !!p.eliminated,
 			balance: typeof p.balance === 'number' ? p.balance : 0,
 			capturedStyles: Array.isArray(p.capturedStyles) ? p.capturedStyles : [],
+			// New per-player ledgers (added with the promotion-credit
+			// rework). Without these the player loses every captured
+			// piece + banked credit on a server restart.
+			capturedBasket: Array.isArray(p.capturedBasket) ? p.capturedBasket : [],
+			promotionCredits: Array.isArray(p.promotionCredits) ? p.promotionCredits : [],
 			lastTetrominoPlacement: p.lastTetrominoPlacement || null,
 			lastTetrominoPlacementAt: p.lastTetrominoPlacementAt || 0,
 			lastChessMoveAt: p.lastChessMoveAt || 0,
@@ -112,6 +181,7 @@ function buildSnapshot() {
 			activityLog: Array.isArray(world.activityLog) ? world.activityLog.slice() : [],
 			_activityLogNextId: Number.isFinite(world._activityLogNextId) ? world._activityLogNextId : 1,
 			players: persistablePlayers,
+			powerUps: Array.isArray(world.powerUps) ? world.powerUps.slice() : [],
 		},
 	};
 }
@@ -145,9 +215,13 @@ function saveWorldSync() {
 		const cellCount = Object.keys(w.board.cells || {}).length;
 		const playerCount = Object.keys(w.players || {}).length;
 		console.log(`[Persistence] World saved (${cellCount} cells, ${playerCount} players).`);
+		const m = metrics();
+		if (m && m.recordSaveResult) m.recordSaveResult(true);
 		return true;
 	} catch (err) {
 		console.error('[Persistence] Failed to save world:', err.message);
+		const m = metrics();
+		if (m && m.recordSaveResult) m.recordSaveResult(false);
 		return false;
 	}
 }
@@ -162,7 +236,7 @@ function startAutoSave() {
 		if (!World.isDirty()) return;
 		const now = Date.now();
 		if (now - _lastSaveTs < SAVE_THROTTLE_MS) return;
-		saveWorldSync();
+		if (saveWorldSync()) maybeRollBackup();
 	}, SAVE_INTERVAL_MS);
 	if (typeof _saveTimer.unref === 'function') _saveTimer.unref();
 }

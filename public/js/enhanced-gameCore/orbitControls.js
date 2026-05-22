@@ -3,7 +3,7 @@
  *
  * Picks up the constructor from whichever attachment point Three.js
  * exposes (member of `THREE`, global, or window), and applies the
- * Shaktris default tuning so callers don't repeat the same boilerplate.
+ * Tetches default tuning so callers don't repeat the same boilerplate.
  */
 
 import { getTHREE } from '../gameContext.js';

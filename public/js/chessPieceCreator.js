@@ -25,6 +25,25 @@ import {
 	initMaterials,
 	createSafeMaterials,
 } from './chessPieceCreator/materials.js';
+
+/**
+ * Normalise any colour representation (hex number, `#abc` /
+ * `#aabbcc`, or `rgb(...)` / `hsl(...)`) into a hex integer that
+ * THREE's `setHex` can consume. Returns `null` for things THREE
+ * needs to parse via `Color.set()` instead (e.g. `rgb()` strings).
+ */
+function colorToHex(value) {
+	if (typeof value === 'number' && Number.isFinite(value)) return value;
+	if (typeof value !== 'string' || value.length === 0) return null;
+	if (value.startsWith('#')) {
+		const hex = value.length === 4
+			? value[1] + value[1] + value[2] + value[2] + value[3] + value[3]
+			: value.slice(1);
+		const parsed = parseInt(hex, 16);
+		return Number.isFinite(parsed) ? parsed : null;
+	}
+	return null;
+}
 import { createRetroLetterPiece, createCutePiece } from './chessPieceCreator/specialModes.js';
 import {
 	buildRussianPiece,
@@ -79,7 +98,15 @@ export function createChessPiece(gameState, x, z, pieceType, player, options = {
 	const isLocalPlayer = options.isLocalPlayer !== undefined
 		? options.isLocalPlayer
 		: (gameState.localPlayerId === player || gameState.myPlayerId === player);
-	const customColor = options.color;
+	// Always normalise to a hex integer so `setHex(...)` later in this
+	// function and in the material builders won't silently fall back
+	// to default tones for callers that pass a `#rrggbb` string.
+	const customColor = options.color !== undefined && options.color !== null
+		? colorToHex(options.color)
+		: undefined;
+	const customColorString = (customColor === null || customColor === undefined)
+		? (typeof options.color === 'string' ? options.color : null)
+		: null;
 	const materialKey = isLocalPlayer ? 'self' : 'other';
 
 	if (gameState.retroMode || gameState.renderProfile === 'retro') {
@@ -94,6 +121,21 @@ export function createChessPiece(gameState, x, z, pieceType, player, options = {
 		const cacheKey = materialKey;
 		const customModel = customModels[cacheKey][pieceTypeNum];
 
+		// Apply a parsed colour to a single material; fall back to
+		// CSS string parsing via `Color.set` when the caller passed
+		// `rgb(...)` / `hsl(...)` / a named colour that `colorToHex`
+		// couldn't convert.
+		const applyColorToMaterial = (material) => {
+			if (!material || !material.color) return;
+			if (customColor !== null && customColor !== undefined) {
+				material.color.setHex(customColor);
+			} else if (customColorString) {
+				try { material.color.set(customColorString); } catch (_) { /* ignore */ }
+			}
+		};
+		const hasCustomColor = (customColor !== null && customColor !== undefined)
+			|| !!customColorString;
+
 		if (customModel) {
 			const model = customModel.clone();
 			model.scale.set(0.4 * PIECE_SCALE, 0.4 * PIECE_SCALE, 0.4 * PIECE_SCALE);
@@ -102,17 +144,17 @@ export function createChessPiece(gameState, x, z, pieceType, player, options = {
 			model.traverse(child => {
 				if (!child.isMesh) return;
 				child.visible = true;
-				if (customColor !== undefined) {
+				if (hasCustomColor) {
 					if (!child.material) {
 						child.material = new THREE.MeshStandardMaterial({
-							color: customColor, roughness: 0.7, metalness: 0.3,
+							color: customColor ?? customColorString,
+							roughness: 0.7,
+							metalness: 0.3,
 						});
 					} else if (Array.isArray(child.material)) {
-						for (const material of child.material) {
-							if (material) material.color.setHex(customColor);
-						}
+						for (const material of child.material) applyColorToMaterial(material);
 					} else {
-						child.material.color.setHex(customColor);
+						applyColorToMaterial(child.material);
 					}
 				}
 				child.castShadow = true;
@@ -121,12 +163,12 @@ export function createChessPiece(gameState, x, z, pieceType, player, options = {
 			pieceGroup.add(model);
 		} else {
 			let materials = null;
-			if (customColor !== undefined) {
+			if (hasCustomColor) {
 				initMaterials();
 				materials = createSafeMaterials(materialKey);
-				materials.primary.color.setHex(customColor);
-				materials.secondary.color.setHex(customColor);
-				materials.accent.color.setHex(customColor);
+				applyColorToMaterial(materials.primary);
+				applyColorToMaterial(materials.secondary);
+				applyColorToMaterial(materials.accent);
 			}
 			const pieceMesh = buildRussianPiece(pieceTypeNum, materialKey, isLocalPlayer, materials);
 			pieceMesh.visible = true;

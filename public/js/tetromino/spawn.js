@@ -124,6 +124,13 @@ export function initializeNewTetromino(gameState, type) {
 	const tetromino = {
 		type,
 		shape,
+		// Rotation index (0..3) matching the server's
+		// `TETROMINO_SHAPES[type][rotation]`. The server discards the
+		// client `shape` and rebuilds from `(type, rotation)`, so
+		// keeping this in sync with the rotated matrix is critical —
+		// otherwise rotated pieces validate connectivity against the
+		// canonical un-rotated cells. See processRotate().
+		rotation: 0,
 		position: { x: initialPosition.x, z: initialPosition.z },
 		heightAboveBoard: initialPosition.heightAboveBoard,
 		sponsor: null,

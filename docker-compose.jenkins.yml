@@ -3,7 +3,7 @@ services:
     build:
       context: ./ci
       dockerfile: Dockerfile.jenkins
-    container_name: shaktris-jenkins
+    container_name: tetches-jenkins
     restart: unless-stopped
     ports:
       - "8090:8080"
@@ -12,8 +12,8 @@ services:
       - jenkins_home:/var/jenkins_home
 
       # Deployment target directories on the host
-      - /var/www/shaktris.staging:/var/www/shaktris.staging
-      - /var/www/shaktris.live:/var/www/shaktris.live
+      - /var/www/tetches.staging:/var/www/tetches.staging
+      - /var/www/tetches.live:/var/www/tetches.live
 
       # Deploy trigger directory (Jenkins writes, host cron reads)
       - /var/www/.deploy-triggers:/var/www/.deploy-triggers

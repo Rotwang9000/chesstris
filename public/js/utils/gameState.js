@@ -54,7 +54,21 @@ const gameState = {
 	lastMovementTime: 0,
 	pendingRender: false,
 	// Movement deltas for relative movement
-	movementDelta: { x: 0, z: 0, y: 0, rotation: 0 }
+	movementDelta: { x: 0, z: 0, y: 0, rotation: 0 },
+	// Active power-up orbs streamed from the server. Mutated in
+	// place by the network-event handlers. The renderer reads it
+	// every frame and the player-bar UI uses it to flag
+	// "incoming pickup near you" hints.
+	powerUps: [],
+	// Captured-piece basket for the local player (private; server
+	// sends it via a per-socket `captured_basket` event on join /
+	// after every capture / redeem).
+	capturedBasket: [],
+	// Banked promotion credits for the local player. Each entry:
+	// `{ id, originalX, originalZ, createdAt }`. Server pushes them
+	// via `promotion_credits` (full list) and `promotion_credit_added`
+	// (single new credit). Redeemed via `redeem_promotion`.
+	promotionCredits: []
 };
 
 /**
@@ -147,6 +161,25 @@ function update(data) {
 		if (preservedCurrentTetromino && !newData.currentTetromino) {
 			gameState.currentTetromino = preservedCurrentTetromino;
 		}
+	}
+
+	// Normalise powerUps so the renderer always sees an array. The
+	// server includes them in every full game_update payload; sparse
+	// deltas don't carry them but the periodic full updates do.
+	if (Array.isArray(newData.powerUps)) {
+		gameState.powerUps = newData.powerUps.slice();
+	} else if (!Array.isArray(gameState.powerUps)) {
+		gameState.powerUps = [];
+	}
+	if (Array.isArray(newData.capturedBasket)) {
+		gameState.capturedBasket = newData.capturedBasket.slice();
+	} else if (!Array.isArray(gameState.capturedBasket)) {
+		gameState.capturedBasket = [];
+	}
+	if (Array.isArray(newData.promotionCredits)) {
+		gameState.promotionCredits = newData.promotionCredits.slice();
+	} else if (!Array.isArray(gameState.promotionCredits)) {
+		gameState.promotionCredits = [];
 	}
 	
 	// Make sure gameStarted flag is set if we have board data

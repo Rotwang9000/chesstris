@@ -69,7 +69,7 @@ export function createLoadingIndicator() {
 
 	// Create loading text
 	const loadingText = document.createElement('div');
-	loadingText.textContent = 'Preparing Shaktris World...';
+	loadingText.textContent = 'Preparing Tetches World...';
 	Object.assign(loadingText.style, {
 		fontSize: '24px',
 		marginBottom: '10px',
@@ -358,8 +358,8 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 	console.log('Creating tutorial message overlay');
 
 	// Check for previous game key in localStorage
-	const previousGameKey = localStorage.getItem('shaktris_game_key');
-	const playerEmail = localStorage.getItem('shaktris_player_email');
+	const previousGameKey = localStorage.getItem('tetches_game_key');
+	const playerEmail = localStorage.getItem('tetches_player_email');
 
 	// Create tutorial message container (full screen overlay)
 	const tutorialElement = document.createElement('div');
@@ -491,7 +491,7 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 	const startGame = (gameKey = null) => {
 		// Store the game key if provided
 		if (gameKey) {
-			localStorage.setItem('shaktris_game_key', gameKey);
+			localStorage.setItem('tetches_game_key', gameKey);
 		}
 		
 		// Remove the tutorial
@@ -503,9 +503,9 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 		if (typeof startGameFunction === 'function') {
 			console.log('Entering world using passed function', gameKey ? `with key: ${gameKey}` : 'default shared world');
 			startGameFunction(gameKey);
-		} else if (typeof window.startShaktrisGame === 'function') {
+		} else if (typeof window.startTetchesGame === 'function') {
 			console.log('Entering world using global function');
-			window.startShaktrisGame(gameKey);
+			window.startTetchesGame(gameKey);
 		} else {
 			console.error('No game start function available!');
 			alert('Error: Could not start the game. Please refresh and try again.');
@@ -515,7 +515,7 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 	// Build the scrollable content
 	scrollContent.innerHTML = `
 		<h2 style="color: #ffcc00; margin: 0 0 8px 0; font-family: 'Times New Roman', serif; font-size: 28px;">
-			☦ Welcome to Shaktris ☦
+			☦ Welcome to Tetches ☦
 		</h2>
 		<p style="margin: 0 0 20px 0; opacity: 0.8;">A massively multiplayer shared-world game combining Chess and Tetris</p>
 		
@@ -699,7 +699,7 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 				
 				if (result.success) {
 					// Store email for later
-					localStorage.setItem('shaktris_player_email', email);
+					localStorage.setItem('tetches_player_email', email);
 					
 					if (magicLinkStatus) {
 						if (result.method === 'console') {
@@ -745,9 +745,9 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 	
 	if (authResult === 'success' && playerKey) {
 		console.log('Magic link authentication successful');
-		localStorage.setItem('shaktris_player_key', playerKey);
+		localStorage.setItem('tetches_player_key', playerKey);
 		if (urlGameKey) {
-			localStorage.setItem('shaktris_game_key', urlGameKey);
+			localStorage.setItem('tetches_game_key', urlGameKey);
 		}
 		// Clean URL
 		const cleanUrl = new URL(window.location.href);

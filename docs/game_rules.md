@@ -1,11 +1,11 @@
-# Shaktris Game Rules — Short Summary
+# Tetches Game Rules — Short Summary
 
 > **Definitive reference:** `docs/players-bible.md`. This file is a quick
 > tabular summary. Whenever they disagree, the bible is authoritative.
 
 ## Overview
 
-Shaktris is a real-time multiplayer fusion of chess and Tetris on a
+Tetches is a real-time multiplayer fusion of chess and Tetris on a
 dynamically expanding board. Each player starts with a standard chess set on
 an 8×2 home zone. Place tetrominoes to grow territory; move chess pieces to
 capture enemies and their kings.

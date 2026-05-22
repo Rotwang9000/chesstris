@@ -1,5 +1,5 @@
 /**
- * Shaktris REST API
+ * Tetches REST API
  *
  * The single authoritative game state lives in `server/world/World.js`
  * and gameplay flows through Socket.IO.  This thin REST surface only
@@ -39,7 +39,7 @@ function validateApiToken(playerId, token) {
 router.get('/', (_req, res) => {
 	res.json({
 		success: true,
-		message: 'Shaktris API is running',
+		message: 'Tetches API is running',
 		version: '2.0.0',
 		world: {
 			id: World.getWorldId(),
@@ -47,11 +47,30 @@ router.get('/', (_req, res) => {
 		},
 		endpoints: [
 			'GET  /',
+			'GET  /health',
 			'GET  /world',
 			'GET  /world/visualization',
 			'POST /computer-players/register',
 			'GET  /computer-players',
 		],
+	});
+});
+
+// Liveness / readiness probe used by Docker HEALTHCHECK, nginx
+// upstream checks, and uptime monitors. Intentionally cheap — does
+// not touch the persistence layer; only confirms the process is up
+// and the singleton world is initialised.
+router.get('/health', (_req, res) => {
+	const w = World.getWorld();
+	if (!w) {
+		return res.status(503).json({ status: 'starting' });
+	}
+	res.json({
+		status: 'ok',
+		worldId: w.id,
+		players: World.playerCount(),
+		uptimeSec: Math.round(process.uptime()),
+		memoryMB: Math.round(process.memoryUsage().rss / 1024 / 1024),
 	});
 });
 

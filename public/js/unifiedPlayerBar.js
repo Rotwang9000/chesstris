@@ -1,5 +1,5 @@
 /**
- * Unified Player Bar Component for Shaktris
+ * Unified Player Bar Component for Tetches
  * 
  * This file implements a slide-out player bar that appears from the right side of the screen.
  * It provides player info and highlights pieces on hover.
@@ -8,11 +8,34 @@
 import * as NetworkManager from './utils/networkManager.js';
 import { highlightPlayerPieces, removePlayerPiecesHighlight } from './pieceHighlightManager.js';
 import { showToastMessage } from './showToastMessage.js';
+import { showPromotionRedeemDialog } from './uiOverlays.js';
 
 // State tracking variables
 let isBarVisible = false;
 let lastPlayerDataHash = '';
 let forcedPlayerUpdateCounter = 0;
+
+/**
+ * Coerce the various colour formats the server emits — bare integers
+ * (0xDD0000), prefixed strings ("0xff0000" / "#ff0000") and named
+ * CSS colours ("red") — into a CSS-safe hex string. Returns an
+ * empty string for nullish/invalid inputs so callers can fall back
+ * to their default.
+ */
+function normaliseColour(value) {
+	if (value === null || value === undefined || value === '') return '';
+	if (typeof value === 'number') {
+		if (!Number.isFinite(value)) return '';
+		return '#' + (value & 0xFFFFFF).toString(16).padStart(6, '0');
+	}
+	if (typeof value !== 'string') return '';
+	const trimmed = value.trim();
+	if (!trimmed) return '';
+	if (trimmed.startsWith('#')) return trimmed;
+	if (/^0x[0-9a-f]{6}$/i.test(trimmed)) return '#' + trimmed.slice(2);
+	if (/^[0-9a-f]{6}$/i.test(trimmed)) return '#' + trimmed;
+	return trimmed; // Trust named CSS colours / rgb() / hsl()
+}
 
 // Add a utility function to get the player ID
 /**
@@ -65,7 +88,7 @@ function resolvePlayerCode(gameState) {
 		if (networkId) return String(networkId);
 	}
 	if (gameState && gameState.localPlayerId) return String(gameState.localPlayerId);
-	const cookieId = getCookieValue('shaktris_player_id');
+	const cookieId = getCookieValue('tetches_player_id');
 	return cookieId ? String(cookieId) : '';
 }
 
@@ -482,8 +505,10 @@ function addPlayerToBar(playerBar, playerId, playerInfo, gameState) {
 	// Clear existing content
 	playerElement.innerHTML = '';
 	
-	// Generate the player color
-	const playerColor = playerInfo.color || generatePlayerColor(playerId);
+	// Generate the player color, defensively coerced so a 0xDD0000
+	// integer (the server's wire format for player colour) still
+	// renders as CSS.
+	const playerColor = normaliseColour(playerInfo.color) || generatePlayerColor(playerId);
 	
 	// Create color indicator
 	const colorIndicator = document.createElement('div');
@@ -552,7 +577,102 @@ function addPlayerToBar(playerBar, playerId, playerInfo, gameState) {
 	}
 	
 	playerElement.appendChild(nameDisplay);
-	
+
+	// Show captured-piece basket as a compact badge: "♜ 3" etc.
+	// Each glyph is rendered in the *original owner's* colour so a
+	// captured red-bishop reads as "I took this from the red player",
+	// not as "this is mine". Falls back to the old single-colour
+	// rendering for legacy server payloads that don't include the
+	// breakdown.
+	const capturedCount = Number(playerInfo.capturedCount) || 0;
+	if (capturedCount > 0) {
+		const PIECE_GLYPH = { QUEEN: '\u265B', ROOK: '\u265C', BISHOP: '\u265D', KNIGHT: '\u265E' };
+		const order = ['QUEEN', 'ROOK', 'BISHOP', 'KNIGHT'];
+		const breakdown = Array.isArray(playerInfo.capturedBreakdown) ? playerInfo.capturedBreakdown : null;
+
+		const basketDisplay = document.createElement('div');
+		Object.assign(basketDisplay.style, {
+			marginLeft: '6px',
+			fontSize: '12px',
+			padding: '2px 6px',
+			borderRadius: '3px',
+			backgroundColor: 'rgba(0,0,0,0.45)',
+			fontFamily: 'serif',
+			letterSpacing: '2px',
+			display: 'inline-flex',
+			gap: '4px',
+			alignItems: 'center',
+		});
+		basketDisplay.title = `Captured pieces awaiting redemption (${capturedCount}). Glyph colour matches the original owner.`;
+
+		if (breakdown && breakdown.length > 0) {
+			// Per-(type, owner-colour) chips so the captured player's
+			// hue is preserved. We still respect the promotion order
+			// (queens first) for visual consistency.
+			breakdown
+				.slice()
+				.sort((a, b) => order.indexOf(a.type) - order.indexOf(b.type))
+				.forEach(entry => {
+					const glyph = PIECE_GLYPH[entry.type] || '\u265F';
+					const colour = normaliseColour(entry.color) || '#ffd97a';
+					const chip = document.createElement('span');
+					chip.textContent = `${glyph}${entry.count}`;
+					chip.style.color = colour;
+					chip.style.textShadow = '0 0 2px rgba(0,0,0,0.6)';
+					basketDisplay.appendChild(chip);
+				});
+		} else {
+			const summary = playerInfo.capturedSummary || {};
+			const parts = order
+				.filter(type => summary[type] > 0)
+				.map(type => `${PIECE_GLYPH[type]}${summary[type]}`)
+				.join(' ');
+			basketDisplay.textContent = parts || `${capturedCount}`;
+			basketDisplay.style.color = '#ffd97a';
+		}
+		playerElement.appendChild(basketDisplay);
+	}
+
+	// Promotion-credits badge. Only meaningful for the local player —
+	// other players' credits are private (the server doesn't expose
+	// per-credit positions). The badge is clickable and opens the
+	// redeem dialog.
+	const promotionCreditCount = Number(playerInfo.promotionCreditCount) || 0;
+	if (promotionCreditCount > 0) {
+		const creditDisplay = document.createElement('div');
+		creditDisplay.textContent = `\u2605${promotionCreditCount}`;
+		Object.assign(creditDisplay.style, {
+			marginLeft: '6px',
+			fontSize: '12px',
+			padding: '2px 6px',
+			borderRadius: '3px',
+			backgroundColor: 'rgba(76,175,80,0.2)',
+			color: '#a8e6a3',
+			fontFamily: 'serif',
+			letterSpacing: '1px',
+			border: '1px solid rgba(76,175,80,0.5)',
+		});
+		if (isLocalPlayer) {
+			creditDisplay.title = 'Banked promotion credits. Click to spend one against a captured piece.';
+			creditDisplay.style.cursor = 'pointer';
+			creditDisplay.style.boxShadow = '0 0 6px rgba(168,230,163,0.5)';
+			creditDisplay.addEventListener('mouseenter', () => {
+				creditDisplay.style.backgroundColor = 'rgba(76,175,80,0.4)';
+			});
+			creditDisplay.addEventListener('mouseleave', () => {
+				creditDisplay.style.backgroundColor = 'rgba(76,175,80,0.2)';
+			});
+			creditDisplay.addEventListener('click', (e) => {
+				e.stopPropagation();
+				try { showPromotionRedeemDialog(); }
+				catch (err) { console.warn('Failed to open redeem dialog:', err); }
+			});
+		} else {
+			creditDisplay.title = `Banked promotion credits (${promotionCreditCount})`;
+		}
+		playerElement.appendChild(creditDisplay);
+	}
+
 	// Add score if available
 	if (playerInfo.score !== undefined) {
 		const scoreDisplay = document.createElement('div');
@@ -735,7 +855,7 @@ export function updateUnifiedPlayerBar(gameState) {
 		currentHash = Object.keys(gameState.players).map(playerId => {
 			const player = gameState.players[playerId];
 			if (!player) return '';
-			return `${playerId}-${player.name || ''}-${player.score || 0}-${player.isActive ? 1 : 0}-${player.eliminated ? 1 : 0}-${player.color || ''}`;
+			return `${playerId}-${player.name || ''}-${player.score || 0}-${player.isActive ? 1 : 0}-${player.eliminated ? 1 : 0}-${player.color || ''}-${player.capturedCount || 0}`;
 		}).sort().join('|');
 		
 		// Add current player to hash
@@ -818,7 +938,9 @@ export function updateUnifiedPlayerBar(gameState) {
 				{
 					name: player.name || `Player ${playerId.substring(0, 6)}`,
 					color: player.color,
-					score: player.score || 0
+					score: player.score || 0,
+					capturedCount: player.capturedCount || 0,
+					capturedSummary: player.capturedSummary || {},
 				},
 				gameState
 			);

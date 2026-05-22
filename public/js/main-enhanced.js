@@ -1,5 +1,5 @@
 /**
- * Shaktris Game - Enhanced Main Entry Point
+ * Tetches Game - Enhanced Main Entry Point
  * 
  * This file initializes the enhanced game core with Russian theme.
  */
@@ -159,7 +159,7 @@ function wireSessionWarningLink() {
 
 // Main initialization
 async function init() {
-	console.log('Initializing enhanced Shaktris game with Russian theme...');
+	console.log('Initializing enhanced Tetches game with Russian theme...');
 	
 	// Force hide loading screen and error messages - failsafe
 	hideLoadingScreen();
@@ -326,7 +326,7 @@ function showPlayerNamePrompt() {
 		// Add login form with Russian theme
 		loginContainer.innerHTML = `
 			<div style="background-color: #111; padding: 30px; border-radius: 10px; width: 300px; max-width: 90%; text-align: center; box-shadow: 0 0 20px rgba(255, 204, 0, 0.3); border: 2px solid #ffcc00;">
-				<h2 style="color: #ffcc00; margin-top: 0; font-family: 'Times New Roman', serif;">Welcome to Shaktris</h2>
+				<h2 style="color: #ffcc00; margin-top: 0; font-family: 'Times New Roman', serif;">Welcome to Tetches</h2>
 				<div style="font-size: 36px; color: #ffcc00; margin: 10px 0;">☦</div>
 				<p style="color: white; margin-bottom: 20px; font-family: 'Times New Roman', serif;">Enter your player name to start playing</p>
 				
@@ -389,7 +389,7 @@ async function joinGame(gameId = null) {
 		// Check for saved state from mode switch (should rejoin same game)
 		if (!gameId) {
 			try {
-				const savedState = sessionStorage.getItem('shaktris_mode_switch_state');
+				const savedState = sessionStorage.getItem('tetches_mode_switch_state');
 				if (savedState) {
 					const state = JSON.parse(savedState);
 					// Only use if saved within last 30 seconds (recent mode switch)
@@ -402,7 +402,7 @@ async function joinGame(gameId = null) {
 						}
 					}
 					// Clear the saved state after reading
-					sessionStorage.removeItem('shaktris_mode_switch_state');
+					sessionStorage.removeItem('tetches_mode_switch_state');
 				}
 			} catch (e) {
 				console.warn('Could not restore mode switch state:', e);
@@ -577,7 +577,7 @@ async function joinGameAfterConnection(gameId = null) {
 			}
 			
 			// Update window title with world ID
-			document.title = `Shaktris - World ${currentGameId}`;
+			document.title = `Tetches - World ${currentGameId}`;
 			
 			// Show in URL but don't reload page
 			const url = new URL(window.location);

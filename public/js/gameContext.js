@@ -77,6 +77,12 @@ export function setTetrominoGroup(val) {
 export function getChessPiecesGroup() { return _ctx.chessPiecesGroup; }
 export function setChessPiecesGroup(val) { _ctx.chessPiecesGroup = val; }
 
+export function getPowerUpGroup() { return _ctx.powerUpGroup; }
+export function setPowerUpGroup(val) {
+	_ctx.powerUpGroup = val;
+	gameState.powerUpGroup = val;
+}
+
 // ── Interaction helpers ─────────────────────────────────────────────────────
 
 export function getRaycaster() { return _ctx.raycaster; }

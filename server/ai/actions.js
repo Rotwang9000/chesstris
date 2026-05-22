@@ -14,6 +14,7 @@ const TETROMINO_TYPES = Object.freeze(['I', 'J', 'L', 'O', 'S', 'T', 'Z']);
 
 function createAiActions({
 	io, gameManager, broadcaster, integrityService, spectatorRegistry, lineClearService,
+	powerUpManager = null,
 }) {
 	if (!io) throw new Error('createAiActions: io required');
 	if (!gameManager) throw new Error('createAiActions: gameManager required');
@@ -56,10 +57,18 @@ function createAiActions({
 			);
 			if (!canPlace) continue;
 
-			gameManager.tetrominoManager.placeTetromino(world, tetromino, x, z, computerId);
+			const placedCells = gameManager.tetrominoManager.placeTetromino(world, tetromino, x, z, computerId);
 			computerPlayer.lastTetrominoPlacement = { x, z };
 			computerPlayer.lastTetrominoPlacementAt = Date.now();
 			computerPlayer.moveCount = (computerPlayer.moveCount || 0) + 1;
+
+			if (powerUpManager && typeof powerUpManager.claimAcrossPlacement === 'function') {
+				try {
+					powerUpManager.claimAcrossPlacement(world, computerId, placedCells);
+				} catch (claimErr) {
+					console.warn('[AI] power-up claim failed:', claimErr.message);
+				}
+			}
 
 			integrityService.runIslandIntegrityPass({ emitAnimation: true });
 			world.lastAction = {

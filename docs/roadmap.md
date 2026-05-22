@@ -1,4 +1,4 @@
-# Shaktris Development Roadmap
+# Tetches Development Roadmap
 
 ## Current Status (v0.1.0)
 

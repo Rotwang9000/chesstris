@@ -20,7 +20,7 @@ const { registerStateHandlers } = require('./state');
 const { registerSpectateHandlers } = require('./spectate');
 const { registerLifecycleHandlers } = require('./lifecycle');
 
-const PLAYER_ID_COOKIE = 'shaktris_player_id';
+const PLAYER_ID_COOKIE = 'tetches_player_id';
 
 function createConnectionHandler(services) {
 	const { io, lifecycleService, spectatorRegistry } = services;

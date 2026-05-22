@@ -5,8 +5,8 @@
 # and restarts the corresponding PM2 process.
 #
 # Cron entry (every 30 seconds via two cron lines):
-#   * * * * * /opt/shaktris/deploy-watcher.sh >> /var/log/shaktris-deploy.log 2>&1
-#   * * * * * sleep 30 && /opt/shaktris/deploy-watcher.sh >> /var/log/shaktris-deploy.log 2>&1
+#   * * * * * /opt/tetches/deploy-watcher.sh >> /var/log/tetches-deploy.log 2>&1
+#   * * * * * sleep 30 && /opt/tetches/deploy-watcher.sh >> /var/log/tetches-deploy.log 2>&1
 #
 set -euo pipefail
 
@@ -68,9 +68,9 @@ for TRIGGER_FILE in "$TRIGGER_DIR"/*; do
 
 	echo "[$(date -Iseconds)] Processing trigger: ${ENV_NAME} (${PM2_NAME}) from ${TIMESTAMP}"
 
-	DEPLOY_DIR="/var/www/shaktris.${ENV_NAME}"
+	DEPLOY_DIR="/var/www/tetches.${ENV_NAME}"
 	if [ "$ENV_NAME" = "production" ]; then
-		DEPLOY_DIR="/var/www/shaktris.live"
+		DEPLOY_DIR="/var/www/tetches.live"
 	fi
 
 	PROCESSED_OK=false

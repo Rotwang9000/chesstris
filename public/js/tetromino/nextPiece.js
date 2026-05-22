@@ -166,7 +166,7 @@ export function updateNextPieceHint(gameState) {
 	}
 }
 
-const FIRST_DROP_HINT_KEY = 'shaktris_seen_rotation_hint_v1';
+const FIRST_DROP_HINT_KEY = 'tetches_seen_rotation_hint_v1';
 let firstDropHintShown = false;
 function showFirstDropRotationHint() {
 	if (firstDropHintShown) return;
@@ -206,7 +206,7 @@ function showFirstDropRotationHint() {
 		textAlign: 'center',
 		maxWidth: '420px',
 		cursor: 'pointer',
-		animation: 'shaktris-fade-in 280ms ease-out',
+		animation: 'tetches-fade-in 280ms ease-out',
 	});
 	const dismiss = () => {
 		try { if (window.localStorage) window.localStorage.setItem(FIRST_DROP_HINT_KEY, '1'); } catch (_) {}

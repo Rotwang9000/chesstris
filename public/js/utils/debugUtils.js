@@ -1,5 +1,5 @@
 /**
- * Debug Utilities for Shaktris
+ * Debug Utilities for Tetches
  * 
  * Helper functions for debugging and diagnostics.
  */
@@ -80,7 +80,7 @@ export function checkWebGLSupport() {
  * Print system diagnostics to console
  */
 export function printSystemDiagnostics() {
-	console.group('Shaktris System Diagnostics');
+	console.group('Tetches System Diagnostics');
 	
 	// Check browser info
 	console.log('Browser:', navigator.userAgent);
@@ -197,7 +197,7 @@ export function showDiagnosticOverlay(diagnosticData) {
 	}
 	
 	// Build HTML content
-	let content = '<h3>Shaktris Diagnostics</h3>';
+	let content = '<h3>Tetches Diagnostics</h3>';
 	
 	// THREE.js status
 	if (diagnosticData.threeStatus) {

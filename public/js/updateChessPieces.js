@@ -688,12 +688,14 @@ function createRetroPiece(type, isLocal, THREE) {
 function createPieceMeshForPlayer(piece, pieceType, pieceColor, orientation, gameState, THREE) {
 	const piecePos = piece?.position || piece;
 	const isLocalPiece = isLocalPlayerPiece(piece, gameState);
-	const isRetro = !!(gameState && (gameState.retroMode || gameState.renderProfile === 'retro'));
 
-	// Retro mode or local-player pieces both use the detailed creator
-	// (which handles retro letter sprites or 3D geometry internally).
+	// Always go through the detailed creator so every player's pieces
+	// share the same scale and silhouette (only the trim detail
+	// differs). The previous opponent-only `simplePieces` fallback was
+	// ~50% larger because its geometries used a different radius —
+	// the user observed "their lighter red pieces are bigger than
+	// mine" because of this mismatch.
 	if (
-		(isRetro || isLocalPiece) &&
 		typeof createDetailedChessPiece === 'function' &&
 		piecePos &&
 		Number.isFinite(piecePos.x) &&
@@ -708,7 +710,8 @@ function createPieceMeshForPlayer(piece, pieceType, pieceColor, orientation, gam
 				piece.player,
 				{
 					orientation,
-					isLocalPlayer: isLocalPiece
+					isLocalPlayer: isLocalPiece,
+					color: pieceColor,
 				}
 			);
 		} catch (error) {
@@ -716,8 +719,29 @@ function createPieceMeshForPlayer(piece, pieceType, pieceColor, orientation, gam
 		}
 	}
 
-	// Opponents in non-retro mode use the lightweight fallback.
 	return chessPieceCreator.createPiece(pieceType, pieceColor, orientation, THREE);
+}
+
+/**
+ * Convert any colour representation (number, `#rrggbb`, or
+ * `rgb(r,g,b)` / `hsl(...)`) to a numeric hex value that
+ * `THREE.Color.setHex` and friends will accept.
+ */
+function toHexNumber(colour) {
+	if (typeof colour === 'number') return colour;
+	if (typeof colour !== 'string' || colour.length === 0) return null;
+	if (colour.startsWith('#')) {
+		const hex = colour.length === 4
+			// `#abc` → `#aabbcc`
+			? colour[1] + colour[1] + colour[2] + colour[2] + colour[3] + colour[3]
+			: colour.slice(1);
+		const parsed = parseInt(hex, 16);
+		return Number.isFinite(parsed) ? parsed : null;
+	}
+	// Defer rgb()/hsl()/named colours to THREE.Color, which knows the
+	// CSS color set. We can't use it directly here without a THREE
+	// reference, but the parsed integer is what most callers need.
+	return null;
 }
 
 /**
@@ -727,9 +751,11 @@ function createPieceMeshForPlayer(piece, pieceType, pieceColor, orientation, gam
  * @returns {number} - The color as a hexadecimal number
  */
 function getChessPieceColor(piece, gameState) {
-	// If piece has an explicit color, use it
+	// If piece has an explicit color, use it (converted to a hex
+	// number — server stores colours as strings like '#a1b2c3').
 	if (piece.color && piece.color !== 0xcccccc) {
-		return piece.color;
+		const asNumber = toHexNumber(piece.color);
+		if (asNumber !== null) return asNumber;
 	}
 	
 	// Use the centralized color function for consistent colors

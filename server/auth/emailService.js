@@ -66,12 +66,12 @@ async function sendMagicLinkEmail(email, token, baseUrl) {
 	const msg = {
 		to: email,
 		from: {
-			email: process.env.SENDGRID_FROM_EMAIL || 'noreply@shaktris.com',
-			name: 'Shaktris'
+			email: process.env.SENDGRID_FROM_EMAIL || 'noreply@tetches.com',
+			name: 'Tetches'
 		},
-		subject: '🎮 Your Shaktris Magic Link',
+		subject: 'Your Tetches Magic Link',
 		text: `
-Welcome to Shaktris!
+Welcome to Tetches!
 
 Click the link below to sign in (valid for 15 minutes):
 ${magicLink}
@@ -79,7 +79,7 @@ ${magicLink}
 If you didn't request this, you can safely ignore this email.
 
 Happy gaming!
-The Shaktris Team
+The Tetches Team
 		`.trim(),
 		html: `
 <!DOCTYPE html>
@@ -91,7 +91,7 @@ The Shaktris Team
 <body style="margin: 0; padding: 0; background-color: #0a0a1a; font-family: 'Times New Roman', Georgia, serif;">
 	<div style="max-width: 500px; margin: 0 auto; padding: 40px 20px;">
 		<div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); border: 2px solid #ffcc00; border-radius: 12px; padding: 30px; text-align: center;">
-			<h1 style="color: #ffcc00; margin: 0 0 20px 0; font-size: 28px;">☦ Shaktris ☦</h1>
+			<h1 style="color: #ffcc00; margin: 0 0 20px 0; font-size: 28px;">Tetches</h1>
 			<p style="color: #ffffff; margin: 0 0 30px 0; font-size: 16px;">
 				Click the button below to sign in to your game:
 			</p>
@@ -104,7 +104,7 @@ The Shaktris Team
 			</p>
 		</div>
 		<p style="color: #666666; text-align: center; margin-top: 20px; font-size: 12px;">
-			Shaktris - Chess + Tetris in the Clouds
+			Tetches - Chess + Tetris in the Clouds
 		</p>
 	</div>
 </body>

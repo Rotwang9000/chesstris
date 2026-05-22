@@ -1,5 +1,5 @@
 /**
- * GameUtilities.js - Shared utility functions for Shaktris game
+ * GameUtilities.js - Shared utility functions for Tetches game
  * This module provides common utility functions used across different game components
  */
 
