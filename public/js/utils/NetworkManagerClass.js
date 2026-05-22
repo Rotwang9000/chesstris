@@ -1,7 +1,17 @@
 /**
  * NetworkManager Class
  * Handles all network communication in the game.
+ *
+ * Code-shape refactor (May 2026): the bulk of the boilerplate
+ * `socket.on('xxx', d => this.emitEvent('xxx', d))` wiring was
+ * extracted to `./network/socketEventBridge.js`, and the in-memory
+ * event-listener book-keeping (emit / addEventListener /
+ * removeEventListener) moved to `./network/eventBus.js`. This file
+ * is now focused on the lifecycle (connect / join / leave / actions).
  */
+import { attachSimpleForwards } from './network/socketEventBridge.js';
+import * as eventBus from './network/eventBus.js';
+
 // socket.io-client is loaded globally by the CDN <script> in index.html.
 // Using the global avoids fragile /node_modules/ imports that break behind nginx.
 function getSocketIO() {
@@ -66,8 +76,19 @@ export default class NetworkManager {
 					// Set flag immediately to prevent multiple auto-init attempts
 					this.state.hasAutoInitialized = true;
 					console.log('NetworkManager: Starting auto-initialization in development mode');
-					const mockPlayerName = 'DevPlayer_' + Math.floor(Math.random() * 1000);
-					this.initialize(mockPlayerName)
+					// Honour the user's saved name first; only fall
+					// back to a random DevPlayer_ if they really have
+					// never set one. The old behaviour overwrote the
+					// real localStorage name with `DevPlayer_xxx`,
+					// which is half of why "Change Name" was broken
+					// (and the other half is why the player list
+					// showed "Guest" instead of the typed name).
+					let savedName = null;
+					try { savedName = localStorage.getItem('playerName') || null; }
+					catch (_e) { savedName = null; }
+					const autoInitName = (savedName && savedName.trim())
+						|| ('DevPlayer_' + Math.floor(Math.random() * 1000));
+					this.initialize(autoInitName)
 						.then(() => {
 							console.log('NetworkManager: Auto-initialized in development mode');
 							// Only join if we're not already joining and not already in a game
@@ -196,161 +217,11 @@ export default class NetworkManager {
 					console.log('NetworkManager: Session cookie set for', data.playerId);
 				}
 			});
-				
-				socket.on('player_joined', (data) => {
-					this.emitEvent('player_joined', data);
-				});
-				
-				socket.on('player_left', (data) => {
-					this.emitEvent('player_left', data);
-				});
-				
-				socket.on('row_cleared', (data) => {
-					this.emitEvent('row_cleared', data);
-				});
-				
-				socket.on('no_valid_chess_moves', (data) => {
-					this.emitEvent('no_valid_chess_moves', data);
-				});
-				
-				socket.on('new_tetromino', (data) => {
-					this.emitEvent('new_tetromino', data);
-				});
-				
-				socket.on('turn_update', (data) => {
-					this.emitEvent('turn_update', data);
-				});
-				
-			socket.on('chess_move', (data) => {
-				this.emitEvent('chess_move', data);
-			});
 
-			socket.on('chess_capture', (data) => {
-				this.emitEvent('chess_capture', data);
-			});
-				
-			socket.on('tetrominoFailed', (data) => {
-				this.emitEvent('tetrominoFailed', data);
-			});
-
-			socket.on('pawn_promotion_available', (data) => {
-				this.emitEvent('pawn_promotion_available', data);
-			});
-
-			socket.on('king_captured', (data) => {
-				this.emitEvent('king_captured', data);
-			});
-
-			socket.on('suicidal_pawn', (data) => {
-				this.emitEvent('suicidal_pawn', data);
-			});
-			
-			socket.on('pawn_detonation', (data) => {
-				this.emitEvent('pawn_detonation', data);
-			});
-			
-			socket.on('king_detonation', (data) => {
-				this.emitEvent('king_detonation', data);
-			});
-
-			socket.on('king_detonation_layer', (data) => {
-				this.emitEvent('king_detonation_layer', data);
-			});
-
-			socket.on('island_decay', (data) => {
-				this.emitEvent('island_decay', data);
-			});
-
-			socket.on('island_at_risk', (data) => {
-				this.emitEvent('island_at_risk', data);
-			});
-
-			socket.on('cells_clearing', (data) => {
-				this.emitEvent('cells_clearing', data);
-			});
-
-			socket.on('cascade_complete', (data) => {
-				this.emitEvent('cascade_complete', data);
-			});
-
-			socket.on('simultaneous_capture_resolved', (data) => {
-				this.emitEvent('simultaneous_capture_resolved', data);
-			});
-
-			socket.on('king_duel_start', (data) => {
-				this.emitEvent('king_duel_start', data);
-			});
-
-			socket.on('king_duel_result', (data) => {
-				this.emitEvent('king_duel_result', data);
-			});
-
-			socket.on('king_duel_round_result', (data) => {
-				this.emitEvent('king_duel_round_result', data);
-			});
-
-			socket.on('king_duel_new_round', (data) => {
-				this.emitEvent('king_duel_new_round', data);
-			});
-
-			socket.on('king_duel_announced', (data) => {
-				this.emitEvent('king_duel_announced', data);
-			});
-
-			// Activity log feed — the Recent Activity panel listens for
-			// these via `NetworkManager.on(...)`. Without these
-			// forwards the panel stayed empty even though the server
-			// was emitting events the whole time (the bug the user
-			// reported as "Recent activity is still empty btw").
-			socket.on('activity_event', (data) => {
-				this.emitEvent('activity_event', data);
-			});
-
-			socket.on('activity_log_snapshot', (data) => {
-				this.emitEvent('activity_log_snapshot', data);
-			});
-
-			// Per-player captured-piece basket. Targets a single
-			// socket (the basket owner), not a broadcast — see
-			// `broadcasts.emitCapturedBasket`. Forwarded here so the
-			// game-core listener can surface it in the UI.
-			socket.on('captured_basket', (data) => {
-				this.emitEvent('captured_basket', data);
-			});
-
-			// Power-up orbs (struggling-player aid pickups). Server
-			// fans out `powerup_spawned` / `powerup_claimed` /
-			// `powerup_expired` as the orb lifecycle progresses; the
-			// game-core listener mutates `gameState.powerUps` so the
-			// renderer can draw / remove the floating spheres.
-			socket.on('powerup_spawned', (data) => {
-				this.emitEvent('powerup_spawned', data);
-			});
-			socket.on('powerup_claimed', (data) => {
-				this.emitEvent('powerup_claimed', data);
-			});
-			socket.on('powerup_expired', (data) => {
-				this.emitEvent('powerup_expired', data);
-			});
-
-			// Promotion credits. Server pushes the full list on join /
-			// after every credit lifecycle event; individual events
-			// (`promotion_credit_added` / `_redeemed`) are also forwarded
-			// so the UI can toast + animate without needing a full
-			// `promotion_credits` payload.
-			socket.on('promotion_credits', (data) => {
-				this.emitEvent('promotion_credits', data);
-			});
-			socket.on('promotion_credit_added', (data) => {
-				this.emitEvent('promotion_credit_added', data);
-			});
-			socket.on('promotion_credit_redeemed', (data) => {
-				this.emitEvent('promotion_credit_redeemed', data);
-			});
-
-				socket.on('chessFailed', (data) => {
-					this.emitEvent('chessFailed', data);
-				});
+			// Wire up the ~30 pass-through events (player_joined,
+			// chess_move, powerup_spawned, …) in one go. See
+			// `./network/socketEventBridge.js` for the full list.
+			attachSimpleForwards(socket, (eventType, payload) => this.emitEvent(eventType, payload));
 				
 				socket.on('game_state', (data) => {
 					this.state.gameState = (data && data.state) ? data.state : data;
@@ -582,6 +453,22 @@ export default class NetworkManager {
 	}
 
 	/**
+	 * Name sent with `join_game` — never the literal placeholder `'Guest'`
+	 * when the user has already stored a real name.
+	 * @private
+	 */
+	_nameForJoinGame() {
+		if (this.state.playerName && this.state.playerName !== 'Guest') {
+			return this.state.playerName;
+		}
+		try {
+			const stored = localStorage.getItem('playerName');
+			if (stored && stored.trim()) return stored.trim();
+		} catch (_e) { /* private browsing */ }
+		return this.state.playerName;
+	}
+
+	/**
 	 * Inner implementation of joinGame
 	 * @private
 	 * @param {string} gameIdArg - Optional game ID to join
@@ -609,6 +496,22 @@ export default class NetworkManager {
 				// Store game ID
 				this.state.gameId = data.gameId;
 				this.state.playerId = data.playerId;
+				if (data.playerName) {
+					let resolved = data.playerName;
+					const isPlaceholder = !resolved || resolved === 'Guest'
+						|| /^Player_[a-f0-9]{6}$/i.test(String(resolved).trim());
+					if (isPlaceholder) {
+						try {
+							const stored = localStorage.getItem('playerName');
+							if (stored && stored.trim()) resolved = stored.trim();
+						} catch (_e) { /* ignore */ }
+					}
+					if (resolved && resolved !== 'Guest') {
+						this.state.playerName = resolved;
+						try { localStorage.setItem('playerName', resolved); }
+						catch (_e) { /* ignore */ }
+					}
+				}
 				this.state.hasJoinedGame = true;
 				this.state.isJoiningGame = false; // Clear joining flag
 				
@@ -654,10 +557,10 @@ export default class NetworkManager {
 			};
 			
 			// Send join request
+			const joinName = this._nameForJoinGame();
 			if (gameIdArg) {
 				console.log('NetworkManager: Joining specific game:', gameIdArg);
-				// Join specific game
-				this.state.socket.emit('join_game', { gameId: gameIdArg, playerName: this.state.playerName }, (response) => {
+				this.state.socket.emit('join_game', { gameId: gameIdArg, playerName: joinName }, (response) => {
 					console.log('NetworkManager: Join specific game response:', gameIdArg, response);
 					if (response.error) {
 						onJoinError(response.error);
@@ -667,8 +570,7 @@ export default class NetworkManager {
 				});
 			} else {
 				console.log('NetworkManager: Joining global game');
-				// Join any available game or create new
-				this.state.socket.emit('join_game', { playerName: this.state.playerName }, (response) => {
+				this.state.socket.emit('join_game', { playerName: joinName }, (response) => {
 					console.log('NetworkManager: Join any available game response:', response);
 					if (response.error) {
 						onJoinError(response.error);
@@ -1088,168 +990,12 @@ export default class NetworkManager {
 	 * @param {string} eventType - Event type
 	 * @param {Object} data - Event data
 	 */
-	emitEvent(eventType, data) {
-		// Ensure eventListeners object exists with proper structure
-		if (!this.state.eventListeners) {
-			this.state.eventListeners = {};
-		}
-		
-		// Special handling for gameJoined event to include game state
-		if (eventType === 'gameJoined' && data && !data.gameState && this.state.gameState) {
-			// Clone the data to avoid modifying the original
-			data = { ...data, gameState: this.state.gameState };
-		}
-		
-		// Ensure all standard event types have arrays
-		const standardEventTypes = [
-			'connect', 'disconnect', 'error', 'connecting', 
-			'game_state', 'game_update', 'player_joined', 'player_left', 'message',
-			'gameJoined', 'gameLeft'
-		];
-		
-		standardEventTypes.forEach(type => {
-			if (!this.state.eventListeners[type]) {
-				this.state.eventListeners[type] = [];
-			}
-		});
-		
-		// Ensure message handlers object exists
-		if (!this.state.eventListeners.messageHandlers) {
-			this.state.eventListeners.messageHandlers = {};
-		}
-		
-		// Handle 'message' events differently, they have type-specific handlers
-		if (eventType === 'message' && data && data.type) {
-			const messageType = data.type;
-			
-			// First call generic message handlers
-			if (Array.isArray(this.state.eventListeners.message)) {
-				this.state.eventListeners.message.forEach(handler => {
-					try {
-						handler(data);
-					} catch (error) {
-						console.error(`NetworkManager: Error in message handler:`, error);
-					}
-				});
-			}
-			
-			// Then call type-specific handlers
-			if (this.state.eventListeners.messageHandlers[messageType] && 
-				Array.isArray(this.state.eventListeners.messageHandlers[messageType])) {
-				
-				this.state.eventListeners.messageHandlers[messageType].forEach(handler => {
-					try {
-						handler(data);
-					} catch (error) {
-						console.error(`NetworkManager: Error in message handler for ${messageType}:`, error);
-					}
-				});
-			}
-			return;
-		}
-		
-		// For other events, ensure the array exists
-		if (!this.state.eventListeners[eventType]) {
-			this.state.eventListeners[eventType] = [];
-		}
-		
-		// Call each handler
-		if (Array.isArray(this.state.eventListeners[eventType])) {
-			this.state.eventListeners[eventType].forEach(handler => {
-				try {
-					handler(data);
-				} catch (error) {
-					console.error(`NetworkManager: Error in event handler for ${eventType}:`, error);
-				}
-			});
-		} else {
-			console.warn(`NetworkManager: Event listeners for ${eventType} is not an array`);
-		}
-		
-		// Also emit corresponding DOM event for compatibility
-		if (typeof document !== 'undefined') {
-			try {
-				const customEvent = new CustomEvent(`network:${eventType}`, { detail: data });
-				document.dispatchEvent(customEvent);
-			} catch (error) {
-				console.warn(`NetworkManager: Error dispatching DOM event ${eventType}:`, error);
-			}
-		}
-	}
-
-	/**
-	 * Add an event listener
-	 * @param {string} eventType - Event type
-	 * @param {Function} callback - Event callback
-	 */
-	addEventListener(eventType, callback) {
-		// Ensure eventListeners object exists
-		if (!this.state.eventListeners) {
-			this.state.eventListeners = {};
-		}
-		
-		// Handle special message event types with prefix
-		if (eventType.startsWith('message:')) {
-			const messageType = eventType.substring('message:'.length);
-			
-			// Ensure messageHandlers object exists
-			if (!this.state.eventListeners.messageHandlers) {
-				this.state.eventListeners.messageHandlers = {};
-			}
-			
-			// Ensure array for this message type exists
-			if (!this.state.eventListeners.messageHandlers[messageType]) {
-				this.state.eventListeners.messageHandlers[messageType] = [];
-			}
-			
-			// Add the callback
-			this.state.eventListeners.messageHandlers[messageType].push(callback);
-			return;
-		}
-		
-		// For normal events, ensure the array exists
-		if (!this.state.eventListeners[eventType]) {
-			this.state.eventListeners[eventType] = [];
-		}
-		
-		// Add the callback
-		this.state.eventListeners[eventType].push(callback);
-	}
-
-	/**
-	 * Remove an event listener
-	 * @param {string} eventType - Event type
-	 * @param {Function} callback - Event callback to remove
-	 */
-	removeEventListener(eventType, callback) {
-		// Ensure eventListeners object exists
-		if (!this.state.eventListeners) {
-			return;
-		}
-		
-		// Handle special message event types
-		if (eventType.startsWith('message:')) {
-			const messageType = eventType.substring('message:'.length);
-			
-			// Ensure messageHandlers object exists
-			if (!this.state.eventListeners.messageHandlers) {
-				return;
-			}
-			
-			// If handlers exist for this message type, filter out the callback
-			if (this.state.eventListeners.messageHandlers[messageType]) {
-				this.state.eventListeners.messageHandlers[messageType] = 
-					this.state.eventListeners.messageHandlers[messageType].filter(handler => handler !== callback);
-			}
-			return;
-		}
-		
-		// For normal events, filter out the callback if the array exists
-		if (this.state.eventListeners[eventType]) {
-			this.state.eventListeners[eventType] = 
-				this.state.eventListeners[eventType].filter(handler => handler !== callback);
-		}
-	}
+	// Event bus is implemented in ./network/eventBus.js — these
+	// thin wrappers exist purely so external callers can keep using
+	// `NetworkManager.on(...)` / `.emitEvent(...)` syntax.
+	emitEvent(eventType, data) { return eventBus.emitEvent(this, eventType, data); }
+	addEventListener(eventType, callback) { return eventBus.addEventListener(this, eventType, callback); }
+	removeEventListener(eventType, callback) { return eventBus.removeEventListener(this, eventType, callback); }
 
 	/**
 	 * Alias for addEventListener

@@ -7,6 +7,9 @@
 	"scripts": {
 		"start": "node server.js",
 		"dev": "nodemon server.js",
+		"build": "npm run build:client",
+		"build:client": "node scripts/build-client.js",
+		"build:client:watch": "node scripts/build-client.js --watch",
 		"lint": "eslint .",
 		"lint:fix": "eslint . --fix",
 		"test": "jest",
@@ -56,6 +59,7 @@
 		"@babel/preset-env": "^7.26.9",
 		"@eslint/js": "^10.0.1",
 		"babel-jest": "^29.7.0",
+		"esbuild": "^0.28.0",
 		"eslint": "^10.4.0",
 		"globals": "^17.6.0",
 		"jest": "^29.7.0",

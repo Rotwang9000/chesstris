@@ -27,7 +27,11 @@ function registerJoinHandlers(socket, ctx) {
 			}
 
 			const requestedName = validatePlayerName(data?.playerName);
-			if (requestedName) player.name = requestedName;
+			// `'Guest'` is the client's connection placeholder — never let it
+			// stomp a name the player already chose.
+			if (requestedName && requestedName.toLowerCase() !== 'guest') {
+				player.name = requestedName;
+			}
 
 			const worldId = World.getWorldId();
 
@@ -99,6 +103,53 @@ function registerJoinHandlers(socket, ctx) {
 			if (callback) callback({ success: true, gameId: worldId });
 		} catch (error) {
 			console.error('Error creating game:', error);
+			if (callback) callback({ success: false, error: 'Server error' });
+		}
+	});
+
+	// Rename without reconnecting. The previous "Change Name" UI
+	// destroyed and recreated the socket via a page reload, which
+	// produced two server-side bugs at once:
+	//   1. Anything mid-flight (in-flight chess move, pending
+	//      tetromino) was discarded, and
+	//   2. If the client raced the auto-init flow it'd send the
+	//      mock `DevPlayer_xxx` name and overwrite the real name.
+	// This handler exists so the client can just push a new name to
+	// the server and have it broadcast in-place.
+	socket.on('change_name', (data, callback) => {
+		try {
+			const player = World.getPlayer(playerId);
+			if (!player) {
+				if (callback) callback({ success: false, error: 'Player not registered' });
+				return;
+			}
+			const newName = validatePlayerName(data?.playerName);
+			if (!newName) {
+				if (callback) callback({ success: false, error: 'Invalid name' });
+				return;
+			}
+			if (player.name === newName) {
+				if (callback) callback({ success: true, playerName: newName, unchanged: true });
+				return;
+			}
+			const previousName = player.name;
+			player.name = newName;
+			player.lastActiveAt = Date.now();
+			World.markDirty();
+			persistence.markDirty();
+
+			const worldId = World.getWorldId();
+			const playersList = broadcaster.buildPlayersList();
+			io.to(worldId).emit('player_renamed', {
+				playerId,
+				previousName,
+				playerName: newName,
+				players: playersList,
+			});
+			broadcaster.broadcastGameUpdate();
+			if (callback) callback({ success: true, playerName: newName });
+		} catch (error) {
+			console.error('Error renaming player:', error);
 			if (callback) callback({ success: false, error: 'Server error' });
 		}
 	});

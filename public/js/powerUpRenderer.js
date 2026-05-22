@@ -31,14 +31,19 @@ import { translatePosition } from './centreBoardMarker.js';
 const ORB_RADIUS = 0.45;
 // Lowered so the orb hovers visibly close to its host cell — the user
 // flagged that the previous height (1.5) made it ambiguous which cell
-// was the orb's home. Combined with the new ground disc + tether beam
+// was the orb's home. Combined with the new ghost block + tether beam
 // the player can see "build a tetromino into THIS cell" at a glance.
-const ORB_HEIGHT_ABOVE_CELL = 1.1;
+const ORB_HEIGHT_ABOVE_CELL = 1.6;
 const ORB_BOB_AMPLITUDE = 0.12;
 const ORB_BOB_FREQ_HZ = 0.6;
 const ORB_ROTATION_SPEED = 0.6;
-const GROUND_DISC_RADIUS = 0.55;
-const GROUND_DISC_HEIGHT = 0.02;
+// Ghost cell — a translucent 3D block that visually anchors the orb
+// to its host cell. Matches the standard board-cell dimensions
+// (0.94×0.94×0.94, see boardFunctions/rendering.js) so the player
+// reads it as "this is the slot to fill". Sits at y = block-height/2
+// so the top face is level with normal cells once they're built.
+const GHOST_BLOCK_SIZE = 0.94;
+const GHOST_BLOCK_HEIGHT = 0.94;
 const TETHER_BEAM_RADIUS = 0.05;
 
 // Piece-type → tint used to colour the orb's inner glow. We avoid pure
@@ -112,40 +117,65 @@ function buildOrbVisual(orb) {
 		phase: Math.random() * Math.PI * 2,
 	};
 
-	// Ground disc — a pulsing circle ON the host cell. Marks "the orb
-	// is for THIS cell" so the player knows which tile to build under.
-	const discMaterial = new THREE.MeshBasicMaterial({
+	// Ghost block — a translucent 3D cell sitting on the host
+	// coordinate. Players read "build a real cell here to claim
+	// this orb". Sized to match the standard board-cell box so it
+	// slots cleanly into the player's mental model. A second,
+	// slightly larger box wireframe emphasises the silhouette
+	// against the sky background; without it the box vanishes at
+	// shallow camera angles.
+	const blockMaterial = new THREE.MeshStandardMaterial({
+		color: tint,
+		emissive: tint,
+		emissiveIntensity: 0.45,
+		transparent: true,
+		opacity: 0.52,
+		roughness: 0.4,
+		metalness: 0.05,
+		depthWrite: false,
+	});
+	const block = new THREE.Mesh(
+		new THREE.BoxGeometry(GHOST_BLOCK_SIZE, GHOST_BLOCK_HEIGHT, GHOST_BLOCK_SIZE),
+		blockMaterial,
+	);
+	block.position.set(0, GHOST_BLOCK_HEIGHT / 2, 0);
+	group.add(block);
+	group.userData.block = block;
+	group.userData.blockMaterial = blockMaterial;
+
+	// Wireframe outline — same dimensions, slightly larger so the
+	// edges sit just outside the translucent block. Pure colour
+	// material (no lighting) so it stays crisp at any camera angle.
+	const wireMaterial = new THREE.LineBasicMaterial({
 		color: tint,
 		transparent: true,
-		opacity: 0.55,
-		depthWrite: false,
-		side: THREE.DoubleSide,
+		opacity: 0.9,
 	});
-	const disc = new THREE.Mesh(
-		new THREE.CircleGeometry(GROUND_DISC_RADIUS, 24),
-		discMaterial,
+	const wireGeometry = new THREE.EdgesGeometry(
+		new THREE.BoxGeometry(GHOST_BLOCK_SIZE * 1.02, GHOST_BLOCK_HEIGHT * 1.02, GHOST_BLOCK_SIZE * 1.02)
 	);
-	disc.rotation.x = -Math.PI / 2;
-	disc.position.set(0, GROUND_DISC_HEIGHT, 0);
-	group.add(disc);
-	group.userData.disc = disc;
-	group.userData.discMaterial = discMaterial;
+	const wireframe = new THREE.LineSegments(wireGeometry, wireMaterial);
+	wireframe.position.set(0, GHOST_BLOCK_HEIGHT / 2, 0);
+	group.add(wireframe);
+	group.userData.wireframe = wireframe;
+	group.userData.wireMaterial = wireMaterial;
 
-	// Tether beam — a thin vertical cylinder from disc to orb, so the
-	// eye traces the connection. We make it semi-transparent and emit
-	// the orb's tint colour so it reads as "magical link" not "post".
+	// Tether beam — thin cylinder from the top of the ghost block to
+	// the orb. Still useful: it keeps the eye tracking between the
+	// orb's bobbing motion and the static host block.
 	const tetherMaterial = new THREE.MeshBasicMaterial({
 		color: tint,
 		transparent: true,
 		opacity: 0.25,
 		depthWrite: false,
 	});
-	const tetherHeight = Math.max(0.1, ORB_HEIGHT_ABOVE_CELL - ORB_RADIUS);
+	const tetherTopOfBlock = GHOST_BLOCK_HEIGHT;
+	const tetherHeight = Math.max(0.1, ORB_HEIGHT_ABOVE_CELL - tetherTopOfBlock - ORB_RADIUS);
 	const tether = new THREE.Mesh(
 		new THREE.CylinderGeometry(TETHER_BEAM_RADIUS, TETHER_BEAM_RADIUS, tetherHeight, 12),
 		tetherMaterial,
 	);
-	tether.position.set(0, GROUND_DISC_HEIGHT + tetherHeight / 2, 0);
+	tether.position.set(0, tetherTopOfBlock + tetherHeight / 2, 0);
 	group.add(tether);
 	group.userData.tether = tether;
 	group.userData.tetherMaterial = tetherMaterial;
@@ -266,13 +296,17 @@ export function syncPowerUps(orbs) {
 
 function disposeOrbVisual(visual) {
 	if (!visual || !visual.userData) return;
-	// Disc and tether materials are unique per-orb (we tint them
-	// with the cached shared material's colour but each gets its
-	// own MeshBasicMaterial instance for opacity pulsing). Dispose
+	// Block / wireframe / tether materials are unique per-orb (we
+	// tint them with the cached shared material's colour but each
+	// gets its own material instance for opacity pulsing). Dispose
 	// them explicitly to avoid GPU leaks over a long session.
-	const { discMaterial, tetherMaterial } = visual.userData;
-	if (discMaterial && typeof discMaterial.dispose === 'function') discMaterial.dispose();
+	const { blockMaterial, wireMaterial, tetherMaterial } = visual.userData;
+	if (blockMaterial && typeof blockMaterial.dispose === 'function') blockMaterial.dispose();
+	if (wireMaterial && typeof wireMaterial.dispose === 'function') wireMaterial.dispose();
 	if (tetherMaterial && typeof tetherMaterial.dispose === 'function') tetherMaterial.dispose();
+	if (visual.userData.wireframe?.geometry?.dispose) {
+		visual.userData.wireframe.geometry.dispose();
+	}
 }
 
 /**
@@ -295,12 +329,18 @@ export function animatePowerUps(timeSec) {
 				visual.userData.silhouette.rotation.y -= ORB_ROTATION_SPEED * 0.032;
 			}
 		}
-		// Pulse the ground disc opacity in sync with the bob so the
-		// player's eye is repeatedly drawn back to the host cell.
-		const discMat = visual.userData.discMaterial;
-		if (discMat) {
-			const pulse = 0.4 + 0.25 * (1 + Math.sin(phase * 0.5)) * 0.5;
-			discMat.opacity = pulse;
+		// Pulse the ghost block + wireframe opacity in sync with the
+		// bob so the player's eye is repeatedly drawn back to the
+		// host cell.
+		const blockMat = visual.userData.blockMaterial;
+		if (blockMat) {
+			const pulse = 0.42 + 0.18 * (1 + Math.sin(phase * 0.5)) * 0.5;
+			blockMat.opacity = pulse;
+		}
+		const wireMat = visual.userData.wireMaterial;
+		if (wireMat) {
+			const pulse = 0.7 + 0.2 * (1 + Math.sin(phase * 0.7)) * 0.5;
+			wireMat.opacity = pulse;
 		}
 	}
 }

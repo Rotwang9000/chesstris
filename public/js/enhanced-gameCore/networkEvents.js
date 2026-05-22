@@ -678,6 +678,29 @@ export function setupNetworkEvents(hooks = {}) {
 	NetworkManager.on('king_duel_new_round', safe('king_duel_new_round', handleDuelNewRound));
 	NetworkManager.on('king_duel_result', safe('king_duel_result', showKingDuelResult));
 	NetworkManager.on('king_duel_announced', handleKingDuelAnnounced);
+	// Server-initiated rename broadcast. The local UI already
+	// updated localStorage when the user submitted the dialog —
+	// this handler covers everyone *else* seeing the new name.
+	NetworkManager.on('player_renamed', (payload) => {
+		try {
+			if (!payload || !payload.playerId) return;
+			const players = gameState.players || {};
+			if (players[payload.playerId]) {
+				players[payload.playerId].name = payload.playerName;
+			}
+			if (payload.playerId === gameState.localPlayerId && payload.playerName) {
+				try { localStorage.setItem('playerName', payload.playerName); } catch (_e) { /* ignore */ }
+			}
+			if (Array.isArray(payload.players)) {
+				dispatchGameUpdate({ players: payload.players });
+			} else {
+				dispatchGameUpdate({});
+			}
+		} catch (e) {
+			console.warn('[player_renamed] update failed:', e);
+		}
+	});
+
 	NetworkManager.on('activity_event', (payload) => {
 		// Cheap audio hooks for activity events that don't have a
 		// dedicated handler. The cues are quieter when the actor

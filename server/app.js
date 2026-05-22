@@ -18,6 +18,7 @@ const { mountAuthRoutes } = require('./auth/routes');
 const { parseAllowedOrigins, isOriginAllowed } = require('./security/origins');
 const metrics = require('./observability/metrics');
 const sentry = require('./observability/sentry');
+const { createIndexHtmlBundleSwap } = require('./bundling/indexHtmlBundleSwap');
 
 /**
  * Build the Content-Security-Policy directive set. We're strict but
@@ -110,6 +111,14 @@ function createApp({ projectRoot = process.cwd() } = {}) {
 	});
 	app.use('/api', apiLimiter);
 
+	// Bundle-aware index.html serving (rewrites the entrypoint
+	// script tag to `dist/app.bundle.js` when one exists). Mounted
+	// BEFORE express.static so it claims `/` and `/index.html`
+	// before the static handler serves the raw template.
+	const indexSwap = createIndexHtmlBundleSwap({ projectRoot });
+	app.use(indexSwap.middleware);
+	app._indexBundleStatus = indexSwap.bundleStatus;
+
 	app.use('/node_modules', express.static(path.join(projectRoot, 'node_modules')));
 	app.use(express.static(path.join(projectRoot, 'public')));
 
@@ -152,9 +161,9 @@ function createApp({ projectRoot = process.cwd() } = {}) {
 		}
 	});
 
-	app.get('/2d', (_req, res) => {
-		res.sendFile(path.join(projectRoot, 'public', 'index.html'));
-	});
+	// `/2d` and `/` both go through `indexSwap.middleware` so they
+	// receive the bundle-swapped HTML automatically. We only need
+	// explicit handlers here for the *other* HTML entry points.
 	app.get('/advertise', (_req, res) => {
 		res.sendFile(path.join(projectRoot, 'public', 'advertise.html'));
 	});
@@ -162,12 +171,11 @@ function createApp({ projectRoot = process.cwd() } = {}) {
 		res.sendFile(path.join(projectRoot, 'public', 'admin', 'advertisers.html'));
 	});
 
-	app.get('*', (_req, res) => {
-		if (isDevelopment) {
-			res.sendFile(path.join(projectRoot, 'public', 'index.html'));
-		} else {
-			res.sendFile(path.join(projectRoot, 'client/build', 'index.html'));
-		}
+	app.get('*', (req, res, next) => {
+		// Pass HTML SPA routes through the bundle-swap middleware so
+		// they pick up the same script-tag rewrite that `/` does.
+		req.url = '/';
+		return indexSwap.middleware(req, res, next);
 	});
 
 	// Sentry's error handler must be the LAST middleware before any

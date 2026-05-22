@@ -9,6 +9,7 @@ import * as NetworkManager from './utils/networkManager.js';
 import { highlightPlayerPieces, removePlayerPiecesHighlight } from './pieceHighlightManager.js';
 import { showToastMessage } from './showToastMessage.js';
 import { showPromotionRedeemDialog } from './uiOverlays.js';
+import { promptInlineRename } from './renameDialog.js';
 
 // State tracking variables
 let isBarVisible = false;
@@ -67,6 +68,38 @@ function getLocalPlayerId(gameState) {
 	
 	// Return null if we couldn't find a local player ID
 	return null;
+}
+
+function isPlaceholderPlayerName(name) {
+	if (!name || typeof name !== 'string') return true;
+	const trimmed = name.trim();
+	if (!trimmed || trimmed === 'Guest') return true;
+	if (/^Player_[a-f0-9]{6}$/i.test(trimmed)) return true;
+	if (/^DevPlayer_/i.test(trimmed)) return true;
+	return false;
+}
+
+/**
+ * Footer + nameplate: prefer a name the user chose in localStorage when
+ * the server still has a placeholder (`Guest`, `Player_xxx`, etc.).
+ */
+function resolveLocalDisplayName(gameState, localPlayerId) {
+	let stored = '';
+	try {
+		stored = (localStorage.getItem('playerName') || '').trim();
+	} catch (_e) { /* private browsing */ }
+
+	const serverName = (localPlayerId && gameState?.players?.[localPlayerId]?.name)
+		? String(gameState.players[localPlayerId].name).trim()
+		: '';
+
+	if (stored && (!serverName || isPlaceholderPlayerName(serverName))) {
+		return stored;
+	}
+	if (serverName && !isPlaceholderPlayerName(serverName)) {
+		return serverName;
+	}
+	return stored || serverName || 'Guest';
 }
 
 function getCookieValue(name) {
@@ -337,9 +370,7 @@ export function createUnifiedPlayerBar(gameState) {
 			marginTop: 'auto'
 		});
 		
-		const playerName = localPlayerId && gameState.players && gameState.players[localPlayerId] ? 
-			gameState.players[localPlayerId].name : 
-			localStorage.getItem('playerName') || 'Guest';
+		const playerName = resolveLocalDisplayName(gameState, localPlayerId);
 		
 		footer.innerHTML = `
 			<div style="font-size: 14px; color: #ffcc00;">You are playing as:</div>
@@ -353,10 +384,14 @@ export function createUnifiedPlayerBar(gameState) {
 		`;
 		playerBar.appendChild(footer);
 		
-		// Add event listener for name change
+		// Inline rename. The previous version cleared localStorage and
+		// reloaded the page — which kicked the user out of the game,
+		// raced the dev-mode auto-init, and routinely landed them
+		// back as "Guest" or "DevPlayer_xxx". Sending a `change_name`
+		// socket message lets the server update the existing record
+		// in-place.
 		document.getElementById('change-player-name')?.addEventListener('click', () => {
-			localStorage.removeItem('playerName');
-			window.location.reload();
+			promptInlineRename(playerName);
 		});
 	}
 	

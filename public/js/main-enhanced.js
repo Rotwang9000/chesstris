@@ -575,6 +575,22 @@ async function joinGameAfterConnection(gameId = null) {
 				gameState.localPlayerId = result.playerId;
 				console.log('Local player ID set to:', gameState.localPlayerId);
 			}
+
+			if (result.playerName && result.playerName !== 'Guest') {
+				try { localStorage.setItem('playerName', result.playerName); } catch (_e) { /* ignore */ }
+				if (!gameState.players) gameState.players = {};
+				if (!gameState.players[gameState.localPlayerId]) {
+					gameState.players[gameState.localPlayerId] = { id: gameState.localPlayerId };
+				}
+				gameState.players[gameState.localPlayerId].name = result.playerName;
+			}
+			if (Array.isArray(result.players) && result.players.length > 0) {
+				gameState.players = gameState.players || {};
+				for (const entry of result.players) {
+					if (!entry || !entry.id) continue;
+					gameState.players[entry.id] = { ...gameState.players[entry.id], ...entry };
+				}
+			}
 			
 			// Update window title with world ID
 			document.title = `Tetches - World ${currentGameId}`;

@@ -23,13 +23,29 @@ function getInstance() {
 // Get the singleton instance
 const networkManagerInstance = getInstance();
 
+/**
+ * Prefer a name the user actually chose. The class default is `'Guest'`,
+ * which must never overwrite `localStorage` on reconnect.
+ */
+function resolvePlayerName(explicitName) {
+	if (explicitName && String(explicitName).trim() && explicitName !== 'Guest') {
+		return String(explicitName).trim();
+	}
+	try {
+		const stored = localStorage.getItem('playerName');
+		if (stored && stored.trim()) return stored.trim();
+	} catch (_e) { /* private browsing */ }
+	if (explicitName && String(explicitName).trim()) return String(explicitName).trim();
+	return 'Guest';
+}
+
 // Export the instance methods to maintain the same module interface
 export function initialize(playerName = 'Guest') {
-	return networkManagerInstance.initialize(playerName);
+	return networkManagerInstance.initialize(resolvePlayerName(playerName));
 }
 
 export function ensureConnected(playerNameArg = null, maxAttempts = 3) {
-	return networkManagerInstance.ensureConnected(playerNameArg, maxAttempts);
+	return networkManagerInstance.ensureConnected(resolvePlayerName(playerNameArg), maxAttempts);
 }
 
 export function joinGame(gameIdArg) {
