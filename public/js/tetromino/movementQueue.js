@@ -326,6 +326,16 @@ function processPlaceTetromino() {
 
 			if (response && response.success === true) {
 				gameState._hasPlacedTetromino = true;
+				if (Array.isArray(response.powerUpClaims) && response.powerUpClaims.length > 0) {
+					const claimedIds = new Set(
+						response.powerUpClaims.map(c => c && c.orbId).filter(Boolean)
+					);
+					gameState.powerUps = (gameState.powerUps || [])
+						.filter(o => o && !claimedIds.has(o.id));
+					if (typeof window.updateBoardVisuals === 'function') {
+						window.updateBoardVisuals();
+					}
+				}
 				if (placedTetrominoSponsor) {
 					console.log('Displaying sponsor ad for:', placedTetrominoSponsor.name);
 					displaySponsorInfo(placedTetrominoSponsor);

@@ -55,7 +55,7 @@ const HOME_ZONE_DEGRADATION_CHECK_MS = 30000;
 const WORLD_INTEGRITY_CHECK_MS = 10000;
 const LONE_KING_SWEEP_MS = 15000;
 const GHOST_PLAYER_SWEEP_MS = 20000;
-const POWER_UP_TICK_MS = 20000;
+const POWER_UP_TICK_MS = 45000;
 const METRICS_TICK_MS = 5000;
 
 function bootstrap({ projectRoot = process.cwd() } = {}) {

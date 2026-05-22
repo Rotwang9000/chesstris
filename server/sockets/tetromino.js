@@ -140,6 +140,14 @@ function registerTetrominoHandlers(socket, ctx) {
 				callback({
 					success: true,
 					boardState: world.board,
+					placedCells,
+					powerUpClaims: powerUpClaims.map(c => ({
+						orbId: c.orb.id,
+						pieceId: c.piece.id,
+						pieceType: c.orb.pieceType,
+						x: c.orb.x,
+						z: c.orb.z,
+					})),
 				});
 			}
 

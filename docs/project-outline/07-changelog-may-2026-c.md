@@ -335,6 +335,9 @@ step-by-step "ship tetches.com on 95.216.77.237" runbook.
 - **Power-up orbs.** Each orb sits on a translucent ghost cell
   (0.94³, matching board cells) plus wireframe + tether beam;
   `translatePosition` keeps orbs aligned with the board grid.
+  Claims fire when a tetromino lands on the orb cell **or** on an
+  adjacent cell; spawns only beside existing board structure; caps
+  lowered (max 4 orbs, ~35% spawn chance / 45 s tick).
 - **Code shape + bundle.** `NetworkManagerClass` →
   `socketEventBridge` + `eventBus`; `ChessManager` →
   `chess/moveValidation.js`; `npm run build:client` →

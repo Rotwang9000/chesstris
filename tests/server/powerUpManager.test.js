@@ -82,24 +82,49 @@ describe('PowerUpManager', () => {
 		const activityLog = makeActivityLog();
 
 		const manager = createPowerUpManager({ io, broadcaster, persistence, activityLog });
+		const world = World.getWorld();
+		// Give each home zone a board foothold so spawn locations are reachable.
+		world.board.cells['4,1'] = [{ type: 'tetromino', player: 'p1', placedAt: Date.now() }];
+		world.board.cells['44,1'] = [{ type: 'tetromino', player: 'p2', placedAt: Date.now() }];
 
-		let spawned = null;
-		for (let attempt = 0; attempt < 50; attempt++) {
-			const result = manager.tick();
-			if (result.spawned) {
-				spawned = result.spawned;
-				break;
-			}
-		}
+		const randomSpy = jest.spyOn(Math, 'random').mockReturnValue(0.1);
+		const spawned = manager._internals.trySpawnOne(world);
+		randomSpy.mockRestore();
 
 		expect(spawned).not.toBeNull();
 		expect(spawned.id.startsWith('orb-')).toBe(true);
 		expect(Number.isFinite(spawned.x)).toBe(true);
 		expect(Number.isFinite(spawned.z)).toBe(true);
 		expect(['PAWN', 'KNIGHT', 'BISHOP', 'ROOK', 'QUEEN']).toContain(spawned.pieceType);
-		const world = World.getWorld();
 		expect(world.powerUps.length).toBe(1);
 		expect(activityLog.records.some(r => r.type === 'spawned')).toBe(true);
+	});
+
+	test('claimAcrossPlacement claims an orb when placement is orthogonally adjacent', () => {
+		seedWorld();
+		const io = makeIo();
+		const manager = createPowerUpManager({
+			io, broadcaster: makeBroadcaster(), persistence: makePersistence(),
+		});
+		const world = World.getWorld();
+		world.board.cells['5,5'] = [{ type: 'tetromino', player: 'p2', placedAt: Date.now() }];
+		world.powerUps.push({
+			id: 'orb-adjacent',
+			x: 6,
+			z: 5,
+			pieceType: 'KNIGHT',
+			spawnedAt: Date.now(),
+		});
+
+		const claims = manager.claimAcrossPlacement(world, 'p2', [
+			{ x: 4, z: 5 },
+			{ x: 5, z: 5 },
+		]);
+
+		expect(claims).toHaveLength(1);
+		expect(claims[0].orb.id).toBe('orb-adjacent');
+		expect(claims[0].piece.type).toBe('KNIGHT');
+		expect(world.powerUps).toHaveLength(0);
 	});
 
 	test('claimAcrossPlacement converts an orb under a tetromino cell into a chess piece', () => {
@@ -200,6 +225,19 @@ describe('PowerUpManager', () => {
 		expect(p2Wins).toBeGreaterThan(samples * 0.6);
 	});
 
+	test('orbs do not spawn in empty void — must neighbour existing board cells', () => {
+		const world = seedWorld();
+		const io = makeIo();
+		const manager = createPowerUpManager({
+			io, broadcaster: makeBroadcaster(), persistence: makePersistence(),
+		});
+
+		expect(manager._internals.isCellAvailableForOrb(world, 99, 99)).toBe(false);
+		world.board.cells['10,10'] = [{ type: 'tetromino', player: 'p1', placedAt: Date.now() }];
+		expect(manager._internals.isCellAvailableForOrb(world, 10, 10)).toBe(false);
+		expect(manager._internals.isCellAvailableForOrb(world, 11, 10)).toBe(true);
+	});
+
 	test('orbs do not spawn on top of existing occupied cells', () => {
 		const world = seedWorld();
 		world.board.cells['10,10'] = [
@@ -212,7 +250,7 @@ describe('PowerUpManager', () => {
 		});
 
 		expect(manager._internals.isCellAvailableForOrb(world, 10, 10)).toBe(false);
-		expect(manager._internals.isCellAvailableForOrb(world, 12, 12)).toBe(true);
+		expect(manager._internals.isCellAvailableForOrb(world, 11, 10)).toBe(true);
 	});
 
 	test('claim is a no-op when no orb sits on the placed cell', () => {

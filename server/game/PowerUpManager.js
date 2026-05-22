@@ -31,10 +31,10 @@
  *     regenerate within `SPAWN_TICK_MS` of the first tick.
  *
  * Claim flow:
- *   `tryClaimAtCell(world, playerId, x, z)` is called by the tetromino
- *   socket handler for every cell the placement covers. If an orb sits
- *   on that exact cell, the orb is consumed, a chess piece appears via
- *   `pieces.addPiece`, and a `powerup_claimed` activity event fires.
+ *   `claimAcrossPlacement` runs after each tetromino lands. An orb is
+ *   claimed when the placement **covers** the orb cell or sits on an
+ *   **orthogonally adjacent** cell (players naturally bridge onto the
+ *   glowing slot). The piece spawns on the orb's coordinates.
  *
  * Why this lives in `server/game/` rather than `server/world/`:
  *   It mutates `world.chessPieces` and the board, so it's logically a
@@ -47,16 +47,18 @@ const { v4: uuidv4 } = require('uuid');
 const World = require('../world/World');
 const pieces = require('./pieces');
 
-const SPAWN_TICK_MS = 20 * 1000;
+const SPAWN_TICK_MS = 45 * 1000;
 const ORB_LIFETIME_MS = 4 * 60 * 1000;
 
-const MAX_ACTIVE_ORBS_PER_PLAYER = 2;
-const MIN_TOTAL_ORBS = 1;
-const MAX_TOTAL_ORBS = 8;
-const SPAWN_PROBABILITY_PER_TICK = 0.6;
+const MAX_ACTIVE_ORBS_PER_PLAYER = 1;
+const MIN_TOTAL_ORBS = 0;
+const MAX_TOTAL_ORBS = 4;
+const SPAWN_PROBABILITY_PER_TICK = 0.35;
 
-const MIN_SPAWN_DISTANCE = 6;
-const MAX_SPAWN_DISTANCE = 18;
+// Keep orbs on the growing front (one step beyond existing cells),
+// not 6+ cells out in empty sky.
+const MIN_SPAWN_DISTANCE = 1;
+const MAX_SPAWN_DISTANCE = 12;
 const MAX_SPAWN_ATTEMPTS = 40;
 
 const PIECE_TYPE_WEIGHTS = Object.freeze({
@@ -141,16 +143,45 @@ function createPowerUpManager({
 		return pickWeighted(weighted);
 	}
 
+	const ORTHO_DIRS = Object.freeze([
+		[0, 1], [0, -1], [1, 0], [-1, 0],
+	]);
+
+	function normalizeCoord(value) {
+		const n = Number(value);
+		return Number.isFinite(n) ? Math.round(n) : NaN;
+	}
+
+	function isAdjacentToExistingBoard(world, x, z) {
+		for (const [dx, dz] of ORTHO_DIRS) {
+			const nx = x + dx;
+			const nz = z + dz;
+			const key = `${nx},${nz}`;
+			const cell = world.board?.cells?.[key];
+			if (Array.isArray(cell) && cell.length > 0) return true;
+			for (const piece of (world.chessPieces || [])) {
+				if (!piece) continue;
+				const pos = piece.position || piece;
+				if (pos && normalizeCoord(pos.x) === nx && normalizeCoord(pos.z) === nz) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
 	function isCellAvailableForOrb(world, x, z) {
 		const key = `${x},${z}`;
 		const cellContents = world.board?.cells?.[key];
-		// We need an EMPTY cell (no tetromino / home / chess marker) so
-		// a claim moment is unambiguous — the very first tetromino to
-		// land on it wins. Cells with content are skipped.
+		// Empty host cell — first tetromino (or adjacent bridge) wins.
 		if (Array.isArray(cellContents) && cellContents.length > 0) return false;
+		// Must touch existing structure so the orb is reachable in one
+		// placement; void orbs in the sky were the main "nothing happens"
+		// complaint.
+		if (!isAdjacentToExistingBoard(world, x, z)) return false;
 		const orbs = world.powerUps || [];
 		for (const orb of orbs) {
-			if (orb && orb.x === x && orb.z === z) return false;
+			if (orb && normalizeCoord(orb.x) === x && normalizeCoord(orb.z) === z) return false;
 		}
 		return true;
 	}
@@ -158,17 +189,20 @@ function createPowerUpManager({
 	function findSpawnLocation(world, target) {
 		if (!target || !target.zone) return null;
 		const centre = homeZoneCentre(target.zone);
-		for (let attempt = 0; attempt < MAX_SPAWN_ATTEMPTS; attempt++) {
-			const angle = Math.random() * Math.PI * 2;
-			const distance = MIN_SPAWN_DISTANCE
-				+ Math.random() * (MAX_SPAWN_DISTANCE - MIN_SPAWN_DISTANCE);
-			const x = Math.round(centre.x + Math.cos(angle) * distance);
-			const z = Math.round(centre.z + Math.sin(angle) * distance);
-			if (isCellAvailableForOrb(world, x, z)) {
-				return { x, z };
+		const candidates = [];
+		for (let dx = -MAX_SPAWN_DISTANCE; dx <= MAX_SPAWN_DISTANCE; dx++) {
+			for (let dz = -MAX_SPAWN_DISTANCE; dz <= MAX_SPAWN_DISTANCE; dz++) {
+				const dist = Math.hypot(dx, dz);
+				if (dist < MIN_SPAWN_DISTANCE || dist > MAX_SPAWN_DISTANCE) continue;
+				const x = Math.round(centre.x + dx);
+				const z = Math.round(centre.z + dz);
+				if (isCellAvailableForOrb(world, x, z)) {
+					candidates.push({ x, z });
+				}
 			}
 		}
-		return null;
+		if (candidates.length === 0) return null;
+		return candidates[Math.floor(Math.random() * candidates.length)];
 	}
 
 	function maxActiveOrbs(world) {
@@ -258,10 +292,34 @@ function createPowerUpManager({
 		return orb;
 	}
 
+	function pruneUnreachable(world) {
+		const orbs = ensurePowerUps(world);
+		if (orbs.length === 0) return [];
+		const removed = [];
+		const kept = [];
+		for (const orb of orbs) {
+			if (!orb) continue;
+			const x = normalizeCoord(orb.x);
+			const z = normalizeCoord(orb.z);
+			if (!Number.isFinite(x) || !Number.isFinite(z)
+				|| !isAdjacentToExistingBoard(world, x, z)) {
+				removed.push(orb);
+			} else {
+				kept.push(orb);
+			}
+		}
+		if (removed.length > 0) {
+			world.powerUps = kept;
+			persistence.markDirty();
+		}
+		return removed;
+	}
+
 	function tick({ now = Date.now() } = {}) {
 		const world = World.getWorld();
 		if (!world) return { spawned: null, expired: [] };
 		const expired = pruneExpired(world, now);
+		pruneUnreachable(world);
 		const spawned = trySpawnOne(world, now);
 		return { spawned, expired };
 	}
@@ -277,8 +335,13 @@ function createPowerUpManager({
 	 */
 	function tryClaimAtCell(world, playerId, x, z) {
 		if (!world || !playerId) return null;
+		const cellX = normalizeCoord(x);
+		const cellZ = normalizeCoord(z);
+		if (!Number.isFinite(cellX) || !Number.isFinite(cellZ)) return null;
 		const orbs = ensurePowerUps(world);
-		const idx = orbs.findIndex(o => o && o.x === x && o.z === z);
+		const idx = orbs.findIndex(o => o
+			&& normalizeCoord(o.x) === cellX
+			&& normalizeCoord(o.z) === cellZ);
 		if (idx < 0) return null;
 		const orb = orbs[idx];
 		orbs.splice(idx, 1);
@@ -286,12 +349,14 @@ function createPowerUpManager({
 		const piece = pieces.addPiece(world, {
 			type: orb.pieceType,
 			player: playerId,
-			x, z,
+			x: cellX,
+			z: cellZ,
 			reason: 'powerup',
-			activityLog: null,
+			activityLog,
 		});
 		if (!piece) {
 			console.warn(`[PowerUp] tryClaimAtCell: pieces.addPiece failed for orb ${orb.id}`);
+			orbs.splice(idx, 0, orb);
 			return null;
 		}
 
@@ -325,16 +390,34 @@ function createPowerUpManager({
 	}
 
 	/**
-	 * Sweep every cell touched by a tetromino placement and claim any
-	 * orbs hidden under those cells. Returns the array of claim
-	 * outcomes (in order of placement).
+	 * Claim orbs covered by the placement or orthogonally adjacent to
+	 * any placed cell (one-step bridge onto the glowing host slot).
 	 */
 	function claimAcrossPlacement(world, playerId, placedCells) {
 		if (!Array.isArray(placedCells) || placedCells.length === 0) return [];
-		const claimed = [];
+		const touchKeys = new Set();
 		for (const cell of placedCells) {
-			if (!cell || !Number.isFinite(cell.x) || !Number.isFinite(cell.z)) continue;
-			const outcome = tryClaimAtCell(world, playerId, cell.x, cell.z);
+			if (!cell) continue;
+			const x = normalizeCoord(cell.x);
+			const z = normalizeCoord(cell.z);
+			if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
+			touchKeys.add(`${x},${z}`);
+			for (const [dx, dz] of ORTHO_DIRS) {
+				touchKeys.add(`${x + dx},${z + dz}`);
+			}
+		}
+		if (touchKeys.size === 0) return [];
+
+		const orbs = ensurePowerUps(world);
+		const candidates = orbs.filter((orb) => {
+			if (!orb || !orb.id) return false;
+			const ox = normalizeCoord(orb.x);
+			const oz = normalizeCoord(orb.z);
+			return touchKeys.has(`${ox},${oz}`);
+		});
+		const claimed = [];
+		for (const orb of candidates) {
+			const outcome = tryClaimAtCell(world, playerId, orb.x, orb.z);
 			if (outcome) claimed.push(outcome);
 		}
 		return claimed;
@@ -371,8 +454,11 @@ function createPowerUpManager({
 			pickTargetPlayer,
 			findSpawnLocation,
 			isCellAvailableForOrb,
+			isAdjacentToExistingBoard,
+			normalizeCoord,
 			maxActiveOrbs,
 			pruneExpired,
+			pruneUnreachable,
 			trySpawnOne,
 			countPiecesByPlayer,
 		},
