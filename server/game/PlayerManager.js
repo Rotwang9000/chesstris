@@ -2,6 +2,7 @@
  * PlayerManager.js - Handles player management, registration, and related operations
  */
 
+const World = require('../world/World');
 const { PLAYER_SETTINGS } = require('./Constants');
 const { log, generateRandomColor, findHomeZonePosition } = require('./GameUtilities');
 
@@ -53,47 +54,45 @@ class PlayerManager {
 	 */
 	registerPlayer(game, playerId, playerName, isObserver = false) {
 		try {
-			// Check if the player is already registered
-			if (game.players[playerId]) {
-				// Player already exists, return the existing player
+			const existing = game.players[playerId];
+			const hasHomeZone = !!(game.homeZones && game.homeZones[playerId]);
+			if (existing && hasHomeZone) {
 				return {
 					success: true,
-					player: game.players[playerId],
+					player: existing,
 					message: 'Player already registered'
 				};
 			}
 			
 			// Check if the game has reached its maximum player limit
 			const playerCount = Object.values(game.players).filter(p => !p.isObserver).length;
-			if (!isObserver && playerCount >= game.maxPlayers) {
+			if (!existing && !isObserver && playerCount >= game.maxPlayers) {
 				return {
 					success: false,
 					error: `Game has reached maximum player limit of ${game.maxPlayers}`
 				};
 			}
 			
-			// Validate player name
-			const validatedName = this.validatePlayerName(playerName, playerCount + 1);
+			// Validate player name; preserve a previously-chosen name if the
+			// caller didn't pass a new one.
+			const validatedName = playerName
+				? this.validatePlayerName(playerName, playerCount + 1)
+				: (existing?.name || this.validatePlayerName(null, playerCount + 1));
 			
-			// Create a new player
-			const player = {
-				id: playerId,
+			// Upsert via World so rich defaults (cooldown timestamps, tetromino
+			// bag, AI metadata) survive a registration call.
+			const player = World.upsertPlayer(playerId, {
 				name: validatedName,
 				isObserver,
-				color: generateRandomColor(),
-				balance: PLAYER_SETTINGS.INITIAL_BALANCE || 100,
-				lastMoveTime: 0,
-				lastMoveType: null,
+				color: existing?.color || generateRandomColor(),
+				lastMoveTime: existing?.lastMoveTime || 0,
+				lastMoveType: existing?.lastMoveType || null,
 				isReady: false,
 				eliminated: false,
 				connected: true,
-				joinedAt: Date.now()
-			};
+				joinedAt: existing?.joinedAt || Date.now(),
+			});
 			
-			// Add the player to the game
-			game.players[playerId] = player;
-			
-			// If not an observer, set up home zone and pieces
 			if (!isObserver) {
 				// Find a position for the home zone
 				const homeZone = findHomeZonePosition(game);
@@ -255,50 +254,52 @@ class PlayerManager {
 	}
 	
 	/**
-	 * Update the player's move timestamp
+	 * Check whether the player's most recent action was long enough ago that
+	 * a new action of `moveType` is allowed under the real-time cooldowns.
+	 * Updates `lastMoveTime` / `lastMoveType` on the player record when the
+	 * action is permitted.
+	 *
+	 * Cooldowns are taken from `PLAYER_SETTINGS.*_COOLDOWN_MS` so this stays
+	 * in lock-step with the socket-server enforcement in server.js.
+	 *
 	 * @param {Object} game - The game object
 	 * @param {string} playerId - The player's ID
-	 * @param {string} moveType - The type of move (tetromino, chess, etc.)
-	 * @returns {boolean} True if the move is allowed based on timing
+	 * @param {string} moveType - 'tetromino' | 'chess' | 'purchase'
+	 * @returns {boolean} True if the move is permitted.
 	 */
 	updatePlayerMoveTime(game, playerId, moveType) {
-		// Check if the player exists
-		if (!game.players[playerId]) {
+		const player = game.players[playerId];
+		if (!player) return false;
+
+		const now = Date.now();
+		const cooldown = PlayerManager._cooldownFor(moveType);
+
+		if (player.lastMoveTime > 0 && now - player.lastMoveTime < cooldown) {
+			log(`Move rate-limited: ${playerId} attempted ${moveType} after only ${now - player.lastMoveTime}ms (cooldown ${cooldown}ms)`);
 			return false;
 		}
-		
-		const player = game.players[playerId];
-		const currentTime = Date.now();
-		
-		// Check minimum move time constraints
-		if (player.lastMoveTime > 0) {
-			const timeSinceLastMove = currentTime - player.lastMoveTime;
-			
-			// If the last move was of the same type, apply type-specific minimum time
-			if (moveType === player.lastMoveType) {
-				const minTime = PLAYER_SETTINGS.MIN_MOVE_TIMES[moveType] || 
-					PLAYER_SETTINGS.MIN_MOVE_TIMES.DEFAULT;
-				
-				if (timeSinceLastMove < minTime) {
-					log(`Move rejected: Player ${playerId} attempted ${moveType} move too quickly (${timeSinceLastMove}ms)`);
-					return false;
-				}
-			} else {
-				// Different move type, use DEFAULT minimum time
-				const minTime = PLAYER_SETTINGS.MIN_MOVE_TIMES.DEFAULT;
-				
-				if (timeSinceLastMove < minTime) {
-					log(`Move rejected: Player ${playerId} attempted move too quickly after different move type (${timeSinceLastMove}ms)`);
-					return false;
-				}
-			}
-		}
-		
-		// Update the last move time and type
-		player.lastMoveTime = currentTime;
+
+		player.lastMoveTime = now;
 		player.lastMoveType = moveType;
-		
 		return true;
+	}
+
+	/**
+	 * Pick the right cooldown for an action type.
+	 * @param {string} moveType
+	 * @returns {number} cooldown in milliseconds
+	 * @private
+	 */
+	static _cooldownFor(moveType) {
+		switch (moveType) {
+			case 'tetromino':
+				return PLAYER_SETTINGS.TETROMINO_PLACEMENT_COOLDOWN_MS;
+			case 'chess':
+			case 'purchase':
+				return PLAYER_SETTINGS.CHESS_MOVE_COOLDOWN_MS;
+			default:
+				return PLAYER_SETTINGS.CHESS_MOVE_COOLDOWN_MS;
+		}
 	}
 	
 	/**

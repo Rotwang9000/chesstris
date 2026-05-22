@@ -1,7 +1,7 @@
 /**
- * Shaktris Debug Helper
+ * Tetches Debug Helper
  * 
- * Provides debugging tools and utilities for the Shaktris game.
+ * Provides debugging tools and utilities for the Tetches game.
  */
 
 // URL parameter handling
@@ -120,7 +120,7 @@ function addDebugUI() {
     
     // Add heading
     const heading = document.createElement('h3');
-    heading.textContent = 'Shaktris Debug';
+    heading.textContent = 'Tetches Debug';
     debugPanel.appendChild(heading);
     
     // Add version toggle

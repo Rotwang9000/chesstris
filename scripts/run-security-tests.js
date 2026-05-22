@@ -1,5 +1,5 @@
 /**
- * Security Test Runner for Shaktris
+ * Security Test Runner for Tetches
  * 
  * This script runs all security tests to verify that the game is protected against
  * cheating, unauthorized access, and malicious inputs.
@@ -26,7 +26,7 @@ const colors = {
 
 // Print header
 console.log(`${colors.bright}${colors.blue}=======================================`);
-console.log(`    SHAKTRIS SECURITY TEST RUNNER`);
+console.log(`    TETCHES SECURITY TEST RUNNER`);
 console.log(`=======================================${colors.reset}\n`);
 
 // Check if security test directory exists

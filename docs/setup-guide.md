@@ -1,8 +1,8 @@
-# Shaktris YOLO Deployment Guide
+# Tetches YOLO Deployment Guide
 
 ## Prerequisites
 - Ubuntu 22.04 server with root access
-- Domain configured (shaktris.com) with DNS records pointing to your server
+- Domain configured (tetches.com) with DNS records pointing to your server
 - MongoDB installed
 - Redis installed
 - Node.js environment (preferably using NVM)
@@ -26,11 +26,11 @@ db.createUser({
 })
 
 # Create application user
-use chesstris
+use tetches
 db.createUser({
-  user: "chesstris_app",
+  user: "tetches_app",
   pwd: "another_strong_password",
-  roles: [ { role: "readWrite", db: "chesstris" } ]
+  roles: [ { role: "readWrite", db: "tetches" } ]
 })
 
 # Exit MongoDB shell
@@ -74,8 +74,8 @@ sudo systemctl restart redis-server
 
 ```bash
 # Clone repo (if not already done)
-git clone https://github.com/your-repo/chesstris.git /var/www/chesstris
-cd /var/www/chesstris
+git clone https://github.com/your-repo/tetches.git /var/www/tetches
+cd /var/www/tetches
 
 # Setup Node (if using NVM)
 nvm install 16  # or a compatible version
@@ -113,7 +113,7 @@ Add to .env:
 NODE_ENV=production
 PORT=3666
 HOST=0.0.0.0
-MONGODB_URI=mongodb://chesstris_app:another_strong_password@localhost:27017/chesstris
+MONGODB_URI=mongodb://tetches_app:another_strong_password@localhost:27017/tetches
 REDIS_URI=redis://:choose_strong_redis_password@localhost:6379/0
 JWT_SECRET=generate_a_strong_secret_key
 JWT_EXPIRY=7d
@@ -128,7 +128,7 @@ COOKIE_SECRET=generate_a_strong_cookie_key
 sudo npm install -g pm2
 
 # Start the app with PM2
-pm2 start server.js --name chesstris
+pm2 start server.js --name tetches
 
 # Make PM2 start on boot
 pm2 save
@@ -137,21 +137,21 @@ pm2 startup
 
 # Check if the app is running
 pm2 status
-pm2 logs chesstris
+pm2 logs tetches
 ```
 
 ## 4. Nginx Configuration
 
 ```bash
 # Create a new site config
-sudo vim /etc/nginx/sites-available/shaktris.com
+sudo vim /etc/nginx/sites-available/tetches.com
 ```
 
 Add this configuration:
 ```nginx
 server {
     listen 80;
-    server_name shaktris.com www.shaktris.com;
+    server_name tetches.com www.tetches.com;
     
     # Redirect to HTTPS
     return 301 https://$host$request_uri;
@@ -159,11 +159,11 @@ server {
 
 server {
     listen 443 ssl http2;
-    server_name shaktris.com www.shaktris.com;
+    server_name tetches.com www.tetches.com;
     
     # SSL Config (Let's Encrypt)
-    ssl_certificate /etc/letsencrypt/live/shaktris.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/shaktris.com/privkey.pem;
+    ssl_certificate /etc/letsencrypt/live/tetches.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/tetches.com/privkey.pem;
     
     # Security headers
     add_header Strict-Transport-Security "max-age=31536000" always;
@@ -172,13 +172,13 @@ server {
     
     # Static files
     location /static/ {
-        alias /var/www/chesstris/public/;
+        alias /var/www/tetches/public/;
         expires 30d;
     }
     
     # Additional static file types
     location ~ \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|otf)$ {
-        root /var/www/chesstris/public;
+        root /var/www/tetches/public;
         expires 30d;
     }
     
@@ -204,7 +204,7 @@ server {
 
 Enable and test:
 ```bash
-sudo ln -s /etc/nginx/sites-available/shaktris.com /etc/nginx/sites-enabled/
+sudo ln -s /etc/nginx/sites-available/tetches.com /etc/nginx/sites-enabled/
 sudo nginx -t
 sudo systemctl reload nginx
 ```
@@ -213,7 +213,7 @@ sudo systemctl reload nginx
 
 ```bash
 sudo apt install certbot python3-certbot-nginx
-sudo certbot --nginx -d shaktris.com -d www.shaktris.com
+sudo certbot --nginx -d tetches.com -d www.tetches.com
 ```
 
 ## 6. Troubleshooting
@@ -227,12 +227,12 @@ sudo certbot --nginx -d shaktris.com -d www.shaktris.com
 
 2. Check PM2 logs for errors:
    ```bash
-   pm2 logs chesstris
+   pm2 logs tetches
    ```
 
 3. Try running the app directly to see errors:
    ```bash
-   cd /var/www/chesstris
+   cd /var/www/tetches
    node server.js
    ```
 

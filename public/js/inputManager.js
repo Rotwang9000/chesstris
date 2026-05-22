@@ -11,8 +11,11 @@ import {
 } from './gameContext.js';
 import * as tetrominoModule from './tetromino.js';
 import { boardFunctions } from './boardFunctions.js';
-import { performRaycast } from './chessInteraction.js';
+import { performRaycast, clearChessSelection } from './chessInteraction.js';
 import { showToastMessage } from './showToastMessage.js';
+import { playSound, initSoundManager } from './audio/soundManager.js';
+import { setupKeyboardChess } from './keyboardChess.js';
+import { setupTouchGestures } from './touchGestures.js';
 
 let _onTetrisPhaseClick = null;
 
@@ -40,7 +43,13 @@ export function setupInputHandlers() {
 
 	console.log('Setting up enhanced input handlers...');
 
+	// Web Audio needs a user gesture before it'll play. We let the
+	// first keydown / click / touchstart be that gesture by calling
+	// initSoundManager (idempotent) from each handler.
 	document.addEventListener('keydown', handleKeyDown);
+	document.addEventListener('keydown', () => initSoundManager(), { once: true });
+	document.addEventListener('click', () => initSoundManager(), { once: true });
+	document.addEventListener('touchstart', () => initSoundManager(), { once: true });
 
 	document.addEventListener('click', function (e) {
 		if (!renderer || !renderer.domElement || !getMouse()) return;
@@ -53,6 +62,7 @@ export function setupInputHandlers() {
 			const target = e.target;
 			const isUIElement = target.closest('button, input, select, a, .player-list-container, #loading, .tutorial-message');
 			if (isUIElement) return;
+			if (gameState.turnPhase !== 'chess') return;
 
 			const m = getMouse();
 			m.x = ((e.clientX - canvasRect.left) / canvasRect.width) * 2 - 1;
@@ -77,19 +87,22 @@ export function setupInputHandlers() {
 		setMouse(mouse);
 	}
 
-	containerElement.addEventListener('click', handleMouseDown, true);
-	containerElement.addEventListener('mousedown', handleMouseDown, true);
 	containerElement.addEventListener('mousemove', handleMouseMove);
 
 	if (renderer && renderer.domElement) {
-		renderer.domElement.addEventListener('click', handleMouseDown, true);
-		renderer.domElement.addEventListener('mousedown', handleMouseDown, true);
 		renderer.domElement.style.pointerEvents = 'auto';
 	}
 
 	containerElement.addEventListener('touchstart', handleTouchStart, { passive: false });
 	containerElement.addEventListener('touchmove', handleTouchMove, { passive: false });
 	containerElement.addEventListener('touchend', handleTouchEnd, { passive: false });
+
+	// Keyboard-only chess (Tab/arrows/Enter) and touch-only gestures
+	// (swipe/double-tap/long-press) layer cleanly on top of the
+	// existing handlers. Each is a no-op if its target phase isn't
+	// active, so no further coordination is needed.
+	setupKeyboardChess();
+	setupTouchGestures();
 }
 
 // ── Keyboard ────────────────────────────────────────────────────────────────
@@ -105,6 +118,17 @@ function handleKeyDown(event) {
 			showToastMessage(`Debug mode ${gameState.debugMode ? 'enabled' : 'disabled'}`, 3000);
 		}
 		return;
+	}
+
+	if (event.key === 'Escape') {
+		// Always allow Escape to clear chess selection / dismiss the
+		// detonate button. This is the universal "get me out" key in
+		// case the click flow ever leaves us in a stuck state.
+		if (gameState.selectedChessPiece) {
+			clearChessSelection();
+			event.preventDefault();
+			return;
+		}
 	}
 
 	if (!gameState.currentTetromino) {
@@ -146,50 +170,36 @@ function handleKeyDown(event) {
 
 	switch (event.key) {
 		case 'z': case 'Z':
+		case 'q': case 'Q':
 			tetrominoModule.rotateTetromino(-1);
+			try { playSound('tick'); } catch (_e) { /* sound is best-effort */ }
 			break;
 		case 'x': case 'X':
+		case 'r': case 'R':
+		case 'e': case 'E':
 			tetrominoModule.rotateTetromino(1);
+			try { playSound('tick'); } catch (_e) { /* sound is best-effort */ }
 			break;
 		case ' ':
 			event.preventDefault();
 			tetrominoModule.hardDropTetromino();
+			try { playSound('hardDrop'); } catch (_e) { /* sound is best-effort */ }
 			break;
 	}
 }
 
 // ── Mouse ───────────────────────────────────────────────────────────────────
 
-function handleMouseDown(event) {
-	const containerElement = getContainerElement();
+function handleMouseMove(event) {
 	const mouse = getMouse();
 	const renderer = getRenderer();
-	const gameState = getGameState();
-
-	if (!containerElement || !mouse) return;
+	if (!mouse) return;
 
 	try {
 		const rect = renderer && renderer.domElement
 			? renderer.domElement.getBoundingClientRect()
-			: containerElement.getBoundingClientRect();
-
-		mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-		mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-
-		if (gameState.processingMove) return;
-		performRaycast();
-	} catch (error) {
-		console.warn("Error in handleMouseDown:", error);
-	}
-}
-
-function handleMouseMove(event) {
-	const containerElement = getContainerElement();
-	const mouse = getMouse();
-	if (!containerElement || !mouse) return;
-
-	try {
-		const rect = containerElement.getBoundingClientRect();
+			: getContainerElement()?.getBoundingClientRect();
+		if (!rect) return;
 		mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
 		mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 	} catch (error) {
@@ -208,6 +218,7 @@ function handleTouchStart(event) {
 	try {
 		event.preventDefault();
 		if (event.touches.length > 0) {
+			if (gameState.turnPhase !== 'chess') return;
 			const rect = containerElement.getBoundingClientRect();
 			mouse.x = ((event.touches[0].clientX - rect.left) / rect.width) * 2 - 1;
 			mouse.y = -((event.touches[0].clientY - rect.top) / rect.height) * 2 + 1;

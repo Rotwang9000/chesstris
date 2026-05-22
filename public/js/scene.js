@@ -1,6 +1,5 @@
 import { createFewClouds } from './createFewClouds.js';
 import { getTHREE, getGameState } from './gameContext.js';
-import { onWindowResize } from './enhanced-gameCore.js';
 import { translatePosition } from './centreBoardMarker.js';
 
 // Cache of existing islands for reuse
@@ -188,282 +187,6 @@ export function animateCuteElements(scene, deltaTime) {
 	}
 }
 
-export function setupScene(containerElement, scene, camera, renderer, controls, boardGroup, tetrominoGroup, chessPiecesGroup, clouds, gameState) {
-	console.log('Setting up enhanced 3D scene with beautiful sky...');
-	const THREE = getTHREE();
-	// // Create scene
-	scene = new THREE.Scene();
-	
-	// Create a beautiful light blue sky background - lighter color
-	scene.background = new THREE.Color(0xAFE9FF); // Lighter sky blue
-	scene.fog = new THREE.Fog(0xC5F0FF, 60, 150); // Lighter blue fog, pushed further back
-	
-	// Create camera
-	const width = containerElement?.clientWidth || window.innerWidth;
-	const height = containerElement?.clientHeight || window.innerHeight;
-	
-	camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 1000);
-	camera.position.set(20, 25, 20);
-	
-	// Create renderer with improved settings
-	renderer = new THREE.WebGLRenderer({ 
-		antialias: true,
-		alpha: true,
-		powerPreference: 'high-performance'
-	});
-	renderer.setSize(width, Math.max(height, window.innerHeight * 0.9));
-	renderer.shadowMap.enabled = true;
-	renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-	renderer.outputEncoding = THREE.sRGBEncoding;
-	renderer.toneMapping = THREE.ACESFilmicToneMapping;
-	renderer.toneMappingExposure = 1.3; // Brighter exposure for more vibrant scene
-	
-	// Ensure canvas will be visible
-	renderer.domElement.style.width = '100%';
-	renderer.domElement.style.height = '100vh';
-	renderer.domElement.style.display = 'block';
-	
-	containerElement.appendChild(renderer.domElement);
-	
-	// Create orbit controls with better defaults
-	if (typeof THREE.OrbitControls !== 'undefined') {
-		controls = new THREE.OrbitControls(camera, renderer.domElement);
-		controls.enableDamping = true;
-		controls.dampingFactor = 0.15;
-		controls.screenSpacePanning = true;
-		controls.minDistance = 10;
-		controls.maxDistance = 80;
-		controls.maxPolarAngle = Math.PI / 2 - 0.1; // Prevent going below horizon
-		controls.target.set(8, 0, 8);
-		controls.update();
-	} else {
-		console.warn('OrbitControls not available. Using static camera.');
-	}
-	
-	// Add lights for a beautiful sunny day
-	// Main sunlight - golden warm directional light
-	const sunLight = new THREE.DirectionalLight(0xFFFBE8, 1.35); // Warm sunlight
-	sunLight.position.set(25, 80, 30);
-	sunLight.castShadow = true;
-	sunLight.shadow.mapSize.width = 2048;
-	sunLight.shadow.mapSize.height = 2048;
-	sunLight.shadow.camera.near = 10;
-	sunLight.shadow.camera.far = 200;
-	sunLight.shadow.camera.left = -50;
-	sunLight.shadow.camera.right = 50;
-	sunLight.shadow.camera.top = 50;
-	sunLight.shadow.camera.bottom = -50;
-	sunLight.shadow.bias = -0.0001; // Reduce shadow acne
-	sunLight.shadow.normalBias = 0.02; // Improve shadow appearance on curved surfaces
-	scene.add(sunLight);
-	
-	// Ambient light for general illumination - sky colored
-	const ambientLight = new THREE.AmbientLight(0xB0E2FF, 0.65); // Sky-colored ambient light
-	scene.add(ambientLight);
-	
-	// Add a soft golden backlight for rim lighting effect
-	const backLight = new THREE.DirectionalLight(0xFFF0E0, 0.4); // Soft golden backlight
-	backLight.position.set(-15, 20, -25);
-	scene.add(backLight);
-	
-	// Add a soft blue-ish fill light from below for floating cells
-	const fillLight = new THREE.DirectionalLight(0xC8E0FF, 0.25); // Light blue
-	fillLight.position.set(-20, -5, -20);
-	scene.add(fillLight);
-	
-	// Add a subtle hemisphere light for better outdoor lighting
-	const hemisphereLight = new THREE.HemisphereLight(0xFFFBE8, 0x080820, 0.5);
-	scene.add(hemisphereLight);
-	
-	// Create board group
-	boardGroup = new THREE.Group();
-	boardGroup.name = 'boardGroup';
-	// Initialize the board with initial visualization
-	console.log("Creating initial board visualization...");
-	try {
-		createBoard(boardGroup, gameState);
-		console.log("Board created successfully", boardGroup);
-		// boardFunctions.createBoardCells(gameState, boardGroup, createFloatingIsland, THREE);
-	} catch (err) {
-		console.error("Error creating initial board:", err);
-		// Continue with setup, we'll try again when we get data
-	}
-	scene.add(boardGroup);
-	
-	// Create tetromino group
-	tetrominoGroup = new THREE.Group();
-	tetrominoGroup.name = 'tetrominos';
-	scene.add(tetrominoGroup);
-	gameState.tetrominoGroup = tetrominoGroup;
-	gameState.scene = scene;
-	
-	// Create chess pieces group
-	chessPiecesGroup = new THREE.Group();
-	chessPiecesGroup.name = 'chessPieces';
-	scene.add(chessPiecesGroup);
-	
-	// Add beautiful fluffy clouds to scene
-	clouds = createFewClouds(scene);
-	
-	// Add resize listener
-	window.addEventListener('resize', () => onWindowResize(camera, renderer, containerElement));
-
-	return { _scene: scene, _camera: camera, _renderer: renderer, _controls: controls, _boardGroup: boardGroup, _tetrominoGroup: tetrominoGroup, _chessPiecesGroup: chessPiecesGroup, _clouds: clouds };
-}
-
-export function rebuildScene(containerElement, options = {}) {
-	const THREE = getTHREE();
-	// Extract options
-	const { 
-		lowQuality = false, 
-		pixelRatio = window.devicePixelRatio, 
-		shadows = true, 
-		antialiasing = true,
-		groups = {}
-	} = options;
-	
-	// Extract groups if provided
-	const { 
-		boardGroup: existingBoardGroup, 
-		tetrominoGroup: existingTetrominoGroup, 
-		chessPiecesGroup: existingChessPiecesGroup 
-	} = groups;
-	
-	// Initialize scene from scratch
-	const scene = new THREE.Scene();
-	scene.background = new THREE.Color(0x87CEEB); // Sky blue
-	
-	// Create camera
-	const camera = new THREE.PerspectiveCamera(
-		75, // FOV
-		containerElement.clientWidth / containerElement.clientHeight, // Aspect ratio
-		0.1, // Near
-		1000 // Far
-	);
-	
-	// Position camera
-	camera.position.set(5, 20, 25);
-	
-	// Create renderer with quality options
-	const renderer = new THREE.WebGLRenderer({ 
-		antialias: !lowQuality && antialiasing,
-		powerPreference: 'high-performance',
-		precision: lowQuality ? 'lowp' : 'mediump'
-	});
-	renderer.setSize(containerElement.clientWidth, containerElement.clientHeight);
-	renderer.setPixelRatio(lowQuality ? Math.min(1, pixelRatio) : pixelRatio);
-	
-	// Add or replace renderer in container
-	while (containerElement.firstChild) {
-		containerElement.removeChild(containerElement.firstChild);
-	}
-	containerElement.appendChild(renderer.domElement);
-	
-	// Configure shadows based on quality settings
-	renderer.shadowMap.enabled = shadows && !lowQuality;
-	if (renderer.shadowMap.enabled) {
-		renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-	}
-	
-	// Create controls
-	const controls = new THREE.OrbitControls(camera, renderer.domElement);
-	controls.enableDamping = true;
-	controls.dampingFactor = 0.25;
-	controls.screenSpacePanning = false;
-	controls.enableKeys = false; // Disable arrow key controls to prevent page scrolling
-	controls.maxPolarAngle = Math.PI / 2;
-	controls.target.set(0, 0, 0);
-	controls.update();
-	
-	// Create light
-	const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
-	scene.add(ambientLight);
-	
-	const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-	directionalLight.position.set(50, 75, 50);
-	directionalLight.castShadow = shadows && !lowQuality;
-	scene.add(directionalLight);
-	
-	if (directionalLight.castShadow) {
-		directionalLight.shadow.mapSize.width = lowQuality ? 512 : 2048;
-		directionalLight.shadow.mapSize.height = lowQuality ? 512 : 2048;
-		directionalLight.shadow.camera.near = 0.5;
-		directionalLight.shadow.camera.far = 500;
-	}
-	
-	// Create groups for board elements
-	let boardGroup, tetrominoGroup, chessPiecesGroup;
-	
-	// Create or reuse board group
-	if (existingBoardGroup) {
-		boardGroup = existingBoardGroup;
-		// Clear children
-		while (boardGroup.children.length > 0) {
-			boardGroup.remove(boardGroup.children[0]);
-		}
-		scene.add(boardGroup);
-					} else {
-		boardGroup = new THREE.Group();
-		boardGroup.name = 'board';
-		scene.add(boardGroup);
-	}
-	
-	// Create or reuse tetromino group
-	if (existingTetrominoGroup) {
-		tetrominoGroup = existingTetrominoGroup;
-		// Clear children
-		while (tetrominoGroup.children.length > 0) {
-			tetrominoGroup.remove(tetrominoGroup.children[0]);
-		}
-		scene.add(tetrominoGroup);
-					} else {
-		tetrominoGroup = new THREE.Group();
-		tetrominoGroup.name = 'tetrominos';
-		scene.add(tetrominoGroup);
-	}
-	
-	// Create or reuse chess pieces group
-	if (existingChessPiecesGroup) {
-		chessPiecesGroup = existingChessPiecesGroup;
-		// Clear children
-		while (chessPiecesGroup.children.length > 0) {
-			chessPiecesGroup.remove(chessPiecesGroup.children[0]);
-		}
-		scene.add(chessPiecesGroup);
-	} else {
-		chessPiecesGroup = new THREE.Group();
-		chessPiecesGroup.name = 'chessPieces';
-		scene.add(chessPiecesGroup);
-	}
-	
-	// Add beautiful fluffy clouds to scene if not in low quality mode
-	if (!lowQuality) {
-		createFewClouds(scene);
-	}
-	
-	// Add resize listener
-	window.addEventListener('resize', () => onWindowResize(camera, renderer, containerElement));
-	
-	return { 
-		_scene: scene, 
-		_camera: camera, 
-		_renderer: renderer, 
-		_controls: controls, 
-		_boardGroup: boardGroup, 
-		_tetrominoGroup: tetrominoGroup, 
-		_chessPiecesGroup: chessPiecesGroup 
-	};
-}
-
-/**
- * Create a single floating island at the given position
- * @param {number} x - X position
- * @param {number} z - Z position
- * @param {THREE.Material} material - Material to use for the island
- * @param {number} [heightVariation=0.7] - Height variation for the island
- * @param {boolean} [hasContent=false] - Whether the island has content
- * @returns {THREE.Group} The island group object
- */
 export function createFloatingIsland(x, z, material, heightVariation = 0.7, hasContent = false) {
 	// Calculate a position hash for consistent randomness
 	const posHash = Math.sin(x * 412.531 + z * 123.32) * 1000000;
@@ -754,15 +477,30 @@ export function setupLights(scene, options = {}) {
 	const lowQuality = !!options.lowQuality;
 
 	// Clear existing lights, starfield, and floating shapes from previous mode
+	const DECORATION_NAMES = new Set([
+		'starfield', 'cuteShapes', 'cloudBed', 'clouds',
+		'sunDecoration', 'skyClouds', 'distantMountains', 'birds',
+		'ambientParticles', 'tetches-water', 'tetches-water-glow',
+	]);
 	if (scene && Array.isArray(scene.children)) {
 		[...scene.children].forEach(child => {
 			if (child && (child.isLight || child instanceof THREE.Light)) {
 				scene.remove(child);
 			}
-			if (child && (child.name === 'starfield' || child.name === 'cuteShapes' || child.name === 'cloudBed' || child.name === 'clouds')) {
+			if (child && DECORATION_NAMES.has(child.name)) {
 				scene.remove(child);
-				if (child.geometry) child.geometry.dispose();
-				if (child.material) child.material.dispose();
+				if (typeof child.traverse === 'function') {
+					child.traverse(node => {
+						if (node.geometry && typeof node.geometry.dispose === 'function') node.geometry.dispose();
+						if (node.material) {
+							if (Array.isArray(node.material)) node.material.forEach(m => m && m.dispose && m.dispose());
+							else if (typeof node.material.dispose === 'function') node.material.dispose();
+						}
+					});
+				} else {
+					if (child.geometry) child.geometry.dispose();
+					if (child.material) child.material.dispose();
+				}
 			}
 		});
 	}
@@ -857,6 +595,317 @@ export function setupLights(scene, options = {}) {
 
 	addCloudsToScene(scene);
 	addAmbientParticles(scene, THREE);
+	addSkyDecorations(scene, THREE);
+	addWaterPlane(scene, THREE);
+}
+
+/**
+ * A vast, slowly-rippling water plane that sits below the cell platforms
+ * so the floating-island board reads as actually floating on a sea
+ * rather than just suspended in space.
+ *
+ * The mesh is named "tetches-water" so {@link setupLights} can sweep
+ * it away when the render profile changes (cute / retro switch).
+ *
+ * @param {THREE.Scene} scene
+ * @param {Object} THREE
+ */
+function addWaterPlane(scene, THREE) {
+	const existing = scene.getObjectByName('tetches-water');
+	if (existing) scene.remove(existing);
+
+	const geometry = new THREE.PlaneGeometry(1200, 1200, 64, 64);
+	geometry.rotateX(-Math.PI / 2);
+
+	// Per-vertex height noise — animated by `updateWaterPlane` each frame.
+	const baseHeights = new Float32Array(geometry.attributes.position.count);
+	const positions = geometry.attributes.position;
+	for (let i = 0; i < positions.count; i++) {
+		const x = positions.getX(i);
+		const z = positions.getZ(i);
+		baseHeights[i] = (Math.sin(x * 0.04) + Math.cos(z * 0.05)) * 0.18;
+		positions.setY(i, baseHeights[i]);
+	}
+	positions.needsUpdate = true;
+	geometry.computeVertexNormals();
+
+	const material = new THREE.MeshStandardMaterial({
+		color: 0x1f6dab,
+		roughness: 0.7,
+		metalness: 0.15,
+		transparent: true,
+		opacity: 0.78,
+		side: THREE.DoubleSide,
+	});
+
+	const water = new THREE.Mesh(geometry, material);
+	water.name = 'tetches-water';
+	water.position.y = -2.2;
+	water.receiveShadow = true;
+	water.userData.isWaterPlane = true;
+	water.userData.baseHeights = baseHeights;
+	water.userData.startedAt = performance.now();
+	scene.add(water);
+
+	// Sun-glow caustic, very subtle — a wide soft yellow plane stacked
+	// on top of the water that gently rotates.
+	const glowGeo = new THREE.RingGeometry(20, 90, 64);
+	glowGeo.rotateX(-Math.PI / 2);
+	const glowMat = new THREE.MeshBasicMaterial({
+		color: 0xfff2bf,
+		transparent: true,
+		opacity: 0.05,
+		side: THREE.DoubleSide,
+	});
+	const glow = new THREE.Mesh(glowGeo, glowMat);
+	glow.name = 'tetches-water-glow';
+	glow.position.y = -2.1;
+	scene.add(glow);
+}
+
+/**
+ * Per-frame animation — called from the gameLoop so the water doesn't
+ * sit dead still. No-op when there's no water plane (cute / retro).
+ *
+ * @param {THREE.Scene} scene
+ */
+export function updateWaterPlane(scene) {
+	if (!scene) return;
+	const water = scene.getObjectByName('tetches-water');
+	if (!water || !water.geometry) return;
+	const base = water.userData.baseHeights;
+	if (!base) return;
+
+	const t = (performance.now() - (water.userData.startedAt || 0)) / 1000;
+	const positions = water.geometry.attributes.position;
+	for (let i = 0; i < positions.count; i++) {
+		const x = positions.getX(i);
+		const z = positions.getZ(i);
+		const ripple = Math.sin(x * 0.08 + t * 0.7) * 0.12
+			+ Math.cos(z * 0.07 - t * 0.55) * 0.1;
+		positions.setY(i, base[i] + ripple);
+	}
+	positions.needsUpdate = true;
+
+	const glow = scene.getObjectByName('tetches-water-glow');
+	if (glow) glow.rotation.y = t * 0.03;
+}
+
+/**
+ * Add richer sky-level decorations for the normal render profile:
+ *  - A soft golden sun
+ *  - A few large layered clouds above the board
+ *  - Distant pastel mountain silhouettes ringing the horizon
+ *  - A handful of slow-drifting birds
+ *
+ * Each item is named so {@link setupLights} can clean them up when the
+ * render profile changes.
+ *
+ * @param {THREE.Scene} scene
+ * @param {Object} THREE
+ */
+function addSkyDecorations(scene, THREE) {
+	addSun(scene, THREE);
+	addSkyClouds(scene, THREE);
+	addDistantMountains(scene, THREE);
+	addBirds(scene, THREE);
+}
+
+function addSun(scene, THREE) {
+	const sunGroup = new THREE.Group();
+	sunGroup.name = 'sunDecoration';
+
+	const coreMat = new THREE.MeshBasicMaterial({
+		color: 0xFFE6A8,
+		transparent: true,
+		opacity: 0.95,
+	});
+	const sun = new THREE.Mesh(new THREE.SphereGeometry(6, 24, 16), coreMat);
+	sun.position.set(80, 50, -120);
+	sunGroup.add(sun);
+
+	const haloMat = new THREE.MeshBasicMaterial({
+		color: 0xFFD080,
+		transparent: true,
+		opacity: 0.18,
+		depthWrite: false,
+	});
+	const halo = new THREE.Mesh(new THREE.SphereGeometry(12, 24, 16), haloMat);
+	halo.position.copy(sun.position);
+	sunGroup.add(halo);
+
+	scene.add(sunGroup);
+}
+
+function addSkyClouds(scene, THREE) {
+	const cloudGroup = new THREE.Group();
+	cloudGroup.name = 'skyClouds';
+
+	const cloudMat = new THREE.MeshStandardMaterial({
+		color: 0xFFFFFF,
+		transparent: true,
+		opacity: 0.78,
+		roughness: 1.0,
+		metalness: 0.0,
+		depthWrite: false,
+	});
+
+	const cloudCount = 22;
+	for (let i = 0; i < cloudCount; i++) {
+		const cloud = new THREE.Group();
+		const puffCount = 4 + Math.floor(Math.random() * 4);
+		const angle = (i / cloudCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.6;
+		const distance = 80 + Math.random() * 90;
+		const cx = Math.cos(angle) * distance;
+		const cz = Math.sin(angle) * distance;
+		const cy = 18 + Math.random() * 22;
+		const sizeScale = 1.5 + Math.random() * 2.5;
+
+		for (let j = 0; j < puffCount; j++) {
+			const radius = (1.4 + Math.random() * 1.4) * sizeScale;
+			const puff = new THREE.Mesh(
+				new THREE.SphereGeometry(radius, 10, 8),
+				cloudMat
+			);
+			puff.position.set(
+				(Math.random() - 0.5) * 6 * sizeScale,
+				(Math.random() - 0.5) * 1.4,
+				(Math.random() - 0.5) * 6 * sizeScale
+			);
+			puff.scale.set(1, 0.5, 1);
+			cloud.add(puff);
+		}
+
+		cloud.position.set(cx, cy, cz);
+		cloud.userData = {
+			driftSpeed: 0.25 + Math.random() * 0.4,
+			driftAxis: Math.random() < 0.5 ? 'x' : 'z',
+			startX: cx,
+			startZ: cz,
+			phase: Math.random() * Math.PI * 2,
+		};
+		cloudGroup.add(cloud);
+	}
+
+	scene.add(cloudGroup);
+}
+
+function addDistantMountains(scene, THREE) {
+	const mountainGroup = new THREE.Group();
+	mountainGroup.name = 'distantMountains';
+
+	const palettes = [0x6E8FB3, 0x82A4C8, 0x9CB7D5];
+	const ringRadius = 200;
+	const peakCount = 36;
+
+	for (let i = 0; i < peakCount; i++) {
+		const angle = (i / peakCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.12;
+		const x = Math.cos(angle) * ringRadius;
+		const z = Math.sin(angle) * ringRadius;
+		const height = 14 + Math.random() * 22;
+		const width = 22 + Math.random() * 28;
+
+		const geom = new THREE.ConeGeometry(width / 2, height, 8);
+		const mat = new THREE.MeshBasicMaterial({
+			color: palettes[i % palettes.length],
+			transparent: true,
+			opacity: 0.55,
+			depthWrite: false,
+		});
+		const peak = new THREE.Mesh(geom, mat);
+		peak.position.set(x, height / 2 - 5, z);
+		peak.lookAt(0, peak.position.y, 0);
+		mountainGroup.add(peak);
+	}
+
+	scene.add(mountainGroup);
+}
+
+function addBirds(scene, THREE) {
+	const birdGroup = new THREE.Group();
+	birdGroup.name = 'birds';
+
+	const birdMat = new THREE.MeshBasicMaterial({ color: 0x222222 });
+	const birdCount = 8;
+
+	for (let i = 0; i < birdCount; i++) {
+		// Two flat triangles for the wings.
+		const wingShape = new THREE.Shape();
+		wingShape.moveTo(0, 0);
+		wingShape.lineTo(-0.9, 0.35);
+		wingShape.lineTo(-1.8, 0);
+		wingShape.lineTo(0, 0);
+		const otherWing = wingShape.clone();
+		otherWing.curves = [];
+		otherWing.moveTo(0, 0);
+		otherWing.lineTo(0.9, 0.35);
+		otherWing.lineTo(1.8, 0);
+		otherWing.lineTo(0, 0);
+
+		const wings = new THREE.Group();
+		const leftMesh = new THREE.Mesh(new THREE.ShapeGeometry(wingShape), birdMat);
+		const rightMesh = new THREE.Mesh(new THREE.ShapeGeometry(otherWing), birdMat);
+		wings.add(leftMesh);
+		wings.add(rightMesh);
+		wings.rotation.x = -Math.PI / 2;
+
+		const radius = 35 + Math.random() * 35;
+		const angle = Math.random() * Math.PI * 2;
+		wings.position.set(
+			Math.cos(angle) * radius,
+			28 + Math.random() * 15,
+			Math.sin(angle) * radius
+		);
+		wings.scale.setScalar(0.7 + Math.random() * 0.8);
+		wings.userData = {
+			orbitRadius: radius,
+			orbitAngle: angle,
+			orbitSpeed: 0.04 + Math.random() * 0.06,
+			flapPhase: Math.random() * Math.PI * 2,
+			baseY: wings.position.y,
+		};
+		birdGroup.add(wings);
+	}
+
+	scene.add(birdGroup);
+}
+
+/**
+ * Animate sky decorations for normal mode — drifting clouds and
+ * orbiting flapping birds. The function is a no-op for cute/retro
+ * scenes (those groups won't exist).
+ *
+ * @param {THREE.Scene} scene
+ */
+export function animateSkyDecorations(scene) {
+	if (!scene) return;
+	const time = performance.now() * 0.001;
+
+	const clouds = scene.getObjectByName('skyClouds');
+	if (clouds && clouds.children) {
+		for (const cloud of clouds.children) {
+			const ud = cloud.userData;
+			if (!ud) continue;
+			const drift = Math.sin(time * 0.05 + ud.phase) * 30;
+			if (ud.driftAxis === 'x') cloud.position.x = ud.startX + drift;
+			else cloud.position.z = ud.startZ + drift;
+		}
+	}
+
+	const birds = scene.getObjectByName('birds');
+	if (birds && birds.children) {
+		for (const bird of birds.children) {
+			const ud = bird.userData;
+			if (!ud) continue;
+			ud.orbitAngle += ud.orbitSpeed * 0.016;
+			bird.position.x = Math.cos(ud.orbitAngle) * ud.orbitRadius;
+			bird.position.z = Math.sin(ud.orbitAngle) * ud.orbitRadius;
+			bird.position.y = ud.baseY + Math.sin(time * 1.5 + ud.flapPhase) * 0.5;
+			bird.rotation.z = Math.sin(time * 8 + ud.flapPhase) * 0.45;
+			bird.lookAt(0, bird.position.y, 0);
+			bird.rotation.x = -Math.PI / 2;
+		}
+	}
 }
 
 /**

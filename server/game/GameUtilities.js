@@ -1,9 +1,13 @@
 /**
- * GameUtilities.js - Shared utility functions for Shaktris game
+ * GameUtilities.js - Shared utility functions for Tetches game
  * This module provides common utility functions used across different game components
  */
 
 const crypto = require('crypto');
+const BoardGenerator = require('../boardGenerator');
+const { BOARD_SETTINGS } = require('./Constants');
+
+const { HOME_ZONE_WIDTH, HOME_ZONE_HEIGHT } = BOARD_SETTINGS;
 
 /**
  * Generate a random game ID
@@ -73,12 +77,16 @@ function generateRandomColor() {
  * @returns {Object|null} Home zone position or null if not found
  */
 function findHomeZonePosition(game) {
-	// Import the BoardGenerator module that has our improved home zone placement logic
-	const BoardGenerator = require('../boardGenerator');
-	const { HOME_ZONE_WIDTH, HOME_ZONE_HEIGHT } = require('./Constants').BOARD_SETTINGS;
-	
-	// Get the playerIndex based on the number of existing home zones
-	const playerIndex = Object.keys(game.homeZones).length;
+	// Count only zones whose owner is still in the game and not
+	// eliminated. Treating dead players as "existing" used to push
+	// new joiners way out into the void; the user flagged this when
+	// fresh games ended up nowhere near any active player.
+	const players = (game && game.players) || {};
+	const livingZoneCount = Object.keys(game.homeZones || {}).filter(pid => {
+		const p = players[pid];
+		return !(p && p.eliminated);
+	}).length;
+	const playerIndex = livingZoneCount;
 	
 	// Use the improved calculateHomePosition function from BoardGenerator
 	// No longer pass board width and height as we're using a boundless board model

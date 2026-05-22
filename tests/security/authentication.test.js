@@ -1,5 +1,5 @@
 /**
- * Authentication Tests for Shaktris
+ * Authentication Tests for Tetches
  * 
  * These tests verify the authentication system properly validates credentials,
  * manages sessions, and prevents unauthorized access.

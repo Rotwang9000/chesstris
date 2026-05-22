@@ -1,6 +1,6 @@
-# Chesstris Production Configuration Guide
+# Tetches Production Configuration Guide
 
-This guide provides recommendations for configuring Chesstris for production deployment.
+This guide provides recommendations for configuring Tetches for production deployment.
 
 ## Environment Variables
 
@@ -13,7 +13,7 @@ PORT=3000
 HOST=0.0.0.0
 
 # Database Configuration
-MONGODB_URI=mongodb://username:password@your-mongodb-host:27017/chesstris
+MONGODB_URI=mongodb://username:password@your-mongodb-host:27017/tetches
 REDIS_URI=redis://username:password@your-redis-host:6379/0
 
 # Security
@@ -47,7 +47,7 @@ Add a `ecosystem.config.js` for PM2:
 ```javascript
 module.exports = {
   apps: [{
-    name: 'chesstris',
+    name: 'tetches',
     script: 'server.js',
     instances: 'max',
     exec_mode: 'cluster',
@@ -90,7 +90,7 @@ server {
     
     # Static assets with caching
     location /static/ {
-        root /path/to/chesstris/public;
+        root /path/to/tetches/public;
         expires 30d;
         add_header Cache-Control "public, max-age=2592000";
     }
@@ -205,7 +205,7 @@ Create a `backup.sh` script:
 
 # Configuration
 BACKUP_DIR="/path/to/backups"
-MONGODB_URI="mongodb://username:password@your-mongodb-host:27017/chesstris"
+MONGODB_URI="mongodb://username:password@your-mongodb-host:27017/tetches"
 DATE=$(date +%Y-%m-%d_%H-%M-%S)
 
 # Create backup directory if it doesn't exist

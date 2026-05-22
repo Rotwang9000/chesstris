@@ -69,7 +69,7 @@ export function createLoadingIndicator() {
 
 	// Create loading text
 	const loadingText = document.createElement('div');
-	loadingText.textContent = 'Preparing Shaktris World...';
+	loadingText.textContent = 'Preparing Tetches World...';
 	Object.assign(loadingText.style, {
 		fontSize: '24px',
 		marginBottom: '10px',
@@ -358,8 +358,8 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 	console.log('Creating tutorial message overlay');
 
 	// Check for previous game key in localStorage
-	const previousGameKey = localStorage.getItem('shaktris_game_key');
-	const playerEmail = localStorage.getItem('shaktris_player_email');
+	const previousGameKey = localStorage.getItem('tetches_game_key');
+	const playerEmail = localStorage.getItem('tetches_player_email');
 
 	// Create tutorial message container (full screen overlay)
 	const tutorialElement = document.createElement('div');
@@ -491,7 +491,7 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 	const startGame = (gameKey = null) => {
 		// Store the game key if provided
 		if (gameKey) {
-			localStorage.setItem('shaktris_game_key', gameKey);
+			localStorage.setItem('tetches_game_key', gameKey);
 		}
 		
 		// Remove the tutorial
@@ -501,11 +501,11 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 		
 		// Start the game with the key if provided
 		if (typeof startGameFunction === 'function') {
-			console.log('Starting game using passed function', gameKey ? `with key: ${gameKey}` : 'new game');
+			console.log('Entering world using passed function', gameKey ? `with key: ${gameKey}` : 'default shared world');
 			startGameFunction(gameKey);
-		} else if (typeof window.startShaktrisGame === 'function') {
-			console.log('Starting game using global function');
-			window.startShaktrisGame(gameKey);
+		} else if (typeof window.startTetchesGame === 'function') {
+			console.log('Entering world using global function');
+			window.startTetchesGame(gameKey);
 		} else {
 			console.error('No game start function available!');
 			alert('Error: Could not start the game. Please refresh and try again.');
@@ -515,9 +515,9 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 	// Build the scrollable content
 	scrollContent.innerHTML = `
 		<h2 style="color: #ffcc00; margin: 0 0 8px 0; font-family: 'Times New Roman', serif; font-size: 28px;">
-			☦ Welcome to Shaktris ☦
+			☦ Welcome to Tetches ☦
 		</h2>
-		<p style="margin: 0 0 20px 0; opacity: 0.8;">A massively multiplayer game combining Chess and Tetris</p>
+		<p style="margin: 0 0 20px 0; opacity: 0.8;">A massively multiplayer shared-world game combining Chess and Tetris</p>
 		
 		<div style="text-align: left; margin: 0 0 20px 0; padding: 16px; background: rgba(255, 204, 0, 0.05); border-radius: 8px;">
 			<h3 style="color: #ffcc00; margin: 0 0 12px 0; font-size: 16px;">How to Play:</h3>
@@ -545,6 +545,13 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 				Tip: Place tetrominos to expand your territory, then use your chess pieces to attack!
 			</p>
 		</div>
+		<div style="margin-top: 12px; padding: 12px; background: rgba(0, 0, 0, 0.25); border-radius: 8px; text-align: left;">
+			<div style="font-weight: bold; color: #ffcc00; margin-bottom: 6px;">Terminology</div>
+			<div style="font-size: 13px; line-height: 1.5;">
+				<div><strong>World:</strong> the shared global board everyone plays on.</div>
+				<div><strong>Player Code:</strong> your personal identity/progress inside that world.</div>
+			</div>
+		</div>
 	`;
 
 	// Build the button area
@@ -554,7 +561,7 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 	if (previousGameKey) {
 		buttonHTML += `
 			<button id="rejoin-game-btn" class="tutorial-btn primary">
-				⟲ REJOIN PREVIOUS GAME
+				⟲ REJOIN WITH SAVED WORLD KEY
 			</button>
 			<div class="tutorial-divider"><span>OR</span></div>
 		`;
@@ -562,12 +569,15 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 	
 	buttonHTML += `
 		<button id="new-game-btn" class="tutorial-btn ${!previousGameKey ? 'primary' : ''}">
-			✦ START NEW GAME
+			✦ ENTER SHARED WORLD
 		</button>
-		<div class="tutorial-divider"><span>OR JOIN WITH KEY</span></div>
+		<div style="font-size: 12px; opacity: 0.8; text-align: center; margin-top: -2px;">
+			Resumes your position if your Player Code/session is known.
+		</div>
+		<div class="tutorial-divider"><span>OR ENTER SPECIFIC WORLD KEY</span></div>
 		<div style="display: flex; gap: 8px;">
 			<input type="text" id="game-key-input" class="game-key-input" 
-				placeholder="Enter game key..." 
+				placeholder="Enter world key..." 
 				style="flex: 1;">
 			<button id="join-key-btn" class="tutorial-btn" style="width: auto; padding: 12px 20px;">
 				JOIN
@@ -606,8 +616,8 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 	if (newGameBtn) {
 		newGameBtn.addEventListener('click', () => {
 			newGameBtn.disabled = true;
-			newGameBtn.textContent = 'Starting...';
-			startGame(null); // New game, no key
+			newGameBtn.textContent = 'Entering...';
+			startGame(null); // Default shared world (session may restore position)
 		});
 	}
 
@@ -689,7 +699,7 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 				
 				if (result.success) {
 					// Store email for later
-					localStorage.setItem('shaktris_player_email', email);
+					localStorage.setItem('tetches_player_email', email);
 					
 					if (magicLinkStatus) {
 						if (result.method === 'console') {
@@ -735,9 +745,9 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 	
 	if (authResult === 'success' && playerKey) {
 		console.log('Magic link authentication successful');
-		localStorage.setItem('shaktris_player_key', playerKey);
+		localStorage.setItem('tetches_player_key', playerKey);
 		if (urlGameKey) {
-			localStorage.setItem('shaktris_game_key', urlGameKey);
+			localStorage.setItem('tetches_game_key', urlGameKey);
 		}
 		// Clean URL
 		const cleanUrl = new URL(window.location.href);

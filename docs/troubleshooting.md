@@ -1,6 +1,6 @@
-# Shaktris Troubleshooting Guide
+# Tetches Troubleshooting Guide
 
-This guide provides solutions for common issues encountered when deploying or running Shaktris.
+This guide provides solutions for common issues encountered when deploying or running Tetches.
 
 ## Server Not Listening on Port 3666
 
@@ -12,14 +12,14 @@ The most common reason for this issue is that the `.env` file isn't being read c
 
 ```bash
 # Verify .env file exists and contains correct PORT
-cat /var/www/chesstris/.env | grep PORT
+cat /var/www/tetches/.env | grep PORT
 
 # If missing, create it with proper values
-cat > /var/www/chesstris/.env << EOL
+cat > /var/www/tetches/.env << EOL
 NODE_ENV=production
 PORT=3666
 HOST=0.0.0.0
-MONGODB_URI=mongodb://chesstris_app:your_password@localhost:27017/chesstris
+MONGODB_URI=mongodb://tetches_app:your_password@localhost:27017/tetches
 REDIS_URI=redis://:your_redis_password@localhost:6379/0
 JWT_SECRET=your_secure_jwt_secret
 JWT_EXPIRY=7d
@@ -35,10 +35,10 @@ Check if PM2 is actually running the correct file:
 ```bash
 # Check PM2 status and logs
 pm2 status
-pm2 logs chesstris
+pm2 logs tetches
 
 # Restart the application
-pm2 restart chesstris
+pm2 restart tetches
 
 # Verify the process with system tools
 netstat -tlpn | grep 3666
@@ -51,7 +51,7 @@ ss -tlpn | grep 3666
 Try running the server directly to see any error messages:
 
 ```bash
-cd /var/www/chesstris
+cd /var/www/tetches
 node -r dotenv/config server.js
 ```
 
@@ -64,11 +64,11 @@ Make sure PM2 is starting the correct file. In the project root directory:
 ls -la server.js src/server.js
 
 # Update PM2 config to use the correct file
-pm2 stop chesstris
-pm2 delete chesstris
-pm2 start src/server.js --name chesstris  # if this is the correct file
+pm2 stop tetches
+pm2 delete tetches
+pm2 start src/server.js --name tetches  # if this is the correct file
 # or
-pm2 start server.js --name chesstris      # if this is the correct file
+pm2 start server.js --name tetches      # if this is the correct file
 ```
 
 ### 5. Check Server Logs
@@ -77,7 +77,7 @@ Look for any startup errors:
 
 ```bash
 # Tail the last 100 lines of logs
-pm2 logs chesstris --lines 100
+pm2 logs tetches --lines 100
 ```
 
 ### 6. Verify MongoDB and Redis Connections
@@ -144,7 +144,7 @@ sudo systemctl start mongod
 sudo systemctl start redis-server
 
 # Make sure test environment variables are set correctly
-export MONGODB_URI="mongodb://localhost:27017/chesstris_test"
+export MONGODB_URI="mongodb://localhost:27017/tetches_test"
 export REDIS_URI="redis://localhost:6379/1"
 ```
 
@@ -167,16 +167,16 @@ sudo ufw status
 
 ```bash
 # Try connecting manually to verify credentials
-mongosh "mongodb://chesstris_app:your_password@localhost:27017/chesstris"
+mongosh "mongodb://tetches_app:your_password@localhost:27017/tetches"
 
 # If that fails, re-create the user
 mongosh
-use chesstris
-db.dropUser("chesstris_app")
+use tetches
+db.dropUser("tetches_app")
 db.createUser({
-  user: "chesstris_app",
+  user: "tetches_app",
   pwd: "new_password",
-  roles: [ { role: "readWrite", db: "chesstris" } ]
+  roles: [ { role: "readWrite", db: "tetches" } ]
 })
 ```
 

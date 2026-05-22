@@ -1,10 +1,10 @@
-# Shaktris Server Structure Guide
+# Tetches Server Structure Guide
 
-This document explains the server architecture of the Shaktris application and how to properly deploy it.
+This document explains the server architecture of the Tetches application and how to properly deploy it.
 
 ## Server Files Structure
 
-Shaktris has a modern, unified server structure:
+Tetches has a modern, unified server structure:
 
 1. **Main Server (`/server.js`)**
    - The primary application server using ES modules (import/export)
@@ -33,8 +33,8 @@ When deploying to production, you should:
 
 ```bash
 # Clone repository
-git clone https://github.com/your-repo/chesstris.git /var/www/chesstris
-cd /var/www/chesstris
+git clone https://github.com/your-repo/tetches.git /var/www/tetches
+cd /var/www/tetches
 
 # Install dependencies
 npm install --production
@@ -43,7 +43,7 @@ npm install --production
 # Ensure PORT=3666 is set
 
 # Start the MAIN server.js file
-pm2 start server.js --name chesstris
+pm2 start server.js --name tetches
 ```
 
 ## Testing Configuration
@@ -85,7 +85,7 @@ If having problems with the server not starting:
 
 3. **Run the server directly to see errors**:
    ```bash
-   cd /var/www/chesstris
+   cd /var/www/tetches
    node server.js
    ```
 

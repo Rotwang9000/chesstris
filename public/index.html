@@ -3,14 +3,14 @@
 <head>
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<title>Shaktris - Russian Theme</title>
-	<meta name="description" content="Shaktris is a unique game that combines elements of chess and Tetris with Russian-inspired visuals.">
+	<title>Tetches</title>
+	<meta name="description" content="Tetches is a unique game that combines elements of chess and Tetris on a dynamically expanding board.">
 	
 	<!-- Libraries -->
 	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
 	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
 	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
-	<script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.2/dist/socket.io.min.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.8.1/dist/socket.io.min.js"></script>
 	
 	<style>
 		@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&display=swap');
@@ -309,19 +309,20 @@
 </head>
 <body>
 	<!-- Game Title -->
-	<div class="game-title">SHAKTRIS</div>
+	<div class="game-title">TETCHES</div>
 	
 	<!-- Debug Indicator -->
 	<div class="debug-indicator">
 		<button id="reset-camera-btn" style="margin-left: 10px; padding: 2px 6px; background: #333; color: #ffcc00; border: 1px solid #ffcc00; border-radius: 3px; cursor: pointer; font-family: 'Playfair Display', serif;">Reset Camera</button>
+		<button id="show-flight-controls-btn" title="Show camera & keyboard controls" style="margin-left: 6px; padding: 2px 8px; background: #333; color: #ffcc00; border: 1px solid #ffcc00; border-radius: 3px; cursor: pointer; font-family: 'Playfair Display', serif;">Controls</button>
 		<button id="toggle-render-mode-btn" style="margin-left: 10px; padding: 2px 6px; background: #333; color: #ffcc00; border: 1px solid #ffcc00; border-radius: 3px; cursor: pointer; font-family: 'Playfair Display', serif;">Mode: Normal</button>
-		<span id="session-warning" style="margin-left: 12px; font-size: 11px; color: #888; font-family: 'Playfair Display', serif;">Save your player code from the menu before leaving!</span>
+		<span id="session-warning" role="button" tabindex="0" title="Click to copy your Player Code (needed to resume your game later)" style="margin-left: 12px; font-size: 11px; color: #ffcc00; font-family: 'Playfair Display', serif; cursor: pointer; text-decoration: underline;">&#128190; Copy your Player Code to resume later</span>
 	</div>
 
 	<!-- Loading Screen -->
 	<div id="loading" class="loading-screen">
 		<div class="spinner"></div>
-		<div class="loading-text">Loading Shaktris...</div>
+		<div class="loading-text">Loading Tetches...</div>
 	</div>
 	
 	<!-- Error message container - will be shown if there's an error -->
@@ -350,9 +351,8 @@
 	<a href="/advertise" class="advertise-link">Advertise Here</a>
 	
 	<!-- Core game scripts -->
-	<script src="/socket.io/socket.io.js"></script>
 	<script>
-		// Ensure socket.io is loaded
+		// Ensure socket.io is loaded (provided by CDN script above)
 		if (typeof io === 'undefined') {
 			console.error('Socket.io failed to load');
 			document.getElementById('error-message').textContent = 'Socket.io failed to load. Please check your internet connection and refresh the page.';

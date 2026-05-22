@@ -1,0 +1,66 @@
+name: CI
+
+# Runs on every push and on PRs to main/develop.  This is the safety
+# net that catches regressions before they reach Jenkins (which then
+# handles deployment).  Stages are intentionally cheap-first so a
+# typo fails in seconds rather than after a 5-minute test run.
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci --prefer-offline --no-audit --no-fund
+      - run: npm run lint
+
+  test-server:
+    name: Server tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci --prefer-offline --no-audit --no-fund
+      - run: npm run test:server
+        env:
+          CI: 'true'
+
+  audit:
+    name: npm audit (advisory)
+    runs-on: ubuntu-latest
+    # Advisory, not a gate. Vulnerable transitive deps are often
+    # outside our control; we surface them on PRs without blocking
+    # the merge. Real production scans happen on the deploy host.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci --prefer-offline --no-audit --no-fund
+      - run: npm audit --omit=dev --audit-level=high
+
+  docker:
+    name: Docker build smoke
+    runs-on: ubuntu-latest
+    needs: [lint, test-server]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production image
+        run: docker build -t tetches:ci .
+      - name: Smoke-check image
+        run: docker run --rm tetches:ci node -e "console.log('image OK', require('./package.json').name, require('./package.json').version)"

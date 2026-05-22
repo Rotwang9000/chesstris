@@ -1,0 +1,48 @@
+# What NOT to copy into the Docker image.
+
+node_modules
+npm-debug.log*
+yarn-error.log*
+
+.git
+.gitignore
+.gitattributes
+
+# Test artefacts & dev-only configs
+tests
+jest.config.js
+jest.setup.js
+babel.config.json
+coverage
+.eslintrc*
+.eslint.*
+
+# Editor / OS noise
+.vscode
+.idea
+.cursor
+*.swp
+*.bak
+.DS_Store
+
+# Local secrets / state (use volume mounts instead)
+.env
+.env.local
+.env.*.local
+data
+logs
+
+# CI / deploy bits — not needed at runtime
+ci
+Jenkinsfile
+docker-compose.jenkins.yml
+ecosystem.config.cjs
+scripts/deploy.sh
+
+# Docs aren't part of the runtime image (saves ~MBs of markdown)
+docs
+
+# Build artefacts
+dist
+build
+.cache

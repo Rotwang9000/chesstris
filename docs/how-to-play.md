@@ -1,8 +1,8 @@
-Shaktris:
+Tetches:
 ## Core Gameplay Mechanics
 A massive multiplayer online game that combines elements of chess and Tetris on a dynamically expanding board.
 
-Shaktris is a multiplayer prototype that fuses elements of chess and Tetris on a dynamically expanding 2D board rendered in 3D. In this game, each player is assigned a unique "home zone" (an 8×2 area randomly placed, although within 8 to 12 squares of another home zone) where their chess pieces reside. 
+Tetches is a multiplayer prototype that fuses elements of chess and Tetris on a dynamically expanding 2D board rendered in 3D. In this game, each player is assigned a unique "home zone" (an 8×2 area randomly placed, although within 8 to 12 squares of another home zone) where their chess pieces reside. 
 
 Chess pieces move on the X-Z plane (X is horizontal, Z is vertical), while tetromino pieces fall from above along the Y-axis. The tetrominos stick to the board only if at least one block lands adjacent to an existing cell which has a route back to the player's king. The chess pieces can then use these cells as part of the board. Players need to build up the board towards their opponent to be able to move pieces into a place where they can attack.
 

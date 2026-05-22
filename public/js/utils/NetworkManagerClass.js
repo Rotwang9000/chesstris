@@ -2,7 +2,13 @@
  * NetworkManager Class
  * Handles all network communication in the game.
  */
-import io from '/node_modules/socket.io-client/dist/socket.io.esm.min.js';
+// socket.io-client is loaded globally by the CDN <script> in index.html.
+// Using the global avoids fragile /node_modules/ imports that break behind nginx.
+function getSocketIO() {
+	if (typeof window !== 'undefined' && window.io) return window.io;
+	throw new Error('Socket.IO client not loaded — check CDN script tag in index.html');
+}
+const io = getSocketIO();
 
 // Configuration Constants
 const CONNECTION_TIMEOUT_MS = 10000; // 10 seconds
@@ -186,7 +192,7 @@ export default class NetworkManager {
 
 			socket.on('set_session', (data) => {
 				if (data && data.playerId) {
-					document.cookie = `shaktris_player_id=${data.playerId};path=/;max-age=${60 * 60 * 24 * 30};SameSite=Lax`;
+					document.cookie = `tetches_player_id=${data.playerId};path=/;max-age=${60 * 60 * 24 * 30};SameSite=Lax`;
 					console.log('NetworkManager: Session cookie set for', data.playerId);
 				}
 			});
@@ -215,9 +221,13 @@ export default class NetworkManager {
 					this.emitEvent('turn_update', data);
 				});
 				
-				socket.on('chess_move', (data) => {
-					this.emitEvent('chess_move', data);
-				});
+			socket.on('chess_move', (data) => {
+				this.emitEvent('chess_move', data);
+			});
+
+			socket.on('chess_capture', (data) => {
+				this.emitEvent('chess_capture', data);
+			});
 				
 			socket.on('tetrominoFailed', (data) => {
 				this.emitEvent('tetrominoFailed', data);
@@ -233,6 +243,34 @@ export default class NetworkManager {
 
 			socket.on('suicidal_pawn', (data) => {
 				this.emitEvent('suicidal_pawn', data);
+			});
+			
+			socket.on('pawn_detonation', (data) => {
+				this.emitEvent('pawn_detonation', data);
+			});
+			
+			socket.on('king_detonation', (data) => {
+				this.emitEvent('king_detonation', data);
+			});
+
+			socket.on('king_detonation_layer', (data) => {
+				this.emitEvent('king_detonation_layer', data);
+			});
+
+			socket.on('island_decay', (data) => {
+				this.emitEvent('island_decay', data);
+			});
+
+			socket.on('island_at_risk', (data) => {
+				this.emitEvent('island_at_risk', data);
+			});
+
+			socket.on('cells_clearing', (data) => {
+				this.emitEvent('cells_clearing', data);
+			});
+
+			socket.on('cascade_complete', (data) => {
+				this.emitEvent('cascade_complete', data);
 			});
 
 			socket.on('simultaneous_capture_resolved', (data) => {
@@ -258,44 +296,87 @@ export default class NetworkManager {
 			socket.on('king_duel_announced', (data) => {
 				this.emitEvent('king_duel_announced', data);
 			});
-				
+
+			// Activity log feed — the Recent Activity panel listens for
+			// these via `NetworkManager.on(...)`. Without these
+			// forwards the panel stayed empty even though the server
+			// was emitting events the whole time (the bug the user
+			// reported as "Recent activity is still empty btw").
+			socket.on('activity_event', (data) => {
+				this.emitEvent('activity_event', data);
+			});
+
+			socket.on('activity_log_snapshot', (data) => {
+				this.emitEvent('activity_log_snapshot', data);
+			});
+
+			// Per-player captured-piece basket. Targets a single
+			// socket (the basket owner), not a broadcast — see
+			// `broadcasts.emitCapturedBasket`. Forwarded here so the
+			// game-core listener can surface it in the UI.
+			socket.on('captured_basket', (data) => {
+				this.emitEvent('captured_basket', data);
+			});
+
+			// Power-up orbs (struggling-player aid pickups). Server
+			// fans out `powerup_spawned` / `powerup_claimed` /
+			// `powerup_expired` as the orb lifecycle progresses; the
+			// game-core listener mutates `gameState.powerUps` so the
+			// renderer can draw / remove the floating spheres.
+			socket.on('powerup_spawned', (data) => {
+				this.emitEvent('powerup_spawned', data);
+			});
+			socket.on('powerup_claimed', (data) => {
+				this.emitEvent('powerup_claimed', data);
+			});
+			socket.on('powerup_expired', (data) => {
+				this.emitEvent('powerup_expired', data);
+			});
+
+			// Promotion credits. Server pushes the full list on join /
+			// after every credit lifecycle event; individual events
+			// (`promotion_credit_added` / `_redeemed`) are also forwarded
+			// so the UI can toast + animate without needing a full
+			// `promotion_credits` payload.
+			socket.on('promotion_credits', (data) => {
+				this.emitEvent('promotion_credits', data);
+			});
+			socket.on('promotion_credit_added', (data) => {
+				this.emitEvent('promotion_credit_added', data);
+			});
+			socket.on('promotion_credit_redeemed', (data) => {
+				this.emitEvent('promotion_credit_redeemed', data);
+			});
+
 				socket.on('chessFailed', (data) => {
 					this.emitEvent('chessFailed', data);
 				});
 				
-				// Set up initial event handlers
+				socket.on('game_state', (data) => {
+					this.state.gameState = (data && data.state) ? data.state : data;
+					this.emitEvent('game_state', data);
+				});
+
+				socket.on('game_update', (data) => {
+					const incomingState = (data && data.state) ? data.state : data;
+					if (this.state.gameState) {
+						this.state.gameState = { ...this.state.gameState, ...incomingState };
+					} else {
+						this.state.gameState = incomingState;
+					}
+					this.emitEvent('game_update', incomingState);
+				});
+
 				socket.on('connect', () => {
 					console.log('NetworkManager: Connected to server');
 					this.state.socket = socket;
 					this.state.playerName = playerName;
 					this.state.isInitializing = false;
-					this.state.reconnectAttempts = 0; // Reset counter on successful connection
+					this.state.reconnectAttempts = 0;
 					this.state.connectionStatus = 'connected';
-					
-					// Emit connect event to listeners
+
 					this.emitEvent('connect', { connected: true, playerName: this.state.playerName, playerId: this.state.playerId || socket.id });
-					
-					// Set up game state event handlers
-					socket.on('game_state', (data) => {
-						console.log('NetworkManager: Received game_state event:', data);
-						// Store state for internal access (prefer the actual state object)
-						this.state.gameState = (data && data.state) ? data.state : data;
-						// Emit the full payload so listeners can access players, timestamps, etc.
-						this.emitEvent('game_state', data);
-					});
-					
-					socket.on('game_update', (data) => {
-						console.log('NetworkManager: Received game_update event:', data);
-						const incomingState = (data && data.state) ? data.state : data;
-						// Update our cached game state with new data if possible
-						if (this.state.gameState) {
-							this.state.gameState = { ...this.state.gameState, ...incomingState };
-						} else {
-							this.state.gameState = incomingState;
-						}
-						this.emitEvent('game_update', incomingState);
-					});
-					
+
 					resolve(true);
 				});
 				
@@ -679,11 +760,11 @@ export default class NetworkManager {
 	}
 
 	_clearSession() {
-		document.cookie = 'shaktris_player_id=;path=/;max-age=0';
+		document.cookie = 'tetches_player_id=;path=/;max-age=0';
 		this.state.gameId = null;
 		this.state.hasJoinedGame = false;
 		this.state.playerId = null;
-		localStorage.removeItem('shaktris_game_key');
+		localStorage.removeItem('tetches_game_key');
 	}
 
 	/**
@@ -692,8 +773,43 @@ export default class NetworkManager {
 	 * @param {string} chosenType - QUEEN, ROOK, BISHOP, or KNIGHT
 	 * @returns {Promise<Object>}
 	 */
-	promotePawn(pieceId, chosenType) {
-		return this.sendMessage('promote_pawn', { pieceId, chosenType });
+	/**
+	 * Bank a promotion credit for `pieceId` (the pawn must already have
+	 * walked the full promotion distance). The server-side chess_move
+	 * handler now auto-banks credits the moment a pawn finishes its
+	 * walk; this method exists for legacy clients and explicit
+	 * "promote now" buttons that want to convert before the next move.
+	 *
+	 * Use `redeemPromotion(...)` afterwards to spend the credit against
+	 * a captured-piece basket entry.
+	 */
+	promotePawn(pieceId) {
+		return this.sendMessage('promote_pawn', { pieceId });
+	}
+
+	/**
+	 * Redeem a banked promotion credit by spawning a captured piece
+	 * at the credit's original cell (or nearest-to-king if the cell
+	 * is gone). Consumes one matching basket entry. Uses an explicit
+	 * callback so the caller's UI can react to success / failure
+	 * without waiting on a full state broadcast.
+	 *
+	 * @param {string} capturedType  'QUEEN' | 'ROOK' | 'BISHOP' | 'KNIGHT'
+	 * @param {string} [creditId]    Specific credit to redeem; defaults to oldest.
+	 * @param {Function} callback    Invoked with the server ack payload.
+	 */
+	redeemPromotion(capturedType, creditId, callback) {
+		if (!this.isConnected() || !this.socket) {
+			if (typeof callback === 'function') {
+				callback({ success: false, error: 'Not connected' });
+			}
+			return;
+		}
+		const payload = { capturedType };
+		if (creditId) payload.creditId = creditId;
+		this.socket.emit('redeem_promotion', payload, (ack) => {
+			if (typeof callback === 'function') callback(ack);
+		});
 	}
 
 	/**
@@ -741,10 +857,21 @@ export default class NetworkManager {
 						return;
 					}
 					
-					// Check if this is a validation error or a network error
+					// Check if this is a validation error or a network error.
+					// IMPORTANT: keep the server-supplied `reason` if present —
+					// callers (chess move handler, etc) need to distinguish
+					// `piece_gone` / `desync_repaired` from a generic
+					// validation_error so they can react properly. Previously
+					// every rejection was overwritten to `validation_error`,
+					// which is how the "knight just disappeared" stale-state
+					// bug went unhandled — the client never knew the server
+					// had told it the piece was already gone.
 					const errorText = String(response.error);
 					const errorLower = errorText.toLowerCase();
-					
+					const explicitReason = (typeof response.reason === 'string' && response.reason)
+						? response.reason
+						: null;
+
 					const isValidationError = (
 						errorLower.includes('invalid') ||
 						errorLower.includes('not allowed') ||
@@ -754,20 +881,15 @@ export default class NetworkManager {
 						errorLower.includes('cannot') ||
 						errorLower.includes('occupied')
 					);
-					
-					if (isValidationError) {
-						reject({
-							message: errorText,
-							reason: 'validation_error',
-							details: response
-						});
-					} else {
-						reject({
-							message: errorText,
-							reason: 'network_error',
-							details: response
-						});
-					}
+
+					const reason = explicitReason
+						|| (isValidationError ? 'validation_error' : 'network_error');
+
+					reject({
+						message: errorText,
+						reason,
+						details: response,
+					});
 				} else {
 					resolve(response);
 				}
@@ -879,6 +1001,16 @@ export default class NetworkManager {
 			console.error('NetworkManager: Chess move failed:', error);
 			throw error;
 		}
+	}
+
+	async detonatePawn(pieceId) {
+		if (!this.isConnected()) {
+			return Promise.reject(new Error('Not connected'));
+		}
+		if (!this.state.gameId) {
+			return Promise.reject(new Error('Not in a game'));
+		}
+		return this.sendMessage('detonate_pawn', { pieceId });
 	}
 
 	/**
@@ -1196,11 +1328,29 @@ export default class NetworkManager {
 	 */
 	handleSocketDisconnect(reason) {
 		console.warn('NetworkManager: Disconnected from server:', reason);
-		
+
 		this.state.connectionStatus = 'disconnected';
-		
-		// Emit disconnect event
+
 		this.emitEvent('disconnect', { reason });
+
+		if (reason === 'io client disconnect') return;
+
+		const MAX_RECONNECT = 8;
+		const BASE_DELAY_MS = 2000;
+		const attempt = (this.state.reconnectAttempts || 0) + 1;
+		if (attempt > MAX_RECONNECT) {
+			console.warn('NetworkManager: Max reconnection attempts reached');
+			return;
+		}
+		this.state.reconnectAttempts = attempt;
+		const delay = Math.min(BASE_DELAY_MS * Math.pow(1.5, attempt - 1), 30000);
+		console.log(`NetworkManager: Reconnecting in ${Math.round(delay)}ms (attempt ${attempt}/${MAX_RECONNECT})`);
+		setTimeout(() => {
+			if (this.state.connectionStatus === 'connected') return;
+			this.ensureConnected(this.state.playerName).catch(err => {
+				console.warn('NetworkManager: Reconnection attempt failed:', err);
+			});
+		}, delay);
 	}
 
 	/**

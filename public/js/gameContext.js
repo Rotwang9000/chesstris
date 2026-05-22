@@ -77,6 +77,12 @@ export function setTetrominoGroup(val) {
 export function getChessPiecesGroup() { return _ctx.chessPiecesGroup; }
 export function setChessPiecesGroup(val) { _ctx.chessPiecesGroup = val; }
 
+export function getPowerUpGroup() { return _ctx.powerUpGroup; }
+export function setPowerUpGroup(val) {
+	_ctx.powerUpGroup = val;
+	gameState.powerUpGroup = val;
+}
+
 // ── Interaction helpers ─────────────────────────────────────────────────────
 
 export function getRaycaster() { return _ctx.raycaster; }
@@ -106,12 +112,6 @@ const PLAYER_COLORS = Object.freeze({
 });
 
 export function getPlayerColors() { return PLAYER_COLORS; }
-
-const _models = { pieces: {}, board: null, defaultPieces: {} };
-export function getModels() { return _models; }
-
-const _textures = { board: null, cells: [], skybox: null };
-export function getTextures() { return _textures; }
 
 // Axis helper constants
 export const AXIS_LENGTH = 20;

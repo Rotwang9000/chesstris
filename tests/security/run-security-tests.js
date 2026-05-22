@@ -7,7 +7,7 @@
 const { spawn } = require('child_process');
 const path = require('path');
 
-console.log('Running Shaktris Security Tests');
+console.log('Running Tetches Security Tests');
 console.log('===============================');
 
 // Get all test files from command arguments or run all if none specified

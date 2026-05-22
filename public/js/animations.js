@@ -1,5 +1,5 @@
 /**
- * Board animations module for Shaktris
+ * Board animations module for Tetches
  * Handles animations for cell and piece movement, removal, and appearance
  */
 

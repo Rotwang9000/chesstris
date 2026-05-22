@@ -1,6 +1,6 @@
-# Shaktris Frontend Component Model
+# Tetches Frontend Component Model
 
-This document outlines the component architecture for the Shaktris frontend, providing a blueprint for developers to follow when implementing or refactoring the user interface.
+This document outlines the component architecture for the Tetches frontend, providing a blueprint for developers to follow when implementing or refactoring the user interface.
 
 ## Component Hierarchy
 

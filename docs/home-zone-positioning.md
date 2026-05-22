@@ -2,7 +2,7 @@
 
 ## Overview
 
-The home zone positioning system in Shaktris uses a deterministic spiral pattern to place each player's home zone in relation to other players. This approach ensures that:
+The home zone positioning system in Tetches uses a deterministic spiral pattern to place each player's home zone in relation to other players. This approach ensures that:
 
 1. Player home zones are positioned in a clear, predictable pattern
 2. Each player's pawn will clash with adjacent players after exactly 8 moves

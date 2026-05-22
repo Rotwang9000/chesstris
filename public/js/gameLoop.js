@@ -16,6 +16,8 @@ import { animateClouds } from './textures.js';
 import { updateUnifiedPlayerBar } from './unifiedPlayerBar.js';
 import { updateChessPieces } from './updateChessPieces.js';
 import { handleMouseHover } from './chessInteraction.js';
+import { syncPowerUps, animatePowerUps } from './powerUpRenderer.js';
+import { syncNameplates, animateNameplates } from './nameplateRenderer.js';
 
 // ── Timing state ────────────────────────────────────────────────────────────
 
@@ -44,6 +46,20 @@ const PERFORMANCE_FPS_HIGH = 45;
 const TETROMINO_FALL_INTERVAL_MS = 1000;
 const SCENE_VALIDATION_INTERVAL = 5000;
 const UI_UPDATE_INTERVAL = 2000;
+
+// Per-frame budget governor.
+//
+// `LATE_FRAME_BUDGET_MS` is the wall-clock spend (since the previous
+// frame started) we treat as "we're falling behind". When the last
+// frame went over budget we skip non-essential per-frame work this
+// frame so we don't compound the deficit — that's the "miss frames if
+// things are taking too long" behaviour the user asked for. After
+// `RECOVERY_FRAMES` consecutive on-budget frames we drop back into
+// normal mode and resume everything.
+const LATE_FRAME_BUDGET_MS = 33; // 30 FPS threshold
+const RECOVERY_FRAMES = 6;
+let consecutiveOnBudgetFrames = RECOVERY_FRAMES;
+let skipNonEssentialThisFrame = false;
 
 export function resetTetrisLastFallTime() {
 	tetrisLastFallTime = Date.now();
@@ -174,24 +190,18 @@ function updateGameLogic(_deltaTime) {
 
 function validateSceneGraph(object) {
 	if (!object) return;
+	const gs = getGameState();
+	if (!gs?.debugMode) return;
 	try {
-		if (object.visible === undefined || object.visible === null) {
-			object.visible = true;
-		}
-		if (object.matrixAutoUpdate && object.matrix?.elements?.some(e => Number.isNaN(e))) {
-			object.updateMatrix();
-		}
 		if (object.children) {
-			const hasNullChildren = object.children.some(c => c === null || c === undefined);
-			if (hasNullChildren) {
-				object.children = object.children.filter(c => c !== null && c !== undefined);
-			}
-			for (const child of [...object.children]) {
-				if (child) validateSceneGraph(child);
+			for (let i = object.children.length - 1; i >= 0; i--) {
+				if (!object.children[i]) {
+					object.children.splice(i, 1);
+				}
 			}
 		}
 	} catch (err) {
-		console.error('Error validating object in scene graph:', err);
+		console.error('Error validating scene graph:', err);
 	}
 }
 
@@ -204,6 +214,7 @@ export function setUpdateBoardVisuals(fn) { _updateBoardVisuals = fn; }
 
 function animate(time) {
 	setAnimationFrameId(requestAnimationFrame(animate));
+	const frameStart = perfNow();
 
 	try {
 		const scene = getScene();
@@ -216,10 +227,26 @@ function animate(time) {
 		const chessPiecesGroup = getChessPiecesGroup();
 
 		const delta = (time - lastTime) / 1000;
+		const sinceLastFrameMs = time - lastTime;
 		lastTime = time;
 
 		frameSkip = (frameSkip + 1) % HEAVY_OPERATION_FRAME_MOD;
 		const isHeavyFrame = frameSkip === 0;
+
+		// Per-frame budget governor — if the prior frame took longer
+		// than LATE_FRAME_BUDGET_MS we're falling behind, so we drop
+		// the "look pretty" updates this frame to give the next one
+		// a chance to catch up. We *never* skip controls.update or
+		// the renderer call — interaction must stay responsive.
+		if (sinceLastFrameMs > LATE_FRAME_BUDGET_MS) {
+			skipNonEssentialThisFrame = true;
+			consecutiveOnBudgetFrames = 0;
+		} else if (consecutiveOnBudgetFrames < RECOVERY_FRAMES) {
+			consecutiveOnBudgetFrames++;
+			if (consecutiveOnBudgetFrames >= RECOVERY_FRAMES) {
+				skipNonEssentialThisFrame = false;
+			}
+		}
 
 		if (delta > 1) return;
 
@@ -230,13 +257,14 @@ function animate(time) {
 				lastControlsUpdate = time;
 			}
 
-			handleMouseHover();
+			if (!skipNonEssentialThisFrame) handleMouseHover();
 
 			if (window.cameraInfoDisplay && time - window.cameraInfoDisplay.lastUpdate > window.cameraInfoDisplay.updateInterval) {
 				try { updateCameraInfoDisplay(); window.cameraInfoDisplay.lastUpdate = time; } catch (_) {}
 			}
 
-			if (isHeavyFrame && clouds && Array.isArray(clouds)) {
+			// Heavy decorative updates only when the budget says it's safe.
+			if (!skipNonEssentialThisFrame && isHeavyFrame && clouds && Array.isArray(clouds)) {
 				for (let i = 0; i < clouds.length; i++) {
 					if (clouds[i]) clouds[i].rotation.y += 0.001 * delta * 3;
 				}
@@ -245,10 +273,14 @@ function animate(time) {
 				}
 			}
 
-			if (gameState.renderProfile === 'cute') {
-				if (typeof sceneModule.animateCuteElements === 'function') sceneModule.animateCuteElements(scene, delta);
-			} else if (gameState.renderProfile !== 'retro') {
-				if (typeof sceneModule.animateAmbientParticles === 'function') sceneModule.animateAmbientParticles(scene, delta);
+			if (!skipNonEssentialThisFrame) {
+				if (gameState.renderProfile === 'cute') {
+					if (typeof sceneModule.animateCuteElements === 'function') sceneModule.animateCuteElements(scene, delta);
+				} else if (gameState.renderProfile !== 'retro') {
+					if (typeof sceneModule.animateAmbientParticles === 'function') sceneModule.animateAmbientParticles(scene, delta);
+					if (typeof sceneModule.animateSkyDecorations === 'function') sceneModule.animateSkyDecorations(scene);
+					if (typeof sceneModule.updateWaterPlane === 'function') sceneModule.updateWaterPlane(scene);
+				}
 			}
 
 			if (animationQueue && animationQueue.length > 0) processAnimationQueue();
@@ -262,11 +294,46 @@ function animate(time) {
 				}
 				lastUiUpdate = time;
 			}
+
+			// Power-ups: reconcile each frame (cheap O(n) of active
+			// orbs which is at most a handful) so newly-spawned /
+			// expired orbs appear without waiting for the heavier
+			// `updateChessPieces` pulse.
+			try {
+				syncPowerUps(Array.isArray(gameState.powerUps) ? gameState.powerUps : []);
+			} catch (e) {
+				console.error('Error syncing power-ups:', e);
+			}
+			try {
+				animatePowerUps(time * 0.001);
+			} catch (e) {
+				console.error('Error animating power-ups:', e);
+			}
+
+			// Player nameplates above each king. Captures-strip
+			// shows only when the local player is observing — the
+			// HUD already displays it for active players.
+			try {
+				const pieces = Array.isArray(gameState.chessPieces) ? gameState.chessPieces : [];
+				const players = gameState.players || {};
+				const isSpectator = !!(gameState.isObserver || gameState.spectator || gameState.spectatingPlayer);
+				syncNameplates(pieces, players, {
+					showCaptures: isSpectator,
+					gameState,
+				});
+				animateNameplates(time * 0.001);
+			} catch (e) {
+				console.error('Error syncing nameplates:', e);
+			}
 		}
 
+		// TWEENs MUST run every frame — they drive piece moves and
+		// camera glides. Skipping them would make controls feel
+		// frozen which is worse than a slow frame.
 		if (window.TWEEN) window.TWEEN.update();
 
-		if (window.animationsModule && typeof window.animationsModule.updateAnimations === 'function') {
+		if (!skipNonEssentialThisFrame
+			&& window.animationsModule && typeof window.animationsModule.updateAnimations === 'function') {
 			window.animationsModule.updateAnimations();
 		}
 
@@ -287,11 +354,12 @@ function animate(time) {
 			if (time > 10000) monitorPerformance(fps);
 		}
 
-		if (isHeavyFrame) {
+		if (!skipNonEssentialThisFrame && isHeavyFrame) {
 			if (time - lastLODUpdate > LOD_UPDATE_INTERVAL) {
 				lastLODUpdate = time;
 				if (typeof animateClouds === 'function') animateClouds(scene);
 				if (typeof sceneModule.animateFloatingIslands === 'function') sceneModule.animateFloatingIslands(scene);
+				if (typeof sceneModule.updateWaterPlane === 'function') sceneModule.updateWaterPlane(scene);
 			}
 			if (time - lastGameLogicUpdate > GAME_LOGIC_INTERVAL) {
 				lastGameLogicUpdate = time;
@@ -313,6 +381,15 @@ function animate(time) {
 			try { renderer.render(scene, camera); } catch (renderError) {
 				console.error('Error during render:', renderError);
 			}
+		}
+
+		// If THIS frame ran long, propagate the signal so the next
+		// frame also throttles itself. Without this, a single heavy
+		// frame would only skip non-essentials once.
+		const frameElapsed = perfNow() - frameStart;
+		if (frameElapsed > LATE_FRAME_BUDGET_MS) {
+			skipNonEssentialThisFrame = true;
+			consecutiveOnBudgetFrames = 0;
 		}
 	} catch (error) {
 		console.error('Error in animation loop:', error);

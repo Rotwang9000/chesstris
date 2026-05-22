@@ -220,7 +220,8 @@ class ComputerPlayerManager {
 		const hasChessPieces = chessPieces.length > 0;
 		
 		// Check if we can afford to purchase pieces
-		const canAffordPiece = player.balance >= 10; // Minimum piece cost
+		const minPiecePrice = Math.min(...Object.values(PIECE_PRICES));
+		const canAffordPiece = player.balance >= minPiecePrice;
 		
 		// Check if we have tetrominos available
 		const hasTetrominos = player.availableTetrominos && player.availableTetrominos.length > 0;

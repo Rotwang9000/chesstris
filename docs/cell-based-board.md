@@ -2,7 +2,7 @@
 
 ## Current Implementation
 
-Shaktris uses a cell-based board structure with a controlled pawn clash positioning system, replacing the previous spiral home zone layout approach.
+Tetches uses a cell-based board structure with a controlled pawn clash positioning system, replacing the previous spiral home zone layout approach.
 
 ## Cell-Based Board Structure
 

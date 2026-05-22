@@ -32,18 +32,18 @@ let movesSinceLastForcedUpdate = 0; // Counter for moves since last forced updat
 let lastKnownMoveCount = 0; // Track the last move count to detect new moves
 
 export function updateChessPieces(chessPiecesGroup, camera, gameState) {
-	// Rate-limit updates to reduce performance impact
+	// Rate-limit updates to reduce performance impact (but never skip forced)
 	const now = Date.now();
-	if (now - lastChessPiecesUpdate < CHESS_PIECES_UPDATE_INTERVAL) {
-		return; // Skip if called too soon after previous update
+	if (now - lastChessPiecesUpdate < CHESS_PIECES_UPDATE_INTERVAL && !gameState._forceUpdate) {
+		return;
 	}
 	
-	// Only process if there are actual changes to the pieces
-	// Generate a simple hash of the current chess pieces
-	let currentHash = '';
+	// Generate a hash of the current chess pieces + render profile so
+	// switching themes triggers a rebuild even when positions haven't changed.
+	const profileTag = gameState.renderProfile || (gameState.retroMode ? 'retro' : 'normal');
+	let currentHash = `profile:${profileTag}|`;
 	if (gameState.chessPieces && Array.isArray(gameState.chessPieces)) {
-		// Create a hash based on critical properties of each piece
-		currentHash = gameState.chessPieces.map(piece => {
+		currentHash += gameState.chessPieces.map(piece => {
 			if (!piece) return '';
 			const pos = piece.position || piece;
 			const px = (pos && pos.x !== undefined) ? pos.x : piece.x;
@@ -184,9 +184,22 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 
 		// Quick safety check - if we have no chess pieces, stop processing
 		if (!chessPieces || chessPieces.length === 0) {
-			if (isFirstRun || gameState.debugMode) {
-				console.warn('No chess pieces to render, skipping update');
+			const existing = [...chessPiecesGroup.children];
+			for (const pieceMesh of existing) {
+				try {
+					chessPiecesGroup.remove(pieceMesh);
+					if (pieceMesh.geometry) pieceMesh.geometry.dispose();
+					if (pieceMesh.material) {
+						if (Array.isArray(pieceMesh.material)) {
+							pieceMesh.material.forEach(m => m && m.dispose && m.dispose());
+						} else if (pieceMesh.material.dispose) {
+							pieceMesh.material.dispose();
+						}
+					}
+				} catch (_) { /* ignore disposal issues */ }
 			}
+			lastChessPiecesHash = currentHash;
+			resetErrorTracking();
 			return;
 		}
 
@@ -282,8 +295,17 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 						const absPos = translatePosition({x, z}, gameState, true);
 						const adjustX = absPos.x;
 						const adjustZ = absPos.z;
-						
-						if (existingPiece.position.x !== adjustX || existingPiece.position.z !== adjustZ || existingPiece.position.y !== 0.5) {
+
+						// Don't yank pieces that are currently airborne
+						// (wings rule). The wing animation owns their
+						// Y position and the surrounding XZ until the
+						// settle phase removes the airborne flag.
+						const isAirborne = existingPiece.userData && existingPiece.userData.airborne;
+						if (!isAirborne && (
+							existingPiece.position.x !== adjustX
+							|| existingPiece.position.z !== adjustZ
+							|| existingPiece.position.y !== 0.5
+						)) {
 							existingPiece.position.set(adjustX, 0.5, adjustZ);
 						}
 
@@ -292,14 +314,8 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 						piecesReused++;
 					}
 				} else {
-					// Create a new piece mesh
 					const pieceColor = getChessPieceColor(piece, gameState);
 					const pieceType = getChessPieceType(piece);
-					
-					// For debugging
-					console.log(`Creating chess piece: ${pieceType} for player ${piece.player}, color: ${pieceColor.toString(16)}, at position (${x}, ${z})`);
-					
-					// Generate a player identifier
 					const playerIdentifier = piece.player;
 					
 					// Try to use direct creation with color
@@ -420,7 +436,8 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 					try {
 						if (pieceMesh.getObjectByName && !pieceMesh.getObjectByName('raycast-hitbox')) {
 							if (!updateChessPieces._raycastHitboxGeometry) {
-								updateChessPieces._raycastHitboxGeometry = new THREE.CylinderGeometry(0.55, 0.55, 1.3, 8);
+								// Keep hitbox smaller than a full cell to avoid selecting pieces behind.
+								updateChessPieces._raycastHitboxGeometry = new THREE.CylinderGeometry(0.36, 0.36, 0.75, 8);
 							}
 							if (!updateChessPieces._raycastHitboxMaterial) {
 							updateChessPieces._raycastHitboxMaterial = new THREE.MeshBasicMaterial({
@@ -433,7 +450,7 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 							}
 							const hitbox = new THREE.Mesh(updateChessPieces._raycastHitboxGeometry, updateChessPieces._raycastHitboxMaterial);
 							hitbox.name = 'raycast-hitbox';
-							hitbox.position.set(0, 0.65, 0);
+							hitbox.position.set(0, 0.38, 0);
 							hitbox.castShadow = false;
 							hitbox.receiveShadow = false;
 							pieceMesh.add(hitbox);
@@ -502,18 +519,44 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 			}
 		});
 
-		// Remove any pieces that are no longer in the game
-		// Create a copy of the array to avoid modification during iteration
+		// Remove any pieces that are no longer in the game. Honour the
+		// in-flight optimistic move pin so a `game_update` arriving
+		// mid-animation can't yank the moving mesh out from underneath
+		// the tween — that race was the root cause of the user's
+		// "knight just disappeared" report. The pin is cleared once the
+		// move ack arrives (success or failure) by `chessInteraction.js`.
+		// We also stop pruning the piece for a short safety window so a
+		// failed ack still has time to revert visually.
+		const inFlight = gameState?.inFlightMove;
+		const inFlightId = inFlight?.pieceId ? String(inFlight.pieceId) : null;
+		const PIN_SAFETY_MS = 2000;
+		const inFlightStillValid = inFlight && (
+			!Number.isFinite(inFlight.startedAt)
+				|| (now - inFlight.startedAt) < PIN_SAFETY_MS
+		);
 		const currentPieces = [...chessPiecesGroup.children];
 		let piecesRemoved = 0;
 
 		currentPieces.forEach(pieceMesh => {
 			try {
 				if (pieceMesh && pieceMesh.userData && pieceMesh.userData.id) {
-					// If the piece is not in the processed set, remove it
 					if (!processedPieceIds.has(pieceMesh.userData.id)) {
+						if (inFlightStillValid
+							&& inFlightId
+							&& String(pieceMesh.userData.id) === inFlightId
+						) {
+							// Pinned — keep mesh, let the move flow drop or
+							// adopt it once the ack arrives.
+							return;
+						}
+						// Airborne pieces own their own removal animation
+						// (wings flap, then fall into the water). Skip
+						// the standard prune so we don't snip the mesh
+						// mid-fall.
+						if (pieceMesh.userData.airborne) {
+							return;
+						}
 						chessPiecesGroup.remove(pieceMesh);
-						// Dispose of geometries and materials
 						if (pieceMesh.geometry) pieceMesh.geometry.dispose();
 						if (pieceMesh.material) {
 							if (Array.isArray(pieceMesh.material)) {
@@ -525,7 +568,6 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 						piecesRemoved++;
 					}
 				} else {
-					// Remove any invalid pieces
 					chessPiecesGroup.remove(pieceMesh);
 					piecesRemoved++;
 				}
@@ -543,6 +585,8 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 		// 	console.log(`Chess pieces updated: ${piecesCreated} created, ${piecesReused} reused, ${piecesRemoved} removed`);
 		// }
 		
+		lastChessPiecesHash = currentHash;
+
 		// If we get here without errors, reset error tracking
 		resetErrorTracking();
 	} catch (error) {
@@ -645,13 +689,13 @@ function createPieceMeshForPlayer(piece, pieceType, pieceColor, orientation, gam
 	const piecePos = piece?.position || piece;
 	const isLocalPiece = isLocalPlayerPiece(piece, gameState);
 
-	if (gameState && gameState.retroMode) {
-		return createRetroPiece(pieceType, isLocalPiece, THREE);
-	}
-
-	// Local player gets the detailed Russian-styled pieces.
+	// Always go through the detailed creator so every player's pieces
+	// share the same scale and silhouette (only the trim detail
+	// differs). The previous opponent-only `simplePieces` fallback was
+	// ~50% larger because its geometries used a different radius —
+	// the user observed "their lighter red pieces are bigger than
+	// mine" because of this mismatch.
 	if (
-		isLocalPiece &&
 		typeof createDetailedChessPiece === 'function' &&
 		piecePos &&
 		Number.isFinite(piecePos.x) &&
@@ -666,16 +710,38 @@ function createPieceMeshForPlayer(piece, pieceType, pieceColor, orientation, gam
 				piece.player,
 				{
 					orientation,
-					isLocalPlayer: true
+					isLocalPlayer: isLocalPiece,
+					color: pieceColor,
 				}
 			);
 		} catch (error) {
-			console.warn('Detailed local piece creation failed, using fallback:', error);
+			console.warn('Detailed piece creation failed, using fallback:', error);
 		}
 	}
-	
-	// Opponents remain lightweight for performance.
+
 	return chessPieceCreator.createPiece(pieceType, pieceColor, orientation, THREE);
+}
+
+/**
+ * Convert any colour representation (number, `#rrggbb`, or
+ * `rgb(r,g,b)` / `hsl(...)`) to a numeric hex value that
+ * `THREE.Color.setHex` and friends will accept.
+ */
+function toHexNumber(colour) {
+	if (typeof colour === 'number') return colour;
+	if (typeof colour !== 'string' || colour.length === 0) return null;
+	if (colour.startsWith('#')) {
+		const hex = colour.length === 4
+			// `#abc` → `#aabbcc`
+			? colour[1] + colour[1] + colour[2] + colour[2] + colour[3] + colour[3]
+			: colour.slice(1);
+		const parsed = parseInt(hex, 16);
+		return Number.isFinite(parsed) ? parsed : null;
+	}
+	// Defer rgb()/hsl()/named colours to THREE.Color, which knows the
+	// CSS color set. We can't use it directly here without a THREE
+	// reference, but the parsed integer is what most callers need.
+	return null;
 }
 
 /**
@@ -685,9 +751,11 @@ function createPieceMeshForPlayer(piece, pieceType, pieceColor, orientation, gam
  * @returns {number} - The color as a hexadecimal number
  */
 function getChessPieceColor(piece, gameState) {
-	// If piece has an explicit color, use it
+	// If piece has an explicit color, use it (converted to a hex
+	// number — server stores colours as strings like '#a1b2c3').
 	if (piece.color && piece.color !== 0xcccccc) {
-		return piece.color;
+		const asNumber = toHexNumber(piece.color);
+		if (asNumber !== null) return asNumber;
 	}
 	
 	// Use the centralized color function for consistent colors

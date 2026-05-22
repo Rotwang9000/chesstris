@@ -1,53 +1,41 @@
 /**
- * Unified Player Bar Component for Shaktris
+ * Unified Player Bar Component for Tetches
  * 
  * This file implements a slide-out player bar that appears from the right side of the screen.
  * It provides player info and highlights pieces on hover.
  */
 
 import * as NetworkManager from './utils/networkManager.js';
-
-// Import these if they exist, otherwise provide fallbacks
-let highlightPlayerPieces;
-let removePlayerPiecesHighlight;
-
-// Fallback functions in case import fails
-const fallbackHighlightPlayerPieces = (playerId) => {
-	console.log('Fallback: Highlight requested for player', playerId);
-	// Use gameCore functions if available
-	if (window.gameCore && window.gameCore.highlightPlayerPieces) {
-		window.gameCore.highlightPlayerPieces(playerId);
-	}
-};
-
-const fallbackRemovePlayerPiecesHighlight = () => {
-	console.log('Fallback: Removing highlights');
-	// Use gameCore functions if available
-	if (window.gameCore && window.gameCore.removePlayerPiecesHighlight) {
-		window.gameCore.removePlayerPiecesHighlight();
-	}
-};
-
-// Set initial fallbacks
-highlightPlayerPieces = fallbackHighlightPlayerPieces;
-removePlayerPiecesHighlight = fallbackRemovePlayerPiecesHighlight;
-
-// Try to load the real functions
-import('./pieceHighlightManager.js')
-	.then(module => {
-		console.log('Successfully imported pieceHighlightManager.js');
-		// Replace fallbacks with real functions
-		highlightPlayerPieces = module.highlightPlayerPieces;
-		removePlayerPiecesHighlight = module.removePlayerPiecesHighlight;
-	})
-	.catch(error => {
-		console.warn('Could not import pieceHighlightManager.js, using fallbacks:', error);
-	});
+import { highlightPlayerPieces, removePlayerPiecesHighlight } from './pieceHighlightManager.js';
+import { showToastMessage } from './showToastMessage.js';
+import { showPromotionRedeemDialog } from './uiOverlays.js';
 
 // State tracking variables
 let isBarVisible = false;
 let lastPlayerDataHash = '';
 let forcedPlayerUpdateCounter = 0;
+
+/**
+ * Coerce the various colour formats the server emits — bare integers
+ * (0xDD0000), prefixed strings ("0xff0000" / "#ff0000") and named
+ * CSS colours ("red") — into a CSS-safe hex string. Returns an
+ * empty string for nullish/invalid inputs so callers can fall back
+ * to their default.
+ */
+function normaliseColour(value) {
+	if (value === null || value === undefined || value === '') return '';
+	if (typeof value === 'number') {
+		if (!Number.isFinite(value)) return '';
+		return '#' + (value & 0xFFFFFF).toString(16).padStart(6, '0');
+	}
+	if (typeof value !== 'string') return '';
+	const trimmed = value.trim();
+	if (!trimmed) return '';
+	if (trimmed.startsWith('#')) return trimmed;
+	if (/^0x[0-9a-f]{6}$/i.test(trimmed)) return '#' + trimmed.slice(2);
+	if (/^[0-9a-f]{6}$/i.test(trimmed)) return '#' + trimmed;
+	return trimmed; // Trust named CSS colours / rgb() / hsl()
+}
 
 // Add a utility function to get the player ID
 /**
@@ -79,6 +67,68 @@ function getLocalPlayerId(gameState) {
 	
 	// Return null if we couldn't find a local player ID
 	return null;
+}
+
+function getCookieValue(name) {
+	const cookieText = document.cookie || '';
+	if (!cookieText) return null;
+	const entries = cookieText.split(';');
+	for (const entry of entries) {
+		const [rawKey, ...rawValue] = entry.trim().split('=');
+		if (rawKey === name) {
+			return decodeURIComponent(rawValue.join('='));
+		}
+	}
+	return null;
+}
+
+function resolvePlayerCode(gameState) {
+	if (NetworkManager && typeof NetworkManager.getPlayerId === 'function') {
+		const networkId = NetworkManager.getPlayerId();
+		if (networkId) return String(networkId);
+	}
+	if (gameState && gameState.localPlayerId) return String(gameState.localPlayerId);
+	const cookieId = getCookieValue('tetches_player_id');
+	return cookieId ? String(cookieId) : '';
+}
+
+function resolveWorldId() {
+	if (NetworkManager && typeof NetworkManager.getGameId === 'function') {
+		const networkGameId = NetworkManager.getGameId();
+		if (networkGameId) return String(networkGameId);
+	}
+	const params = new URLSearchParams(window.location.search);
+	return params.get('gameId') || params.get('game') || 'shared-world';
+}
+
+function updateSessionDetails(gameState) {
+	const worldInput = document.getElementById('sidebar-world-id-display');
+	if (worldInput) {
+		worldInput.value = resolveWorldId();
+	}
+	const playerCodeInput = document.getElementById('sidebar-player-code-display');
+	if (playerCodeInput) {
+		playerCodeInput.value = resolvePlayerCode(gameState) || 'Not assigned yet';
+	}
+}
+
+function copyInputFieldValue(inputId, button, successText = 'Copied!') {
+	const input = document.getElementById(inputId);
+	if (!input) return;
+	input.focus();
+	input.select();
+	input.setSelectionRange(0, 99999);
+	let copied = false;
+	try {
+		copied = document.execCommand('copy');
+	} catch (_error) {
+		copied = false;
+	}
+	const originalText = button.textContent;
+	button.textContent = copied ? successText : 'Copy failed';
+	setTimeout(() => {
+		button.textContent = originalText;
+	}, 1400);
 }
 
 /**
@@ -214,8 +264,9 @@ export function createUnifiedPlayerBar(gameState) {
 		overflowY: 'auto'
 	});
 	playerBar.appendChild(playerContainer);
+
 	
-	// Add Game ID section
+	// Add World / Player session section
 	const gameIdSection = document.createElement('div');
 	gameIdSection.id = 'sidebar-game-id';
 	Object.assign(gameIdSection.style, {
@@ -223,22 +274,34 @@ export function createUnifiedPlayerBar(gameState) {
 		borderTop: '1px solid rgba(255, 204, 0, 0.5)'
 	});
 	
-	// Get the game ID from URL parameters
-	const urlParams = new URLSearchParams(window.location.search);
-	const gameId = urlParams.get('game') || 'Creating new game...';
+	const worldId = resolveWorldId();
+	const playerCode = resolvePlayerCode(gameState);
 	
 	gameIdSection.innerHTML = `
-		<div style="font-weight: bold; margin-bottom: 5px; color: #ffcc00;">Game ID</div>
+		<div style="font-weight: bold; margin-bottom: 5px; color: #ffcc00;">World ID</div>
 		<div style="display: flex; align-items: center; margin-bottom: 10px;">
-			<input id="sidebar-game-id-display" type="text" value="${gameId}" 
+			<input id="sidebar-world-id-display" type="text" value="${worldId}" 
 				style="flex-grow: 1; margin-right: 5px; background: rgba(34, 34, 34, 0.8); color: #ffcc00; 
 				border: 1px solid #ffcc00; border-radius: 3px; font-family: monospace; padding: 5px;" readonly>
-			<button id="sidebar-copy-game-id" 
+			<button id="sidebar-copy-world-id" 
 				style="background: #333; color: #ffcc00; border: 1px solid #ffcc00; 
 				border-radius: 3px; padding: 5px 8px; cursor: pointer; font-family: 'Playfair Display', serif;">
 				Copy
 			</button>
 		</div>
+		<div style="font-size: 11px; color: #bbb; margin-bottom: 12px;">Shared board identifier</div>
+		<div style="font-weight: bold; margin-bottom: 5px; color: #ffcc00;">Player Code</div>
+		<div style="display: flex; align-items: center; margin-bottom: 6px;">
+			<input id="sidebar-player-code-display" type="text" value="${playerCode || 'Not assigned yet'}" 
+				style="flex-grow: 1; margin-right: 5px; background: rgba(34, 34, 34, 0.8); color: #ffcc00; 
+				border: 1px solid #ffcc00; border-radius: 3px; font-family: monospace; padding: 5px;" readonly>
+			<button id="sidebar-copy-player-code" 
+				style="background: #333; color: #ffcc00; border: 1px solid #ffcc00; 
+				border-radius: 3px; padding: 5px 8px; cursor: pointer; font-family: 'Playfair Display', serif;">
+				Copy
+			</button>
+		</div>
+		<div style="font-size: 11px; color: #bbb;">Use this code to restore your saved position in the world.</div>
 	`;
 	playerBar.appendChild(gameIdSection);
 	
@@ -300,22 +363,16 @@ export function createUnifiedPlayerBar(gameState) {
 	// Add to document
 	document.body.appendChild(playerBar);
 	
-	// Add event listener for Game ID copy button
-	const copyButton = document.getElementById('sidebar-copy-game-id');
-	if (copyButton) {
-		copyButton.addEventListener('click', () => {
-			const gameIdInput = document.getElementById('sidebar-game-id-display');
-			if (gameIdInput) {
-				gameIdInput.select();
-				document.execCommand('copy');
-				
-				// Show feedback
-				const originalText = copyButton.textContent;
-				copyButton.textContent = 'Copied!';
-				setTimeout(() => {
-					copyButton.textContent = originalText;
-				}, 2000);
-			}
+	const worldCopyButton = document.getElementById('sidebar-copy-world-id');
+	if (worldCopyButton) {
+		worldCopyButton.addEventListener('click', () => {
+			copyInputFieldValue('sidebar-world-id-display', worldCopyButton, 'Copied!');
+		});
+	}
+	const playerCodeCopyButton = document.getElementById('sidebar-copy-player-code');
+	if (playerCodeCopyButton) {
+		playerCodeCopyButton.addEventListener('click', () => {
+			copyInputFieldValue('sidebar-player-code-display', playerCodeCopyButton, 'Copied!');
 		});
 	}
 	
@@ -340,6 +397,7 @@ export function createUnifiedPlayerBar(gameState) {
 	
 	// Populate player information
 	updateUnifiedPlayerBar(gameState);
+	updateSessionDetails(gameState);
 	
 	// Show the bar initially
 	showPlayerBar();
@@ -447,8 +505,10 @@ function addPlayerToBar(playerBar, playerId, playerInfo, gameState) {
 	// Clear existing content
 	playerElement.innerHTML = '';
 	
-	// Generate the player color
-	const playerColor = playerInfo.color || generatePlayerColor(playerId);
+	// Generate the player color, defensively coerced so a 0xDD0000
+	// integer (the server's wire format for player colour) still
+	// renders as CSS.
+	const playerColor = normaliseColour(playerInfo.color) || generatePlayerColor(playerId);
 	
 	// Create color indicator
 	const colorIndicator = document.createElement('div');
@@ -517,7 +577,102 @@ function addPlayerToBar(playerBar, playerId, playerInfo, gameState) {
 	}
 	
 	playerElement.appendChild(nameDisplay);
-	
+
+	// Show captured-piece basket as a compact badge: "♜ 3" etc.
+	// Each glyph is rendered in the *original owner's* colour so a
+	// captured red-bishop reads as "I took this from the red player",
+	// not as "this is mine". Falls back to the old single-colour
+	// rendering for legacy server payloads that don't include the
+	// breakdown.
+	const capturedCount = Number(playerInfo.capturedCount) || 0;
+	if (capturedCount > 0) {
+		const PIECE_GLYPH = { QUEEN: '\u265B', ROOK: '\u265C', BISHOP: '\u265D', KNIGHT: '\u265E' };
+		const order = ['QUEEN', 'ROOK', 'BISHOP', 'KNIGHT'];
+		const breakdown = Array.isArray(playerInfo.capturedBreakdown) ? playerInfo.capturedBreakdown : null;
+
+		const basketDisplay = document.createElement('div');
+		Object.assign(basketDisplay.style, {
+			marginLeft: '6px',
+			fontSize: '12px',
+			padding: '2px 6px',
+			borderRadius: '3px',
+			backgroundColor: 'rgba(0,0,0,0.45)',
+			fontFamily: 'serif',
+			letterSpacing: '2px',
+			display: 'inline-flex',
+			gap: '4px',
+			alignItems: 'center',
+		});
+		basketDisplay.title = `Captured pieces awaiting redemption (${capturedCount}). Glyph colour matches the original owner.`;
+
+		if (breakdown && breakdown.length > 0) {
+			// Per-(type, owner-colour) chips so the captured player's
+			// hue is preserved. We still respect the promotion order
+			// (queens first) for visual consistency.
+			breakdown
+				.slice()
+				.sort((a, b) => order.indexOf(a.type) - order.indexOf(b.type))
+				.forEach(entry => {
+					const glyph = PIECE_GLYPH[entry.type] || '\u265F';
+					const colour = normaliseColour(entry.color) || '#ffd97a';
+					const chip = document.createElement('span');
+					chip.textContent = `${glyph}${entry.count}`;
+					chip.style.color = colour;
+					chip.style.textShadow = '0 0 2px rgba(0,0,0,0.6)';
+					basketDisplay.appendChild(chip);
+				});
+		} else {
+			const summary = playerInfo.capturedSummary || {};
+			const parts = order
+				.filter(type => summary[type] > 0)
+				.map(type => `${PIECE_GLYPH[type]}${summary[type]}`)
+				.join(' ');
+			basketDisplay.textContent = parts || `${capturedCount}`;
+			basketDisplay.style.color = '#ffd97a';
+		}
+		playerElement.appendChild(basketDisplay);
+	}
+
+	// Promotion-credits badge. Only meaningful for the local player —
+	// other players' credits are private (the server doesn't expose
+	// per-credit positions). The badge is clickable and opens the
+	// redeem dialog.
+	const promotionCreditCount = Number(playerInfo.promotionCreditCount) || 0;
+	if (promotionCreditCount > 0) {
+		const creditDisplay = document.createElement('div');
+		creditDisplay.textContent = `\u2605${promotionCreditCount}`;
+		Object.assign(creditDisplay.style, {
+			marginLeft: '6px',
+			fontSize: '12px',
+			padding: '2px 6px',
+			borderRadius: '3px',
+			backgroundColor: 'rgba(76,175,80,0.2)',
+			color: '#a8e6a3',
+			fontFamily: 'serif',
+			letterSpacing: '1px',
+			border: '1px solid rgba(76,175,80,0.5)',
+		});
+		if (isLocalPlayer) {
+			creditDisplay.title = 'Banked promotion credits. Click to spend one against a captured piece.';
+			creditDisplay.style.cursor = 'pointer';
+			creditDisplay.style.boxShadow = '0 0 6px rgba(168,230,163,0.5)';
+			creditDisplay.addEventListener('mouseenter', () => {
+				creditDisplay.style.backgroundColor = 'rgba(76,175,80,0.4)';
+			});
+			creditDisplay.addEventListener('mouseleave', () => {
+				creditDisplay.style.backgroundColor = 'rgba(76,175,80,0.2)';
+			});
+			creditDisplay.addEventListener('click', (e) => {
+				e.stopPropagation();
+				try { showPromotionRedeemDialog(); }
+				catch (err) { console.warn('Failed to open redeem dialog:', err); }
+			});
+		} else {
+			creditDisplay.title = `Banked promotion credits (${promotionCreditCount})`;
+		}
+		playerElement.appendChild(creditDisplay);
+	}
+
 	// Add score if available
 	if (playerInfo.score !== undefined) {
 		const scoreDisplay = document.createElement('div');
@@ -577,6 +732,55 @@ function addPlayerToBar(playerBar, playerId, playerInfo, gameState) {
 		}
 	});
 	
+	// Click flies the camera to that player's king (or home zone if
+	// the king is missing).
+	//
+	// Notes:
+	//   - One listener per row, on `pointerdown` so mobile + desktop
+	//     behave identically and we don't queue up two animations from
+	//     a click that lands on a child element (the previous version
+	//     fired on both `click` and `touchstart`, which caused the
+	//     "laggy / does nothing" behaviour the user reported).
+	//   - A short cooldown stops rapid double-clicks from stacking
+	//     fly animations on top of each other.
+	playerElement.dataset.playerId = playerId;
+	playerElement.style.cursor = 'pointer';
+	playerElement.title = `Fly to ${playerInfo.name || playerId}`;
+	let lastFlyAt = 0;
+	const FLY_COOLDOWN_MS = 250;
+	const flyHandler = (event) => {
+		if (event && event.pointerType === 'mouse' && event.button !== 0) return;
+		event.preventDefault();
+		event.stopPropagation();
+		const now = Date.now();
+		if (now - lastFlyAt < FLY_COOLDOWN_MS) return;
+		lastFlyAt = now;
+
+		console.log('[player-bar] fly-to click for playerId=', playerId);
+
+		playerElement.style.transition = 'transform 120ms ease, background-color 120ms ease';
+		const previousBg = playerElement.style.backgroundColor;
+		playerElement.style.backgroundColor = 'rgba(255, 204, 0, 0.55)';
+		playerElement.style.transform = 'translateX(-5px) scale(1.04)';
+		setTimeout(() => {
+			playerElement.style.backgroundColor = previousBg;
+			playerElement.style.transform = 'translateX(-5px)';
+		}, 180);
+
+		if (window.gameCore && typeof window.gameCore.flyToPlayerKing === 'function') {
+			const moved = window.gameCore.flyToPlayerKing(playerId);
+			if (moved === false) {
+				showToastMessage(`Couldn't fly to ${playerInfo.name || playerId} — no king and no home zone found.`);
+			} else {
+				showToastMessage(`Flying to ${playerInfo.name || playerId}...`);
+			}
+		} else {
+			console.warn('[player-bar] flyToPlayerKing is not exposed on window.gameCore yet');
+			showToastMessage('Camera not ready — try again in a second.');
+		}
+	};
+	playerElement.addEventListener('pointerdown', flyHandler);
+
 	// Add touch events for mobile devices
 	playerElement.addEventListener('touchstart', (e) => {
 		// Prevent default to avoid scrolling
@@ -635,8 +839,8 @@ function addPlayerToBar(playerBar, playerId, playerInfo, gameState) {
 export function updateUnifiedPlayerBar(gameState) {
 	if (!gameState) return;
 	
-	// Debug the game state
-	console.log('Updating player bar with game state:', gameState);
+	// Debug the game state (gated to avoid performance hit from serialising the full object)
+	if (gameState?.debugMode) console.log('Updating player bar with game state:', gameState);
 	
 	// Ensure the bar exists
 	let playerBar = document.getElementById('unified-player-bar');
@@ -651,7 +855,7 @@ export function updateUnifiedPlayerBar(gameState) {
 		currentHash = Object.keys(gameState.players).map(playerId => {
 			const player = gameState.players[playerId];
 			if (!player) return '';
-			return `${playerId}-${player.name || ''}-${player.score || 0}-${player.isActive ? 1 : 0}-${player.color || ''}`;
+			return `${playerId}-${player.name || ''}-${player.score || 0}-${player.isActive ? 1 : 0}-${player.eliminated ? 1 : 0}-${player.color || ''}-${player.capturedCount || 0}`;
 		}).sort().join('|');
 		
 		// Add current player to hash
@@ -674,6 +878,7 @@ export function updateUnifiedPlayerBar(gameState) {
 	
 	// Update hash
 	lastPlayerDataHash = currentHash;
+	updateSessionDetails(gameState);
 	
 	// Get the player container
 	const playerContainer = document.getElementById('unified-player-container');
@@ -699,24 +904,59 @@ export function updateUnifiedPlayerBar(gameState) {
 		};
 	}
 	
-	// Add each player
+	// Add each player. The local player is pinned to the top of the
+	// list — they're the user looking at this UI, and "Fly to my king"
+	// is by far the most common reason for opening the panel.
+	// Eliminated players are filtered out entirely because the user
+	// asked: "players that have been totally beaten are staying in the
+	// system... they are all apearing in the left menu". Keeping them
+	// would also bias the spawn algorithm towards dead-king coords.
 	if (gameState.players && Object.keys(gameState.players).length > 0) {
-		console.log('Players in game state:', Object.keys(gameState.players).length);
-		Object.keys(gameState.players).forEach(playerId => {
+		const visibleIds = Object.keys(gameState.players).filter(pid => {
+			const player = gameState.players[pid];
+			if (!player) return false;
+			// Always show the local player even if a stale flag claims
+			// they're eliminated — we'd rather show a wrong row than
+			// hide the user from their own UI.
+			if (pid === localPlayerId) return true;
+			return !player.eliminated;
+		});
+		console.log('Players in game state:', Object.keys(gameState.players).length,
+			'visible:', visibleIds.length);
+		const sortedIds = visibleIds.sort((a, b) => {
+			if (a === localPlayerId) return -1;
+			if (b === localPlayerId) return 1;
+			return 0;
+		});
+		sortedIds.forEach(playerId => {
 			const player = gameState.players[playerId];
 			if (!player) return;
-			
+
 			addPlayerToBar(
 				playerBar,
 				playerId,
 				{
 					name: player.name || `Player ${playerId.substring(0, 6)}`,
 					color: player.color,
-					score: player.score || 0
+					score: player.score || 0,
+					capturedCount: player.capturedCount || 0,
+					capturedSummary: player.capturedSummary || {},
 				},
 				gameState
 			);
 		});
+		if (sortedIds.length === 0) {
+			const noOneMessage = document.createElement('div');
+			noOneMessage.textContent = 'No active opponents — you have the world to yourself.';
+			Object.assign(noOneMessage.style, {
+				textAlign: 'center',
+				color: '#ffcc00',
+				padding: '20px',
+				fontStyle: 'italic',
+			});
+			const container = document.getElementById('unified-player-container');
+			if (container) container.appendChild(noOneMessage);
+		}
 	} else {
 		// Show waiting message
 		const waitingMessage = document.createElement('div');
@@ -730,35 +970,30 @@ export function updateUnifiedPlayerBar(gameState) {
 		playerContainer.appendChild(waitingMessage);
 	}
 	
-	// Update Game ID when a game ID is available
-	const urlParams = new URLSearchParams(window.location.search);
-	const gameId = urlParams.get('game');
-	const gameIdInput = document.getElementById('sidebar-game-id-display');
-	if (gameIdInput && gameId) {
-		gameIdInput.value = gameId;
-	}
+	// Keep world/session details in sync with latest connection state
+	updateSessionDetails(gameState);
 }
 
 /**
  * Generate a deterministic color for a player ID
  */
 function generatePlayerColor(playerId) {
-	// Check if player is local
+	// Local player gets the same warm-wood swatch their chess pieces
+	// use in the scene, so the sidebar matches what they see on the
+	// board (was previously a misleading red).
 	if (NetworkManager && NetworkManager.getPlayerId && playerId === NetworkManager.getPlayerId()) {
-		return '#AA0000'; // Red for local player
+		return '#C4A265';
 	}
-	
-	// Generate deterministic color based on ID
+
 	let hash = 0;
 	const id = playerId || 'unknown';
 	for (let i = 0; i < id.length; i++) {
 		hash = id.charCodeAt(i) + ((hash << 5) - hash);
 	}
-	
-	// Generate blue/green-ish colors (keep red low)
-	const r = Math.abs(hash % 80); // Keep red low
-	const g = 100 + Math.abs((hash >> 4) % 155);
-	const b = 150 + Math.abs((hash >> 8) % 105);
-	
-	return `rgb(${r}, ${g}, ${b})`;
+
+	// Match the in-scene palette (greens/cyans/blues — h ∈ [120, 240]).
+	const h = 120 + (Math.abs(hash) % 120);
+	const s = 65 + (Math.abs(hash >> 8) % 35);
+	const l = 45 + (Math.abs(hash >> 16) % 20);
+	return `hsl(${h}, ${s}%, ${l}%)`;
 } 

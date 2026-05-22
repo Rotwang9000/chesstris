@@ -5,6 +5,13 @@
 
 const { CHESS_PIECE_POSITIONS, PIECE_PRICES, GAME_RULES } = require('./Constants');
 const { log } = require('./GameUtilities');
+const cells = require('./cells');
+// `pieces` module is the single mutation point for `world.chessPieces`.
+// Every removal *must* go through it so the activity log gets a
+// `chess_piece_lost` / `chess_piece_captured` / `chess_piece_detonated`
+// entry — otherwise a piece can vanish without leaving any trace, which
+// is the bug the user has hit multiple times.
+const pieceLifecycle = require('./pieces');
 
 class ChessManager {
 	constructor(boardManager, islandManager) {
@@ -23,8 +30,7 @@ class ChessManager {
 		const pieces = [];
 		const playerColor = game.players[playerId].color;
 		
-		// Log the orientation for debugging
-		console.log(`ChessManager: Initializing chess pieces for player ${playerId} with home zone orientation ${homeZone.orientation}`);
+		log(`ChessManager: Initialising chess pieces for player ${playerId} with home zone orientation ${homeZone.orientation}`);
 		
 		// Determine layout based on orientation (not just dimensions)
 		// Horizontal layout for orientation 0 (facing up) and 2 (facing down)
@@ -55,6 +61,8 @@ class ChessManager {
 					position: { x, z },
 					color: playerColor,
 					hasMoved: false,
+					moveCount: 0,
+					forwardDistance: 0,
 					orientation: homeZone.orientation
 				};
 				
@@ -96,6 +104,8 @@ class ChessManager {
 					position: { x, z },
 					color: playerColor,
 					hasMoved: false,
+					moveCount: 0,
+					forwardDistance: 0,
 					orientation: homeZone.orientation
 				};
 				
@@ -145,6 +155,8 @@ class ChessManager {
 					position: { x, z },
 					color: playerColor,
 					hasMoved: false,
+					moveCount: 0,
+					forwardDistance: 0,
 					orientation: homeZone.orientation
 				};
 				
@@ -186,6 +198,8 @@ class ChessManager {
 					position: { x, z },
 					color: playerColor,
 					hasMoved: false,
+					moveCount: 0,
+					forwardDistance: 0,
 					orientation: homeZone.orientation
 				};
 				
@@ -327,16 +341,12 @@ class ChessManager {
 	 * @private
 	 */
 	_hasAdjacentCell(game, x, z, playerId) {
-		// Check all adjacent cells (including diagonals)
+		// Orthogonal only — must match island/tetromino adjacency rules
 		const directions = [
 			{ x: 0, z: -1 },  // North
-			{ x: 1, z: -1 },  // Northeast
 			{ x: 1, z: 0 },   // East
-			{ x: 1, z: 1 },   // Southeast
 			{ x: 0, z: 1 },   // South
-			{ x: -1, z: 1 },  // Southwest
 			{ x: -1, z: 0 },  // West
-			{ x: -1, z: -1 }  // Northwest
 		];
 		
 		for (const dir of directions) {
@@ -359,6 +369,69 @@ class ChessManager {
 		return { hasAdjacent: false };
 	}
 	
+	/**
+	 * Build an "obstructor view" of the board — a single function that
+	 * returns the canonical occupant of any cell, agreeing with the
+	 * client move generator about what blocks a slide.
+	 *
+	 * The previous validators walked cell markers and chessPieces
+	 * separately, so a phantom piece in chessPieces (no matching
+	 * marker) or a stale marker (no live piece) would make the two
+	 * sides disagree and surface as "Invalid chess move" toasts. This
+	 * helper is the single source of truth.
+	 *
+	 * Priority:
+	 *   1. `game.chessPieces` — every live piece's position is occupied.
+	 *   2. Legacy cell markers that have NO `pieceId` (older migration
+	 *      data the user can't easily clear). Markers with a pieceId
+	 *      that no longer corresponds to a live piece are treated as
+	 *      ghosts and ignored.
+	 *
+	 * Returns a `pieceAt(x, z)` function returning either `null` or
+	 * `{ player, pieceType, pieceId, piece }` (piece is the live
+	 * `chessPieces` entry, or `null` for legacy-marker blockers).
+	 *
+	 * @param {Object} game
+	 * @returns {(x: number, z: number) => Object|null}
+	 * @private
+	 */
+	_buildPieceLocator(game) {
+		const pieceIndex = new Map();
+		const activePieces = Array.isArray(game.chessPieces) ? game.chessPieces : [];
+		for (const p of activePieces) {
+			if (!p || !p.position) continue;
+			const x = Number(p.position.x);
+			const z = Number(p.position.z);
+			if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
+			pieceIndex.set(`${x},${z}`, p);
+		}
+		return (x, z) => {
+			const live = pieceIndex.get(`${x},${z}`);
+			if (live) {
+				return {
+					player: live.player,
+					pieceType: String(live.type || '').toLowerCase(),
+					pieceId: live.id,
+					piece: live,
+				};
+			}
+			const cell = this.boardManager.getCell(game.board, x, z);
+			if (!Array.isArray(cell)) return null;
+			for (const item of cell) {
+				if (!item || item.type !== 'chess') continue;
+				if (item.pieceId == null) {
+					return {
+						player: item.player,
+						pieceType: item.pieceType,
+						pieceId: null,
+						piece: null,
+					};
+				}
+			}
+			return null;
+		};
+	}
+
 	/**
 	 * Validate a chess piece move
 	 * @param {Object} game - The game object
@@ -398,28 +471,29 @@ class ChessManager {
 					error: 'Cannot move to the same position'
 				};
 			}
-			
-			// Check if the destination has a chess piece of the same player
+
+			const pieceAt = this._buildPieceLocator(game);
 			const targetCell = this.boardManager.getCell(game.board, toX, toZ);
-			if (Array.isArray(targetCell)) {
-				const friendlyChess = targetCell.find(item => item && item.type === 'chess' && item.player === playerId);
-				if (friendlyChess) {
-					return {
-						valid: false,
-						error: 'Cannot capture your own piece'
-					};
-				}
+
+			// Friendly-piece check — uses the shared locator so the AI
+			// path agrees with the socket path about who is where.
+			const targetPiece = pieceAt(toX, toZ);
+			if (targetPiece && String(targetPiece.player) === String(playerId)) {
+				return {
+					valid: false,
+					error: 'Cannot capture your own piece'
+				};
 			}
 			
 			// Validate move based on piece type
-			const typeValidation = this._validateMoveByPieceType(game, piece, toX, toZ);
+			const typeValidation = this._validateMoveByPieceType(game, piece, toX, toZ, pieceAt);
 			if (!typeValidation.valid) {
 				return typeValidation;
 			}
 			
 			// Check for path obstructions (except knights which can jump)
 			if (piece.type !== 'KNIGHT') {
-				const pathValidation = this._checkPathObstruction(game, piece, toX, toZ);
+				const pathValidation = this._checkPathObstruction(game, piece, toX, toZ, pieceAt);
 				if (!pathValidation.valid) {
 					return pathValidation;
 				}
@@ -451,15 +525,16 @@ class ChessManager {
 	 * @param {Object} piece - The chess piece
 	 * @param {number} toX - Destination X coordinate
 	 * @param {number} toZ - Destination Z coordinate
+	 * @param {Function} [pieceAt] - Optional shared occupant locator
 	 * @returns {Object} Result of the validation
 	 * @private
 	 */
-	_validateMoveByPieceType(game, piece, toX, toZ) {
+	_validateMoveByPieceType(game, piece, toX, toZ, pieceAt) {
 		const fromX = piece.position.x;
 		const fromZ = piece.position.z;
 		const type = piece.type.toLowerCase();
-		
-		// Calculate the absolute differences in coordinates
+		const occupantAt = pieceAt || this._buildPieceLocator(game);
+
 		const deltaX = Math.abs(toX - fromX);
 		const deltaZ = Math.abs(toZ - fromZ);
 		
@@ -481,8 +556,7 @@ class ChessManager {
 					toX - fromX === fwd.dx * 2 && toZ - fromZ === fwd.dz * 2);
 
 				if (isForwardOne) {
-					const dest = this.boardManager.getCell(game.board, toX, toZ);
-					if (!dest || !Array.isArray(dest) || !dest.some(i => i && i.type === 'chess')) {
+					if (!occupantAt(toX, toZ)) {
 						return { valid: true };
 					}
 					return { valid: false, error: 'Pawn cannot move forward into an occupied cell' };
@@ -491,25 +565,20 @@ class ChessManager {
 				if (isForwardTwo) {
 					const midX = fromX + fwd.dx;
 					const midZ = fromZ + fwd.dz;
-					const midCell = this.boardManager.getCell(game.board, midX, midZ);
-					const midBlocked = Array.isArray(midCell) && midCell.some(i => i && i.type === 'chess');
-					const destCell = this.boardManager.getCell(game.board, toX, toZ);
-					const destBlocked = Array.isArray(destCell) && destCell.some(i => i && i.type === 'chess');
-					if (!midBlocked && !destBlocked) {
-						return { valid: true };
+					if (occupantAt(midX, midZ) || occupantAt(toX, toZ)) {
+						return { valid: false, error: 'Pawn cannot jump over pieces' };
 					}
-					return { valid: false, error: 'Pawn cannot jump over pieces' };
+					return { valid: true };
 				}
 
-				// Diagonal capture
+				// Diagonal capture — must have an enemy occupant.
 				const isDiag = fwd.dx === 0
 					? (Math.abs(toX - fromX) === 1 && toZ - fromZ === fwd.dz)
 					: (Math.abs(toZ - fromZ) === 1 && toX - fromX === fwd.dx);
 				if (isDiag) {
-					const targetCell = this.boardManager.getCell(game.board, toX, toZ);
-					if (Array.isArray(targetCell)) {
-						const enemyChess = targetCell.find(item => item && item.type === 'chess' && item.player !== piece.player);
-						if (enemyChess) return { valid: true };
+					const target = occupantAt(toX, toZ);
+					if (target && String(target.player) !== String(piece.player)) {
+						return { valid: true };
 					}
 					return { valid: false, error: 'Pawn can only move diagonally when capturing' };
 				}
@@ -518,7 +587,6 @@ class ChessManager {
 			}
 			
 			case 'rook': {
-				// Rooks move horizontally or vertically
 				if (fromX === toX || fromZ === toZ) {
 					return { valid: true };
 				}
@@ -526,7 +594,6 @@ class ChessManager {
 			}
 			
 			case 'knight': {
-				// Knights move in an L-shape (2 in one direction, 1 in perpendicular direction)
 				if ((deltaX === 2 && deltaZ === 1) || (deltaX === 1 && deltaZ === 2)) {
 					return { valid: true };
 				}
@@ -534,7 +601,6 @@ class ChessManager {
 			}
 			
 			case 'bishop': {
-				// Bishops move diagonally
 				if (deltaX === deltaZ) {
 					return { valid: true };
 				}
@@ -542,7 +608,6 @@ class ChessManager {
 			}
 			
 			case 'queen': {
-				// Queens move horizontally, vertically, or diagonally
 				if (fromX === toX || fromZ === toZ || deltaX === deltaZ) {
 					return { valid: true };
 				}
@@ -550,14 +615,12 @@ class ChessManager {
 			}
 			
 			case 'king': {
-				// Kings move one step in any direction
 				if (deltaX <= 1 && deltaZ <= 1) {
 					return { valid: true };
 				}
 
-				// Castling: king moves exactly 2 squares along the home row
 				if (!piece.hasMoved && ((deltaX === 2 && deltaZ === 0) || (deltaX === 0 && deltaZ === 2))) {
-					const castleResult = this._validateCastle(game, piece, toX, toZ);
+					const castleResult = this._validateCastle(game, piece, toX, toZ, occupantAt);
 					if (castleResult.valid) {
 						return { valid: true, castling: castleResult };
 					}
@@ -572,13 +635,16 @@ class ChessManager {
 		}
 	}
 
-	_validateCastle(game, king, toX, toZ) {
+	_validateCastle(game, king, toX, toZ, pieceAt) {
 		const fromX = king.position.x;
 		const fromZ = king.position.z;
 		const dx = Math.sign(toX - fromX);
 		const dz = Math.sign(toZ - fromZ);
+		const occupantAt = pieceAt || this._buildPieceLocator(game);
 
-		// Find a rook belonging to the same player along the castling direction
+		// Find a friendly rook along the castling direction using the
+		// shared locator — agrees with the slider-blocker logic so
+		// phantoms / ghosts don't change the answer.
 		let rook = null;
 		let searchX = fromX + dx;
 		let searchZ = fromZ + dz;
@@ -586,19 +652,16 @@ class ChessManager {
 		for (let i = 0; i < maxSearch; i++) {
 			const cell = this.boardManager.getCell(game.board, searchX, searchZ);
 			if (!cell) break;
-
-			if (Array.isArray(cell)) {
-				const chessPiece = cell.find(it => it && it.type === 'chess');
-				if (chessPiece) {
-					if (chessPiece.pieceType === 'rook' &&
-						String(chessPiece.player) === String(king.player)) {
-						// Found a friendly rook
-						rook = game.chessPieces.find(
-							p => p && p.id === chessPiece.pieceId
-						);
-					}
-					break;
+			const occupant = occupantAt(searchX, searchZ);
+			if (occupant) {
+				if (
+					occupant.piece &&
+					String(occupant.pieceType).toLowerCase() === 'rook' &&
+					String(occupant.player) === String(king.player)
+				) {
+					rook = occupant.piece;
 				}
+				break;
 			}
 			searchX += dx;
 			searchZ += dz;
@@ -611,7 +674,7 @@ class ChessManager {
 			return { valid: false, error: 'Rook has already moved' };
 		}
 
-		// Ensure all cells between king and rook exist and are free of chess pieces
+		// Ensure path exists and is free of obstructors.
 		let checkX = fromX + dx;
 		let checkZ = fromZ + dz;
 		while (checkX !== rook.position.x || checkZ !== rook.position.z) {
@@ -619,14 +682,13 @@ class ChessManager {
 			if (!cell || (Array.isArray(cell) && cell.length === 0)) {
 				return { valid: false, error: 'Gap in board between king and rook' };
 			}
-			if (Array.isArray(cell) && cell.some(it => it && it.type === 'chess')) {
+			if (occupantAt(checkX, checkZ)) {
 				return { valid: false, error: 'Piece between king and rook' };
 			}
 			checkX += dx;
 			checkZ += dz;
 		}
 
-		// The rook moves to the square the king crossed over
 		const rookDestX = fromX + dx;
 		const rookDestZ = fromZ + dz;
 
@@ -646,35 +708,32 @@ class ChessManager {
 	 * @param {Object} piece - The chess piece
 	 * @param {number} toX - Destination X coordinate
 	 * @param {number} toZ - Destination Z coordinate
+	 * @param {Function} [pieceAt] - Optional shared occupant locator
 	 * @returns {Object} Result of the path check
 	 * @private
 	 */
-	_checkPathObstruction(game, piece, toX, toZ) {
+	_checkPathObstruction(game, piece, toX, toZ, pieceAt) {
 		const fromX = piece.position.x;
 		const fromZ = piece.position.z;
-		
-		// Determine the direction of movement
+		const occupantAt = pieceAt || this._buildPieceLocator(game);
+
 		const dx = Math.sign(toX - fromX);
 		const dz = Math.sign(toZ - fromZ);
-		
-		// Start from the next position after the piece
+
 		let x = fromX + dx;
 		let z = fromZ + dz;
-		
-		// Check all cells along the path excluding the destination — only chess pieces block
+
 		while (x !== toX || z !== toZ) {
-			const pathCell = this.boardManager.getCell(game.board, x, z);
-			if (Array.isArray(pathCell) && pathCell.some(item => item && item.type === 'chess')) {
+			if (occupantAt(x, z)) {
 				return {
 					valid: false,
 					error: `Path is obstructed at position (${x}, ${z})`
 				};
 			}
-			
 			x += dx;
 			z += dz;
 		}
-		
+
 		return { valid: true };
 	}
 	
@@ -709,12 +768,20 @@ class ChessManager {
 				if (p.position.x === toX && p.position.z === toZ && p.player !== playerId) {
 					capture = true;
 					capturedPiece = p;
-					
+
 					log(`${piece.type} captures ${p.type} at (${toX}, ${toZ})`);
-					game.chessPieces.splice(i, 1);
-					
+					pieceLifecycle.removePiece(game, p, {
+						reason: pieceLifecycle.REMOVAL_REASONS.CAPTURED,
+						activityLog: this.activityLog,
+						capturedBy: {
+							playerId,
+							pieceId: piece.id,
+							pieceType: String(piece.type || '').toLowerCase(),
+						},
+					});
+
 					if (p.type === 'KING') {
-						this._handleKingCapture(game, p.player);
+						this._handleKingCapture(game, p.player, playerId);
 					}
 					break;
 				}
@@ -742,6 +809,11 @@ class ChessManager {
 			piece.position.z = toZ;
 			piece.hasMoved = true;
 			piece.moveCount = (piece.moveCount || 0) + 1;
+
+			// Track net forward distance for pawn promotion
+			if (piece.type === 'PAWN') {
+				this._updatePawnForwardDistance(piece, fromX, fromZ, toX, toZ);
+			}
 			
 			// If capturing, also strip the captured piece's cell entry at the destination
 			if (capture) {
@@ -753,6 +825,12 @@ class ChessManager {
 				}
 			}
 			
+			// ── Cell ownership transfer ──────────────────────────────────────
+			// Landing on an enemy cell claims its non-home content for the
+			// mover. Home markers are intrinsic to the original owner and
+			// are never transferred.
+			this._transferCellOwnership(game, toX, toZ, playerId);
+
 			// Append the chess-piece marker to the destination cell without
 			// destroying existing tetromino / home content.
 			this.boardManager.addToCellContents(game.board, toX, toZ, {
@@ -820,33 +898,219 @@ class ChessManager {
 	}
 	
 	/**
-	 * Handle king capture
+	 * Transfer cell content ownership when a chess piece lands on an enemy cell.
+	 * Home markers are never transferred (they belong to the zone owner).
+	 * After transfer, island detection runs for each affected former owner.
+	 *
 	 * @param {Object} game - The game object
-	 * @param {string} playerId - The player who lost their king
+	 * @param {number} x - Target cell X
+	 * @param {number} z - Target cell Z
+	 * @param {string} newOwner - The player claiming the cell
 	 * @private
 	 */
-	_handleKingCapture(game, playerId) {
-		log(`Player ${playerId} lost their king!`);
-		
-		// Mark the player as eliminated
-		game.players[playerId].eliminated = true;
-		game.players[playerId].eliminatedAt = Date.now();
-		
+	_transferCellOwnership(game, x, z, newOwner) {
+		const key = `${x},${z}`;
+		const cell = game.board.cells[key];
+		if (!Array.isArray(cell)) return;
+
+		const affectedOwners = new Set();
+		for (const item of cell) {
+			if (!item || !item.player) continue;
+			if (String(item.player) === String(newOwner)) continue;
+			if (item.type === cells.HOME_TYPE) continue;
+			affectedOwners.add(String(item.player));
+		}
+
+		const playerColor = game.players[newOwner]?.color;
+		cells.transferOwnership(cell, newOwner, playerColor);
+
+		for (const prevOwner of affectedOwners) {
+			log(`Cell (${x},${z}) ownership transferred from ${prevOwner} to ${newOwner}`);
+		}
+	}
+
+	/**
+	 * Handle king capture — per the bible:
+	 * 1. Non-pawn pieces transfer to the captor.
+	 * 2. Pawns become "suicidal" (3 s delay, then one per 0.5 s, destroying cells).
+	 * 3. Island decay runs after all suicidal pawns detonate.
+	 * 4. Defeated player is eliminated; their territory transfers.
+	 * 5. Captured king goes to prison.
+	 *
+	 * @param {Object} game - The game object
+	 * @param {string} defeatedId - The player who lost their king
+	 * @param {string} captorId - The player who captured the king
+	 * @private
+	 */
+	_handleKingCapture(game, defeatedId, captorId) {
+		log(`Player ${defeatedId} lost their king to ${captorId}!`);
+
+		const defeated = game.players[defeatedId];
+		const captor = game.players[captorId];
+		if (!defeated || !captor) return;
+
+		// ── 1. Transfer non-pawn pieces to the captor ───────────────────────
+		const suicidalPawns = [];
+		for (const piece of game.chessPieces) {
+			if (!piece || piece.player !== defeatedId) continue;
+			if (piece.type === 'KING') continue;
+
+			if (piece.type === 'PAWN') {
+				suicidalPawns.push(piece);
+			} else {
+				piece.player = captorId;
+				piece.color = captor.color;
+
+				// Update cell entry ownership
+				const key = `${piece.position.x},${piece.position.z}`;
+				const cell = game.board.cells[key];
+				if (Array.isArray(cell)) {
+					const entry = cell.find(
+						it => it && it.type === 'chess' && String(it.player) === String(defeatedId)
+					);
+					if (entry) {
+						entry.player = captorId;
+						entry.color = captor.color;
+					}
+				}
+				log(`Transferred ${piece.type} at (${piece.position.x}, ${piece.position.z}) to ${captorId}`);
+			}
+		}
+
+		// ── 2. Suicidal pawns — schedule detonation ─────────────────────────
+		const detonateAt = Date.now() + GAME_RULES.SUICIDAL_PAWN_DELAY_MS;
+		for (let i = 0; i < suicidalPawns.length; i++) {
+			suicidalPawns[i]._suicidalDetonateAt =
+				detonateAt + i * GAME_RULES.SUICIDAL_PAWN_INTERVAL_MS;
+			suicidalPawns[i]._suicidal = true;
+		}
+
+		if (suicidalPawns.length > 0) {
+			const totalTime =
+				GAME_RULES.SUICIDAL_PAWN_DELAY_MS +
+				suicidalPawns.length * GAME_RULES.SUICIDAL_PAWN_INTERVAL_MS;
+
+			log(`${suicidalPawns.length} suicidal pawns will detonate over ${totalTime} ms`);
+
+			this._scheduleSuicidalPawns(game, suicidalPawns, captorId, defeatedId);
+		} else {
+			this._finaliseKingCapture(game, defeatedId, captorId);
+		}
+	}
+
+	/**
+	 * Tick through suicidal pawns one at a time, destroying cells.
+	 * @private
+	 */
+	_scheduleSuicidalPawns(game, pawns, captorId, defeatedId) {
+		let idx = 0;
+
+		const detonateNext = () => {
+			if (idx >= pawns.length) {
+				this.islandManager.checkForIslandsAfterRowClear(game);
+				this._finaliseKingCapture(game, defeatedId, captorId);
+				return;
+			}
+
+			const pawn = pawns[idx];
+			idx++;
+
+			if (!pawn || !pawn.position) {
+				detonateNext();
+				return;
+			}
+
+			const px = pawn.position.x;
+			const pz = pawn.position.z;
+			log(`Suicidal pawn detonates at (${px}, ${pz})`);
+
+			pieceLifecycle.removePiece(game, pawn, {
+				reason: pieceLifecycle.REMOVAL_REASONS.SUICIDAL_PAWN,
+				activityLog: this.activityLog,
+			});
+
+			const key = `${px},${pz}`;
+			delete game.board.cells[key];
+
+			setTimeout(detonateNext, GAME_RULES.SUICIDAL_PAWN_INTERVAL_MS);
+		};
+
+		setTimeout(detonateNext, GAME_RULES.SUICIDAL_PAWN_DELAY_MS);
+	}
+
+	/**
+	 * Finalise king capture after suicidal pawns have detonated.
+	 * @private
+	 */
+	_finaliseKingCapture(game, defeatedId, captorId) {
+		const defeated = game.players[defeatedId];
+		const captor = game.players[captorId];
+
+		// ── 3. Transfer remaining territory to captor ────────────────────────
+		for (const key in game.board.cells) {
+			const cell = game.board.cells[key];
+			if (!Array.isArray(cell)) continue;
+			for (const item of cell) {
+				if (item && String(item.player) === String(defeatedId)) {
+					item.player = captorId;
+					item.color = captor ? captor.color : item.color;
+				}
+			}
+		}
+
+		if (!Array.isArray(game.kingPrison)) game.kingPrison = [];
+		game.kingPrison.push({
+			playerId: defeatedId,
+			capturedBy: captorId,
+			capturedAt: Date.now(),
+		});
+
+		// ── 5. Track captured styles ────────────────────────────────────────
+		if (!captor.capturedStyles) captor.capturedStyles = [];
+		captor.capturedStyles.push({
+			playerId: defeatedId,
+			color: defeated ? defeated.color : null,
+		});
+
+		// ── 6. Eliminate the defeated player ─────────────────────────────────
+		if (defeated) {
+			defeated.eliminated = true;
+			defeated.eliminatedAt = Date.now();
+		}
+
 		// Check if only one player remains
 		const remainingPlayers = Object.values(game.players)
 			.filter(p => !p.eliminated && !p.isObserver);
-		
+
 		if (remainingPlayers.length === 1) {
-			// Game over, declare the remaining player as the winner
 			game.status = 'completed';
 			game.winnerId = remainingPlayers[0].id;
 			game.completedAt = Date.now();
 			log(`Game over! Player ${game.winnerId} wins!`);
 		}
+
+		log(`King capture finalised: ${captorId} defeated ${defeatedId}`);
 	}
 	
 	/**
-	 * Check for pawn promotion
+	 * Update the pawn's net forward distance from its start position.
+	 * @private
+	 */
+	_updatePawnForwardDistance(piece, fromX, fromZ, toX, toZ) {
+		const orientation = Number.isFinite(piece.orientation) ? piece.orientation : 0;
+		let forwardDelta = 0;
+		switch (orientation) {
+			case 0: forwardDelta = toZ - fromZ; break;
+			case 1: forwardDelta = toX - fromX; break;
+			case 2: forwardDelta = fromZ - toZ; break;
+			case 3: forwardDelta = fromX - toX; break;
+		}
+		piece.forwardDistance = (piece.forwardDistance || 0) + forwardDelta;
+	}
+
+	/**
+	 * Check for pawn promotion — triggers after 9 squares forward
+	 * from starting position (net forward distance, not total moves).
 	 * @param {Object} game - The game object
 	 * @param {Object} piece - The chess piece (pawn)
 	 * @private
@@ -854,7 +1118,7 @@ class ChessManager {
 	_checkPawnPromotion(game, piece) {
 		if (piece.type !== 'PAWN') return null;
 
-		const distance = piece.moveCount || 0;
+		const distance = piece.forwardDistance || 0;
 		if (distance < GAME_RULES.PAWN_PROMOTION_DISTANCE) return null;
 
 		return { pieceId: piece.id, playerId: piece.player };
@@ -887,6 +1151,164 @@ class ChessManager {
 
 		log(`Pawn ${pieceId} promoted to ${promotionPiece} at (${piece.position.x}, ${piece.position.z})`);
 		return { success: true, pieceType: promotionPiece, piece };
+	}
+
+	/**
+	 * Voluntarily detonate one of the player's own pieces.
+	 * - Pawn: always destroys the detonated coordinate entirely.
+	 * - King: allowed only if it is the player's final remaining piece; this
+	 *   triggers a full self-destruct of all that player's territory.
+	 *
+	 * @param {Object} game - The game object
+	 * @param {string} playerId - The player requesting detonation
+	 * @param {string} pieceId - Piece to detonate
+	 * @returns {Object} Result with success flag and payload
+	 */
+	detonatePawn(game, playerId, pieceId) {
+		if (!game || !game.board || !game.board.cells || !Array.isArray(game.chessPieces)) {
+			return { success: false, error: 'Invalid game state' };
+		}
+		
+		const pieceIdx = game.chessPieces.findIndex(
+			p => p && p.id === pieceId && p.player === playerId
+		);
+		if (pieceIdx === -1) {
+			return { success: false, error: 'Piece not found or not yours' };
+		}
+		
+		const piece = game.chessPieces[pieceIdx];
+		const pieceType = String(piece.type || '').toUpperCase();
+		const piecePos = piece.position || piece;
+		if (!piecePos || !Number.isFinite(piecePos.x) || !Number.isFinite(piecePos.z)) {
+			return { success: false, error: 'Invalid piece position' };
+		}
+		const px = piecePos.x;
+		const pz = piecePos.z;
+		
+		if (pieceType === 'KING') {
+			const ownPieces = game.chessPieces.filter(
+				p => p && String(p.player) === String(playerId)
+			);
+			if (ownPieces.length > 1) {
+				return { success: false, error: 'King can only be detonated when it is your last piece' };
+			}
+			
+			const ownedCells = [];
+			const ownedCellSet = new Set();
+			for (const [key, contents] of Object.entries(game.board.cells)) {
+				if (!Array.isArray(contents) || contents.length === 0) continue;
+				const hasOwnedContent = contents.some(
+					item => item && String(item.player) === String(playerId)
+				);
+				if (!hasOwnedContent) continue;
+				const [x, z] = key.split(',').map(Number);
+				const cell = { x, z };
+				ownedCells.push(cell);
+				ownedCellSet.add(`${x},${z}`);
+			}
+			
+			// Compute orthogonal path length layers from the king through owned cells.
+			const distanceMap = new Map();
+			if (ownedCellSet.has(`${px},${pz}`)) {
+				const queue = [{ x: px, z: pz, d: 0 }];
+				distanceMap.set(`${px},${pz}`, 0);
+				
+				while (queue.length > 0) {
+					const current = queue.shift();
+					const adjacent = [
+						{ x: current.x - 1, z: current.z },
+						{ x: current.x + 1, z: current.z },
+						{ x: current.x, z: current.z - 1 },
+						{ x: current.x, z: current.z + 1 },
+					];
+					
+					for (const next of adjacent) {
+						const key = `${next.x},${next.z}`;
+						if (!ownedCellSet.has(key)) continue;
+						if (distanceMap.has(key)) continue;
+						const nextDistance = current.d + 1;
+						distanceMap.set(key, nextDistance);
+						queue.push({ x: next.x, z: next.z, d: nextDistance });
+					}
+				}
+			}
+			
+			let maxDistance = 0;
+			for (const d of distanceMap.values()) {
+				if (d > maxDistance) maxDistance = d;
+			}
+			
+			const explosionSequence = ownedCells.map(cell => {
+				const key = `${cell.x},${cell.z}`;
+				if (distanceMap.has(key)) {
+					return { ...cell, distance: distanceMap.get(key) };
+				}
+				
+				// Fallback for stale/disconnected remnants: still explode first.
+				const manhattan = Math.abs(cell.x - px) + Math.abs(cell.z - pz);
+				return { ...cell, distance: maxDistance + 1 + manhattan };
+			}).sort((a, b) => {
+				if (a.distance !== b.distance) return b.distance - a.distance;
+				if (a.x !== b.x) return a.x - b.x;
+				return a.z - b.z;
+			});
+			
+			for (const cell of explosionSequence) {
+				const key = `${cell.x},${cell.z}`;
+				const cellContents = game.board.cells[key];
+				if (!Array.isArray(cellContents) || cellContents.length === 0) continue;
+				
+				const remaining = cellContents.filter(
+					item => !(item && String(item.player) === String(playerId))
+				);
+				if (remaining.length > 0) {
+					game.board.cells[key] = remaining;
+				} else {
+					delete game.board.cells[key];
+				}
+			}
+			
+			pieceLifecycle.removePiece(game, piece, {
+				reason: pieceLifecycle.REMOVAL_REASONS.DETONATED,
+				activityLog: this.activityLog,
+				note: 'final_king_self_destruct',
+			});
+			this.boardManager.recalculateBoardBoundaries(game.board);
+			this.islandManager.checkForIslandsAfterRowClear(game);
+
+			log(`Player ${playerId} detonated their final KING at (${px}, ${pz})`);
+			return {
+				success: true,
+				detonatedAt: { x: px, z: pz },
+				pieceType: 'KING',
+				endedGame: true,
+				layerIntervalMs: 500,
+				explosionSequence,
+			};
+		}
+
+		if (pieceType !== 'PAWN') {
+			return { success: false, error: 'Only pawns can be detonated (except final king self-destruct)' };
+		}
+
+		// The pawn detonation socket handler in `server/sockets/chess.js`
+		// emits its own `chess_piece_detonated` activity event with the
+		// detonation reason; suppress this helper's automatic event so
+		// the log doesn't carry a duplicate entry.
+		pieceLifecycle.removePiece(game, piece, {
+			reason: pieceLifecycle.REMOVAL_REASONS.DETONATED,
+			silent: true,
+		});
+		delete game.board.cells[`${px},${pz}`];
+
+		log(`Player ${playerId} detonated pawn at (${px}, ${pz})`);
+		this.islandManager.checkForIslandsAfterRowClear(game);
+		
+		return {
+			success: true,
+			detonatedAt: { x: px, z: pz },
+			pieceType: 'PAWN',
+		};
 	}
 	
 	/**
@@ -928,22 +1350,18 @@ class ChessManager {
 			
 			const pieceOwner = piece.player;
 			const pieceType = String(piece.type || '').toUpperCase();
-			
-			// Cannot capture own piece
-			const targetChess = targetCell.find(item => item && item.type === 'chess');
+
+			const pieceAt = this._buildPieceLocator(game);
+			const targetChess = pieceAt(toX, toZ);
 			if (targetChess && String(targetChess.player) === String(pieceOwner)) return false;
-			
+
 			const deltaX = toX - fromX;
 			const deltaZ = toZ - fromZ;
 			const absX = Math.abs(deltaX);
 			const absZ = Math.abs(deltaZ);
-			
-			const hasChessPieceAt = (x, z) => {
-				const cell = this.boardManager.getCell(game.board, x, z);
-				if (!cell || !Array.isArray(cell)) return false;
-				return cell.some(item => item && item.type === 'chess');
-			};
-			
+
+			const hasChessPieceAt = (x, z) => !!pieceAt(x, z);
+
 			const isBoardSquare = (x, z) => {
 				const cell = this.boardManager.getCell(game.board, x, z);
 				return !!(cell && Array.isArray(cell) && cell.length > 0);
@@ -957,11 +1375,9 @@ class ChessManager {
 				let z = fromZ + stepZ;
 				
 				while (x !== toX || z !== toZ) {
-					// Cannot move through the void
 					if (!isBoardSquare(x, z)) return false;
-					// Cannot move through chess pieces
 					if (hasChessPieceAt(x, z)) return false;
-					
+
 					x += stepX;
 					z += stepZ;
 				}
@@ -972,9 +1388,8 @@ class ChessManager {
 			switch (pieceType) {
 				case 'KING':
 					if (absX <= 1 && absZ <= 1) return true;
-					// Castling (2 squares along one axis)
 					if (!piece.hasMoved && ((absX === 2 && absZ === 0) || (absX === 0 && absZ === 2))) {
-						const castleResult = this._validateCastle(game, piece, toX, toZ);
+						const castleResult = this._validateCastle(game, piece, toX, toZ, pieceAt);
 						return castleResult.valid;
 					}
 					return false;
@@ -1027,7 +1442,6 @@ class ChessManager {
 				}
 				
 				if (isForwardTwo) {
-					// Two-square advance on first move — path and destination must be clear
 					const midX = fromX + forward.dx;
 					const midZ = fromZ + forward.dz;
 					const midCell = this.boardManager.getCell(game.board, midX, midZ);
@@ -1064,7 +1478,10 @@ class ChessManager {
 			if (!game || !game.board || !game.board.cells) return false;
 			
 			// Get all chess pieces for the player
-			const playerPieces = game.chessPieces.filter(piece => piece && piece.player === playerId);
+			const pid = String(playerId);
+			const playerPieces = game.chessPieces.filter(
+				piece => piece && String(piece.player) === pid
+			);
 			
 			// If the player has no pieces, they have no valid moves
 			if (!playerPieces.length) {
@@ -1072,17 +1489,14 @@ class ChessManager {
 				return false;
 			}
 			
+			const pieceAt = this._buildPieceLocator(game);
 			const isBoardSquare = (x, z) => {
 				const cell = this.boardManager.getCell(game.board, x, z);
 				return !!(cell && Array.isArray(cell) && cell.length > 0);
 			};
-			
-			const hasChessPieceAt = (x, z) => {
-				const cell = this.boardManager.getCell(game.board, x, z);
-				if (!cell || !Array.isArray(cell)) return false;
-				return cell.some(item => item && item.type === 'chess');
-			};
-			
+
+			const hasChessPieceAt = (x, z) => !!pieceAt(x, z);
+
 			// Check each piece for at least one valid move (efficient ray checks for sliders)
 			for (const piece of playerPieces) {
 				const pos = piece.position || piece;

@@ -1,10 +1,10 @@
-# Shaktris Deployment Guide
+# Tetches Deployment Guide
 
-This comprehensive guide provides step-by-step instructions for deploying Shaktris to a production environment.
+This comprehensive guide provides step-by-step instructions for deploying Tetches to a production environment.
 
 ## 1. Server Architecture
 
-Shaktris uses a modern, unified server architecture:
+Tetches uses a modern, unified server architecture:
 
 - **Main Server (`/server.js`)**: The primary application server using ES modules (import/export)
 - **Supporting Modules (`/src` directory)**: Helper modules that provide auxiliary functionality
@@ -14,7 +14,7 @@ Shaktris uses a modern, unified server architecture:
 
 ### Prerequisites
 - Ubuntu 22.04 server
-- Domain configured (shaktris.com) with DNS records pointing to your server
+- Domain configured (tetches.com) with DNS records pointing to your server
 - SSH access to the server
 
 ### Initial Server Setup
@@ -51,11 +51,11 @@ db.createUser({
   roles: [ { role: "userAdminAnyDatabase", db: "admin" } ]
 })
 
-use chesstris
+use tetches
 db.createUser({
-  user: "chesstris_app",
+  user: "tetches_app",
   pwd: "your_app_password",
-  roles: [ { role: "readWrite", db: "chesstris" } ]
+  roles: [ { role: "readWrite", db: "tetches" } ]
 })
 
 exit
@@ -121,8 +121,8 @@ sudo mkdir -p /var/www
 sudo chown $USER:$USER /var/www
 
 # Clone the repository
-git clone https://github.com/your-repo/chesstris.git /var/www/chesstris
-cd /var/www/chesstris
+git clone https://github.com/your-repo/tetches.git /var/www/tetches
+cd /var/www/tetches
 ```
 
 ### Install Dependencies
@@ -144,7 +144,7 @@ Add the following content:
 NODE_ENV=production
 PORT=3666
 HOST=0.0.0.0
-MONGODB_URI=mongodb://chesstris_app:your_app_password@localhost:27017/chesstris
+MONGODB_URI=mongodb://tetches_app:your_app_password@localhost:27017/tetches
 REDIS_URI=redis://:your_redis_password@localhost:6379/0
 JWT_SECRET=your_secure_jwt_secret
 JWT_EXPIRY=7d
@@ -156,7 +156,7 @@ COOKIE_SECRET=your_secure_cookie_secret
 
 ```bash
 # Start with PM2
-pm2 start server.js --name chesstris
+pm2 start server.js --name tetches
 
 # Configure PM2 to start on boot
 pm2 save
@@ -165,7 +165,7 @@ pm2 startup
 
 # Check if the application is running
 pm2 status
-pm2 logs chesstris
+pm2 logs tetches
 ```
 
 ## 4. Web Server Setup
@@ -177,32 +177,32 @@ pm2 logs chesstris
 sudo apt install -y nginx
 
 # Create Nginx configuration
-sudo vim /etc/nginx/sites-available/shaktris.com
+sudo vim /etc/nginx/sites-available/tetches.com
 ```
 
 Add this configuration:
 ```nginx
 server {
     listen 80;
-    server_name shaktris.com www.shaktris.com;
+    server_name tetches.com www.tetches.com;
     return 301 https://$host$request_uri;
 }
 
 server {
     listen 443 ssl http2;
-    server_name shaktris.com www.shaktris.com;
+    server_name tetches.com www.tetches.com;
     
     # SSL configs will be added by certbot
     
     # Static files
     location /static/ {
-        alias /var/www/chesstris/public/;
+        alias /var/www/tetches/public/;
         expires 30d;
     }
     
     # Additional static file types
     location ~ \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|otf)$ {
-        root /var/www/chesstris/public;
+        root /var/www/tetches/public;
         expires 30d;
     }
     
@@ -228,7 +228,7 @@ server {
 
 Enable and test:
 ```bash
-sudo ln -s /etc/nginx/sites-available/shaktris.com /etc/nginx/sites-enabled/
+sudo ln -s /etc/nginx/sites-available/tetches.com /etc/nginx/sites-enabled/
 sudo nginx -t
 sudo systemctl reload nginx
 ```
@@ -240,7 +240,7 @@ sudo systemctl reload nginx
 sudo apt install -y certbot python3-certbot-nginx
 
 # Get SSL certificate
-sudo certbot --nginx -d shaktris.com -d www.shaktris.com
+sudo certbot --nginx -d tetches.com -d www.tetches.com
 ```
 
 ## 5. Monitoring and Maintenance
@@ -264,7 +264,7 @@ if pm2 status | grep -q "online"; then
     echo "✅ App running"
 else
     echo "❌ App DOWN!"
-    pm2 restart chesstris
+    pm2 restart tetches
 fi
 
 # Check MongoDB
@@ -307,13 +307,13 @@ Follow the instructions in the backup guide (`docs/backup-guide.md`) to set up r
 Check logs and common issues:
 ```bash
 # Check PM2 logs
-pm2 logs chesstris
+pm2 logs tetches
 
 # Check if the port is in use
 sudo lsof -i :3666
 
 # Try running the app directly
-cd /var/www/chesstris
+cd /var/www/tetches
 node server.js
 ```
 
@@ -321,14 +321,14 @@ node server.js
 
 Check that your .env file is correctly set up:
 ```bash
-cat /var/www/chesstris/.env
+cat /var/www/tetches/.env
 ```
 
 ### Database Connection Issues
 
 Test MongoDB connection:
 ```bash
-mongosh "mongodb://chesstris_app:your_app_password@localhost:27017/chesstris" --eval "db.stats()"
+mongosh "mongodb://tetches_app:your_app_password@localhost:27017/tetches" --eval "db.stats()"
 ```
 
 Test Redis connection:
@@ -342,10 +342,10 @@ redis-cli -a "your_redis_password" ping
 
 ```bash
 # Restart the application
-pm2 restart chesstris
+pm2 restart tetches
 
 # View application logs
-pm2 logs chesstris
+pm2 logs tetches
 
 # Restart web server
 sudo systemctl restart nginx
@@ -360,8 +360,8 @@ sudo systemctl restart redis-server
 ### Updating the Application
 
 ```bash
-cd /var/www/chesstris
+cd /var/www/tetches
 git pull
 npm install --production
-pm2 restart chesstris
+pm2 restart tetches
 ``` 

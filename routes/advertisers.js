@@ -17,10 +17,60 @@ const sanitizeHtml = require('sanitize-html');
 
 const router = express.Router();
 
-// In-memory storage for advertisers (Redis/MongoDB integration can be added later)
+// Persistent storage for advertisers. We keep an in-memory `Map` for fast
+// access plus a flat JSON file on disk so that ads survive server restarts.
+// (A heavier backend like Redis/Postgres can later wrap these helpers.)
+const ADVERTISERS_FILE = path.join(__dirname, '../advertisers.json');
 const advertisers = new Map();
 const bidRanking = [];
 let rotationIndex = 0;
+let persistTimer = null;
+
+function loadAdvertisersFromDisk() {
+	try {
+		if (!fs.existsSync(ADVERTISERS_FILE)) return;
+		const raw = fs.readFileSync(ADVERTISERS_FILE, 'utf8');
+		const parsed = JSON.parse(raw);
+		if (!parsed || !Array.isArray(parsed.advertisers)) return;
+		for (const adv of parsed.advertisers) {
+			if (adv && adv.id) advertisers.set(adv.id, adv);
+		}
+		updateBidRankings();
+		console.log(`[Advertisers] Restored ${advertisers.size} advertiser(s) from disk.`);
+	} catch (err) {
+		console.warn('[Advertisers] Failed to load persisted advertisers:', err.message);
+	}
+}
+
+function writeAdvertisersSync() {
+	try {
+		const payload = JSON.stringify({
+			version: 1,
+			savedAt: new Date().toISOString(),
+			advertisers: Array.from(advertisers.values()),
+		}, null, '\t');
+		fs.writeFileSync(ADVERTISERS_FILE, payload, 'utf8');
+	} catch (err) {
+		console.warn('[Advertisers] Failed to persist advertisers:', err.message);
+	}
+}
+
+function schedulePersist() {
+	if (persistTimer) return;
+	persistTimer = setTimeout(() => {
+		persistTimer = null;
+		writeAdvertisersSync();
+	}, 250);
+	if (persistTimer.unref) persistTimer.unref();
+}
+
+function flushAdvertisersSync() {
+	if (persistTimer) {
+		clearTimeout(persistTimer);
+		persistTimer = null;
+	}
+	writeAdvertisersSync();
+}
 
 // Set up multer for image uploads
 const storage = multer.diskStorage({
@@ -146,9 +196,9 @@ router.post('/', upload.single('adImage'), async (req, res) => {
 			updatedAt: new Date().toISOString()
 		};
 		
-		// Store advertiser
 		advertisers.set(advertiser.id, advertiser);
-		
+		schedulePersist();
+
 		res.status(201).json({
 			success: true,
 			message: 'Advertiser registered successfully. Activate by sending payment.',
@@ -206,14 +256,13 @@ router.post('/:id/activate', async (req, res) => {
 			});
 		}
 		
-		// Activate the advertiser
 		advertiser.bidStatus = 'active';
 		advertiser.transactionSignature = transactionSignature;
 		advertiser.activatedAt = new Date().toISOString();
 		advertiser.updatedAt = new Date().toISOString();
-		
-		// Update bid rankings
+
 		updateBidRankings();
+		schedulePersist();
 		
 		res.json({
 			success: true,
@@ -377,17 +426,16 @@ router.post('/:id/impression', async (req, res) => {
 			});
 		}
 		
-		// Increment impressions and cells sponsored
 		advertiser.impressions += 1;
 		advertiser.cellsSponsored += 1;
 		advertiser.updatedAt = new Date().toISOString();
-		
-		// Check if all cells have been sponsored
+
 		if (advertiser.cellsSponsored >= advertiser.cellCount) {
 			advertiser.bidStatus = 'expired';
 			updateBidRankings();
 		}
-		
+		schedulePersist();
+
 		res.status(204).end();
 	} catch (error) {
 		console.error('Error recording impression:', error);
@@ -414,10 +462,10 @@ router.post('/:id/click', async (req, res) => {
 			});
 		}
 		
-		// Increment clicks
 		advertiser.clicks += 1;
 		advertiser.updatedAt = new Date().toISOString();
-		
+		schedulePersist();
+
 		res.status(204).end();
 	} catch (error) {
 		console.error('Error recording click:', error);
@@ -471,10 +519,10 @@ router.put('/:id', upload.single('adImage'), async (req, res) => {
 		}
 		
 		advertiser.updatedAt = new Date().toISOString();
-		
-		// Update rankings if status changed
+
 		updateBidRankings();
-		
+		schedulePersist();
+
 		res.json({
 			success: true,
 			message: 'Advertiser updated successfully',
@@ -562,12 +610,10 @@ router.delete('/:id', async (req, res) => {
 			}
 		}
 		
-		// Remove from storage
 		advertisers.delete(req.params.id);
-		
-		// Update rankings
 		updateBidRankings();
-		
+		schedulePersist();
+
 		res.json({
 			success: true,
 			message: 'Advertiser deleted successfully'
@@ -604,7 +650,11 @@ router.get('/ranking/current', async (req, res) => {
 	}
 });
 
+loadAdvertisersFromDisk();
+
 module.exports = router;
+module.exports.loadAdvertisersFromDisk = loadAdvertisersFromDisk;
+module.exports.flushAdvertisersSync = flushAdvertisersSync;
 
 
 

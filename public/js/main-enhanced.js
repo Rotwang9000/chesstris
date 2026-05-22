@@ -1,5 +1,5 @@
 /**
- * Shaktris Game - Enhanced Main Entry Point
+ * Tetches Game - Enhanced Main Entry Point
  * 
  * This file initializes the enhanced game core with Russian theme.
  */
@@ -9,7 +9,8 @@ import * as debugUtils from './utils/debugUtils.js';
 import * as NetworkManager from './utils/networkManager.js';
 import * as NetworkStatusManager from './utils/networkStatusManager.js';
 import { createNetworkStatusDisplay } from './createNetworkStatusDisplay.js';
-import { createUnifiedPlayerBar, updateUnifiedPlayerBar } from './unifiedPlayerBar.js';
+import { createUnifiedPlayerBar, updateUnifiedPlayerBar, showPlayerBar } from './unifiedPlayerBar.js';
+import { showToastMessage as showToastNotification } from './showToastMessage.js';
 import './boardFunctions.js'; // Import the updated board functions
 import gameState from './utils/gameState.js';
 import * as tetrominoModule from './tetromino.js'; // Import tetromino module for socket events
@@ -106,6 +107,12 @@ function setupRenderModeToggle(profile) {
 		// Apply CRT overlay for retro mode
 		applyCrtOverlay(next === 'retro');
 
+		// Force chess piece rebuild — retro uses letter sprites while other
+		// modes use 3D geometry, so existing meshes must be replaced.
+		if (gs && typeof gameCore.forceChessPieceRebuild === 'function') {
+			gameCore.forceChessPieceRebuild();
+		}
+
 		console.log('Switched render mode to', next, 'without page reload');
 	});
 }
@@ -127,9 +134,32 @@ function applyCrtOverlay(enabled) {
 	}
 }
 
+function openPlayerCodePanel() {
+	showPlayerBar();
+	const playerCodeInput = document.getElementById('sidebar-player-code-display');
+	if (playerCodeInput) {
+		playerCodeInput.focus();
+		playerCodeInput.select();
+		playerCodeInput.setSelectionRange(0, 99999);
+	}
+}
+
+function wireSessionWarningLink() {
+	const warningEl = document.getElementById('session-warning');
+	if (!warningEl || warningEl.dataset.wired === '1') return;
+	warningEl.dataset.wired = '1';
+	warningEl.addEventListener('click', openPlayerCodePanel);
+	warningEl.addEventListener('keydown', (event) => {
+		if (event.key === 'Enter' || event.key === ' ') {
+			event.preventDefault();
+			openPlayerCodePanel();
+		}
+	});
+}
+
 // Main initialization
 async function init() {
-	console.log('Initializing enhanced Shaktris game with Russian theme...');
+	console.log('Initializing enhanced Tetches game with Russian theme...');
 	
 	// Force hide loading screen and error messages - failsafe
 	hideLoadingScreen();
@@ -148,6 +178,18 @@ async function init() {
 		// Check THREE.js status
 		if (!diagnostics.threeStatus || !diagnostics.threeStatus.isLoaded) {
 			throw new Error('THREE.js not available. Please check your internet connection.');
+		}
+
+		// If the browser cannot create any WebGL context, fail fast and
+		// surface the same overlay that the deeper renderer code uses.
+		// This avoids a confusing chain of "module errors" deep in
+		// `enhanced-gameCore.js`.
+		if (diagnostics.webglStatus && !diagnostics.webglStatus.hasWebGL && !diagnostics.webglStatus.hasWebGL2) {
+			if (typeof gameCore.showWebglUnavailableOverlay === 'function') {
+				gameCore.showWebglUnavailableOverlay('No WebGL context available at startup');
+			}
+			hideLoadingScreen();
+			throw new Error('WebGL unavailable: hardware acceleration disabled or unsupported.');
 		}
 		
 		
@@ -226,6 +268,7 @@ async function init() {
 		hideError();
 		// Create player bar
 		createUnifiedPlayerBar(initialState);
+		wireSessionWarningLink();
 		
 		// Join or create a game - this will handle the loading screen
 		joinGame();
@@ -283,7 +326,7 @@ function showPlayerNamePrompt() {
 		// Add login form with Russian theme
 		loginContainer.innerHTML = `
 			<div style="background-color: #111; padding: 30px; border-radius: 10px; width: 300px; max-width: 90%; text-align: center; box-shadow: 0 0 20px rgba(255, 204, 0, 0.3); border: 2px solid #ffcc00;">
-				<h2 style="color: #ffcc00; margin-top: 0; font-family: 'Times New Roman', serif;">Welcome to Shaktris</h2>
+				<h2 style="color: #ffcc00; margin-top: 0; font-family: 'Times New Roman', serif;">Welcome to Tetches</h2>
 				<div style="font-size: 36px; color: #ffcc00; margin: 10px 0;">☦</div>
 				<p style="color: white; margin-bottom: 20px; font-family: 'Times New Roman', serif;">Enter your player name to start playing</p>
 				
@@ -346,7 +389,7 @@ async function joinGame(gameId = null) {
 		// Check for saved state from mode switch (should rejoin same game)
 		if (!gameId) {
 			try {
-				const savedState = sessionStorage.getItem('shaktris_mode_switch_state');
+				const savedState = sessionStorage.getItem('tetches_mode_switch_state');
 				if (savedState) {
 					const state = JSON.parse(savedState);
 					// Only use if saved within last 30 seconds (recent mode switch)
@@ -359,7 +402,7 @@ async function joinGame(gameId = null) {
 						}
 					}
 					// Clear the saved state after reading
-					sessionStorage.removeItem('shaktris_mode_switch_state');
+					sessionStorage.removeItem('tetches_mode_switch_state');
 				}
 			} catch (e) {
 				console.warn('Could not restore mode switch state:', e);
@@ -380,7 +423,7 @@ async function joinGame(gameId = null) {
 		}
 
 		// Show connecting message
-		showToastNotification('Connecting to game server...');
+		showToastNotification('Connecting to world server...');
 
 		// Initialize network connection with progressive retry
 		let connected = false;
@@ -492,8 +535,8 @@ async function joinGame(gameId = null) {
 
 		return joinGameAfterConnection(gameId);
 	} catch (error) {
-		console.error('Error joining game:', error);
-		showError('An error occurred while joining the game. Please try again.');
+		console.error('Error joining world:', error);
+		showError('An error occurred while entering the world. Please try again.');
 		
 		// Hide loading screen even if there's an error
 		document.getElementById('loading').style.display = 'none';
@@ -533,8 +576,8 @@ async function joinGameAfterConnection(gameId = null) {
 				console.log('Local player ID set to:', gameState.localPlayerId);
 			}
 			
-			// Update window title with game ID
-			document.title = `Shaktris - Game ${currentGameId}`;
+			// Update window title with world ID
+			document.title = `Tetches - World ${currentGameId}`;
 			
 			// Show in URL but don't reload page
 			const url = new URL(window.location);
@@ -572,8 +615,8 @@ async function joinGameAfterConnection(gameId = null) {
 			throw new Error('Failed to join game');
 		}
 	} catch (error) {
-		console.error('Error joining game after connection:', error);
-		showError(`Failed to join game: ${error.message || 'Unknown error'}`);
+		console.error('Error entering world after connection:', error);
+		showError(`Failed to enter world: ${error.message || 'Unknown error'}`);
 	}
 }
 
@@ -639,16 +682,28 @@ function setupPlayerListUpdates() {
 			if (typeof NetworkManager.onMessage === 'function') {
 				NetworkManager.onMessage('player_list', (data) => {
 					if (data && data.players) {
+						const normalisedPlayers = Array.isArray(data.players)
+							? data.players.reduce((acc, playerEntry) => {
+								if (!playerEntry || !playerEntry.id) return acc;
+								acc[playerEntry.id] = {
+									id: playerEntry.id,
+									name: playerEntry.name || playerEntry.id,
+									isComputer: !!playerEntry.isComputer
+								};
+								return acc;
+							}, {})
+							: (typeof data.players === 'object' ? data.players : {});
+						
 						// Update the game state with players
 						if (gameState) {
-							gameState.players = Object.assign({}, gameState.players || {}, data.players);
+							gameState.players = Object.assign({}, gameState.players || {}, normalisedPlayers);
 							
 							// Update the unified player bar with the updated game state
 							updateUnifiedPlayerBar(gameState);
 						} else {
 							// If no game state yet, create a minimal one for the player bar
 							const minimalState = {
-								players: data.players,
+								players: normalisedPlayers,
 								localPlayerId: NetworkManager.getPlayerId?.() || null
 							};
 							updateUnifiedPlayerBar(minimalState);
@@ -744,73 +799,6 @@ async function initializeNetworkWithRetry() {
 	}
 	
 	return false;
-}
-
-/**
- * Show toast notification with Russian theme
- * @param {string} message - Message to display
- */
-function showToastNotification(message) {
-	// Create toast container if it doesn't exist
-	let toastContainer = document.getElementById('toast-container');
-	if (!toastContainer) {
-		toastContainer = document.createElement('div');
-		toastContainer.id = 'toast-container';
-		
-		// Style container
-		Object.assign(toastContainer.style, {
-			position: 'fixed',
-			bottom: '20px',
-			left: '50%',
-			transform: 'translateX(-50%)',
-			zIndex: '1000',
-			pointerEvents: 'none'
-		});
-		
-		document.body.appendChild(toastContainer);
-	}
-	
-	// Create toast element with Russian theme
-	const toast = document.createElement('div');
-	
-	// Style toast with Russian theme
-	Object.assign(toast.style, {
-		backgroundColor: 'rgba(0, 0, 0, 0.8)',
-		color: '#ffcc00',
-		padding: '10px 20px',
-		borderRadius: '5px',
-		marginBottom: '10px',
-		boxShadow: '0 0 10px rgba(255, 204, 0, 0.3)',
-		fontFamily: 'Times New Roman, serif',
-		border: '1px solid #ffcc00',
-		opacity: '0',
-		transform: 'translateY(20px)',
-		transition: 'opacity 0.3s, transform 0.3s'
-	});
-	
-	// Set message
-	toast.textContent = message;
-	
-	// Add to container
-	toastContainer.appendChild(toast);
-	
-	// Animate in
-	setTimeout(() => {
-		toast.style.opacity = '1';
-		toast.style.transform = 'translateY(0)';
-	}, 10);
-	
-	// Remove after 3 seconds
-	setTimeout(() => {
-		toast.style.opacity = '0';
-		toast.style.transform = 'translateY(-20px)';
-		
-		setTimeout(() => {
-			if (toast.parentNode) {
-				toast.parentNode.removeChild(toast);
-			}
-		}, 300);
-	}, 3000);
 }
 
 // Helper function to ensure loading screen is always hidden

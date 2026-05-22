@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Shaktris game board now implements a multi-object cell structure, where each cell can contain multiple game objects simultaneously. This is a significant architectural improvement that enables more complex gameplay interactions and simplifies many game mechanics.
+The Tetches game board now implements a multi-object cell structure, where each cell can contain multiple game objects simultaneously. This is a significant architectural improvement that enables more complex gameplay interactions and simplifies many game mechanics.
 
 ## Technical Implementation
 

@@ -1,5 +1,5 @@
 /**
- * Test utilities for Chesstris
+ * Test utilities for Tetches
  */
 
 // Import necessary functions

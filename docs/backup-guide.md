@@ -1,6 +1,6 @@
-# Shaktris Backup Guide
+# Tetches Backup Guide
 
-This guide provides instructions for backing up your Shaktris installation. Regular backups are essential to prevent data loss and enable quick recovery in case of server issues.
+This guide provides instructions for backing up your Tetches installation. Regular backups are essential to prevent data loss and enable quick recovery in case of server issues.
 
 ## What to Back Up
 
@@ -13,16 +13,16 @@ This guide provides instructions for backing up your Shaktris installation. Regu
 
 ## Automated Backup Script
 
-Create a backup script at `/opt/backup/backup-shaktris.sh`:
+Create a backup script at `/opt/backup/backup-tetches.sh`:
 
 ```bash
 #!/bin/bash
 
 # Configuration
-BACKUP_DIR="/opt/backup/shaktris"
-MONGODB_URI="mongodb://chesstris_app:password@localhost:27017/chesstris"
+BACKUP_DIR="/opt/backup/tetches"
+MONGODB_URI="mongodb://tetches_app:password@localhost:27017/tetches"
 DATE=$(date +%Y-%m-%d_%H-%M-%S)
-APP_DIR="/var/www/chesstris"
+APP_DIR="/var/www/tetches"
 
 # Create backup directory if it doesn't exist
 mkdir -p "$BACKUP_DIR/mongodb"
@@ -53,14 +53,14 @@ cp "$APP_DIR/.env" "$BACKUP_DIR/config/.env_$DATE"
 
 # Nginx configuration
 echo "Backing up Nginx configuration..."
-cp /etc/nginx/sites-available/shaktris.com "$BACKUP_DIR/config/nginx_$DATE.conf"
+cp /etc/nginx/sites-available/tetches.com "$BACKUP_DIR/config/nginx_$DATE.conf"
 
 # SSL certificates (if self-managed)
 echo "Backing up SSL certificates..."
-if [ -d "/etc/letsencrypt/live/shaktris.com" ]; then
+if [ -d "/etc/letsencrypt/live/tetches.com" ]; then
     mkdir -p "$BACKUP_DIR/ssl_$DATE"
-    cp -L /etc/letsencrypt/live/shaktris.com/fullchain.pem "$BACKUP_DIR/ssl_$DATE/"
-    cp -L /etc/letsencrypt/live/shaktris.com/privkey.pem "$BACKUP_DIR/ssl_$DATE/"
+    cp -L /etc/letsencrypt/live/tetches.com/fullchain.pem "$BACKUP_DIR/ssl_$DATE/"
+    cp -L /etc/letsencrypt/live/tetches.com/privkey.pem "$BACKUP_DIR/ssl_$DATE/"
 fi
 
 # PM2 process configuration
@@ -82,7 +82,7 @@ echo "Backup completed successfully at $(date)"
 Make the script executable:
 
 ```bash
-chmod +x /opt/backup/backup-shaktris.sh
+chmod +x /opt/backup/backup-tetches.sh
 ```
 
 ## Setting Up Automated Backups
@@ -97,7 +97,7 @@ crontab -e
 Add this line to run backup daily at 3:00 AM:
 
 ```
-0 3 * * * /opt/backup/backup-shaktris.sh > /opt/backup/backup.log 2>&1
+0 3 * * * /opt/backup/backup-tetches.sh > /opt/backup/backup.log 2>&1
 ```
 
 ## Manual Backup
@@ -105,7 +105,7 @@ Add this line to run backup daily at 3:00 AM:
 You can also run a manual backup at any time:
 
 ```bash
-sudo /opt/backup/backup-shaktris.sh
+sudo /opt/backup/backup-tetches.sh
 ```
 
 ## Backup Verification
@@ -117,10 +117,10 @@ Periodically verify that your backups are functioning correctly:
 tail -n 50 /opt/backup/backup.log
 
 # Verify MongoDB backup integrity
-tar -tzf /opt/backup/shaktris/mongodb_YYYY-MM-DD_HH-MM-SS.tar.gz
+tar -tzf /opt/backup/tetches/mongodb_YYYY-MM-DD_HH-MM-SS.tar.gz
 
 # Verify Redis backup file exists
-ls -la /opt/backup/shaktris/redis/
+ls -la /opt/backup/tetches/redis/
 ```
 
 ## Offsite Backups
@@ -129,10 +129,10 @@ For additional security, consider copying backups to an offsite location:
 
 ```bash
 # Example: Using rsync to copy to another server
-rsync -avz --delete /opt/backup/shaktris/ user@backup-server:/path/to/backups/shaktris/
+rsync -avz --delete /opt/backup/tetches/ user@backup-server:/path/to/backups/tetches/
 
 # Alternative: Using rclone to copy to cloud storage
-rclone copy /opt/backup/shaktris/ remote:shaktris-backups/
+rclone copy /opt/backup/tetches/ remote:tetches-backups/
 ```
 
 ## Emergency Database Restore
@@ -143,10 +143,10 @@ If you need to restore from backup:
 
 ```bash
 # Extract the backup
-tar -xzf /opt/backup/shaktris/mongodb_YYYY-MM-DD_HH-MM-SS.tar.gz -C /tmp/
+tar -xzf /opt/backup/tetches/mongodb_YYYY-MM-DD_HH-MM-SS.tar.gz -C /tmp/
 
 # Restore to MongoDB
-mongorestore --uri="mongodb://chesstris_app:password@localhost:27017/chesstris" --drop /tmp/YYYY-MM-DD_HH-MM-SS/
+mongorestore --uri="mongodb://tetches_app:password@localhost:27017/tetches" --drop /tmp/YYYY-MM-DD_HH-MM-SS/
 ```
 
 ### Redis Restore
@@ -156,7 +156,7 @@ mongorestore --uri="mongodb://chesstris_app:password@localhost:27017/chesstris" 
 sudo systemctl stop redis-server
 
 # Replace the dump file
-sudo cp /opt/backup/shaktris/redis/dump_YYYY-MM-DD_HH-MM-SS.rdb /var/lib/redis/dump.rdb
+sudo cp /opt/backup/tetches/redis/dump_YYYY-MM-DD_HH-MM-SS.rdb /var/lib/redis/dump.rdb
 sudo chown redis:redis /var/lib/redis/dump.rdb
 
 # Start Redis

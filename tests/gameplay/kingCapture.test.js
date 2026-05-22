@@ -1,6 +1,6 @@
 /**
  * King Capture Test
- * Tests the mechanics of capturing a king in Shaktris
+ * Tests the mechanics of capturing a king in Tetches
  */
 
 const assert = require('assert');

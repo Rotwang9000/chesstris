@@ -54,7 +54,21 @@ const gameState = {
 	lastMovementTime: 0,
 	pendingRender: false,
 	// Movement deltas for relative movement
-	movementDelta: { x: 0, z: 0, y: 0, rotation: 0 }
+	movementDelta: { x: 0, z: 0, y: 0, rotation: 0 },
+	// Active power-up orbs streamed from the server. Mutated in
+	// place by the network-event handlers. The renderer reads it
+	// every frame and the player-bar UI uses it to flag
+	// "incoming pickup near you" hints.
+	powerUps: [],
+	// Captured-piece basket for the local player (private; server
+	// sends it via a per-socket `captured_basket` event on join /
+	// after every capture / redeem).
+	capturedBasket: [],
+	// Banked promotion credits for the local player. Each entry:
+	// `{ id, originalX, originalZ, createdAt }`. Server pushes them
+	// via `promotion_credits` (full list) and `promotion_credit_added`
+	// (single new credit). Redeemed via `redeem_promotion`.
+	promotionCredits: []
 };
 
 /**
@@ -127,8 +141,7 @@ function update(data) {
 	// Verify we have valid data
 	if (!data) return;
 	
-	// Create a deep copy of the data to avoid reference issues
-	const newData = JSON.parse(JSON.stringify(data));
+	const newData = data;
 	
 	// Preserve client-managed properties that should NOT be overwritten by server
 	// turnPhase is managed by the client (tetris/chess phase transitions)
@@ -149,13 +162,45 @@ function update(data) {
 			gameState.currentTetromino = preservedCurrentTetromino;
 		}
 	}
+
+	// Normalise powerUps so the renderer always sees an array. The
+	// server includes them in every full game_update payload; sparse
+	// deltas don't carry them but the periodic full updates do.
+	if (Array.isArray(newData.powerUps)) {
+		gameState.powerUps = newData.powerUps.slice();
+	} else if (!Array.isArray(gameState.powerUps)) {
+		gameState.powerUps = [];
+	}
+	if (Array.isArray(newData.capturedBasket)) {
+		gameState.capturedBasket = newData.capturedBasket.slice();
+	} else if (!Array.isArray(gameState.capturedBasket)) {
+		gameState.capturedBasket = [];
+	}
+	if (Array.isArray(newData.promotionCredits)) {
+		gameState.promotionCredits = newData.promotionCredits.slice();
+	} else if (!Array.isArray(gameState.promotionCredits)) {
+		gameState.promotionCredits = [];
+	}
 	
 	// Make sure gameStarted flag is set if we have board data
-	if (gameState.board && gameState.board.cells && Object.keys(gameState.board.cells).length > 0) {
+	const _hasCells = gameState.board?.cells && (function() { for (const _ in gameState.board.cells) return true; return false; })();
+	if (_hasCells) {
 		gameState.gameStarted = true;
-		// Set the orientation to the first chess piece
 		if (gameState.chessPieces.length > 0) {
 			gameState.orientation = gameState.chessPieces[0].orientation;
+		}
+	}
+
+	// Infer _hasPlacedTetromino from board state so reconnecting players
+	// don't get false-positive first-placement rules on the client.
+	if (!gameState._hasPlacedTetromino && gameState.board?.cells && gameState.localPlayerId) {
+		const pid = String(gameState.localPlayerId);
+		for (const cell of Object.values(gameState.board.cells)) {
+			const items = Array.isArray(cell) ? cell : (cell?.contents || []);
+			if (items.some(i => i && String(i.player) === pid && i.type === 'tetromino')) {
+				gameState._hasPlacedTetromino = true;
+				break;
+			}
 		}
 	}
 }

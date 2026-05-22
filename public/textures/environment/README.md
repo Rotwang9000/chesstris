@@ -1,4 +1,4 @@
-# Shaktris Environment Textures
+# Tetches Environment Textures
 
 This directory should contain the following texture files:
 
