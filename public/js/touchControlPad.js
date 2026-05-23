@@ -180,14 +180,37 @@ function getPad() {
 	return document.getElementById(PAD_ID) || buildPad();
 }
 
+/**
+ * Push the toast container above the pad while the pad is visible
+ * (and restore the default when it's hidden). Toasts and the pad
+ * both anchor to bottom-centre, so without this the very messages
+ * the player needs to read sit right behind the buttons they're
+ * tapping.
+ */
+function adjustToastContainer(padVisible) {
+	const toast = document.getElementById('toast-container');
+	if (!toast) return;
+	if (padVisible) {
+		const pad = document.getElementById(PAD_ID);
+		const padHeight = pad ? pad.offsetHeight : 130;
+		toast.style.bottom = `${padHeight + 30}px`;
+	} else {
+		toast.style.bottom = '20px';
+	}
+}
+
 function showPad() {
 	const pad = getPad();
+	if (pad.style.visibility === 'visible') return;
 	pad.style.visibility = 'visible';
+	adjustToastContainer(true);
 }
 
 function hidePad() {
 	const pad = document.getElementById(PAD_ID);
-	if (pad) pad.style.visibility = 'hidden';
+	if (!pad || pad.style.visibility === 'hidden') return;
+	pad.style.visibility = 'hidden';
+	adjustToastContainer(false);
 }
 
 /**

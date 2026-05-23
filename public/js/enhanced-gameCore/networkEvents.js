@@ -147,17 +147,55 @@ function handleRowCleared(payload) {
 		const rows = Array.isArray(payload?.rows) ? payload.rows : [];
 		const cols = Array.isArray(payload?.cols) ? payload.cols : [];
 		if (rows.length === 0 && cols.length === 0) return;
-		// Audible cue for every row-clear we see, not just our own.
-		// Quieter for other players' clears so the local action stays
-		// dominant in the mix.
-		const isLocalActor = payload?.playerId && String(payload.playerId) === String(gameState.localPlayerId);
-		try { playSound('lineClear', { gain: isLocalActor ? 1 : 0.6 }); } catch (_e) { /* sound is best-effort */ }
+
+		const localId = gameState.localPlayerId;
+		const isLocalActor = payload?.playerId && String(payload.playerId) === String(localId);
+
+		// "Involves us" means either we triggered the clear OR one of
+		// our chess pieces was sitting on a cleared cell (so it had to
+		// fall / land somewhere). Anything else is purely background
+		// — a bot or a stranger across the world clearing rows, which
+		// must not make our local client beep on a loop.
+		let touchesOurPieces = false;
+		if (Array.isArray(payload?.settleOutcomes) && localId) {
+			const pieces = Array.isArray(gameState.chessPieces) ? gameState.chessPieces : [];
+			for (const outcome of payload.settleOutcomes) {
+				if (!outcome) continue;
+				let owner = outcome.pieceOwner || outcome.player || outcome.playerId;
+				if (!owner && outcome.pieceId) {
+					// Fallback for servers that don't include the owner
+					// in the outcome (e.g. during a rolling deploy).
+					const match = pieces.find(p => p && String(p.id) === String(outcome.pieceId));
+					if (match) owner = match.player || match.playerId;
+				}
+				if (owner && String(owner) === String(localId)) {
+					touchesOurPieces = true;
+					break;
+				}
+			}
+		}
+		const involvesUs = isLocalActor || touchesOurPieces;
+
+		// Sound rules:
+		//   • Our own clears  → beep every cascade iteration (rewarding feedback).
+		//   • Remote clear, but a piece of ours ends up airborne → one beep at
+		//     the start of the cascade, never a chain of them.
+		//   • Pure background clears (a stranger across the world) → silent.
+		if (involvesUs) {
+			const iter = Number(payload?.iteration);
+			const allowSound = isLocalActor || !Number.isFinite(iter) || iter === 0;
+			if (allowSound) {
+				try { playSound('lineClear'); } catch (_e) { /* sound is best-effort */ }
+			}
+		}
+
 		// Even when the clear was triggered by someone else, settle our
 		// own airborne meshes — pieces on those cells need to land or
 		// fall regardless of who finished the line.
 		if (Array.isArray(payload?.settleOutcomes)) {
 			settleAirbornePieces(payload.settleOutcomes);
 		}
+
 		if (!isLocalActor) return;
 		const parts = [];
 		if (rows.length) parts.push(`row${rows.length === 1 ? '' : 's'} ${rows.join(', ')}`);
@@ -554,6 +592,16 @@ function handleKingCaptured(payload) {
 	try {
 		const { captorId, captorName, defeatedId, defeatedName, defeatedColor, inheritedPawnCount } = payload || {};
 		if (!captorId || !defeatedId) return;
+		// Only spotlight king-captures we're a party to — captor or
+		// captured. Big modal + sting for two strangers on the other
+		// side of the world is what made a busy match feel like an
+		// air-raid drill.
+		const localId = gameState.localPlayerId;
+		const involvesUs = localId && (
+			String(captorId) === String(localId)
+			|| String(defeatedId) === String(localId)
+		);
+		if (!involvesUs) return;
 		try { playSound('kingFall'); } catch (_e) { /* sound is best-effort */ }
 		showKingBattleOverlay(captorId, captorName, defeatedId, defeatedName, defeatedColor, inheritedPawnCount);
 	} catch (e) {
@@ -576,14 +624,11 @@ function handleKingRespawned(payload) {
 				`Your king fell (${reason})! ${safeRemaining} ${livesWord} left.`,
 				{ variant: 'alert', duration: 6500 }
 			);
-		} else {
-			showToastMessage(
-				`${payload.playerName || 'A player'}'s king fell — ${safeRemaining} ${livesWord} left.`,
-				{ duration: 4500 }
-			);
+			try { playSound('kingFall'); } catch (_e) { /* sound is best-effort */ }
 		}
-		try { playSound('kingFall', { gain: isLocal ? 1 : 0.55 }); }
-		catch (_e) { /* sound is best-effort */ }
+		// Remote king falls aren't toasted or sounded — they're noisy
+		// in a busy world and the player can read about them in the
+		// activity log if they care.
 
 		// Sync local state so the player bar + sidebar reflect the
 		// remaining lives without waiting for the next full game_update.
@@ -612,13 +657,10 @@ function handleKingEliminated(payload) {
 				'Your king has fallen for the last time. Game over!',
 				{ variant: 'alert', duration: 8000 }
 			);
-		} else {
-			showToastMessage(
-				`${payload.playerName || 'A player'} has been eliminated.`,
-				{ duration: 4500 }
-			);
+			try { playSound('kingFall'); } catch (_e) { /* sound is best-effort */ }
 		}
-		try { playSound('kingFall'); } catch (_e) { /* sound is best-effort */ }
+		// Remote eliminations are intentionally silent — the activity
+		// log still records them so spectators can watch the scoreboard.
 	} catch (e) {
 		console.error('Error handling king_eliminated:', e);
 	}
@@ -767,24 +809,26 @@ export function setupNetworkEvents(hooks = {}) {
 	});
 
 	NetworkManager.on('activity_event', (payload) => {
-		// Cheap audio hooks for activity events that don't have a
-		// dedicated handler. The cues are quieter when the actor
-		// isn't the local player so a busy world doesn't drown the
-		// player's own action out.
+		// Audio hooks for activity events that don't have a dedicated
+		// handler. We ONLY fire these for the local player — a busy
+		// shared world (especially with AI bots placing 1-2 pieces
+		// per second) would otherwise produce a constant background
+		// of clatter the user can do nothing about.
 		try {
 			const type = payload && payload.type ? String(payload.type) : '';
 			const isLocal = payload && payload.playerId
 				&& String(payload.playerId) === String(gameState.localPlayerId);
-			const gain = isLocal ? 1 : 0.5;
-			switch (type) {
-				case 'tetromino_placed':
-					playSound('drop', { gain });
-					break;
-				case 'pawn_promoted_to_credit':
-					playSound('promotion', { gain });
-					break;
-				default:
-					break;
+			if (isLocal) {
+				switch (type) {
+					case 'tetromino_placed':
+						playSound('drop');
+						break;
+					case 'pawn_promoted_to_credit':
+						playSound('promotion');
+						break;
+					default:
+						break;
+				}
 			}
 		} catch (_e) { /* sound is best-effort */ }
 		pushActivityEvent(payload);
@@ -830,11 +874,15 @@ export function setupNetworkEvents(hooks = {}) {
 		try {
 			const isLocal = payload.playerId && payload.playerId === gameState.localPlayerId;
 			const label = String(payload.pieceType || 'piece').toLowerCase();
-			const message = isLocal
-				? `Power-up claimed: ${label}!`
-				: `${payload.playerName || 'A player'} claimed a ${label} power-up`;
-			showToastMessage(message, 3000);
-			try { playSound('orbClaim', { gain: isLocal ? 1 : 0.6 }); } catch (_e) { /* sound is best-effort */ }
+			// Toast + sound for our own claim. For remote claims, log
+			// the activity (the snapshot listener already does that)
+			// but stay quiet — no toast, no audio. A live world has
+			// many players, and an orb claim chime every few seconds
+			// for actions we can't influence is just noise.
+			if (isLocal) {
+				showToastMessage(`Power-up claimed: ${label}!`, 3000);
+				try { playSound('orbClaim'); } catch (_e) { /* sound is best-effort */ }
+			}
 		} catch (toastErr) {
 			console.warn('[powerup_claimed] toast failed:', toastErr);
 		}
@@ -860,7 +908,12 @@ export function setupNetworkEvents(hooks = {}) {
 	NetworkManager.on('promotion_credit_added', (payload) => {
 		if (!payload || !payload.creditId) return;
 		const isLocal = payload.playerId && payload.playerId === gameState.localPlayerId;
-		try { playSound('promotion', { gain: isLocal ? 1 : 0.55 }); } catch (_e) { /* sound is best-effort */ }
+		// Sound only for our own promotions — remote promotions are
+		// activity-log only so the audio doesn't ping every few seconds
+		// in a busy world.
+		if (isLocal) {
+			try { playSound('promotion'); } catch (_e) { /* sound is best-effort */ }
+		}
 		if (isLocal) {
 			const list = Array.isArray(gameState.promotionCredits) ? gameState.promotionCredits : [];
 			if (!list.some(c => c && c.id === payload.creditId)) {

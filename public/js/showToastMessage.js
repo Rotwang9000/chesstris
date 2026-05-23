@@ -47,6 +47,18 @@ export function showToastMessage(message, optionsOrDuration) {
 		document.body.appendChild(toastContainer);
 	}
 
+	// If the touch control pad is currently on screen, push toasts
+	// above it. The pad owns the bottom-centre during the tetris
+	// phase on mobile; without this, every "Line cleared!" toast
+	// lands directly behind the move buttons.
+	const pad = document.getElementById('touch-control-pad');
+	if (pad && pad.style.visibility === 'visible') {
+		const padHeight = pad.offsetHeight || 130;
+		toastContainer.style.bottom = `${padHeight + 30}px`;
+	} else {
+		toastContainer.style.bottom = '20px';
+	}
+
 	while (toastContainer.children.length >= MAX_VISIBLE_TOASTS) {
 		toastContainer.removeChild(toastContainer.firstChild);
 	}

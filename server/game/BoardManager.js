@@ -806,12 +806,14 @@ class BoardManager {
 				// (rare, but possible during heavy cascades).
 				outcomes.push({
 					pieceId: airborne.pieceId,
+					pieceOwner: airborne.pieceOwner || null,
 					x: airborne.x,
 					z: airborne.z,
 					outcome: 'gone',
 				});
 				continue;
 			}
+			const pieceOwner = piece.player != null ? String(piece.player) : null;
 
 			// The piece's position is the canonical destination; gravity
 			// never moves a piece on a cleared line (it's airborne) so
@@ -831,6 +833,7 @@ class BoardManager {
 				});
 				outcomes.push({
 					pieceId: airborne.pieceId,
+					pieceOwner,
 					x: targetX,
 					z: targetZ,
 					outcome: 'fell',
@@ -875,6 +878,7 @@ class BoardManager {
 
 			outcomes.push({
 				pieceId: airborne.pieceId,
+				pieceOwner,
 				x: targetX,
 				z: targetZ,
 				outcome: 'landed',

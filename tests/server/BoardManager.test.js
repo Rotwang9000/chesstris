@@ -731,6 +731,56 @@ describe('BoardManager', () => {
 		});
 	});
 	
+	describe('settleAirbornePieces', () => {
+		test('outcomes include the owning player so the client can scope sound/toast cues', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+
+			// Set up a single piece that needs to settle. Surface beneath
+			// it is intact, so the piece "lands" rather than falling.
+			game.chessPieces.push({
+				id: 'p1-ROOK', type: 'ROOK', player: 'p1',
+				position: { x: 7, z: 11 },
+			});
+			boardManager.setCell(game.board, 7, 11, [{ type: 'tetromino', player: 'p1' }]);
+
+			const outcomes = boardManager.settleAirbornePieces(
+				game,
+				[{ pieceId: 'p1-ROOK', x: 7, z: 11 }],
+				{}
+			);
+			expect(outcomes).toHaveLength(1);
+			expect(outcomes[0]).toMatchObject({
+				pieceId: 'p1-ROOK',
+				pieceOwner: 'p1',
+				outcome: 'landed',
+			});
+		});
+
+		test('outcome for a fallen piece still carries the owner so remote-clear effects on us are detectable', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p2');
+
+			// No cell underneath → piece falls into the void.
+			game.chessPieces.push({
+				id: 'p2-PAWN', type: 'PAWN', player: 'p2',
+				position: { x: 4, z: 4 },
+			});
+
+			const outcomes = boardManager.settleAirbornePieces(
+				game,
+				[{ pieceId: 'p2-PAWN', x: 4, z: 4 }],
+				{}
+			);
+			expect(outcomes).toHaveLength(1);
+			expect(outcomes[0]).toMatchObject({
+				pieceId: 'p2-PAWN',
+				pieceOwner: 'p2',
+				outcome: 'fell',
+			});
+		});
+	});
+
 	describe('isCellInSafeHomeZone', () => {
 		test('returns false when home-zone bounds exist but the cell has no active home marker', () => {
 			const game = createGame(boardManager);
