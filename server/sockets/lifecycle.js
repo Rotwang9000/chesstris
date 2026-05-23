@@ -15,6 +15,7 @@ function registerLifecycleHandlers(socket, ctx) {
 		lifecycleService,
 		aiRunner,
 		spectatorRegistry,
+		pauseService,
 	} = ctx;
 
 	socket.on('restart_game', () => {
@@ -81,6 +82,59 @@ function registerLifecycleHandlers(socket, ctx) {
 		lifecycleService.removePlayerCompletely(playerId);
 		Sessions.unbind(socket.id);
 		if (callback) callback({ success: true });
+	});
+
+	socket.on('pause_player', (_data, callback) => {
+		try {
+			if (!pauseService) {
+				if (callback) callback({ success: false, error: 'pause_unavailable' });
+				return;
+			}
+			const result = pauseService.pause(playerId);
+			if (callback) {
+				callback({
+					success: !!result.ok,
+					error: result.ok ? undefined : result.error,
+					status: result.status || null,
+				});
+			}
+		} catch (err) {
+			console.error('Error handling pause_player:', err);
+			if (callback) callback({ success: false, error: 'server_error' });
+		}
+	});
+
+	socket.on('resume_player', (_data, callback) => {
+		try {
+			if (!pauseService) {
+				if (callback) callback({ success: false, error: 'pause_unavailable' });
+				return;
+			}
+			const result = pauseService.resume(playerId, { reason: 'manual' });
+			if (callback) {
+				callback({
+					success: !!result.ok,
+					error: result.ok ? undefined : result.error,
+					status: result.status || null,
+				});
+			}
+		} catch (err) {
+			console.error('Error handling resume_player:', err);
+			if (callback) callback({ success: false, error: 'server_error' });
+		}
+	});
+
+	socket.on('pause_status', (_data, callback) => {
+		try {
+			if (!pauseService) {
+				if (callback) callback({ success: false, error: 'pause_unavailable' });
+				return;
+			}
+			const status = pauseService.getStatus(playerId);
+			if (callback) callback({ success: true, status: status || null });
+		} catch (err) {
+			if (callback) callback({ success: false, error: 'server_error' });
+		}
 	});
 }
 

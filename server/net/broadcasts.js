@@ -140,6 +140,14 @@ function createBroadcaster({ io, persistence }) {
 				// the menu and pushing new joiners away from active
 				// players in the spawn algorithm.
 				eliminated: !!record?.eliminated,
+				// Pause snapshot — used by the player bar to render a
+				// "💤 paused" badge over the opponent's nameplate and
+				// disable capture cursors. The pause service is the
+				// source of truth; this is just the broadcast copy.
+				paused: !!record?.paused,
+				pauseUsesRemaining: Number.isFinite(record?.pauseState?.usesRemaining)
+					? record.pauseState.usesRemaining
+					: null,
 				// Total count + per-type summary of captured pieces.
 				// Used by the sidebar to render "Captured: 4 ♜" etc.
 				capturedCount: basket.length,

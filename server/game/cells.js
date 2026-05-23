@@ -62,6 +62,41 @@ function hasHome(items) {
 	return hasItemType(items, HOME_TYPE);
 }
 
+/**
+ * Does this cell hold a "degraded home" remnant — terrain that used to
+ * be a home cell before idle degradation stripped its home marker?
+ *
+ * These cells are treated as gaps for line-clear purposes (so a player
+ * returning from being away doesn't lose everything in one placement
+ * when their old home-row totals 8 cells already), but still count as
+ * the player's owned territory for gravity, capture, and island-decay.
+ */
+function hasDegradedHomeRemnant(items) {
+	return asArray(items).some(item => item && item.fromHomeZone === true);
+}
+
+/**
+ * Is every non-marker piece of content in this cell either
+ *   • a home / centre / special marker, or
+ *   • a degraded home remnant?
+ *
+ * Used by the line-clear scan to decide whether the cell should be
+ * treated as empty space (breaking the consecutive run).
+ */
+function onlyDegradedOrMarkers(items) {
+	const arr = asArray(items);
+	if (arr.length === 0) return false;
+	let hasAny = false;
+	for (const item of arr) {
+		if (!item) continue;
+		hasAny = true;
+		if (item.type === HOME_TYPE || item.type === SPECIAL_TYPE || item.type === CENTRE_TYPE) continue;
+		if (item.fromHomeZone === true) continue;
+		return false;
+	}
+	return hasAny;
+}
+
 function hasChess(items) {
 	return hasItemType(items, CHESS_TYPE);
 }
@@ -123,9 +158,9 @@ function getChessOwner(items) {
  * Will the **legacy** line-clear actually strip anything from this cell?
  * Used by `BoardManager.stripClearableFromCell` and other internal
  * helpers that haven't been migrated to the new chess-lift behaviour
- * yet. Home and chess cells are protected; centre / special markers
- * are also preserved. Anything else (tetromino terrain, `home_converted`
- * tetrominos) counts.
+ * yet. Home, chess and degraded-home-remnant cells are protected; centre
+ * / special markers are also preserved. Anything else (regular tetromino
+ * terrain) counts.
  *
  * Prefer `isLineClearTarget` for the new airborne-piece-aware behaviour.
  */
@@ -134,6 +169,7 @@ function isClearable(items) {
 	if (hasChess(items)) return false;
 	return asArray(items).some(item => {
 		if (!item) return false;
+		if (item.fromHomeZone === true) return false;
 		return item.type !== HOME_TYPE
 			&& item.type !== SPECIAL_TYPE
 			&& item.type !== CENTRE_TYPE;
@@ -151,9 +187,14 @@ function isClearable(items) {
  *
  * Always returns false for cells carrying a home marker because the
  * home overlay still breaks runs and protects whatever sits on it.
+ * Cells that only carry a degraded-home remnant (no live tetromino /
+ * chess content) are also preserved so a returning idle player isn't
+ * wiped out by their own decayed home zone the moment they place a
+ * tetromino.
  */
 function isLineClearTarget(items) {
 	if (hasHome(items)) return false;
+	if (onlyDegradedOrMarkers(items)) return false;
 	return asArray(items).some(item => {
 		if (!item) return false;
 		return item.type !== HOME_TYPE
@@ -165,8 +206,13 @@ function isLineClearTarget(items) {
 /**
  * Strip terrain **and chess markers** for the new line-clear behaviour.
  * Returns `{ preserved, lifted }` where `preserved` is the cell's new
- * contents (home / centre / special only) and `lifted` is the chess
- * marker that was removed (or null).
+ * contents (home / centre / special / degraded-home remnants) and
+ * `lifted` is the chess marker that was removed (or null).
+ *
+ * Degraded-home remnants survive the clear so the cell still renders
+ * (the player's pre-idle footprint stays visible), matching the
+ * `isLineClearTarget` treatment that already prevents the run from
+ * counting them.
  */
 function stripForLineClear(items) {
 	const preserved = [];
@@ -174,6 +220,10 @@ function stripForLineClear(items) {
 	for (const item of asArray(items)) {
 		if (!item) continue;
 		if (item.type === HOME_TYPE || item.type === SPECIAL_TYPE || item.type === CENTRE_TYPE) {
+			preserved.push(item);
+			continue;
+		}
+		if (item.fromHomeZone === true) {
 			preserved.push(item);
 			continue;
 		}
@@ -238,11 +288,14 @@ function transferOwnership(items, newOwner, newColor) {
 /**
  * Strip everything that the row-clear would remove, returning the
  * cell's leftover contents as a new array. Home / chess / centre /
- * special markers are preserved.
+ * special markers and degraded-home remnants are preserved (the latter
+ * mirror the bible's "decayed home zones don't trigger clears" rule
+ * from §15.2).
  */
 function stripClearable(items) {
 	return asArray(items).filter(item => {
 		if (!item) return false;
+		if (item.fromHomeZone === true) return true;
 		return item.type === HOME_TYPE
 			|| item.type === CHESS_TYPE
 			|| item.type === CENTRE_TYPE
@@ -261,6 +314,8 @@ module.exports = {
 	hasChess,
 	hasTerrain,
 	hasBoardCentre,
+	hasDegradedHomeRemnant,
+	onlyDegradedOrMarkers,
 	isClearable,
 	isLineClearTarget,
 

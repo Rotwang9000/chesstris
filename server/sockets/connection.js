@@ -24,10 +24,11 @@ const { registerLifecycleHandlers } = require('./lifecycle');
 const PLAYER_ID_COOKIE = 'tetches_player_id';
 
 function createConnectionHandler(services) {
-	const { io, lifecycleService, spectatorRegistry } = services;
+	const { io, lifecycleService, spectatorRegistry, pauseService } = services;
 	if (!io) throw new Error('createConnectionHandler: io required');
 	if (!lifecycleService) throw new Error('createConnectionHandler: lifecycleService required');
 	if (!spectatorRegistry) throw new Error('createConnectionHandler: spectatorRegistry required');
+	if (!pauseService) throw new Error('createConnectionHandler: pauseService required');
 
 	return function handleConnection(socket) {
 		const playerId = resolvePlayerIdForSocket(socket, services);

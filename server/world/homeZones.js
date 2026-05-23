@@ -9,10 +9,17 @@
  */
 
 const World = require('../world/World');
+const Sessions = require('../world/Sessions');
 const { BOARD_SETTINGS } = require('../game/Constants');
 const { getLatestPlayerActionAt } = require('../utils/cooldowns');
 
 const DEFAULT_DEGRADATION_MS = 150000;
+// Multiplier applied to the degradation interval when the player is
+// still connected.  The bible's 5-minute degradation rule was intended
+// to clean up *absent* players; players who are still sat in front of
+// the screen shouldn't have their footing pulled out from under them
+// because they're thinking about their next move.
+const ONLINE_DEGRADATION_MULTIPLIER = 12;
 
 function createHomeZoneDegradationService({ gameManager, broadcaster, persistence }) {
 	if (!gameManager) throw new Error('createHomeZoneDegradationService: gameManager required');
@@ -90,6 +97,12 @@ function createHomeZoneDegradationService({ gameManager, broadcaster, persistenc
 				if (!homeZone || homeZone.isDegraded) continue;
 
 				const playerData = World.getPlayer(playerId);
+
+				// Manual pause is honoured here too — it freezes
+				// degradation entirely. See `pauseService` in
+				// `server/world/pause.js`.
+				if (playerData && playerData.paused === true) continue;
+
 				const latestActionAt = getLatestPlayerActionAt(playerData);
 
 				if (latestActionAt > 0) {
@@ -99,7 +112,11 @@ function createHomeZoneDegradationService({ gameManager, broadcaster, persistenc
 				}
 
 				const sinceMs = idleSince.get(playerId) || now;
-				if (now - sinceMs < degradationInterval) continue;
+				const isOnline = Sessions.isOnline(playerId);
+				const effectiveInterval = isOnline
+					? degradationInterval * ONLINE_DEGRADATION_MULTIPLIER
+					: degradationInterval;
+				if (now - sinceMs < effectiveInterval) continue;
 
 				const convertedCount = convertHomeZoneToNormalCells(playerId, homeZone);
 				homeZone.isDegraded = true;
@@ -108,7 +125,7 @@ function createHomeZoneDegradationService({ gameManager, broadcaster, persistenc
 				changed = true;
 
 				console.log(
-					`[HomeZone] Degraded ${playerId}; converted ${convertedCount} cells to normal terrain.`
+					`[HomeZone] Degraded ${playerId} (${isOnline ? 'online idle' : 'offline'}); converted ${convertedCount} cells to normal terrain.`
 				);
 			}
 

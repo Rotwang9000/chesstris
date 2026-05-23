@@ -378,11 +378,16 @@ export function createUnifiedPlayerBar(gameState) {
 			<button id="change-player-name" style="margin-top: 10px; padding: 5px; background: #333; color: #ffcc00; border: 1px solid #ffcc00; border-radius: 3px; cursor: pointer; font-size: 12px; width: 100%;">
 				Change Name
 			</button>
+			<button id="pause-player-btn" style="margin-top: 8px; padding: 5px; background: #224; color: #cef; border: 1px solid #66f; border-radius: 3px; cursor: pointer; font-size: 12px; width: 100%;">
+				Pause (loading…)
+			</button>
+			<div id="pause-player-meta" style="margin-top: 4px; font-size: 10px; color: #aaa; text-align: center; min-height: 12px;"></div>
 			<button id="exit-game-sidebar-btn" style="margin-top: 8px; padding: 5px; background: #600; color: #fff; border: 1px solid #f44; border-radius: 3px; cursor: pointer; font-size: 12px; width: 100%;">
 				Exit Game
 			</button>
 		`;
 		playerBar.appendChild(footer);
+		try { wirePauseButton(); } catch (_e) { /* pause UI is non-critical */ }
 		
 		// Inline rename. The previous version cleared localStorage and
 		// reloaded the page — which kicked the user out of the game,
@@ -446,6 +451,110 @@ export function createUnifiedPlayerBar(gameState) {
 	
 	console.log("Unified player bar created and attached to DOM");
 	return playerBar;
+}
+
+// ── Pause / resume button ──────────────────────────────────────────────────
+
+let pauseStatusCache = null;
+let pauseStatusListenerInstalled = false;
+
+function formatPauseMinutesLeft(status) {
+	if (!status) return '';
+	const remainingMs = Math.max(0,
+		Number(status.maxTotalMs || 0) - Number(status.totalPausedMs || 0)
+	);
+	const remainingMin = Math.floor(remainingMs / 60000);
+	return `${status.usesRemaining ?? 0} uses · ${remainingMin} min`;
+}
+
+function applyPauseButtonState(status) {
+	const btn = document.getElementById('pause-player-btn');
+	const meta = document.getElementById('pause-player-meta');
+	if (!btn) return;
+	if (!status) {
+		btn.textContent = 'Pause';
+		btn.disabled = false;
+		if (meta) meta.textContent = '';
+		return;
+	}
+	if (status.active) {
+		btn.textContent = '▶ Resume';
+		btn.style.background = '#460';
+		btn.style.borderColor = '#6f6';
+		btn.disabled = false;
+	} else {
+		const exhausted = (status.usesRemaining ?? 0) <= 0
+			|| (status.maxTotalMs - status.totalPausedMs) <= 0;
+		btn.textContent = exhausted ? 'Pause (no uses left)' : '⏸ Pause';
+		btn.style.background = '#224';
+		btn.style.borderColor = '#66f';
+		btn.disabled = !!exhausted;
+	}
+	if (meta) meta.textContent = formatPauseMinutesLeft(status);
+}
+
+function sendPauseRequest(eventType) {
+	if (!NetworkManager || typeof NetworkManager.sendMessage !== 'function') {
+		return Promise.reject(new Error('pause unavailable'));
+	}
+	return NetworkManager.sendMessage(eventType, {});
+}
+
+function requestPauseStatus() {
+	sendPauseRequest('pause_status')
+		.then((resp) => {
+			if (resp && resp.success && resp.status) {
+				pauseStatusCache = resp.status;
+				applyPauseButtonState(resp.status);
+			}
+		})
+		.catch(() => { /* server may not support pause yet */ });
+}
+
+function wirePauseButton() {
+	const btn = document.getElementById('pause-player-btn');
+	if (!btn) return;
+	btn.addEventListener('click', () => {
+		const willPause = !(pauseStatusCache && pauseStatusCache.active);
+		const event = willPause ? 'pause_player' : 'resume_player';
+		btn.disabled = true;
+		btn.textContent = willPause ? 'Pausing…' : 'Resuming…';
+		sendPauseRequest(event)
+			.then((resp) => {
+				if (!resp || !resp.success) {
+					showToastMessage(resp && resp.error
+						? `Pause failed: ${resp.error}`
+						: 'Pause request failed');
+					requestPauseStatus();
+					return;
+				}
+				pauseStatusCache = resp.status || pauseStatusCache;
+				applyPauseButtonState(pauseStatusCache);
+				showToastMessage(willPause
+					? 'Paused — your pieces and zone are frozen.'
+					: 'Resumed — back in the game!');
+			})
+			.catch((err) => {
+				showToastMessage(`Pause request failed: ${err?.message || err}`);
+				requestPauseStatus();
+			});
+	});
+
+	if (!pauseStatusListenerInstalled && NetworkManager && typeof NetworkManager.on === 'function') {
+		pauseStatusListenerInstalled = true;
+		NetworkManager.on('player_pause_state', (payload) => {
+			if (!payload) return;
+			const localId = getLocalPlayerId({});
+			if (String(payload.playerId) !== String(localId)) return;
+			pauseStatusCache = payload;
+			applyPauseButtonState(payload);
+			if (payload.resumeReason === 'auto_timeout') {
+				showToastMessage('Auto-resumed — pause time elapsed.');
+			}
+		});
+	}
+
+	requestPauseStatus();
 }
 
 /**
@@ -577,6 +686,17 @@ function addPlayerToBar(playerBar, playerId, playerInfo, gameState) {
 		nameDisplay.style.color = '#ffcc00';
 		nameDisplay.textContent += ' (You)';
 		playerElement.style.boxShadow = '0 0 8px rgba(255,204,0,0.5)';
+	}
+	if (playerInfo.paused) {
+		const pauseBadge = document.createElement('span');
+		pauseBadge.textContent = ' ⏸ paused';
+		pauseBadge.style.marginLeft = '6px';
+		pauseBadge.style.fontSize = '11px';
+		pauseBadge.style.color = '#9cf';
+		pauseBadge.style.background = 'rgba(60,80,140,0.35)';
+		pauseBadge.style.padding = '0 5px';
+		pauseBadge.style.borderRadius = '3px';
+		nameDisplay.appendChild(pauseBadge);
 	}
 	
 	// Highlight if current turn
@@ -890,7 +1010,7 @@ export function updateUnifiedPlayerBar(gameState) {
 		currentHash = Object.keys(gameState.players).map(playerId => {
 			const player = gameState.players[playerId];
 			if (!player) return '';
-			return `${playerId}-${player.name || ''}-${player.score || 0}-${player.isActive ? 1 : 0}-${player.eliminated ? 1 : 0}-${player.color || ''}-${player.capturedCount || 0}`;
+			return `${playerId}-${player.name || ''}-${player.score || 0}-${player.isActive ? 1 : 0}-${player.eliminated ? 1 : 0}-${player.paused ? 1 : 0}-${player.color || ''}-${player.capturedCount || 0}`;
 		}).sort().join('|');
 		
 		// Add current player to hash

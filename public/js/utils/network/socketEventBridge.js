@@ -67,6 +67,8 @@ const SIMPLE_FORWARD_EVENTS = Object.freeze([
 	'promotion_credits',
 	'promotion_credit_added',
 	'promotion_credit_redeemed',
+	// Pause / resume
+	'player_pause_state',
 ]);
 
 /**

@@ -77,6 +77,10 @@ function attachWings(mesh) {
 	if (!mesh || mesh.userData?.wings) return;
 	const THREE = getTHREE();
 	if (!THREE) return;
+	// Isolate this piece's materials from the global cache so any fade
+	// we apply during the fall animation can't bleed across every other
+	// piece using the same shared `ENHANCED_MATERIALS` instance.
+	isolateMeshMaterials(mesh);
 	const wings = {
 		left: buildWing(THREE, 'left'),
 		right: buildWing(THREE, 'right'),
@@ -85,6 +89,27 @@ function attachWings(mesh) {
 	mesh.add(wings.right);
 	mesh.userData = mesh.userData || {};
 	mesh.userData.wings = wings;
+}
+
+/**
+ * Replace every material on `mesh` with a per-instance clone so opacity /
+ * colour mutations on the airborne piece don't affect any other piece
+ * that happens to share the cached material objects. Tracks the swap on
+ * `mesh.userData.materialsIsolated` so we don't double-clone if a piece
+ * survives one wing cycle and grows wings a second time.
+ */
+function isolateMeshMaterials(mesh) {
+	if (!mesh || mesh.userData?.materialsIsolated) return;
+	mesh.traverse((node) => {
+		if (!node || !node.isMesh || !node.material) return;
+		if (Array.isArray(node.material)) {
+			node.material = node.material.map(m => (m && typeof m.clone === 'function') ? m.clone() : m);
+		} else if (typeof node.material.clone === 'function') {
+			node.material = node.material.clone();
+		}
+	});
+	mesh.userData = mesh.userData || {};
+	mesh.userData.materialsIsolated = true;
 }
 
 function detachWings(mesh) {

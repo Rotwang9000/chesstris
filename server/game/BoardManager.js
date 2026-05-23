@@ -583,6 +583,28 @@ class BoardManager {
 					continue;
 				}
 
+				// Degraded-home remnants (cells whose home marker was
+				// converted to plain terrain after idle degradation)
+				// also break the run. Without this guard a returning
+				// player gets their whole zone row-cleared the moment
+				// they place a tetromino, because a degraded 8-wide
+				// home zone is already a full row by itself.
+				if (this._cellIsDegradedHomeOnly(game.board, x, z)) {
+					consecutive = 0;
+					runStart = null;
+					continue;
+				}
+
+				// Cells owned by a paused player are inert: their
+				// footprint is frozen until they resume, so we treat
+				// them as gaps too. Matches the bible's pause rule
+				// (`server/world/pause.js`).
+				if (this._cellIsOwnedByPausedPlayer(game, x, z)) {
+					consecutive = 0;
+					runStart = null;
+					continue;
+				}
+
 				if (this._cellHasClearableContent(game.board, x, z)) {
 					if (consecutive === 0) runStart = scan;
 					consecutive++;
@@ -637,10 +659,34 @@ class BoardManager {
 		// pass has had a chance to mark stranded chess cells for decay.
 		return cellContents.some(item => {
 			if (!item) return false;
+			if (item.fromHomeZone === true) return false;
 			return !(item.type === cells.HOME_TYPE
 				|| item.type === cells.SPECIAL_TYPE
 				|| item.type === cells.CENTRE_TYPE);
 		});
+	}
+
+	/**
+	 * Does the cell at (x, z) hold *only* a degraded-home remnant —
+	 * the leftover terrain produced when an idle home zone loses its
+	 * `home` marker? Used by the line-clear scan to treat such cells
+	 * as gaps so returning players aren't wiped by a single placement.
+	 */
+	_cellIsDegradedHomeOnly(board, x, z) {
+		return cells.onlyDegradedOrMarkers(this.getCell(board, x, z));
+	}
+
+	/**
+	 * Cells whose owner is currently paused (see `pauseService`) are
+	 * inert for the duration of the pause — the line-clear scan
+	 * treats them as gaps so an opponent can't wipe a paused player
+	 * out before they resume.
+	 */
+	_cellIsOwnedByPausedPlayer(game, x, z) {
+		const owner = cells.getOwner(this.getCell(game.board, x, z));
+		if (!owner || !game || !game.players) return false;
+		const player = game.players[owner];
+		return !!(player && player.paused === true);
 	}
 
 	/**

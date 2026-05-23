@@ -72,6 +72,35 @@ export function findChessPieceMeshAt(x, z) {
 
 // ── Raycasting ──────────────────────────────────────────────────────────────
 
+// Tracks {pieceId -> lastClickAt} for the double-click rule on pieces
+// adjacent to a valid move target. Cleared on selection / deselection.
+const _adjacentClickGuard = new Map();
+const ADJACENT_DOUBLE_CLICK_MS = 450;
+
+function isOrthogonallyAdjacent(a, b) {
+	if (!a || !b) return false;
+	const dx = Math.abs(Number(a.x) - Number(b.x));
+	const dz = Math.abs(Number(a.z) - Number(b.z));
+	return (dx + dz === 1);
+}
+
+function pieceIsAdjacentToValidMove(pieceMesh, validMoves) {
+	if (!pieceMesh || !pieceMesh.userData || !Array.isArray(validMoves) || validMoves.length === 0) {
+		return false;
+	}
+	const pos = pieceMesh.userData.position;
+	if (!pos) return false;
+	for (const move of validMoves) {
+		if (!move) continue;
+		if (isOrthogonallyAdjacent(pos, move)) return true;
+	}
+	return false;
+}
+
+function clearAdjacentClickGuard() {
+	_adjacentClickGuard.clear();
+}
+
 export function performRaycast() {
 	const raycaster = getRaycaster();
 	const camera = getCamera();
@@ -142,11 +171,45 @@ export function performRaycast() {
 		if (!gameState.processingMove) {
 			const piecePlayer = chessPieceHit.userData.player;
 			const isLocalPlayerPiece = String(piecePlayer) === String(gameState.localPlayerId);
-			if (isLocalPlayerPiece) {
-				selectChessPiece(chessPieceHit);
-			} else {
+			if (!isLocalPlayerPiece) {
 				showPieceInfo(chessPieceHit);
+				return;
 			}
+
+			// Click on the piece that's already selected → deselect.
+			// Gives the user an obvious "click-off" for misclicks and
+			// makes the green-circle move-target reachable without first
+			// having to find an empty cell to dismiss the selection.
+			if (
+				gameState.selectedChessPiece
+				&& gameState.selectedChessPiece === chessPieceHit
+			) {
+				clearChessSelection();
+				return;
+			}
+
+			// If a different piece is selected and has valid moves, and
+			// the candidate piece sits orthogonally adjacent to one of
+			// those move targets, require a double-click within
+			// ADJACENT_DOUBLE_CLICK_MS. The first click "fizzles" so
+			// the player can re-aim at the green cell behind it.
+			if (
+				gameState.selectedChessPiece
+				&& Array.isArray(gameState.validMoves)
+				&& gameState.validMoves.length > 0
+				&& pieceIsAdjacentToValidMove(chessPieceHit, gameState.validMoves)
+			) {
+				const pieceId = String(chessPieceHit.userData.id || '');
+				const now = performance.now();
+				const lastClick = _adjacentClickGuard.get(pieceId) || 0;
+				if (now - lastClick > ADJACENT_DOUBLE_CLICK_MS) {
+					_adjacentClickGuard.set(pieceId, now);
+					return; // ignore the first click; await confirm
+				}
+				_adjacentClickGuard.delete(pieceId);
+			}
+
+			selectChessPiece(chessPieceHit);
 		}
 	} else if (cellHit) {
 		const cellPosition = cellHit.userData.position;
@@ -230,6 +293,7 @@ export function selectChessPiece(piece) {
 	const gameState = getGameState();
 	if (!gameState || gameState.turnPhase !== 'chess') return;
 
+	clearAdjacentClickGuard();
 	clearChessSelection();
 	gameState.selectedChessPiece = piece;
 	gameState.selectedHoveredPlayer = piece.userData.player;
@@ -371,6 +435,7 @@ export function clearChessSelection() {
 	clearMoveHighlights();
 	hideDetonateButton();
 	try { setInfoCardPiece(null); } catch (_e) { /* card is non-critical */ }
+	clearAdjacentClickGuard();
 }
 
 // ── Movement ────────────────────────────────────────────────────────────────

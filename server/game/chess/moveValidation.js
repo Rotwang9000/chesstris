@@ -42,6 +42,17 @@ function pawnForward(orientation) {
 }
 
 /**
+ * True if the given owner is currently paused. Used so opponent
+ * chess pieces refuse to capture a paused player's pieces (the
+ * pause feature freezes the player's footprint until they resume).
+ */
+function _isOwnerPaused(game, ownerId) {
+	if (!game || !game.players || ownerId == null) return false;
+	const record = game.players[String(ownerId)];
+	return !!(record && record.paused === true);
+}
+
+/**
  * @typedef {Object} ValidationCtx
  * @property {{ getCell(board: object, x: number, z: number): any[]|null }} boardManager
  * @property {(game: object) => (x: number, z: number) => object|null} buildPieceLocator
@@ -73,6 +84,9 @@ function validateChessMove(ctx, game, playerId, moveData) {
 		const targetPiece = pieceAt(toX, toZ);
 		if (targetPiece && String(targetPiece.player) === String(playerId)) {
 			return { valid: false, error: 'Cannot capture your own piece' };
+		}
+		if (targetPiece && _isOwnerPaused(game, targetPiece.player)) {
+			return { valid: false, error: 'That player is paused — their pieces are temporarily protected' };
 		}
 
 		const typeValidation = validateMoveByPieceType(ctx, game, piece, toX, toZ, pieceAt);
@@ -269,6 +283,7 @@ function isValidChessMove(ctx, game, piece, toX, toZ) {
 		const pieceAt = ctx.buildPieceLocator(game);
 		const targetChess = pieceAt(toX, toZ);
 		if (targetChess && String(targetChess.player) === String(pieceOwner)) return false;
+		if (targetChess && _isOwnerPaused(game, targetChess.player)) return false;
 
 		const deltaX = toX - fromX;
 		const deltaZ = toZ - fromZ;

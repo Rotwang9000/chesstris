@@ -55,18 +55,50 @@ Each player is assigned a home zone when they join.
 
 ### Home zone degradation
 
-Home zones now degrade by converting to normal terrain (not by deleting cells):
+Home zones degrade by converting to normal terrain (not by deleting cells):
 
 - **Interval**: after sustained inactivity
-  (`HOME_ZONE_DEGRADATION_INTERVAL = 300 000 ms` = 5 minutes, checked
-  periodically). The previous 2.5-minute window felt punitive — players
-  reported having all their cells stripped while composing a single chat
-  message.
-- Home markers are converted into normal owned terrain cells.
-- Occupied cells are preserved: pieces remain on-board; no timed auto-removal of
-  cells just because a piece is standing on them.
-- Once converted, those cells are no longer treated as protected "safe home
-  zone" cells for row-clearing rules.
+  (`HOME_ZONE_DEGRADATION_INTERVAL = 300 000 ms` = 5 minutes for
+  **offline** players; multiplied by 12 ≈ 1 hour for **online but
+  idle** players). The "if you're still in front of the screen,
+  don't pull the rug out" rule was added after players reported
+  losing their footing while composing a chat message or thinking
+  through a move.
+- Home markers are converted into normal owned terrain cells, tagged
+  `fromHomeZone: true` so the rest of the engine can recognise the
+  remnant.
+- Occupied cells are preserved: pieces remain on-board; no timed
+  auto-removal of cells just because a piece is standing on them.
+- Once converted, the cells are still owned and still gravity-anchor
+  to the king, but they are **treated as gaps by the line-clear
+  scan** (`cells.onlyDegradedOrMarkers`). A returning player can't be
+  wiped out by a single placement turning a degraded 8-cell home row
+  into a row-clear; the run breaks at the remnant.
+- Degraded cells can still be captured by another player's tetromino
+  placement and can still decay via island integrity if they end up
+  stranded from the king.
+
+### Pause / resume
+
+Players may manually freeze their footprint with the **Pause** button
+in the player sidebar. While paused:
+
+- Their cells are skipped by the line-clear scan (treated as gaps,
+  same as degraded-home cells).
+- Their chess pieces refuse capture.
+- Their home zone does not degrade.
+
+Limits per session (`server/world/pause.js`):
+
+- **PAUSE_MAX_USES = 4** pauses per session.
+- **PAUSE_MAX_TOTAL_MS = 60 minutes** of cumulative paused time.
+- **PAUSE_AUTO_RESUME_MS = 30 minutes** maximum single pause; the
+  server auto-resumes at the cap so a player can't disappear forever
+  by leaving the pause running.
+
+Opponents see a "⏸ paused" badge in the player sidebar and a
+"That player is paused — their pieces are temporarily protected"
+error if they try to capture into a paused piece.
 
 ---
 

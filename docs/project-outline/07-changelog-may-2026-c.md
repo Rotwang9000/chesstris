@@ -2,6 +2,69 @@
 
 > Part of the [Tetches project outline](README.md). May 2026: power-up orbs, connectivity, production audit.
 
+### Disappearing pieces, sticky selection, pause / dormant-player handling (late May 2026)
+
+Three live-feedback fixes shipped together after the cutover.
+
+**Pieces vanishing during a row-clear cascade
+(`public/js/wingAnimations.js`).** The wing-fall animation faded
+`mesh.material.opacity` to 0 — but every piece of the same "side"
+shares a single `ENHANCED_MATERIALS` instance, so the fade silently
+made *all* surviving pieces invisible until something forced a fresh
+render. Fix: when wings attach, walk the mesh and replace each
+material with a per-instance `material.clone()`. The fall fade now
+isolates to the airborne piece.
+
+**Sticky / misrouted piece selection
+(`public/js/chessInteraction.js`).** Two cooperating rules:
+
+1. Clicking the currently-selected piece deselects it (no need to
+   hunt for an empty cell to dismiss the selection).
+2. If a different piece is selected with valid moves, and the
+   candidate piece sits orthogonally adjacent to one of those green
+   move targets, the click is treated as a "fizzle" — the user must
+   double-click within ~450 ms to override. Click guards reset on
+   selection / deselection so they never leak across pieces.
+
+**Dormant-player handling (the big one).** Players who go offline
+no longer come back to a one-move wipe. Three layered fixes:
+
+1. **Degraded-home cells break line-clear runs
+   (`server/game/cells.js`, `server/game/BoardManager.js`).** Cells
+   tagged `fromHomeZone: true` (the `home_converted` remnants
+   created when an idle home zone loses its `home` marker) are now
+   treated as gaps for the line-scan and survive
+   `stripForLineClear`. They still convert ownership on tetromino
+   placement and still decay via island integrity, but they no
+   longer hand a returning player a guaranteed wipe.
+2. **Slower degradation while online
+   (`server/world/homeZones.js`).** Online but idle players now
+   degrade after `HOME_ZONE_DEGRADATION_INTERVAL × 12` (≈ 1 hr),
+   matching the user's "if they must degrade then it must happen
+   whilst they aren't looking" rule. Offline players continue to
+   degrade on the bible's 5-minute timer.
+3. **Manual pause / resume (`server/world/pause.js`,
+   `server/sockets/lifecycle.js`,
+   `public/js/unifiedPlayerBar.js`).** New `pause_player` /
+   `resume_player` / `pause_status` socket events plus a "⏸ Pause"
+   button in the player sidebar. While paused:
+   - The owner's cells are skipped by the line-clear scan
+     (`BoardManager._cellIsOwnedByPausedPlayer`).
+   - The owner's pieces refuse capture
+     (`moveValidation._isOwnerPaused`).
+   - Home-zone degradation is frozen.
+   - Auto-resumes after 30 minutes; usage is capped at
+     `PAUSE_MAX_USES` (4) and a total of 60 minutes per session.
+
+The `players` payload in every broadcast now carries `paused` and
+`pauseUsesRemaining` so opponent rows render a "⏸ paused" badge.
+
+Tests: `tests/server/cellsDegradedHome.test.js` (6 tests) for the
+degraded-home rule and `tests/server/pauseService.test.js` (7
+tests) for the pause budget / idempotency. Existing 404-test
+server suite remains green.
+
+
 ### Power-up orbs + ghost-player sweep + promotion-credit redeem (May 2026)
 
 Three intertwined feature/bugfix shipped in one pass — all sparked

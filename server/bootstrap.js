@@ -38,6 +38,7 @@ const { createHomeZoneDegradationService } = require('./world/homeZones');
 const { createLifecycleService } = require('./world/lifecycle');
 const { createWorldGravityService, GRAVITY_TICK_MS } = require('./world/gravity');
 const { createGhostPlayerSweepService } = require('./world/ghostPlayerSweep');
+const { createPauseService } = require('./world/pause');
 const { createKingCaptureService } = require('./king/capture');
 const { createKingDuelService } = require('./king/duels');
 const { createKingDetonationService } = require('./king/detonation');
@@ -112,6 +113,12 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 
 	const homeZoneDegradation = createHomeZoneDegradationService({
 		gameManager,
+		broadcaster,
+		persistence,
+	});
+
+	const pauseService = createPauseService({
+		io,
 		broadcaster,
 		persistence,
 	});
@@ -262,6 +269,7 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		spectatorRegistry,
 		persistence,
 		activityLog,
+		pauseService,
 	});
 	io.on('connection', socket => {
 		metrics.setSocketCount(io.engine.clientsCount);
@@ -303,6 +311,7 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		loneKingSweep.reset();
 		ghostPlayerSweep.reset();
 		powerUpManager.reset();
+		pauseService.shutdown();
 		Sessions.clearAll && Sessions.clearAll();
 		process.exit(0);
 	}
