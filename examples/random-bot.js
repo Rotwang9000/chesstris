@@ -78,75 +78,130 @@ function emitWithAck(socket, event, payload) {
 }
 
 /**
- * Pick a random adjacent cell to one of our own pieces. This keeps
- * the tetromino on a path back to our king, which the server
- * requires. It's not a smart strategy — it's the simplest valid one.
+ * Collect anchor cells we can build from — every cell we already
+ * own, plus our king position as a fallback. This mirrors the
+ * `collectPlacementAnchors` helper the in-process AI uses (see
+ * `server/ai/actions.js`).
  */
-function chooseTetrominoPosition(state, ourId) {
-	const ourCells = [];
+function collectAnchors(state, ourId) {
+	const anchors = [];
+	const seen = new Set();
+	const push = (x, z) => {
+		const key = `${x},${z}`;
+		if (seen.has(key)) return;
+		seen.add(key);
+		anchors.push({ x, z });
+	};
+
 	for (const [key, contents] of Object.entries(state.board?.cells || {})) {
 		if (!Array.isArray(contents)) continue;
-		const ownsCell = contents.some((item) => item && String(item.player) === String(ourId));
-		if (ownsCell) {
+		if (contents.some((item) => item && String(item.player) === String(ourId))) {
 			const [x, z] = key.split(',').map(Number);
-			ourCells.push({ x, z });
+			push(x, z);
 		}
 	}
-	if (ourCells.length === 0) return null;
-	const anchor = randomFrom(ourCells);
-	const offset = randomFrom([
-		{ dx: 1, dz: 0 }, { dx: -1, dz: 0 },
-		{ dx: 0, dz: 1 }, { dx: 0, dz: -1 },
-	]);
-	return { x: anchor.x + offset.dx, z: anchor.z + offset.dz };
+	for (const piece of state.chessPieces || []) {
+		if (String(piece.player) !== String(ourId)) continue;
+		push(piece.position.x, piece.position.z);
+	}
+	return anchors;
 }
 
+/**
+ * Try up to `maxAttempts` random anchor + offset + rotation combos
+ * until the server accepts one. The server validates the actual
+ * shape against the board, so we just probe candidates and rely on
+ * the `invalid_placement` ack for negatives. This is the same
+ * pattern the built-in AI uses (`maxAttempts = 60`,
+ * `offsetRange = 4`).
+ */
 async function placeTetromino(socket, tetromino, state, ourId) {
-	const target = chooseTetrominoPosition(state, ourId)
-		|| { x: 0, z: 0 };
-	const payload = {
-		tetromino: {
-			pieceType: tetromino.pieceType || tetromino.type,
-			type: tetromino.type || tetromino.pieceType,
-			rotation: Math.floor(Math.random() * 4),
-			position: target,
-		},
-	};
+	const anchors = collectAnchors(state, ourId);
+	const pieceType = tetromino.pieceType || tetromino.type;
+	const maxAttempts = 40;
+	const offsetRange = 4;
+	for (let attempt = 0; attempt < maxAttempts; attempt++) {
+		const anchor = anchors.length > 0
+			? randomFrom(anchors)
+			: { x: 0, z: 0 };
+		const dx = Math.floor(Math.random() * (offsetRange * 2 + 1)) - offsetRange;
+		const dz = Math.floor(Math.random() * (offsetRange * 2 + 1)) - offsetRange;
+		const target = { x: anchor.x + dx, z: anchor.z + dz };
+		const rotation = Math.floor(Math.random() * 4);
+		const payload = {
+			tetromino: {
+				pieceType,
+				type: pieceType,
+				rotation,
+				position: target,
+			},
+		};
+		try {
+			await emitWithAck(socket, 'tetromino_placed', payload);
+			console.log(`[move] placed ${pieceType}@rot${rotation} at (${target.x},${target.z})`);
+			return true;
+		} catch (err) {
+			if (/rate_limited/i.test(err.message)) {
+				await sleep(800);
+				continue;
+			}
+			// invalid_placement / something_else → try a different anchor.
+		}
+	}
+	console.log(`[move] gave up after ${maxAttempts} attempts for ${pieceType}`);
+	return false;
+}
+
+/**
+ * Request a fresh tetromino from the server and try to place it.
+ * The browser uses a client-side 7-bag for this; external bots can
+ * either replicate that bag or, like this example, ask the server
+ * for the next piece via `request_tetromino` each time.
+ */
+async function requestAndPlaceTetromino(socket, state, ourId) {
 	try {
-		await emitWithAck(socket, 'tetromino_placed', payload);
-		console.log(`[move] placed ${payload.tetromino.pieceType} at (${target.x},${target.z})`);
+		const resp = await emitWithAck(socket, 'request_tetromino', {});
+		if (!resp || !resp.success || !resp.tetromino) {
+			console.log('[move] no tetromino issued — waiting');
+			return false;
+		}
+		return await placeTetromino(socket, resp.tetromino, state, ourId);
 	} catch (err) {
-		console.log(`[move] tetromino rejected — ${err.message}`);
+		console.log(`[move] request_tetromino failed — ${err.message}`);
+		return false;
 	}
 }
 
+/**
+ * Attempt one chess move. We pick a random piece + a random
+ * 1-step offset and try it. On failure we *don't* retry — the
+ * server logs every rejected chess move to the public activity
+ * feed, so a demo bot that probes every direction would pollute
+ * the feed for everyone else. The caller is expected to call
+ * this on an interval; missed turns are cheap.
+ */
 async function tryRandomChessMove(socket, state, ourId) {
 	const ourPieces = (state.chessPieces || [])
 		.filter((p) => String(p.player) === String(ourId));
 	if (ourPieces.length === 0) return false;
-
-	for (const piece of ourPieces.sort(() => Math.random() - 0.5)) {
-		const offsets = [
-			{ dx: 1, dz: 0 }, { dx: -1, dz: 0 },
-			{ dx: 0, dz: 1 }, { dx: 0, dz: -1 },
-			{ dx: 1, dz: 1 }, { dx: 1, dz: -1 },
-			{ dx: -1, dz: 1 }, { dx: -1, dz: -1 },
-		].sort(() => Math.random() - 0.5);
-		for (const o of offsets) {
-			const target = { x: piece.position.x + o.dx, z: piece.position.z + o.dz };
-			try {
-				await emitWithAck(socket, 'chess_move', {
-					pieceId: piece.id,
-					targetPosition: target,
-				});
-				console.log(`[chess] ${piece.type} ${piece.id} → (${target.x},${target.z})`);
-				return true;
-			} catch (err) {
-				// Try the next direction / piece.
-			}
-		}
+	const piece = randomFrom(ourPieces);
+	const offset = randomFrom([
+		{ dx: 1, dz: 0 }, { dx: -1, dz: 0 },
+		{ dx: 0, dz: 1 }, { dx: 0, dz: -1 },
+		{ dx: 1, dz: 1 }, { dx: 1, dz: -1 },
+		{ dx: -1, dz: 1 }, { dx: -1, dz: -1 },
+	]);
+	const target = { x: piece.position.x + offset.dx, z: piece.position.z + offset.dz };
+	try {
+		await emitWithAck(socket, 'chess_move', {
+			pieceId: piece.id,
+			targetPosition: target,
+		});
+		console.log(`[chess] ${piece.type} ${piece.id} → (${target.x},${target.z})`);
+		return true;
+	} catch (_err) {
+		return false;
 	}
-	return false;
 }
 
 async function main() {
@@ -162,8 +217,6 @@ async function main() {
 			const joinResp = await emitWithAck(socket, 'join_game', { playerName: BOT_NAME });
 			currentState = joinResp?.gameState || null;
 			console.log('[bot] joined world');
-			// Open with one chess move to demonstrate the chess loop.
-			await tryRandomChessMove(socket, currentState, playerId);
 		} catch (err) {
 			console.error('[bot] join_game failed:', err.message);
 		}
@@ -199,6 +252,24 @@ async function main() {
 			await tryRandomChessMove(socket, currentState || {}, playerId);
 		}
 	});
+
+	// Self-driving move loop. We don't rely on `new_tetromino` push
+	// signals (the server only emits them in specific cases like
+	// "no chess moves left after a placement") — we just request a
+	// fresh piece and place it whenever we're idle. Same for chess:
+	// the server has no "your turn" event for bots that already
+	// placed a tetromino, so we just attempt a chess move on a
+	// short interval and rely on the server to reject the move with
+	// "already placed" if it's not actually our chess phase yet.
+	setInterval(async () => {
+		if (!socket.connected) return;
+		await requestAndPlaceTetromino(socket, currentState || {}, playerId);
+	}, 2500);
+
+	setInterval(async () => {
+		if (!socket.connected) return;
+		await tryRandomChessMove(socket, currentState || {}, playerId);
+	}, 1800);
 
 	socket.on('disconnect', (reason) => {
 		console.log(`[bot] disconnected (${reason})`);

@@ -121,7 +121,12 @@ function buildPad() {
 		left: '50%',
 		bottom: 'max(12px, env(safe-area-inset-bottom, 12px))',
 		transform: 'translateX(-50%)',
-		zIndex: '1500',
+		// Sit above the canvas (z=1) and the title HUD, but below
+		// any modal/tutorial overlay (z=1000+) and the activity
+		// log panel (z=11500). Bottom-centre placement means we
+		// don't visually collide with the next-piece HUD even
+		// though both share the ~950 stacking band.
+		zIndex: '950',
 		display: 'none',
 		gridTemplateColumns: 'repeat(3, auto) 12px auto auto',
 		gridTemplateRows: 'auto auto',
@@ -185,10 +190,27 @@ function hidePad() {
 	if (pad) pad.style.visibility = 'hidden';
 }
 
+/**
+ * `true` when a tutorial / dialogue / join overlay is on screen
+ * and is blocking interaction with the canvas. The pad would
+ * otherwise float on top of the canvas (correct) which also means
+ * sitting next to whatever the modal is asking the user to do —
+ * confusing in screenshots and worse on a phone where the pad's
+ * buttons live right where the modal's CTA usually is.
+ */
+function isBlockingOverlayVisible() {
+	const overlay = document.getElementById('tutorial-message');
+	if (overlay && overlay.offsetParent !== null) return true;
+	const loading = document.getElementById('loading');
+	if (loading && loading.offsetParent !== null && loading.style.display !== 'none') return true;
+	return false;
+}
+
 function tick() {
 	const gameState = getGameState();
 	const inTetris = !!(gameState && gameState.turnPhase === 'tetris' && gameState.currentTetromino);
-	if (inTetris) showPad(); else hidePad();
+	if (inTetris && !isBlockingOverlayVisible()) showPad();
+	else hidePad();
 }
 
 // ── Device detection ────────────────────────────────────────────────────────

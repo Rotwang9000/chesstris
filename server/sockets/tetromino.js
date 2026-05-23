@@ -205,7 +205,13 @@ function registerTetrominoHandlers(socket, ctx) {
 		}
 	});
 
-	socket.on('request_tetromino', (callback) => {
+	// Accept both calling conventions: `(callback)` (no payload) and
+	// `(data, callback)` (browser / bot style). The browser doesn't
+	// currently use this event, but the external bot examples do.
+	socket.on('request_tetromino', (...args) => {
+		const callback = typeof args[args.length - 1] === 'function'
+			? args[args.length - 1]
+			: null;
 		try {
 			const player = World.getPlayer(playerId);
 			if (!player) {

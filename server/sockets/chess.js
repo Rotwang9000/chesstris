@@ -1004,10 +1004,24 @@ function classifyMoveRejection(gameManager, world, piece, targetPosition, destEx
 	};
 }
 
+// Per-player throttle on rejected-chess-move log entries. Without
+// this an over-eager bot (or a human spam-clicking) could fill the
+// rolling 200-event activity log with their own bad attempts in a
+// few seconds, drowning out everything interesting for spectators
+// and fly-through tools.
+const REJECTION_LOG_COOLDOWN_MS = 1500;
+const _rejectionLogLastAt = new Map();
+
 function logRejection(activityLog, world, player, piece, targetPosition, reason, message) {
 	if (!activityLog || typeof activityLog.recordChessMoveRejected !== 'function') return;
+	const playerId = player?.id || (piece && piece.player) || null;
+	if (playerId) {
+		const last = _rejectionLogLastAt.get(playerId) || 0;
+		const now = Date.now();
+		if (now - last < REJECTION_LOG_COOLDOWN_MS) return;
+		_rejectionLogLastAt.set(playerId, now);
+	}
 	try {
-		const playerId = player?.id || (piece && piece.player) || null;
 		const playerName = player?.username || player?.name || playerId;
 		activityLog.recordChessMoveRejected({
 			playerId,
