@@ -378,8 +378,8 @@ export function createUnifiedPlayerBar(gameState) {
 			<button id="change-player-name" style="margin-top: 10px; padding: 5px; background: #333; color: #ffcc00; border: 1px solid #ffcc00; border-radius: 3px; cursor: pointer; font-size: 12px; width: 100%;">
 				Change Name
 			</button>
-			<button id="pause-player-btn" style="margin-top: 8px; padding: 5px; background: #224; color: #cef; border: 1px solid #66f; border-radius: 3px; cursor: pointer; font-size: 12px; width: 100%;">
-				Pause (loading…)
+			<button id="pause-player-btn" title="Pause your zone and pieces — uncapturable while paused. Limited uses per session." style="margin-top: 8px; padding: 5px; background: #224; color: #cef; border: 1px solid #66f; border-radius: 3px; cursor: pointer; font-size: 12px; width: 100%;">
+				⏸ Pause
 			</button>
 			<div id="pause-player-meta" style="margin-top: 4px; font-size: 10px; color: #aaa; text-align: center; min-height: 12px;"></div>
 			<button id="exit-game-sidebar-btn" style="margin-top: 8px; padding: 5px; background: #600; color: #fff; border: 1px solid #f44; border-radius: 3px; cursor: pointer; font-size: 12px; width: 100%;">
@@ -500,15 +500,40 @@ function sendPauseRequest(eventType) {
 	return NetworkManager.sendMessage(eventType, {});
 }
 
-function requestPauseStatus() {
+let pauseStatusRetryTimer = null;
+function requestPauseStatus({ retryOnFail = true } = {}) {
 	sendPauseRequest('pause_status')
 		.then((resp) => {
 			if (resp && resp.success && resp.status) {
 				pauseStatusCache = resp.status;
 				applyPauseButtonState(resp.status);
+				if (pauseStatusRetryTimer) {
+					clearTimeout(pauseStatusRetryTimer);
+					pauseStatusRetryTimer = null;
+				}
+			} else if (retryOnFail && !pauseStatusRetryTimer) {
+				// Server responded but join hadn't fully completed
+				// yet — try once more after the connection settles.
+				pauseStatusRetryTimer = setTimeout(() => {
+					pauseStatusRetryTimer = null;
+					requestPauseStatus({ retryOnFail: false });
+				}, 2500);
 			}
 		})
-		.catch(() => { /* server may not support pause yet */ });
+		.catch(() => {
+			// Server may not yet support the pause endpoint, or the
+			// socket isn't connected. Retry once more so the button
+			// resolves to a sensible state after auto-connect.
+			if (retryOnFail && !pauseStatusRetryTimer) {
+				pauseStatusRetryTimer = setTimeout(() => {
+					pauseStatusRetryTimer = null;
+					requestPauseStatus({ retryOnFail: false });
+				}, 2500);
+			} else {
+				// Give up and show a usable default.
+				applyPauseButtonState(null);
+			}
+		});
 }
 
 function wirePauseButton() {

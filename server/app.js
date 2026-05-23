@@ -167,7 +167,19 @@ function createApp({ projectRoot = process.cwd() } = {}) {
 	app.get('/advertise', (_req, res) => {
 		res.sendFile(path.join(projectRoot, 'public', 'advertise.html'));
 	});
-	app.get('/admin/advertisers', (_req, res) => {
+	app.get('/admin/advertisers', (req, res) => {
+		// In production the admin panel is gated behind ADMIN_TOKEN.
+		// Browser-friendly: token via `?adminToken=…` query string.
+		if (process.env.NODE_ENV === 'production') {
+			const expected = process.env.ADMIN_TOKEN;
+			if (!expected) {
+				return res.status(503).send('Admin panel disabled (ADMIN_TOKEN not configured).');
+			}
+			const provided = req.query.adminToken;
+			if (!provided || provided !== expected) {
+				return res.status(401).send('Admin token required.');
+			}
+		}
 		res.sendFile(path.join(projectRoot, 'public', 'admin', 'advertisers.html'));
 	});
 

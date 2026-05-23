@@ -371,6 +371,66 @@ describe('BoardManager', () => {
 				expect(boardManager.getCell(game.board, x, 60)).toBeNull();
 			}
 		});
+
+		test('home cells bound the clear to the qualifying run on their side only', () => {
+			// 8 owned cells, then a home cell, then 4 more owned cells.
+			// Only the qualifying 8-run should be cleared; the 4 cells
+			// on the far side of the home gap must survive untouched.
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+			for (let x = 0; x < 8; x++) {
+				boardManager.setCell(game.board, x, 70, [{ type: 'tetromino', player: 'p1' }]);
+			}
+			boardManager.setCell(game.board, 8, 70, [{ type: 'home', player: 'p1' }]);
+			for (let x = 9; x < 13; x++) {
+				boardManager.setCell(game.board, x, 70, [{ type: 'tetromino', player: 'p1' }]);
+			}
+
+			const { rows, cells, rowRuns } = boardManager.findClearableLines(game);
+			expect(rows).toEqual([70]);
+			expect(rowRuns.get(70)).toEqual([{ start: 0, end: 7 }]);
+			expect(cells.every(c => c.x <= 7)).toBe(true);
+
+			boardManager.applyClearedLines(game, rows, [], { rowRuns });
+
+			for (let x = 0; x < 8; x++) {
+				expect(boardManager.getCell(game.board, x, 70)).toBeNull();
+			}
+			// Home cell still present.
+			expect(boardManager.getCell(game.board, 8, 70)).toEqual([
+				expect.objectContaining({ type: 'home', player: 'p1' }),
+			]);
+			// The 4 cells on the far side must NOT have been stripped.
+			for (let x = 9; x < 13; x++) {
+				const cell = boardManager.getCell(game.board, x, 70);
+				expect(cell).toEqual([
+					expect.objectContaining({ type: 'tetromino', player: 'p1' }),
+				]);
+			}
+		});
+
+		test('two qualifying runs in the same line both clear', () => {
+			// 8 cells, gap of 2 empty, 8 more cells. Two qualifying
+			// runs → both should clear; the gap stays empty.
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+			for (let x = 0; x < 8; x++) {
+				boardManager.setCell(game.board, x, 80, [{ type: 'tetromino', player: 'p1' }]);
+			}
+			for (let x = 10; x < 18; x++) {
+				boardManager.setCell(game.board, x, 80, [{ type: 'tetromino', player: 'p1' }]);
+			}
+
+			const { rows, rowRuns } = boardManager.findClearableLines(game);
+			expect(rows).toEqual([80]);
+			expect(rowRuns.get(80)).toEqual([
+				{ start: 0, end: 7 },
+				{ start: 10, end: 17 },
+			]);
+
+			const applied = boardManager.applyClearedLines(game, rows, [], { rowRuns });
+			expect(applied.totalCellsCleared).toBe(16);
+		});
 	});
 
 	describe('checkAndClearLines — dual axis', () => {

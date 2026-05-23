@@ -65,6 +65,58 @@ tests) for the pause budget / idempotency. Existing 404-test
 server suite remains green.
 
 
+### Pre-launch polish (late May 2026)
+
+A small, targeted sweep before opening the door to playtesters.
+
+**Bug: line-clear bled past the home-cell gap
+(`server/game/BoardManager.js`, `server/game/LineClearService.js`).**
+Home cells correctly *broke the run* during scanning, but the
+destructive step still cleared the whole row, so the cells on
+the far side of any home / degraded-home / paused-player gap
+disappeared too. Fix: `_findClearableLines` now tracks all
+qualifying *runs* (range pairs) per line, `findClearableLines`
+exposes them via new `rowRuns` / `colRuns` Maps, and
+`applyClearedLines` / `_clearLine` clip the destruction to those
+ranges. Multiple qualifying runs in the same line both clear,
+each bounded by its own gap. Two new tests in
+`tests/server/BoardManager.test.js` lock the behaviour in.
+
+**Production hardening.**
+
+- Admin gate (`routes/advertisers.js`, `server/app.js`): the
+  `/admin/advertisers` panel and the destructive
+  `/api/advertisers` endpoints (POST register, POST activate,
+  PUT, DELETE, GET list, GET :id/stats) now require an
+  `ADMIN_TOKEN` env var when `NODE_ENV=production`. Pass it via
+  the `x-admin-token` header (API) or `?adminToken=…` (admin
+  page). In development the gate is open so local workflows
+  aren't disturbed.
+- Log noise cull (`server/game/IslandManager.js`): the
+  "Player … has N disconnected islands after row clear" line
+  was being emitted on every 10 s integrity tick, dominating
+  PM2 logs (~1 350 of 1 500 lines in a recent capture). It's
+  now a single summary "Island integrity: N disconnected
+  island(s) pending decay" that only fires when the count
+  changes (and a "queue cleared" line when it drops to zero).
+- Dead static assets removed from `public/`:
+  `enhanced.html`, `enhanced-game.html`, `interaction-test.html`,
+  `dev-test.html`, and the never-imported `debugHelper.js`.
+  The 2D-retired stubs (`public/2D/index.html`,
+  `public/index-2d.html`) stay — they exist solely to give a
+  graceful "this mode is gone" page to anyone with a stale
+  bookmark.
+
+**Pause-button UX (`public/js/unifiedPlayerBar.js`).** The
+sidebar pause control no longer gets stuck on "Pause
+(loading…)" if the very first `pause_status` request loses the
+race with the socket join — it now retries once after 2.5 s,
+falls back to the unfetched default if that also fails, and
+shows a tooltip explaining the cap. Initial label is now
+`⏸ Pause` so it doesn't *look* broken before the status
+returns.
+
+
 ### Power-up orbs + ghost-player sweep + promotion-credit redeem (May 2026)
 
 Three intertwined feature/bugfix shipped in one pass — all sparked

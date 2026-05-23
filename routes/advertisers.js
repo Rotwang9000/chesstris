@@ -17,6 +17,32 @@ const sanitizeHtml = require('sanitize-html');
 
 const router = express.Router();
 
+// Admin gate for mutating / sensitive endpoints. In production an
+// `ADMIN_TOKEN` env var MUST be set, and the caller must supply it via
+// either an `x-admin-token` header or an `adminToken` query parameter.
+// In development the gate is open so local workflows aren't disturbed.
+function requireAdmin(req, res, next) {
+	const isProduction = process.env.NODE_ENV === 'production';
+	if (!isProduction) return next();
+
+	const expected = process.env.ADMIN_TOKEN;
+	if (!expected) {
+		return res.status(503).json({
+			success: false,
+			message: 'Admin endpoints are disabled (ADMIN_TOKEN not configured on this server).',
+		});
+	}
+
+	const provided = req.get('x-admin-token') || req.query.adminToken;
+	if (!provided || provided !== expected) {
+		return res.status(401).json({
+			success: false,
+			message: 'Admin token required.',
+		});
+	}
+	next();
+}
+
 // Persistent storage for advertisers. We keep an in-memory `Map` for fast
 // access plus a flat JSON file on disk so that ads survive server restarts.
 // (A heavier backend like Redis/Postgres can later wrap these helpers.)
@@ -225,7 +251,7 @@ router.post('/', upload.single('adImage'), async (req, res) => {
  * @desc Activate an advertiser after payment verification
  * @access Public (requires transaction signature)
  */
-router.post('/:id/activate', async (req, res) => {
+router.post('/:id/activate', requireAdmin, async (req, res) => {
 	try {
 		const { id } = req.params;
 		const { transactionSignature } = req.body;
@@ -287,7 +313,7 @@ router.post('/:id/activate', async (req, res) => {
  * @desc Get all advertisers
  * @access Public (should be admin-only in production)
  */
-router.get('/', async (req, res) => {
+router.get('/', requireAdmin, async (req, res) => {
 	try {
 		const allAdvertisers = Array.from(advertisers.values()).map(adv => ({
 			id: adv.id,
@@ -481,7 +507,7 @@ router.post('/:id/click', async (req, res) => {
  * @desc Update advertiser
  * @access Public (should be authenticated in production)
  */
-router.put('/:id', upload.single('adImage'), async (req, res) => {
+router.put('/:id', requireAdmin, upload.single('adImage'), async (req, res) => {
 	try {
 		const advertiser = advertisers.get(req.params.id);
 		
@@ -546,7 +572,7 @@ router.put('/:id', upload.single('adImage'), async (req, res) => {
  * @desc Get advertiser statistics
  * @access Public
  */
-router.get('/:id/stats', async (req, res) => {
+router.get('/:id/stats', requireAdmin, async (req, res) => {
 	try {
 		const advertiser = advertisers.get(req.params.id);
 		
@@ -587,7 +613,7 @@ router.get('/:id/stats', async (req, res) => {
  * @desc Delete an advertiser
  * @access Public (should be admin-only in production)
  */
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireAdmin, async (req, res) => {
 	try {
 		const advertiser = advertisers.get(req.params.id);
 		

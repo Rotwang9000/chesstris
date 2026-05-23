@@ -33,7 +33,10 @@ const DISCONNECTED_PIECE_TIME_LIMIT_MS = 20 * 60 * 1000; // 20 minutes
 
 class IslandManager {
 	constructor() {
-		// No properties needed for initialization
+		// Tracks the last logged "disconnected island queue size" so
+		// the integrity maintenance sweep only emits a log line when
+		// the count actually changes (instead of every 10s tick).
+		this._lastDisconnectedCount = 0;
 	}
 	
 	/**
@@ -562,14 +565,26 @@ class IslandManager {
 			const playerIslands = islands.filter(island => island.playerId === playerId);
 			const disconnectedIslands = playerIslands.filter(island => !island.hasKing);
 			if (disconnectedIslands.length === 0) continue;
-			log(`Player ${playerId} has ${disconnectedIslands.length} disconnected islands after row clear`);
 			allDisconnected.push(...disconnectedIslands);
 		}
 
 		this._refreshDisconnectedTimestamps(game, islands);
 
 		if (allDisconnected.length > 0) {
+			// Only log when the disconnected-island count CHANGES.
+			// The maintenance pass runs every 10s and an island can
+			// linger in the decay queue for minutes, so the previous
+			// per-tick log spammed PM2 with the same line. Actual
+			// decay events are recorded via `activityLog.recordIslandDecay`
+			// so the in-game panel still tells the full story.
+			if (this._lastDisconnectedCount !== allDisconnected.length) {
+				log(`Island integrity: ${allDisconnected.length} disconnected island${allDisconnected.length === 1 ? '' : 's'} pending decay`);
+				this._lastDisconnectedCount = allDisconnected.length;
+			}
 			this._processDisconnectedIslands(game, allDisconnected);
+		} else if (this._lastDisconnectedCount > 0) {
+			log('Island integrity: queue cleared');
+			this._lastDisconnectedCount = 0;
 		}
 	}
 

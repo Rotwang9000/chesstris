@@ -67,9 +67,9 @@ function createLineClearService({ io, gameManager, broadcaster, integrityService
 		const allSettleOutcomes = [];
 		let iterations = 0;
 		while (iterations < MAX_CASCADE_ITERATIONS) {
-			const { rows, cols } = boardManager.findClearableLines(world);
+			const { rows, cols, rowRuns, colRuns } = boardManager.findClearableLines(world);
 			if (rows.length === 0 && cols.length === 0) break;
-			const applied = boardManager.applyClearedLines(world, rows, cols);
+			const applied = boardManager.applyClearedLines(world, rows, cols, { rowRuns, colRuns });
 			if (applied.rows.length === 0 && applied.cols.length === 0) break;
 			const settleOutcomes = boardManager.settleAirbornePieces(
 				world,
@@ -102,7 +102,7 @@ function createLineClearService({ io, gameManager, broadcaster, integrityService
 		let iterations = 0;
 
 		while (iterations < MAX_CASCADE_ITERATIONS) {
-			const { rows, cols, cells } = boardManager.findClearableLines(world);
+			const { rows, cols, cells, rowRuns, colRuns } = boardManager.findClearableLines(world);
 			if (rows.length === 0 && cols.length === 0) break;
 			if (cells.length === 0) break;
 
@@ -134,7 +134,7 @@ function createLineClearService({ io, gameManager, broadcaster, integrityService
 				await sleep(FLASH_DURATION_MS);
 			}
 
-			const applied = boardManager.applyClearedLines(world, rows, cols);
+			const applied = boardManager.applyClearedLines(world, rows, cols, { rowRuns, colRuns });
 
 			// Bail if the apply step (somehow) did nothing — this can
 			// happen if another action modified the board during the

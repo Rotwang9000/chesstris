@@ -416,48 +416,54 @@ class BoardManager {
 	 * @returns {{ rows: number[], cols: number[], cells: Array<{x:number,z:number}> }}
 	 */
 	findClearableLines(game) {
-		const rows = this._findClearableLines(game, 'z');
-		const cols = this._findClearableLines(game, 'x');
+		const rowMatches = this._findClearableLines(game, 'z');
+		const colMatches = this._findClearableLines(game, 'x');
 
 		const cellsMap = new Map();
-		const collect = (axis, indices) => {
-			const start = axis === 'z' ? game.board.minX : game.board.minZ;
-			const end = axis === 'z' ? game.board.maxX : game.board.maxZ;
-			for (const idx of indices) {
-				for (let scan = start; scan <= end; scan++) {
-					const [x, z] = axis === 'z' ? [scan, idx] : [idx, scan];
+		const collectRuns = (axis, fixed, runs) => {
+			for (const run of runs) {
+				for (let scan = run.start; scan <= run.end; scan++) {
+					const [x, z] = axis === 'z' ? [scan, fixed] : [fixed, scan];
 					if (!this.wouldClearAffectCell(game.board, x, z)) continue;
 					const key = `${x},${z}`;
 					if (!cellsMap.has(key)) cellsMap.set(key, { x, z });
 				}
 			}
 		};
-		collect('z', rows);
-		collect('x', cols);
+		for (const { index, runs } of rowMatches) collectRuns('z', index, runs);
+		for (const { index, runs } of colMatches) collectRuns('x', index, runs);
 
-		// Drop candidate rows/cols that wouldn't actually modify anything
-		// (entirely chess- or home-protected runs). Keeps the report
-		// honest for callers that broadcast a "line cleared" toast.
-		const rowsTouched = rows.filter(z => {
-			const start = game.board.minX;
-			const end = game.board.maxX;
-			for (let x = start; x <= end; x++) {
-				if (cellsMap.has(`${x},${z}`)) return true;
-			}
-			return false;
-		});
-		const colsTouched = cols.filter(x => {
-			const start = game.board.minZ;
-			const end = game.board.maxZ;
-			for (let z = start; z <= end; z++) {
-				if (cellsMap.has(`${x},${z}`)) return true;
-			}
-			return false;
-		});
+		// A run is only worth announcing / clearing if it actually
+		// modifies at least one cell. A run entirely composed of
+		// chess-only cells (no terrain to strip) would survive the
+		// `_cellHasClearableContent` test that classed it as a run
+		// but contribute nothing to `cellsMap`.
+		const rowRuns = new Map();
+		for (const { index, runs } of rowMatches) {
+			const kept = runs.filter(r => {
+				for (let scan = r.start; scan <= r.end; scan++) {
+					if (cellsMap.has(`${scan},${index}`)) return true;
+				}
+				return false;
+			});
+			if (kept.length > 0) rowRuns.set(index, kept);
+		}
+		const colRuns = new Map();
+		for (const { index, runs } of colMatches) {
+			const kept = runs.filter(r => {
+				for (let scan = r.start; scan <= r.end; scan++) {
+					if (cellsMap.has(`${index},${scan}`)) return true;
+				}
+				return false;
+			});
+			if (kept.length > 0) colRuns.set(index, kept);
+		}
 
 		return {
-			rows: rowsTouched,
-			cols: colsTouched,
+			rows: [...rowRuns.keys()],
+			cols: [...colRuns.keys()],
+			rowRuns,
+			colRuns,
 			cells: [...cellsMap.values()],
 		};
 	}
@@ -471,18 +477,20 @@ class BoardManager {
 	 * @param {number[]} cols
 	 * @returns {{ rows: number[], cols: number[], totalCellsCleared: number }}
 	 */
-	applyClearedLines(game, rows, cols) {
+	applyClearedLines(game, rows, cols, options = {}) {
 		const clearedRows = [];
 		const clearedCols = [];
 		let totalCellsCleared = 0;
 		const airbornePieces = [];
+		const rowRuns = options.rowRuns instanceof Map ? options.rowRuns : null;
+		const colRuns = options.colRuns instanceof Map ? options.colRuns : null;
 
 		for (const z of rows || []) {
-			const n = this._clearLine(game, 'z', z, airbornePieces);
+			const n = this._clearLine(game, 'z', z, airbornePieces, rowRuns?.get(z) || null);
 			if (n > 0) { clearedRows.push(z); totalCellsCleared += n; }
 		}
 		for (const x of cols || []) {
-			const n = this._clearLine(game, 'x', x, airbornePieces);
+			const n = this._clearLine(game, 'x', x, airbornePieces, colRuns?.get(x) || null);
 			if (n > 0) { clearedCols.push(x); totalCellsCleared += n; }
 		}
 
@@ -518,8 +526,8 @@ class BoardManager {
 	 * @returns {{ rows: number[], cols: number[] }} Cleared z-rows and x-cols
 	 */
 	checkAndClearLines(game) {
-		const { rows: candidateRows, cols: candidateCols } = this.findClearableLines(game);
-		const applied = this.applyClearedLines(game, candidateRows, candidateCols);
+		const { rows, cols, rowRuns, colRuns } = this.findClearableLines(game);
+		const applied = this.applyClearedLines(game, rows, cols, { rowRuns, colRuns });
 		// Resolve airborne pieces synchronously so legacy / test paths
 		// that bypass `LineClearService` still see settled state at the
 		// end of the call. Without this the cell-stripped pieces would
@@ -556,7 +564,7 @@ class BoardManager {
 	 */
 	_findClearableLines(game, axis) {
 		const threshold = GAME_RULES.REQUIRED_CELLS_FOR_ROW_CLEARING;
-		const cleared = [];
+		const matches = [];
 
 		const fixedStart = axis === 'z' ? game.board.minZ : game.board.minX;
 		const fixedEnd   = axis === 'z' ? game.board.maxZ : game.board.maxX;
@@ -564,74 +572,56 @@ class BoardManager {
 		const scanEnd    = axis === 'z' ? game.board.maxX : game.board.maxZ;
 
 		for (let fixed = fixedStart; fixed <= fixedEnd; fixed++) {
+			const runs = [];
 			let consecutive = 0;
-			let maxConsecutive = 0;
 			let runStart = null;
-			let bestRunStart = null;
-			let bestRunEnd = null;
+
+			const closeRun = (lastScan) => {
+				if (consecutive >= threshold && runStart !== null) {
+					runs.push({ start: runStart, end: lastScan });
+				}
+				consecutive = 0;
+				runStart = null;
+			};
 
 			for (let scan = scanStart; scan <= scanEnd; scan++) {
 				const [x, z] = axis === 'z' ? [scan, fixed] : [fixed, scan];
 
-				// Per the bible, home cells are treated as empty space for
-				// clear purposes: they break the run and aren't touched by
-				// the clear. This applies to *any* cell carrying a home
-				// marker, not just "safe" home zones.
-				if (this.cellHasHomeMarker(game.board, x, z)) {
-					consecutive = 0;
-					runStart = null;
-					continue;
-				}
-
-				// Degraded-home remnants (cells whose home marker was
-				// converted to plain terrain after idle degradation)
-				// also break the run. Without this guard a returning
-				// player gets their whole zone row-cleared the moment
-				// they place a tetromino, because a degraded 8-wide
-				// home zone is already a full row by itself.
-				if (this._cellIsDegradedHomeOnly(game.board, x, z)) {
-					consecutive = 0;
-					runStart = null;
-					continue;
-				}
-
-				// Cells owned by a paused player are inert: their
-				// footprint is frozen until they resume, so we treat
-				// them as gaps too. Matches the bible's pause rule
-				// (`server/world/pause.js`).
-				if (this._cellIsOwnedByPausedPlayer(game, x, z)) {
-					consecutive = 0;
-					runStart = null;
+				// Per the bible, home cells, degraded-home remnants, and
+				// any cell owned by a paused player are treated as empty
+				// space for clear purposes: they break the run AND bound
+				// the cells that get cleared. This is why we now track
+				// run RANGES (not just indices) — without it the engine
+				// would clear cells on the far side of a home marker
+				// when the run on the near side hit the threshold, and
+				// players reported losing pieces "across the gap".
+				if (this.cellHasHomeMarker(game.board, x, z)
+					|| this._cellIsDegradedHomeOnly(game.board, x, z)
+					|| this._cellIsOwnedByPausedPlayer(game, x, z)) {
+					closeRun(scan - 1);
 					continue;
 				}
 
 				if (this._cellHasClearableContent(game.board, x, z)) {
 					if (consecutive === 0) runStart = scan;
 					consecutive++;
-					if (consecutive > maxConsecutive) {
-						maxConsecutive = consecutive;
-						bestRunStart = runStart;
-						bestRunEnd = scan;
-					}
 				} else {
-					consecutive = 0;
-					runStart = null;
+					closeRun(scan - 1);
 				}
 			}
+			closeRun(scanEnd);
 
-			if (maxConsecutive >= threshold) {
-				cleared.push(fixed);
+			if (runs.length > 0) {
+				matches.push({ index: fixed, runs });
 				log(
-					`Found clearable ${axis}-line at ${axis}=${fixed} ` +
-					`(${maxConsecutive} consecutive filled cells from ` +
-					`${axis === 'z' ? 'x' : 'z'}=${bestRunStart} ` +
-					`to ${axis === 'z' ? 'x' : 'z'}=${bestRunEnd}; ` +
-					`threshold=${threshold})`
+					`Found clearable ${axis}-line at ${axis}=${fixed}: ` +
+					runs.map(r => `${r.start}-${r.end}`).join(', ') +
+					` (threshold=${threshold})`
 				);
 			}
 		}
 
-		return cleared;
+		return matches;
 	}
 
 	/**
@@ -712,13 +702,24 @@ class BoardManager {
 	 * @returns {number} number of cells actually modified
 	 * @private
 	 */
-	_clearLine(game, axis, index, airbornePieces) {
+	_clearLine(game, axis, index, airbornePieces, runs = null) {
 		const start = axis === 'z' ? game.board.minX : game.board.minZ;
 		const end   = axis === 'z' ? game.board.maxX : game.board.maxZ;
 
 		let modified = 0;
+		const inAnyRun = (scan) => {
+			if (!runs) return true;
+			for (const r of runs) if (scan >= r.start && scan <= r.end) return true;
+			return false;
+		};
 
 		for (let scan = start; scan <= end; scan++) {
+			// Bound the clear to the qualifying run(s). A home /
+			// degraded-home / paused cell that broke the run during
+			// the scan therefore also bounds the destruction here —
+			// cells on the far side of the gap are left alone.
+			if (!inAnyRun(scan)) continue;
+
 			const [x, z] = axis === 'z' ? [scan, index] : [index, scan];
 			const key = `${x},${z}`;
 			const cellContents = game.board.cells[key];
