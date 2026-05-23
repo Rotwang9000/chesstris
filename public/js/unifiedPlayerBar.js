@@ -387,21 +387,28 @@ export function createUnifiedPlayerBar(gameState) {
 			</button>
 		`;
 		playerBar.appendChild(footer);
-		try { wirePauseButton(); } catch (_e) { /* pause UI is non-critical */ }
-		
+	}
+	
+	// Add to document FIRST. Any subsequent `document.getElementById`
+	// lookups need the bar to be in the document tree, otherwise the
+	// button references come back null and their click listeners
+	// silently never attach (this is exactly how the pause button
+	// shipped as a no-op).
+	document.body.appendChild(playerBar);
+
+	if (localPlayerId || localStorage.getItem('playerName')) {
 		// Inline rename. The previous version cleared localStorage and
 		// reloaded the page — which kicked the user out of the game,
 		// raced the dev-mode auto-init, and routinely landed them
 		// back as "Guest" or "DevPlayer_xxx". Sending a `change_name`
 		// socket message lets the server update the existing record
 		// in-place.
+		const playerName = resolveLocalDisplayName(gameState, localPlayerId);
 		document.getElementById('change-player-name')?.addEventListener('click', () => {
 			promptInlineRename(playerName);
 		});
+		try { wirePauseButton(); } catch (_e) { /* pause UI is non-critical */ }
 	}
-	
-	// Add to document
-	document.body.appendChild(playerBar);
 	
 	const worldCopyButton = document.getElementById('sidebar-copy-world-id');
 	if (worldCopyButton) {

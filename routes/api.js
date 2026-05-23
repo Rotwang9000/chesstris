@@ -155,11 +155,30 @@ router.post('/computer-players/register', (req, res) => {
 	};
 	externalApiTokens[playerId] = apiToken;
 
+	// Seed a real player record so the playerId is recognised by
+	// the socket layer the moment the bot connects. Without this
+	// step `connection.js` rejected the cookie-bound id as
+	// "unknown" and minted a fresh UUID, throwing the token away.
+	try {
+		World.upsertPlayer(playerId, {
+			name: String(name).slice(0, 32),
+			isComputer: true,
+			external: true,
+			lastActiveAt: Date.now(),
+		});
+	} catch (err) {
+		console.warn('[API] Failed to seed World record for external AI:', err.message);
+	}
+
 	res.json({
 		success: true,
-		message: 'External computer player registered.  Connect via Socket.IO with this id+token to join the world.',
+		message: 'External computer player registered. Connect to Socket.IO with the playerId + apiToken in the handshake query (or cookies) to claim this identity.',
 		playerId,
 		apiToken,
+		socketHandshake: {
+			query: { playerId, apiToken },
+			cookies: { tetches_player_id: playerId, tetches_api_token: apiToken },
+		},
 	});
 });
 

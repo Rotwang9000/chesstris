@@ -1,5 +1,16 @@
 # Tetches Computer Player API
 
+> **⚠ Deprecated.** The multi-game REST sandbox described below was
+> removed from the server in May 2026 in favour of a single shared
+> world. The endpoints and payload shapes in this document **no
+> longer exist**.
+>
+> See [`docs/external-api.md`](external-api.md) for the current
+> external API contract, and `examples/random-bot.js` for a working
+> bot against the live server.
+>
+> This file is preserved only as historical reference.
+
 This document provides a comprehensive guide to creating computer players for Tetches using the external computer player API.
 
 ## Overview

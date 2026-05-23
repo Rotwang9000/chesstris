@@ -7,17 +7,15 @@
  * player can shift, rotate, and hard-drop without using the
  * keyboard.
  *
- * Gestures:
- *   • Tap (short, no drift)       — handled by existing chess code.
- *   • Swipe horizontal (>40 px)   — moveTetrominoX  in that direction.
- *   • Swipe vertical (>40 px)     — moveTetrominoZ  in that direction.
- *   • Double-tap (<300 ms apart)  — rotate clockwise.
- *   • Long-press (>500 ms still)  — hard drop.
- *   • Two-finger tap              — rotate counter-clockwise (chord).
+ * Gestures (tetris phase only):
+ *   • Single tap (short, no drift)  — rotate clockwise.
+ *   • Double-tap (<300 ms apart)    — hard drop.
+ *   • Swipe horizontal (>40 px)     — moveTetrominoX in that direction.
+ *   • Swipe vertical (>40 px)       — moveTetrominoZ in that direction.
+ *   • Two-finger tap                — rotate counter-clockwise (chord).
  *
- * Each gesture only fires when `turnPhase === 'tetris'`. Outside of
- * that the events are passed through to the existing chess-raycast
- * handler — single-finger taps on the board still select pieces.
+ * Outside of the tetris phase, taps fall through to the existing
+ * chess-raycast handler so single-finger taps still select pieces.
  *
  * Tap / swipe coordinates are in screen space; we don't need to map
  * them to board space because the tetromino reacts to relative
@@ -31,7 +29,6 @@ import { playSound } from './audio/soundManager.js';
 
 const SWIPE_THRESHOLD_PX = 40;
 const DOUBLE_TAP_MS = 300;
-const LONG_PRESS_MS = 500;
 const TAP_DRIFT_THRESHOLD_PX = 12;
 
 let attached = false;
@@ -40,7 +37,6 @@ let touchStartX = 0;
 let touchStartY = 0;
 let touchStartTime = 0;
 let lastTapTime = 0;
-let longPressTimer = null;
 let gestureConsumed = false;
 let twoFingerActive = false;
 
@@ -84,10 +80,9 @@ function applySwipe(dx, dy) {
 }
 
 function clearLongPress() {
-	if (longPressTimer) {
-		clearTimeout(longPressTimer);
-		longPressTimer = null;
-	}
+	// Long-press hard-drop was retired in favour of double-tap drop;
+	// keep the helper as a stub so the older call-sites keep working
+	// in case anyone is wiring it via dynamic import.
 }
 
 function onTouchStart(event) {
@@ -111,31 +106,15 @@ function onTouchStart(event) {
 	touchStartTime = Date.now();
 	gestureConsumed = false;
 	twoFingerActive = false;
-
-	// Set up long-press for hard drop.
 	clearLongPress();
-	if (gameState?.turnPhase === 'tetris' && gameState.currentTetromino) {
-		longPressTimer = setTimeout(() => {
-			if (gestureConsumed) return;
-			gestureConsumed = true;
-			tetrominoModule.hardDropTetromino();
-			try { playSound('hardDrop'); } catch (_e) { /* sound is best-effort */ }
-		}, LONG_PRESS_MS);
-	}
 }
 
 function onTouchMove(event) {
 	if (twoFingerActive) return;
 	if (event.touches.length !== 1) return;
-	const t = event.touches[0];
-	const dx = t.clientX - touchStartX;
-	const dy = t.clientY - touchStartY;
-
-	// If the touch has moved beyond the long-press dead-zone, the
-	// long-press is cancelled (this is a swipe in progress).
-	if (Math.abs(dx) > TAP_DRIFT_THRESHOLD_PX || Math.abs(dy) > TAP_DRIFT_THRESHOLD_PX) {
-		clearLongPress();
-	}
+	// We don't need to do anything per-frame: the tap-vs-swipe
+	// decision is made on touchend using the start/end vector.
+	void event;
 }
 
 function onTouchEnd(event) {
@@ -170,17 +149,44 @@ function onTouchEnd(event) {
 	if (absDx < TAP_DRIFT_THRESHOLD_PX && absDy < TAP_DRIFT_THRESHOLD_PX && elapsed < 300) {
 		const now = Date.now();
 		const isDouble = (now - lastTapTime) < DOUBLE_TAP_MS;
-		lastTapTime = now;
-		if (isDouble && gameState?.turnPhase === 'tetris' && gameState.currentTetromino) {
-			tetrominoModule.rotateTetromino(1);
-			try { playSound('tick'); } catch (_e) { /* sound is best-effort */ }
-			event.preventDefault();
-			gestureConsumed = true;
-			lastTapTime = 0;
+		const inTetris = gameState?.turnPhase === 'tetris' && gameState.currentTetromino;
+
+		if (inTetris) {
+			if (isDouble) {
+				// Double-tap → hard drop.
+				tetrominoModule.hardDropTetromino();
+				try { playSound('hardDrop'); } catch (_e) { /* sound is best-effort */ }
+				event.preventDefault();
+				gestureConsumed = true;
+				lastTapTime = 0;
+			} else {
+				// First tap of a potential double. We can't act
+				// immediately (need to wait for the second tap),
+				// so schedule a single-tap rotate that fires
+				// after the double-tap window if no follow-up
+				// tap arrives. The double-tap branch above will
+				// pre-empt this by resetting `lastTapTime` and
+				// marking the gesture consumed before the
+				// timer ticks.
+				lastTapTime = now;
+				const startedAt = now;
+				setTimeout(() => {
+					if (gestureConsumed) return;
+					if (lastTapTime !== startedAt) return;
+					const gs = getGameState();
+					if (!gs || gs.turnPhase !== 'tetris' || !gs.currentTetromino) return;
+					tetrominoModule.rotateTetromino(1);
+					try { playSound('tick'); } catch (_e) { /* sound is best-effort */ }
+					gestureConsumed = true;
+				}, DOUBLE_TAP_MS + 10);
+			}
+			return;
 		}
-		// Single-tap falls through to the existing raycast handler
-		// (which lives in inputManager.handleTouchStart) so chess
-		// piece selection on a tap still works.
+
+		// Out of tetris phase — let the chess-raycast handler in
+		// inputManager.handleTouchStart deal with it (single-tap
+		// piece select etc.).
+		lastTapTime = now;
 	}
 }
 

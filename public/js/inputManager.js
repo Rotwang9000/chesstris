@@ -16,6 +16,7 @@ import { showToastMessage } from './showToastMessage.js';
 import { playSound, initSoundManager } from './audio/soundManager.js';
 import { setupKeyboardChess } from './keyboardChess.js';
 import { setupTouchGestures } from './touchGestures.js';
+import { setupTouchControlPad } from './touchControlPad.js';
 
 let _onTetrisPhaseClick = null;
 
@@ -98,11 +99,16 @@ export function setupInputHandlers() {
 	containerElement.addEventListener('touchend', handleTouchEnd, { passive: false });
 
 	// Keyboard-only chess (Tab/arrows/Enter) and touch-only gestures
-	// (swipe/double-tap/long-press) layer cleanly on top of the
-	// existing handlers. Each is a no-op if its target phase isn't
-	// active, so no further coordination is needed.
+	// (swipe / single-tap rotate / double-tap drop) layer cleanly on
+	// top of the existing handlers. Each is a no-op if its target
+	// phase isn't active, so no further coordination is needed.
+	//
+	// `setupTouchControlPad` adds an on-screen ◀▲▼▶ ⟳ ⬇ pad for
+	// touch-capable devices so mobile players have a discoverable
+	// control surface alongside the gestures.
 	setupKeyboardChess();
 	setupTouchGestures();
+	setupTouchControlPad();
 }
 
 // ── Keyboard ────────────────────────────────────────────────────────────────

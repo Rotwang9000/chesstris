@@ -270,18 +270,23 @@
 			box-shadow: 0 4px 12px rgba(255, 204, 0, 0.4);
 		}
 		
-		/* Advertise link in game title area */
+		/* Advertise link — pinned bottom-left above the camera
+		   controls strip so it doesn't disappear behind the
+		   next-piece HUD (top-right) or the activity log panel
+		   (right side). Low-key styling so it doesn't compete
+		   with gameplay UI. */
 		.advertise-link {
 			position: fixed;
-			top: 10px;
-			right: 10px;
-			z-index: 100;
+			bottom: 44px;
+			left: 10px;
+			z-index: 1100;
 			color: #888;
-			font-size: 12px;
+			font-size: 11px;
 			text-decoration: none;
-			padding: 4px 10px;
+			padding: 3px 8px;
 			border: 1px solid #444;
 			border-radius: 4px;
+			background: rgba(0, 0, 0, 0.55);
 			transition: all 0.2s;
 		}
 		
