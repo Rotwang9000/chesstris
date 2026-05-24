@@ -355,6 +355,58 @@ describe('IslandManager', () => {
 			expect(pawn).toBeDefined();
 		});
 		
+		test('knights survive an island-decay sweep along with the cell they stand on', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+
+			// Connected king island.
+			game.chessPieces.push({
+				id: 'p1-KING', type: 'KING', player: 'p1', position: { x: 0, z: 0 },
+			});
+			boardManager.setCell(game.board, 0, 0, [
+				{ type: 'tetromino', player: 'p1' },
+				{ type: 'chess', player: 'p1', pieceId: 'p1-KING' },
+			]);
+
+			// A stranded knight on a single-cell island, plus a stranded
+			// pawn elsewhere. The pawn should evaporate at decay time;
+			// the knight (and its cell) should survive.
+			game.chessPieces.push({
+				id: 'p1-KNIGHT', type: 'KNIGHT', player: 'p1', position: { x: 10, z: 10 },
+			});
+			boardManager.setCell(game.board, 10, 10, [
+				{ type: 'tetromino', player: 'p1' },
+				{ type: 'chess', player: 'p1', pieceId: 'p1-KNIGHT', pieceType: 'knight' },
+			]);
+
+			game.chessPieces.push({
+				id: 'p1-PAWN', type: 'PAWN', player: 'p1', position: { x: 12, z: 12 },
+			});
+			boardManager.setCell(game.board, 12, 12, [
+				{ type: 'tetromino', player: 'p1' },
+				{ type: 'chess', player: 'p1', pieceId: 'p1-PAWN', pieceType: 'pawn' },
+			]);
+
+			// Stamp the disconnected timestamps with the first sweep,
+			// then age them past the piece-bearing time limit so the
+			// next sweep performs an actual collapse.
+			islandManager.updateIslandsAfterTetrominoPlacement(game, [{ x: 0, z: 0 }], 'p1');
+			const IslandMgr = require('../../server/game/IslandManager');
+			const pieceTimeLimit = IslandMgr.DISCONNECTED_PIECE_TIME_LIMIT_MS;
+			for (const key of Object.keys(game.disconnectedSince || {})) {
+				game.disconnectedSince[key].since -= pieceTimeLimit + 1_000;
+			}
+			islandManager.updateIslandsAfterTetrominoPlacement(game, [{ x: 0, z: 0 }], 'p1');
+
+			// Knight + its cell survive.
+			expect(game.chessPieces.find(p => p.id === 'p1-KNIGHT')).toBeDefined();
+			expect(boardManager.getCell(game.board, 10, 10)).not.toBeNull();
+
+			// Pawn + its cell decay.
+			expect(game.chessPieces.find(p => p.id === 'p1-PAWN')).toBeUndefined();
+			expect(boardManager.getCell(game.board, 12, 12)).toBeNull();
+		});
+
 		test('recreates a support cell when a king has no board square', () => {
 			const game = createGame(boardManager);
 			addPlayer(game, 'p1');

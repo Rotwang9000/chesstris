@@ -59,6 +59,20 @@ function createConnectionHandler(services) {
 		registerSpectateHandlers(socket, handlerCtx);
 		registerLifecycleHandlers(socket, handlerCtx);
 
+		// One-shot fetch so a freshly-connected client can paint the
+		// fleet immediately instead of waiting for the next
+		// `boats_update` broadcast.
+		if (services.boatManager && typeof services.boatManager.getSnapshot === 'function') {
+			socket.on('get_boats', (cb) => {
+				try {
+					const snapshot = services.boatManager.getSnapshot();
+					if (typeof cb === 'function') cb({ boats: snapshot, ts: Date.now() });
+				} catch (err) {
+					if (typeof cb === 'function') cb({ error: err.message });
+				}
+			});
+		}
+
 		socket.on('disconnect', () => {
 			handleDisconnect(socket, playerId, services);
 		});

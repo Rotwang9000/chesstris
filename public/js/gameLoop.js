@@ -17,6 +17,7 @@ import { updateUnifiedPlayerBar } from './unifiedPlayerBar.js';
 import { updateChessPieces } from './updateChessPieces.js';
 import { handleMouseHover } from './chessInteraction.js';
 import { syncPowerUps, animatePowerUps } from './powerUpRenderer.js';
+import { animateBoats } from './boatsRenderer.js';
 import { syncNameplates, animateNameplates } from './nameplateRenderer.js';
 
 // ── Timing state ────────────────────────────────────────────────────────────
@@ -308,6 +309,11 @@ function animate(time) {
 				animatePowerUps(time * 0.001);
 			} catch (e) {
 				console.error('Error animating power-ups:', e);
+			}
+			try {
+				animateBoats(time * 0.001);
+			} catch (e) {
+				console.error('Error animating boats:', e);
 			}
 
 			// Player nameplates above each king. Captures-strip

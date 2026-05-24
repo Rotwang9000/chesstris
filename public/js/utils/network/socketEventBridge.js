@@ -69,6 +69,8 @@ const SIMPLE_FORWARD_EVENTS = Object.freeze([
 	'promotion_credit_redeemed',
 	// Pause / resume
 	'player_pause_state',
+	// Viking longship fleet (drifting boats with adverts on sails)
+	'boats_update',
 ]);
 
 /**

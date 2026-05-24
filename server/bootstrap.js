@@ -39,6 +39,8 @@ const { createLifecycleService } = require('./world/lifecycle');
 const { createWorldGravityService, GRAVITY_TICK_MS } = require('./world/gravity');
 const { createGhostPlayerSweepService } = require('./world/ghostPlayerSweep');
 const { createPauseService } = require('./world/pause');
+const { createBoatManager } = require('./world/boats');
+const advertisersRouter = require('../routes/advertisers');
 const { createKingCaptureService } = require('./king/capture');
 const { createKingDuelService } = require('./king/duels');
 const { createKingDetonationService } = require('./king/detonation');
@@ -120,6 +122,19 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 	const pauseService = createPauseService({
 		io,
 		broadcaster,
+		persistence,
+	});
+
+	// Viking longships drifting around the playable area. The
+	// advertisers router exposes a `pickAdvertiserForBoat` helper
+	// that round-robins through the active bid ranking — boats
+	// pull a fresh sail banner every ~90s from it.
+	const boatManager = createBoatManager({
+		io,
+		pickAdvertiser:
+			typeof advertisersRouter.pickAdvertiserForBoat === 'function'
+				? advertisersRouter.pickAdvertiserForBoat
+				: null,
 		persistence,
 	});
 
@@ -253,6 +268,10 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 	aiRunner.ensureRoster();
 	integrityService.processWorldIntegrityMaintenance({ emitAnimation: false, broadcast: false });
 
+	// Kick off the longship fleet. `start` spawns the boats and
+	// arms the internal tick + broadcast intervals.
+	boatManager.start();
+
 	// ── Sockets ───────────────────────────────────────────────────────────
 	const handleConnection = createConnectionHandler({
 		io,
@@ -270,6 +289,7 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		persistence,
 		activityLog,
 		pauseService,
+		boatManager,
 	});
 	io.on('connection', socket => {
 		metrics.setSocketCount(io.engine.clientsCount);
@@ -312,6 +332,7 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		ghostPlayerSweep.reset();
 		powerUpManager.reset();
 		pauseService.shutdown();
+		boatManager.stop();
 		Sessions.clearAll && Sessions.clearAll();
 		process.exit(0);
 	}

@@ -488,6 +488,17 @@ server runs island detection:
 5. When the grace expires, the cells are removed and any chess pieces standing
    on them are removed too.
 
+### Knight exception
+
+Knights are the only piece that leaps. When an island decays under a knight,
+the knight survives **and** the single cell it is standing on survives with
+it — the knight reads as standing on a stranded rocky outcrop, waiting for
+the world to grow back to it. Pawns / rooks / bishops / queens stranded on
+the same island are removed normally.
+
+In practice this means a knight is the only piece that can persist on a
+1-cell island indefinitely.
+
 This prevents orphaned territory from persisting after row clears, captures, or
 strategic disconnection attacks **without** punishing players who are
 momentarily distracted (writing a chat message, switching tabs, etc.).
@@ -601,6 +612,18 @@ colours is a trophy of conquest.
      delay. All connected players see the explosion sequence.
    - **Human players** can voluntarily detonate via the king-detonation
      button; the same lemming-style animation plays for everyone.
+10. **Knights survive island decay** - the knight is the only piece that
+    leaps in classic chess; in Tetches that translates into "leaps over the
+    rules of land". When a disconnected island would otherwise be wiped,
+    knights stranded on it are kept and the single cell they're standing
+    on is kept with them. They can then be moved off the outcrop by their
+    owner (or wait for a tetromino to bridge back).
+11. **Longship fleet** - between the islands a small fleet of Viking
+    longships drifts in slow loops around the world. Sails carry adverts
+    from the active bid ranking; the boats are passive set-dressing
+    today, but knights will eventually be able to "go viking" and ride
+    them between islands (see `server/world/boats.js` for the data model
+    used by the in-progress system).
 
 ---
 

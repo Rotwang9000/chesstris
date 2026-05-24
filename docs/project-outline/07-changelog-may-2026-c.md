@@ -2,6 +2,69 @@
 
 > Part of the [Tetches project outline](README.md). May 2026: power-up orbs, connectivity, production audit.
 
+### Sea aesthetic, mobile drag, longships, knight survival (late May 2026)
+
+Player feedback flagged four loose ends after the polish pass:
+
+1. **Floating-in-the-sea look ruined by hard shadows.** The water
+   plane's `receiveShadow = true` plus the sun's directional
+   shadow camera dropped a heavy dark blob under every cell —
+   making the islands look glued to a flat slab. Fix:
+   `water.receiveShadow = false` in `public/js/scene.js`. Cells
+   still cast shadows onto each other (useful depth cue between
+   stacked tetrominoes) but the sea surface stays clean.
+
+2. **"Clouds" under cells should look like wave foam.** The cell
+   support graphic in `public/js/boardFunctions/rendering.js` was
+   a three-sphere `MeshStandardMaterial` puff that sat just below
+   the cell base. Reskinned to a flat
+   `CircleGeometry`-on-the-water-surface that reads as a foam
+   splash, plus a sparse field of identical foam patches scattered
+   across the open sea via the revived `createFewClouds.js`
+   helper. Both pulse gently in `animateFoamPatches` so the sea
+   isn't completely static.
+
+3. **Long-press + drag the falling tetris piece on mobile.**
+   `public/js/touchGestures.js` gains a `LONG_PRESS_MS` (280 ms)
+   timer that promotes a single-finger touch into a drag once the
+   finger holds still. While dragging, finger pixel delta is
+   converted into board-cell steps using the same orientation
+   mapping the swipe handler uses, then committed one cell at a
+   time via `moveTetrominoX` / `moveTetrominoZ`. The piece keeps
+   falling at the normal rate (we never touch
+   `moveTetrominoY`); drift past 14 px before the timer fires
+   cancels the drag-arm so a normal swipe still works.
+
+4. **Knights survive without a path to king.** Disconnected-island
+   decay (`server/game/IslandManager.js`
+   `_processDisconnectedIslands`) was wiping any piece on a
+   stranded island. Added a knight-specific protect rule: knights
+   are passed straight through `removePiecesAtCells`, and the
+   single cell the knight stands on is preserved with the
+   timestamp refreshed so we don't re-log it every tick. Other
+   stranded pieces still decay normally. Documented in
+   `docs/players-bible.md` §15 rule 10.
+
+Plus the start of a new advertising surface to replace the
+sponsored-cell rotation that the user described as "complex to
+begin with and needs work":
+
+5. **Viking longship fleet (`server/world/boats.js`,
+   `public/js/boatsRenderer.js`).** A pool of 6 longships orbits
+   the playable area at a 28-unit radius with per-boat jitter so
+   they don't queue up in a single line. Each carries an
+   advertiser banner pulled from
+   `routes/advertisers.pickAdvertiserForBoat()` every ~90 s. The
+   server ticks at 200 ms and broadcasts at 500 ms via
+   `boats_update`; the client interpolates between snapshots so
+   the boats glide rather than teleport. Sails use a procedural
+   red/white striped fallback texture until an advertiser image
+   loads. `addPassenger`/`removePassenger` and a `passengers: []`
+   field on every snapshot lay the groundwork for the
+   knight-as-viking ride described in
+   `docs/boats-and-viking-knights.md`. Tests:
+   `tests/server/boats.test.js` (4).
+
 ### Disappearing pieces, sticky selection, pause / dormant-player handling (late May 2026)
 
 Three live-feedback fixes shipped together after the cutover.

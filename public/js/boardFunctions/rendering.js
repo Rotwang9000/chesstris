@@ -28,17 +28,20 @@ function ensureRenderCache(THREE) {
 			tetromino: new THREE.LineBasicMaterial({ color: 0x333333, transparent: true, opacity: 0.2, depthTest: false }),
 		};
 		cache.materials = Object.create(null);
-		// Three-puff cloud geometry shared across every cell. The
-		// individual puffs are slightly offset in `createCloudPuff`.
-		cache.cloudGeometry = new THREE.SphereGeometry(0.55, 12, 10);
-		cache.cloudMaterial = new THREE.MeshStandardMaterial({
-			color: 0xffffff,
-			roughness: 1.0,
-			metalness: 0.0,
+		// Flat foam splash sitting at the water surface beneath each
+		// cell. The geometry was previously a sphere, which made the
+		// "cloud" look puffy and broke the floating-in-sea aesthetic
+		// the rest of the scene is going for — we now use a circle
+		// laid flat so it reads as wave foam swirling around the
+		// island base.
+		cache.cloudGeometry = new THREE.CircleGeometry(0.7, 18);
+		cache.cloudGeometry.rotateX(-Math.PI / 2);
+		cache.cloudMaterial = new THREE.MeshBasicMaterial({
+			color: 0xF6FBFF,
 			transparent: true,
-			opacity: 0.88,
-			emissive: 0xfafaff,
-			emissiveIntensity: 0.08,
+			opacity: 0.5,
+			depthWrite: false,
+			side: THREE.DoubleSide,
 		});
 		ensureRenderCache._cache = cache;
 	}
@@ -46,36 +49,48 @@ function ensureRenderCache(THREE) {
 }
 
 /**
- * Build a fluffy 3-puff cloud anchored beneath a cell. The cloud is a
- * floppy `THREE.Group` of three spheres at a deterministic but
- * varied offset; we cache by cell key so re-renders don't churn.
+ * Build a sea-foam splash anchored beneath a cell at the water
+ * surface. Replaces the old fluffy cloud puff so cells read as
+ * islands floating on the sea rather than blocks sitting on a
+ * raincloud.
+ *
+ * The mesh is still tagged with the legacy `cloudPuff` userData
+ * type so the cleanup code that prunes orphaned cells/clouds in
+ * `renderBoard` keeps working.
  */
 function createCloudPuff(THREE, renderCache, x, z) {
 	const group = new THREE.Group();
 	const seed = ((x * 73856093) ^ (z * 19349663)) >>> 0;
-	const r1 = ((seed & 0xff) / 255 - 0.5) * 0.25;
-	const r2 = (((seed >> 8) & 0xff) / 255 - 0.5) * 0.25;
-	const r3 = (((seed >> 16) & 0xff) / 255 - 0.5) * 0.25;
+	const r1 = ((seed & 0xff) / 255 - 0.5) * 0.18;
+	const r2 = (((seed >> 8) & 0xff) / 255 - 0.5) * 0.18;
+	const r3 = (((seed >> 16) & 0xff) / 255 - 0.5) * 0.18;
 
-	const puffA = new THREE.Mesh(renderCache.cloudGeometry, renderCache.cloudMaterial);
-	puffA.position.set(-0.32 + r1, -0.45, 0.06 + r2);
-	puffA.scale.set(0.95, 0.55, 0.95);
-	group.add(puffA);
+	// `WATER_SURFACE_Y` mirrors the water plane in scene.js — keep
+	// these in sync if the sea height ever moves.
+	const WATER_SURFACE_Y = -2.0;
 
-	const puffB = new THREE.Mesh(renderCache.cloudGeometry, renderCache.cloudMaterial);
-	puffB.position.set(0.30 + r2, -0.40, -0.08 + r3);
-	puffB.scale.set(1.0, 0.62, 1.0);
-	group.add(puffB);
+	const main = new THREE.Mesh(renderCache.cloudGeometry, renderCache.cloudMaterial);
+	main.position.set(0, WATER_SURFACE_Y, 0);
+	main.scale.set(1.0 + r1 * 0.5, 1, 0.8 + r2 * 0.4);
+	main.rotation.y = ((seed & 0xff) / 255) * Math.PI;
+	main.renderOrder = 2;
+	group.add(main);
 
-	const puffC = new THREE.Mesh(renderCache.cloudGeometry, renderCache.cloudMaterial);
-	puffC.position.set(0.02 + r3, -0.55, -0.05 + r1);
-	puffC.scale.set(1.15, 0.5, 1.15);
-	group.add(puffC);
+	const wisp = new THREE.Mesh(renderCache.cloudGeometry, renderCache.cloudMaterial);
+	wisp.position.set(0.18 + r2, WATER_SURFACE_Y + 0.02, -0.12 + r3);
+	wisp.scale.set(0.45, 1, 0.3);
+	wisp.rotation.y = ((seed >> 8) & 0xff) / 255 * Math.PI;
+	wisp.renderOrder = 2;
+	group.add(wisp);
 
 	group.userData = {
 		type: 'cloudPuff',
 		parentCellKey: `${x},${z}`,
 		isStatic: true,
+		isCellFoam: true,
+		basePulse: 0.85 + ((seed >> 16) & 0xff) / 255 * 0.25,
+		pulseSpeed: 0.18 + ((seed >> 8) & 0xff) / 255 * 0.18,
+		pulsePhase: ((seed & 0xff) / 255) * Math.PI * 2,
 	};
 	return group;
 }

@@ -13,6 +13,9 @@
  *   • Swipe horizontal (>40 px)     — moveTetrominoX in that direction.
  *   • Swipe vertical (>40 px)       — moveTetrominoZ in that direction.
  *   • Two-finger tap                — rotate counter-clockwise (chord).
+ *   • Long-press + drag             — drag the falling piece around
+ *                                     while it keeps falling at the
+ *                                     normal rate.
  *
  * Outside of the tetris phase, taps fall through to the existing
  * chess-raycast handler so single-finger taps still select pieces.
@@ -31,6 +34,16 @@ const SWIPE_THRESHOLD_PX = 40;
 const DOUBLE_TAP_MS = 300;
 const TAP_DRIFT_THRESHOLD_PX = 12;
 
+// How long the finger must stay (mostly) still before the gesture
+// promotes from "potential tap/swipe" to "drag the falling piece".
+const LONG_PRESS_MS = 280;
+// Finger pixels per board cell during drag. Smaller = piece tracks
+// finger more eagerly; larger = more deliberate moves.
+const DRAG_PX_PER_CELL = 32;
+// Maximum drift allowed during the long-press wait before we abort
+// the drag intent (the user is clearly swiping instead).
+const LONG_PRESS_DRIFT_LIMIT_PX = 14;
+
 let attached = false;
 
 let touchStartX = 0;
@@ -39,6 +52,14 @@ let touchStartTime = 0;
 let lastTapTime = 0;
 let gestureConsumed = false;
 let twoFingerActive = false;
+
+let longPressTimer = null;
+let dragActive = false;
+let dragOriginX = 0;
+let dragOriginY = 0;
+let dragStepsX = 0;
+let dragStepsZ = 0;
+let dragOrientation = 0;
 
 /**
  * Translate a screen-space swipe vector into a board-space step,
@@ -80,9 +101,117 @@ function applySwipe(dx, dy) {
 }
 
 function clearLongPress() {
-	// Long-press hard-drop was retired in favour of double-tap drop;
-	// keep the helper as a stub so the older call-sites keep working
-	// in case anyone is wiring it via dynamic import.
+	if (longPressTimer) {
+		clearTimeout(longPressTimer);
+		longPressTimer = null;
+	}
+}
+
+/**
+ * Read the player-facing orientation so left/right/forward/back map
+ * to "intuitive from where the king is sitting".
+ */
+function readDragOrientation(gameState) {
+	let orientation = gameState?.orientation || 0;
+	const kingPiece = boardFunctions.getPlayersKing(gameState, gameState?.currentPlayer, false);
+	if (kingPiece && Number.isFinite(kingPiece.orientation)) orientation = kingPiece.orientation;
+	return orientation;
+}
+
+/**
+ * Translate (screenDx, screenDy) into a board-space (xStep, zStep)
+ * for the local player's view, using the same MOVE_MAP convention
+ * the swipe handler does.
+ */
+function screenDeltaToBoardSteps(orientation, screenDx, screenDy) {
+	const cellsX = Math.trunc(screenDx / DRAG_PX_PER_CELL);
+	const cellsY = Math.trunc(screenDy / DRAG_PX_PER_CELL);
+
+	// MOVE_MAP entry shape: [[dx, dz], ...] indexed by orientation.
+	const MOVE_MAP = {
+		right: [[-1, 0], [0,  1], [ 1, 0], [0, -1]],
+		left:  [[ 1, 0], [0, -1], [-1, 0], [0,  1]],
+		down:  [[0, -1], [-1, 0], [0,  1], [1,  0]],
+		up:    [[0,  1], [ 1, 0], [0, -1], [-1, 0]],
+	};
+
+	const horizDir = cellsX >= 0 ? 'right' : 'left';
+	const vertDir = cellsY >= 0 ? 'down' : 'up';
+
+	const horizUnit = MOVE_MAP[horizDir][orientation] || MOVE_MAP[horizDir][0];
+	const vertUnit = MOVE_MAP[vertDir][orientation] || MOVE_MAP[vertDir][0];
+
+	const cellsHoriz = Math.abs(cellsX);
+	const cellsVert = Math.abs(cellsY);
+
+	return {
+		xSteps: horizUnit[0] * cellsHoriz + vertUnit[0] * cellsVert,
+		zSteps: horizUnit[1] * cellsHoriz + vertUnit[1] * cellsVert,
+	};
+}
+
+/**
+ * Try to begin drag mode. Called from the long-press timer.
+ */
+function beginDrag() {
+	longPressTimer = null;
+	const gameState = getGameState();
+	if (!gameState || gameState.turnPhase !== 'tetris' || !gameState.currentTetromino) {
+		return;
+	}
+	dragActive = true;
+	dragOriginX = touchStartX;
+	dragOriginY = touchStartY;
+	dragStepsX = 0;
+	dragStepsZ = 0;
+	dragOrientation = readDragOrientation(gameState);
+	gestureConsumed = true;
+	try { navigator.vibrate && navigator.vibrate(20); } catch (_e) { /* haptics best-effort */ }
+}
+
+/**
+ * Step the tetromino so the cumulative (xSteps, zSteps) deltas
+ * since drag start match `target`. Returns true if anything was
+ * applied.
+ */
+function applyDragSteps(target) {
+	if (!dragActive) return false;
+	const gameState = getGameState();
+	if (!gameState || !gameState.currentTetromino) return false;
+
+	let xDelta = target.xSteps - dragStepsX;
+	let zDelta = target.zSteps - dragStepsZ;
+	if (xDelta === 0 && zDelta === 0) return false;
+
+	// Limit per-event steps so a fast flick doesn't queue up hundreds
+	// of moves that fight the move-validator.
+	const MAX_STEPS = 4;
+	const sign = (n) => (n > 0 ? 1 : n < 0 ? -1 : 0);
+
+	let appliedX = 0;
+	let appliedZ = 0;
+	while (Math.abs(xDelta) + Math.abs(zDelta) > 0 && (appliedX + appliedZ) < MAX_STEPS) {
+		if (Math.abs(xDelta) >= Math.abs(zDelta) && xDelta !== 0) {
+			const step = sign(xDelta);
+			tetrominoModule.moveTetrominoX(step);
+			xDelta -= step;
+			dragStepsX += step;
+			appliedX++;
+		} else if (zDelta !== 0) {
+			const step = sign(zDelta);
+			tetrominoModule.moveTetrominoZ(step);
+			zDelta -= step;
+			dragStepsZ += step;
+			appliedZ++;
+		} else {
+			break;
+		}
+	}
+
+	if (appliedX + appliedZ > 0) {
+		try { playSound('tick'); } catch (_e) { /* sound is best-effort */ }
+	}
+	return appliedX + appliedZ > 0;
 }
 
 function onTouchStart(event) {
@@ -92,6 +221,7 @@ function onTouchStart(event) {
 	if (event.touches.length === 2 && gameState?.turnPhase === 'tetris' && gameState.currentTetromino) {
 		twoFingerActive = true;
 		gestureConsumed = true;
+		dragActive = false;
 		clearLongPress();
 		tetrominoModule.rotateTetromino(-1);
 		try { playSound('tick'); } catch (_e) { /* sound is best-effort */ }
@@ -106,20 +236,55 @@ function onTouchStart(event) {
 	touchStartTime = Date.now();
 	gestureConsumed = false;
 	twoFingerActive = false;
+	dragActive = false;
+	dragStepsX = 0;
+	dragStepsZ = 0;
 	clearLongPress();
+	// Only arm the long-press → drag timer when we're actually in
+	// the tetris phase with a falling piece. Outside of that the
+	// rest of the gesture pipeline (chess raycast etc.) needs to
+	// stay snappy.
+	if (gameState?.turnPhase === 'tetris' && gameState.currentTetromino) {
+		longPressTimer = setTimeout(beginDrag, LONG_PRESS_MS);
+	}
 }
 
 function onTouchMove(event) {
 	if (twoFingerActive) return;
 	if (event.touches.length !== 1) return;
-	// We don't need to do anything per-frame: the tap-vs-swipe
-	// decision is made on touchend using the start/end vector.
-	void event;
+	const t = event.touches[0];
+	const dx = t.clientX - touchStartX;
+	const dy = t.clientY - touchStartY;
+
+	if (dragActive) {
+		const steps = screenDeltaToBoardSteps(
+			dragOrientation,
+			t.clientX - dragOriginX,
+			t.clientY - dragOriginY,
+		);
+		if (applyDragSteps(steps)) {
+			event.preventDefault();
+		}
+		return;
+	}
+
+	// If the finger has drifted past the long-press tolerance before
+	// the timer fires, the user is swiping (or panning) — kill the
+	// drag-arm so they don't get a surprise drag a beat later.
+	if (longPressTimer && (Math.abs(dx) > LONG_PRESS_DRIFT_LIMIT_PX || Math.abs(dy) > LONG_PRESS_DRIFT_LIMIT_PX)) {
+		clearLongPress();
+	}
 }
 
 function onTouchEnd(event) {
 	const gameState = getGameState();
 	clearLongPress();
+	if (dragActive) {
+		dragActive = false;
+		gestureConsumed = true;
+		event.preventDefault();
+		return;
+	}
 	if (twoFingerActive) {
 		twoFingerActive = false;
 		return;

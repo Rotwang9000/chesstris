@@ -678,9 +678,42 @@ router.get('/ranking/current', async (req, res) => {
 
 loadAdvertisersFromDisk();
 
+/**
+ * Public helper consumed by the server-side BoatManager
+ * (`server/world/boats.js`). Returns a sanitised advertiser blob
+ * suitable for putting on the sail of a Viking longship, or `null`
+ * when there are no active advertisers in the bid ranking.
+ *
+ * The function maintains its own rotation index so it doesn't
+ * interfere with the existing `/api/advertisers/next` endpoint
+ * (which is used elsewhere for sponsored-cell rotation).
+ *
+ * @returns {{id: string, name: string, adImage: string|null, adLink: string|null, adText: string|null}|null}
+ */
+let boatRotationIndex = 0;
+function pickAdvertiserForBoat() {
+	if (bidRanking.length === 0) {
+		updateBidRankings();
+		if (bidRanking.length === 0) return null;
+	}
+	const entry = bidRanking[boatRotationIndex % bidRanking.length];
+	boatRotationIndex = (boatRotationIndex + 1) % bidRanking.length;
+	if (!entry) return null;
+	const advertiser = advertisers.get(entry.id);
+	if (!advertiser) return null;
+	return {
+		id: advertiser.id,
+		name: advertiser.name || null,
+		adImage: advertiser.adImage || null,
+		adLink: advertiser.adLink || null,
+		adText: advertiser.adText || null,
+	};
+}
+
 module.exports = router;
 module.exports.loadAdvertisersFromDisk = loadAdvertisersFromDisk;
 module.exports.flushAdvertisersSync = flushAdvertisersSync;
+module.exports.pickAdvertiserForBoat = pickAdvertiserForBoat;
 
 
 

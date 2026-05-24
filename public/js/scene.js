@@ -1,4 +1,4 @@
-import { createFewClouds } from './createFewClouds.js';
+import { createFewClouds, animateFoamPatches } from './createFewClouds.js';
 import { getTHREE, getGameState } from './gameContext.js';
 import { translatePosition } from './centreBoardMarker.js';
 
@@ -463,12 +463,18 @@ export function createFloatingCube(x, z, material, boardGroup) {
 		cellMesh.receiveShadow = true;
 
 		boardGroup.add(cellMesh);
+
+		// Per-cell foam splash is added by `createCloudPuff` in
+		// `boardFunctions/rendering.js` during the live render pass —
+		// adding one here too would double up.
+
 		return cellMesh;
 	} catch (error) {
 		console.error(`Error creating floating cube at (${x}, ${z}):`, error);
 		return null;
 	}
 }
+
 /**
  * Set up lights for the scene
  */
@@ -641,7 +647,12 @@ function addWaterPlane(scene, THREE) {
 	const water = new THREE.Mesh(geometry, material);
 	water.name = 'tetches-water';
 	water.position.y = -2.2;
-	water.receiveShadow = true;
+	// The sea no longer receives shadows: the heavy dark blobs
+	// the islands used to cast made the board look glued onto a
+	// flat slab instead of floating. Cells still cast onto each
+	// other, which keeps the depth cue between stacked tetromino
+	// pieces.
+	water.receiveShadow = false;
 	water.userData.isWaterPlane = true;
 	water.userData.baseHeights = baseHeights;
 	water.userData.startedAt = performance.now();
@@ -689,6 +700,10 @@ export function updateWaterPlane(scene) {
 
 	const glow = scene.getObjectByName('tetches-water-glow');
 	if (glow) glow.rotation.y = t * 0.03;
+
+	// Cheap to do here so we don't need a separate frame hook just
+	// for the foam patches.
+	animateFoamPatches(scene);
 }
 
 /**
@@ -988,7 +1003,11 @@ export function animateAmbientParticles(scene, deltaTime) {
  * Add decorative clouds to the scene
  */
 function addCloudsToScene(scene) {
-	// Sky clouds replaced by createFewClouds (sparse bed beneath the board)
+	// Render the sea-foam patches that float between the islands.
+	// The helper is named `createFewClouds` for historical reasons —
+	// it now draws low, flat foam splashes on the water surface
+	// instead of fluffy cloud puffs.
+	createFewClouds(scene);
 }
 
 

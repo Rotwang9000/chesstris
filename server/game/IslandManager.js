@@ -374,6 +374,28 @@ class IslandManager {
 			});
 		};
 
+		// Cells that carry one of *our* knights survive an island
+		// decay sweep — knights are the only piece that leaps over
+		// gaps, so the narrative is they can stand on a stranded
+		// rocky outcrop indefinitely waiting for the world to grow
+		// back to them. Without this, a knight on a freshly-cut
+		// island was deleted at the same time the cell beneath it
+		// was cleared.
+		const knightCellsByPlayer = new Map();
+		if (Array.isArray(game.chessPieces)) {
+			for (const piece of game.chessPieces) {
+				if (!piece || !piece.position) continue;
+				if (String(piece.type || '').toUpperCase() !== 'KNIGHT') continue;
+				const pid = String(piece.player);
+				if (!knightCellsByPlayer.has(pid)) knightCellsByPlayer.set(pid, new Set());
+				knightCellsByPlayer.get(pid).add(`${piece.position.x},${piece.position.z}`);
+			}
+		}
+		const isKnightCell = (playerId, x, z) => {
+			const set = knightCellsByPlayer.get(String(playerId));
+			return !!(set && set.has(`${x},${z}`));
+		};
+
 		for (const island of disconnectedIslands) {
 			const { playerId, cells } = island;
 			const pid = String(playerId);
@@ -412,7 +434,12 @@ class IslandManager {
 					reason: pieces.REMOVAL_REASONS.ISLAND_DECAY,
 					activityLog: this.activityLog || null,
 					kingLifeService: this.kingLifeService || null,
-					protect: (_piece, pos) => isProtectedHomeCell(playerId, pos.x, pos.z),
+					protect: (piece, pos) => {
+						if (isProtectedHomeCell(playerId, pos.x, pos.z)) return true;
+						// Knights are exempt from disconnection-decay.
+						if (piece && String(piece.type || '').toUpperCase() === 'KNIGHT') return true;
+						return false;
+					},
 				}
 			);
 			for (const piece of removedPieces) {
@@ -422,6 +449,16 @@ class IslandManager {
 
 			for (const cell of cells) {
 				if (isProtectedHomeCell(playerId, cell.x, cell.z)) continue;
+				if (isKnightCell(playerId, cell.x, cell.z)) {
+					// Keep the cell so the knight has something to
+					// stand on. Refresh the grace timer so we don't
+					// re-log it every tick.
+					game.disconnectedSince[`${pid}:${cell.x},${cell.z}`] = {
+						since: now,
+						moveSnapshot: currentMoves,
+					};
+					continue;
+				}
 
 				const key = `${cell.x},${cell.z}`;
 				const cellContents = game.board.cells[key];

@@ -44,6 +44,7 @@ import {
 } from '../uiOverlays.js';
 import { playSound } from '../audio/soundManager.js';
 import { mountMuteButton } from '../audio/muteButton.js';
+import { syncBoats } from '../boatsRenderer.js';
 
 // `king_detonation` and `island_decay` cap how many simultaneous
 // particle animations we'll spawn so a 100×100 detonation doesn't pin
@@ -894,6 +895,33 @@ export function setupNetworkEvents(hooks = {}) {
 		gameState.powerUps = list.filter(o => o && o.id !== payload.orbId);
 		dispatchGameUpdate({ powerUps: gameState.powerUps.slice() });
 	});
+
+	// Viking longship fleet — drifting boats with adverts on their
+	// sails. The server broadcasts a fresh snapshot every ~500 ms;
+	// the client interpolates between snapshots so the boats glide
+	// smoothly rather than teleporting.
+	NetworkManager.on('boats_update', (payload) => {
+		if (!payload) return;
+		try {
+			syncBoats(Array.isArray(payload.boats) ? payload.boats : []);
+		} catch (err) {
+			console.warn('[boats_update] sync failed:', err && err.message);
+		}
+	});
+
+	// Request a one-shot snapshot on first connection so the fleet
+	// paints immediately instead of waiting for the next broadcast.
+	try {
+		const socket = NetworkManager.getSocket && NetworkManager.getSocket();
+		if (socket) {
+			socket.emit('get_boats', (resp) => {
+				if (!resp || !Array.isArray(resp.boats)) return;
+				try { syncBoats(resp.boats); } catch (err) {
+					console.warn('[get_boats] sync failed:', err && err.message);
+				}
+			});
+		}
+	} catch (_e) { /* best-effort */ }
 
 	// Promotion credits — the local player only. The server pushes the
 	// full list on join (and after every credit lifecycle event); we
