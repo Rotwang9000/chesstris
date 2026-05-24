@@ -1,6 +1,12 @@
 'use strict';
 
-const { createBoatManager, BOAT_COUNT, BOAT_LOOP_RADIUS } = require('../../server/world/boats');
+const {
+	createBoatManager,
+	BOAT_COUNT,
+	BOAT_WANDER_HALF_DEFAULT,
+	BOAT_SEA_Y,
+	BOAT_CELL_AVOID_RADIUS,
+} = require('../../server/world/boats');
 
 describe('BoatManager (server/world/boats)', () => {
 	let manager;
@@ -39,37 +45,101 @@ describe('BoatManager (server/world/boats)', () => {
 		}
 	});
 
-	test('boats sit roughly on the configured loop radius (with jitter)', () => {
-		manager.tick();
+	test('boats spawn inside the wander box (no parking far outside the play area)', () => {
 		const snap = manager.getSnapshot();
 		for (const boat of snap) {
-			const r = Math.hypot(boat.position.x, boat.position.z);
-			// Allow generous slack for the per-boat jitter — we only
-			// care that no boat is parked on top of the play area.
-			expect(r).toBeGreaterThan(BOAT_LOOP_RADIUS - 12);
-			expect(r).toBeLessThan(BOAT_LOOP_RADIUS + 12);
+			expect(Math.abs(boat.position.x)).toBeLessThanOrEqual(BOAT_WANDER_HALF_DEFAULT + 0.5);
+			expect(Math.abs(boat.position.z)).toBeLessThanOrEqual(BOAT_WANDER_HALF_DEFAULT + 0.5);
+			// Hulls float just below cell-base level — see BOAT_SEA_Y.
+			expect(boat.position.y).toBeCloseTo(BOAT_SEA_Y, 0);
 		}
 	});
 
-	test('boats move between ticks', () => {
-		const first = manager.getSnapshot().map(b => ({ id: b.id, x: b.position.x, z: b.position.z }));
-		// Simulate ~2 seconds of elapsed time by advancing the
-		// internal start timestamp backwards.
-		const guts = manager.boats;
-		for (const b of guts) {
-			b.theta0 -= b.direction * 0.5; // shove the phase forward
+	test('wander centre tracks the world board centre', () => {
+		// Simulate a saved world whose chess cells are clustered far
+		// from the origin (typical of a long-running game) and verify
+		// the next batch of boats spawns around that centre instead of
+		// around (0, 0).
+		const offsetManager = createBoatManager({
+			io: null,
+			pickAdvertiser: () => null,
+			getWorldCentre: () => ({ centreX: 30, centreZ: 30, extent: 20 }),
+		});
+		offsetManager.start();
+		try {
+			const snap = offsetManager.getSnapshot();
+			for (const boat of snap) {
+				// Each boat should be within ~ extent*0.7 (=14) of the
+				// reported centre, with a tiny slack for the
+				// initial _stepBoats movement.
+				expect(boat.position.x).toBeGreaterThan(15);
+				expect(boat.position.x).toBeLessThan(45);
+				expect(boat.position.z).toBeGreaterThan(15);
+				expect(boat.position.z).toBeLessThan(45);
+			}
+		} finally {
+			offsetManager.stop();
 		}
+	});
+
+	test('boats actually move between ticks (wandering toward their waypoint)', async () => {
+		const first = manager.getSnapshot().map(b => ({ id: b.id, x: b.position.x, z: b.position.z }));
+		// Boats move at ~1.2 ups; sleep a smidge so the next tick
+		// computes a non-trivial dt and produces measurable motion.
+		await new Promise(r => setTimeout(r, 80));
+		manager.tick();
+		await new Promise(r => setTimeout(r, 80));
 		manager.tick();
 		const second = manager.getSnapshot();
 		let moved = 0;
 		for (const after of second) {
 			const before = first.find(f => f.id === after.id);
 			if (!before) continue;
-			if (Math.abs(before.x - after.position.x) + Math.abs(before.z - after.position.z) > 0.01) {
+			if (Math.abs(before.x - after.position.x) + Math.abs(before.z - after.position.z) > 0.001) {
 				moved++;
 			}
 		}
 		expect(moved).toBeGreaterThan(0);
+	});
+
+	test('boats avoid occupied cells: never spawn on one, steer around them', async () => {
+		// 3×3 island sitting at (0,0) — covers (-1..1, -1..1).
+		const cells = [];
+		for (let x = -1; x <= 1; x++) {
+			for (let z = -1; z <= 1; z++) cells.push({ x, z });
+		}
+		const avoidManager = createBoatManager({
+			io: null,
+			pickAdvertiser: () => null,
+			getWorldCentre: () => ({ centreX: 0, centreZ: 0, extent: 16 }),
+			getOccupiedCells: () => cells,
+		});
+		avoidManager.start();
+		try {
+			// No boat may spawn inside the island.
+			for (const boat of avoidManager.getSnapshot()) {
+				const insideCell = cells.some(c =>
+					Math.abs(boat.position.x - c.x) <= BOAT_CELL_AVOID_RADIUS &&
+					Math.abs(boat.position.z - c.z) <= BOAT_CELL_AVOID_RADIUS
+				);
+				expect(insideCell).toBe(false);
+			}
+			// And after several seconds of simulated drift they still
+			// don't end up clipping through it.
+			for (let i = 0; i < 30; i++) {
+				await new Promise(r => setTimeout(r, 20));
+				avoidManager.tick();
+			}
+			for (const boat of avoidManager.getSnapshot()) {
+				const insideCell = cells.some(c =>
+					Math.abs(boat.position.x - c.x) <= BOAT_CELL_AVOID_RADIUS &&
+					Math.abs(boat.position.z - c.z) <= BOAT_CELL_AVOID_RADIUS
+				);
+				expect(insideCell).toBe(false);
+			}
+		} finally {
+			avoidManager.stop();
+		}
 	});
 
 	test('snapshot propagates the placeholder flag for unpaid sails', () => {

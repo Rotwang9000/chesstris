@@ -17,8 +17,9 @@
 import { getTHREE } from './gameContext.js';
 
 // Sit just above the water plane so the foam doesn't z-fight with
-// it but still reads as sitting on the surface.
-const FOAM_Y = -2.05;
+// it but still reads as sitting on the surface. Water plane is at
+// y=-0.50 (see `scene.js` `addWaterPlane`).
+const FOAM_Y = -0.45;
 const FOAM_SPREAD = 80;
 const FOAM_PATCH_COUNT = 38;
 
@@ -116,16 +117,10 @@ export function animateFoamPatches(scene) {
 			const ud = child && child.userData;
 			if (!ud || !ud.isCellFoam) continue;
 			const pulse = ud.basePulse + Math.sin(t * ud.pulseSpeed + ud.pulsePhase) * 0.18;
-			// The cloudPuff group now also contains a static island
-			// base that should NOT pulse. Scale the foam meshes
-			// individually so the rock pillar stays put.
-			const meshes = child.children;
-			if (!meshes) continue;
-			for (const mesh of meshes) {
-				if (mesh && mesh.userData && mesh.userData.isIslandBase) continue;
-				mesh.scale.x = pulse;
-				mesh.scale.z = pulse * 0.85;
-			}
+			// Island bases have been removed — every child of the
+			// foam group is now a foam mesh that pulses.
+			child.scale.x = pulse;
+			child.scale.z = pulse * 0.85;
 		}
 	}
 }

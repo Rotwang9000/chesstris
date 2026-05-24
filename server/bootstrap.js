@@ -136,6 +136,52 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 				? advertisersRouter.pickAdvertiserForBoat
 				: null,
 		persistence,
+		// Boats wander RELATIVE to the live board centre, not the
+		// world origin. Saved worlds in particular can have their
+		// occupied cells offset by 20+ units from (0, 0) — if the
+		// boats stay parked around the origin they sail off-screen
+		// the moment the camera frames the play area.
+		getWorldCentre: () => {
+			const world = World.getWorld();
+			const cells = world && world.board && world.board.cells;
+			if (!cells) return null;
+			let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity, n = 0;
+			for (const key of Object.keys(cells)) {
+				const idx = key.indexOf(',');
+				if (idx === -1) continue;
+				const x = Number(key.slice(0, idx));
+				const z = Number(key.slice(idx + 1));
+				if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
+				if (x < minX) minX = x;
+				if (x > maxX) maxX = x;
+				if (z < minZ) minZ = z;
+				if (z > maxZ) maxZ = z;
+				n++;
+			}
+			if (n === 0) return null;
+			return {
+				centreX: (minX + maxX) / 2,
+				centreZ: (minZ + maxZ) / 2,
+				extent: Math.max(maxX - minX, maxZ - minZ),
+			};
+		},
+		// Feed the BoatManager the set of occupied cell positions so
+		// the boats can steer around them. Sampled every couple of
+		// seconds inside the manager.
+		getOccupiedCells: () => {
+			const world = World.getWorld();
+			const cells = world && world.board && world.board.cells;
+			if (!cells) return [];
+			const out = [];
+			for (const key of Object.keys(cells)) {
+				const idx = key.indexOf(',');
+				if (idx === -1) continue;
+				const x = Number(key.slice(0, idx));
+				const z = Number(key.slice(idx + 1));
+				if (Number.isFinite(x) && Number.isFinite(z)) out.push({ x, z });
+			}
+			return out;
+		},
 	});
 
 	const worldGravity = createWorldGravityService({

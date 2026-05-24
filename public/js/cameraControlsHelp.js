@@ -18,6 +18,13 @@
 
 const ZOOM_STEP = 0.18;
 const PAN_STEP = 0.6;
+// Rotation step in radians per keypress. ~8° feels responsive
+// without being so coarse that holding the key whips the camera
+// around uncontrollably.
+const ROTATE_YAW_STEP = Math.PI / 22;
+const ROTATE_PITCH_STEP = Math.PI / 36;
+const MIN_PITCH = 0.18;          // never go fully overhead
+const MAX_PITCH = Math.PI / 2 - 0.05; // never go below the horizon
 const ESC_KEY = 'Escape';
 
 let getControlsFn = null;
@@ -113,6 +120,54 @@ function panCamera(dx, dz) {
 	if (typeof controls.update === 'function') controls.update();
 }
 
+/**
+ * Rotate the camera around the controls.target.
+ *
+ * `yaw` rotates around the world Y axis (looking left/right);
+ * `pitch` rotates around the camera's right vector (looking
+ * up/down). Both are radians.
+ *
+ * OrbitControls exposes private `rotateLeft`/`rotateUp` but they
+ * stage state for the next `update()` call and aren't stable across
+ * Three.js builds — manipulating the offset vector directly is
+ * tedious but completely portable.
+ */
+function rotateCamera(yaw, pitch) {
+	const controls = getActiveControls();
+	const camera = getActiveCamera();
+	if (!controls || !camera || !controls.target) return;
+
+	const ox = camera.position.x - controls.target.x;
+	const oy = camera.position.y - controls.target.y;
+	const oz = camera.position.z - controls.target.z;
+	const dist = Math.sqrt(ox * ox + oy * oy + oz * oz);
+	if (dist <= 0) return;
+
+	// Convert to spherical (theta = yaw, phi = pitch from +Y axis).
+	let theta = Math.atan2(ox, oz);
+	let phi = Math.acos(oy / dist);
+
+	theta -= yaw;          // yaw left = positive ⇒ orbit anticlockwise
+	phi = Math.max(MIN_PITCH, Math.min(MAX_PITCH, phi - pitch));
+
+	camera.position.set(
+		controls.target.x + dist * Math.sin(phi) * Math.sin(theta),
+		controls.target.y + dist * Math.cos(phi),
+		controls.target.z + dist * Math.sin(phi) * Math.cos(theta),
+	);
+	camera.lookAt(controls.target.x, controls.target.y, controls.target.z);
+	if (typeof controls.update === 'function') controls.update();
+}
+
+// Q/E/R/F double-duty as tetromino rotation in the tetris phase.
+// Cheap getter so we don't take them away from the placer mid-fall.
+function isTetrisPhaseActive() {
+	const gs = (typeof window !== 'undefined') ? window.gameState : null;
+	if (!gs) return false;
+	if (gs.turnPhase !== 'tetris') return false;
+	return !!gs.currentTetromino;
+}
+
 function installKeyboardCameraShortcuts() {
 	if (keyHandlerInstalled) return;
 	keyHandlerInstalled = true;
@@ -158,6 +213,41 @@ function installKeyboardCameraShortcuts() {
 				// held, but be defensive.
 				if (event.ctrlKey) return;
 				panCamera(PAN_STEP, 0);
+				event.preventDefault();
+				return;
+			// Rotate view. Q/E orbit left/right, R/F tilt up/down.
+			// Z/X are intentionally avoided — they're commonly used
+			// for tetromino rotation. Q/E/R also double as tetromino
+			// rotation in the tetris phase, so we yield to the
+			// placer while a piece is falling.
+			case 'q': case 'Q':
+				if (isTetrisPhaseActive()) return;
+				rotateCamera(+ROTATE_YAW_STEP, 0);
+				event.preventDefault();
+				return;
+			case 'e': case 'E':
+				if (isTetrisPhaseActive()) return;
+				rotateCamera(-ROTATE_YAW_STEP, 0);
+				event.preventDefault();
+				return;
+			case 'r': case 'R':
+				if (isTetrisPhaseActive()) return;
+				rotateCamera(0, -ROTATE_PITCH_STEP);
+				event.preventDefault();
+				return;
+			case 'f': case 'F':
+				rotateCamera(0, +ROTATE_PITCH_STEP);
+				event.preventDefault();
+				return;
+			// Comma / Period — always-on alternates for orbit yaw so
+			// the camera can be steered even while a tetromino is
+			// falling (Q/E/R are yielded to the placer above).
+			case ',': case '<':
+				rotateCamera(+ROTATE_YAW_STEP, 0);
+				event.preventDefault();
+				return;
+			case '.': case '>':
+				rotateCamera(-ROTATE_YAW_STEP, 0);
 				event.preventDefault();
 				return;
 		}
@@ -209,14 +299,16 @@ function buildHelpOverlay() {
 	const list = document.createElement('div');
 	Object.assign(list.style, { fontSize: '13px', lineHeight: '1.6' });
 	const items = [
-		['Rotate view', 'Mouse drag (left button)'],
+		['Rotate view', 'Mouse drag (left button) — or , / . to orbit'],
+		['Orbit (chess phase)', 'Q / E (yields to tetromino during a fall)'],
+		['Tilt view', 'F to tilt down, R to tilt up (R only outside tetris)'],
 		['Pan view', 'Mouse drag (right button) or W A S D'],
 		['Zoom', 'Mouse wheel — or + / − keys (great for touchpads)'],
 		['Reset camera', 'Click "Reset Camera" or press 0 in any phase'],
 		['Touch', 'One finger to rotate, two fingers to pan/zoom'],
 		['—', ''],
 		['Move tetromino', 'Arrow keys'],
-		['Rotate tetromino', 'Z or X (Q / E / R also work)'],
+		['Rotate tetromino', 'Z or X (Q / E / R also work in tetris phase)'],
 		['Hard drop tetromino', 'Spacebar'],
 		['Skip chess move', 'Spacebar (when no chess move available)'],
 		['Clear chess selection', 'Escape'],

@@ -4,7 +4,7 @@
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
 	<title>Advertise on Tetches</title>
-	<meta name="description" content="Advertise your brand on Tetches tetromino tiles. Pay with SOL cryptocurrency.">
+	<meta name="description" content="Sail your brand across the Tetches sea on a Viking longship sail. Pay with SOL cryptocurrency.">
 	
 	<style>
 		@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Inter:wght@400;500;600&display=swap');
@@ -428,14 +428,14 @@
 	<div class="container">
 		<header>
 			<div class="logo">TETCHES</div>
-			<p class="tagline">Advertise Your Brand on the Board</p>
+			<p class="tagline">Sail Your Brand Across the Tetches Sea</p>
 		</header>
 		
 		<!-- Progress Steps -->
 		<div class="steps">
 			<div class="step active" id="step-1">
 				<div class="step-number">1</div>
-				<span class="step-label">Create Ad</span>
+				<span class="step-label">Submit Brand</span>
 			</div>
 			<div class="step" id="step-2">
 				<div class="step-number">2</div>
@@ -443,7 +443,7 @@
 			</div>
 			<div class="step" id="step-3">
 				<div class="step-number">3</div>
-				<span class="step-label">Pay & Activate</span>
+				<span class="step-label">Pay & Set Sail</span>
 			</div>
 		</div>
 		
@@ -453,19 +453,26 @@
 		<!-- How It Works -->
 		<div class="card">
 			<div class="how-it-works">
-				<h3>How Tile Advertising Works</h3>
+				<h3>How Sail Advertising Works</h3>
+				<p style="color: var(--text-muted); margin-bottom: 16px;">
+					Tetches isn't a billboard — it's an ocean of floating chess islands with
+					a fleet of Viking longships drifting between them. Your ad rides one of
+					the sails. Players can click your boat from anywhere on the map to land
+					on your site.
+				</p>
 				<ol>
-					<li><strong>Bid per cell:</strong> Your bid is divided by the number of cells you want to sponsor. Higher cost-per-cell = more visibility.</li>
-					<li><strong>Rotation system:</strong> Advertisers rotate based on bid ranking. Top bidders appear first on falling tetrominos.</li>
-					<li><strong>Pay with SOL:</strong> Connect your Solana wallet (Phantom, Solflare) and pay in SOL cryptocurrency.</li>
-					<li><strong>Track performance:</strong> Monitor impressions, clicks, and click-through rate in real-time.</li>
+					<li><strong>Submit your brand details below.</strong> No image or payment yet — we just need the basics so we can quote you a slot.</li>
+					<li><strong>Pay in SOL.</strong> You'll get a Solana wallet address to send to. We don't bill cards, hold inventory, or run auctions — top-paying brands sail first.</li>
+					<li><strong>Upload your sail.</strong> Once payment lands, you'll be sent a one-time link to upload the artwork that goes on your sail. The brand-name banner along the bottom of the sail is auto-rendered.</li>
+					<li><strong>Bid ranking:</strong> The fleet rotates through active advertisers based on cost-per-impression. A bigger pot per slot means your boat appears more often.</li>
+					<li><strong>Track performance:</strong> Impressions and clicks are reported back in real-time from the live world.</li>
 				</ol>
 			</div>
 		</div>
 		
 		<!-- Registration Form -->
 		<form id="advertiser-form" class="card">
-			<h2 class="card-title">Create Your Advertisement</h2>
+			<h2 class="card-title">Book a Longship Sail</h2>
 			
 			<div class="form-row">
 				<div class="form-group">
@@ -496,10 +503,10 @@
 			</div>
 			
 			<div class="form-group">
-				<label>Ad Image <span class="label-hint">(JPEG, PNG, GIF, WebP - Max 5MB)</span></label>
+				<label>Sail Artwork <span class="label-hint">(JPEG, PNG, GIF, WebP - Max 5MB. Held in escrow until payment confirms — only published sails ever touch disk.)</span></label>
 				<div class="file-upload" id="file-upload-area">
-					<div class="file-upload-icon">📷</div>
-					<div class="file-upload-text">Click or drag to upload your ad image</div>
+					<div class="file-upload-icon">⛵</div>
+					<div class="file-upload-text">Click or drag to upload the artwork that goes on your sail</div>
 					<input type="file" id="adImage" name="adImage" accept="image/jpeg,image/png,image/gif,image/webp" required>
 					<img id="preview-image" class="preview-image" alt="Preview">
 				</div>
@@ -512,7 +519,7 @@
 				</div>
 				
 				<div class="form-group">
-					<label for="cellCount">Number of Cells to Sponsor</label>
+					<label for="cellCount">Slot Length (impressions)</label>
 					<input type="number" id="cellCount" name="cellCount" placeholder="100" min="1" required>
 				</div>
 			</div>
@@ -525,7 +532,7 @@
 						<span class="bid-summary-value" id="total-bid">0 SOL</span>
 					</div>
 					<div class="bid-summary-item">
-						<span class="bid-summary-label">Cost per Cell:</span>
+						<span class="bid-summary-label">Cost per Impression:</span>
 						<span class="bid-summary-value" id="cost-per-cell">0 SOL</span>
 					</div>
 					<div class="bid-summary-item">

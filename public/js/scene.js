@@ -646,7 +646,13 @@ function addWaterPlane(scene, THREE) {
 
 	const water = new THREE.Mesh(geometry, material);
 	water.name = 'tetches-water';
-	water.position.y = -2.2;
+	// Sea surface sits just under the cell bottom (cells are 0.94
+	// cubes centred at y=0, so the bottom face is at y=-0.47). With
+	// the water at y=-0.50 each cell looks like it's floating
+	// directly on the sea — no rock pillars, no visible stilts.
+	// Keep WATER_SURFACE_Y in `boardFunctions/rendering.js` and the
+	// `BOAT_SEA_Y` constant in `server/world/boats.js` in sync.
+	water.position.y = -0.50;
 	// The sea no longer receives shadows: the heavy dark blobs
 	// the islands used to cast made the board look glued onto a
 	// flat slab instead of floating. Cells still cast onto each
@@ -670,7 +676,7 @@ function addWaterPlane(scene, THREE) {
 	});
 	const glow = new THREE.Mesh(glowGeo, glowMat);
 	glow.name = 'tetches-water-glow';
-	glow.position.y = -2.1;
+	glow.position.y = -0.40;
 	scene.add(glow);
 }
 

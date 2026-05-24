@@ -32,11 +32,18 @@ boatManager.start();
 ```
 
 - Spawns `BOAT_COUNT` (6) longships once on `start()`.
-- Each boat orbits the world at `BOAT_LOOP_RADIUS` (≈28 units) with a
-  per-boat radius/phase jitter so they don't queue up in a single
-  line.
+- Each boat **wanders** between random waypoints inside a
+  `BOAT_WANDER_HALF`-sided square (≈52 × 52 units) instead of
+  orbiting at a fixed radius. Boats pick a fresh target whenever
+  they reach the current one, with mild separation steering so they
+  don't pile into each other. This was a deliberate change after
+  the previous fixed-radius orbit left the entire fleet clumped at
+  the edges of the play area, far from any island.
 - A 200 ms tick advances positions; a 500 ms broadcast emits
   `boats_update` to every connected socket.
+- `BOAT_SEA_Y` (-1.05) is the resting hull height. Keep this in
+  step with `scene.js` `addWaterPlane` (water at y=-1.25) and the
+  `WATER_SURFACE_Y` constant in `boardFunctions/rendering.js`.
 - Every ~90 s each boat asks `pickAdvertiserForBoat` for a fresh
   banner so the same boat doesn't carry the same ad indefinitely.
 - New clients can request the current snapshot with the
@@ -91,9 +98,29 @@ don't fight the `/api/advertisers/next` endpoint for slot order.
   each boat on the swell, interpolates from prev → target across
   ~600 ms, and applies the latest heading.
 
-Each longship is built from primitives (hull box + two prow/stern
-cones, mast + spar cylinders, double-sided sail plane, six
-coloured shield decals along each side).
+Each longship is built from primitives — hull box, two prow/stern
+pyramids, dragon-head finial, mast + spar (cylinders in the cute /
+normal profile, box-mast in retro), a double-sided sail plane, and
+seven coloured shield decals along each side. The whole assembly
+is then scaled by `BOAT_SCALE` (1.7) so the ad on the sail is
+legible from across the play area and the deck has room for a
+future passenger model.
+
+### Distance fade + retro variant
+
+`animateBoats` measures each boat's distance from the camera and
+fades / hides it: opaque inside `BOAT_FADE_NEAR` (45 units), linear
+ramp to 0 between `BOAT_FADE_FAR` (65) and `BOAT_FAR_HIDE` (70).
+Boats past the hide threshold are flipped to `visible = false` so
+the GPU skips their draw calls entirely.
+
+If `gameState.renderProfile === 'retro'` the boats are rebuilt with
+a low-poly variant: box-shaped mast/spar, no dragon head, square
+shields, `flatShading: true` materials, and `NearestFilter` on the
+sail texture so the ad reads as a screen-printed pixel-art banner
+rather than an airbrushed photo. The renderer detects profile
+flips inside `syncBoats` and tears the fleet down so the next sync
+rebuilds with the right look.
 
 ### Sail texturing
 
@@ -184,8 +211,13 @@ counting that the existing `routes/advertisers.js` already does.
 
 ## Tests
 
-- `tests/server/boats.test.js` covers spawn count, orbit radius,
-  movement between ticks, and the passenger add/remove round-trip.
+- `tests/server/boats.test.js` covers spawn count, the wander-box
+  bounds, movement between ticks, placeholder-ad propagation, and
+  the passenger add/remove round-trip.
+- `tests/server/advertisers.test.js` exercises the deferred image
+  upload (registration must NOT touch disk; only activation flushes
+  the buffer to `public/uploads/ads/`) plus the per-IP registration
+  rate limit.
 
 ## See also
 

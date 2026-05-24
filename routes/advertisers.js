@@ -98,43 +98,76 @@ function flushAdvertisersSync() {
 	writeAdvertisersSync();
 }
 
-// Set up multer for image uploads
-const storage = multer.diskStorage({
-	destination: (req, file, cb) => {
-		const uploadDir = path.join(__dirname, '../public/uploads/ads');
-		
-		// Create directory if it doesn't exist
-		if (!fs.existsSync(uploadDir)) {
-			fs.mkdirSync(uploadDir, { recursive: true });
-		}
-		
-		cb(null, uploadDir);
-	},
-	filename: (req, file, cb) => {
-		const fileExt = path.extname(file.originalname);
-		const fileName = `${uuidv4()}${fileExt}`;
-		cb(null, fileName);
-	}
-});
+// Image uploads. Originally these went straight to disk on
+// registration — that turned out to be a spam/abuse magnet (anyone
+// could POST 5 MB images to /api/advertisers without paying first
+// and the bytes would sit in `public/uploads/ads/` forever). We now
+// hold the bytes in memory until the advertiser is actually
+// activated by an admin, at which point they're written to disk.
+// Pending advertisers older than `PENDING_TTL_MS` are GC'd along
+// with their cached image bytes so a flood of registrations can't
+// OOM the server.
+const ADS_DIR = path.join(__dirname, '../public/uploads/ads');
+if (!fs.existsSync(ADS_DIR)) {
+	fs.mkdirSync(ADS_DIR, { recursive: true });
+}
+const PENDING_TTL_MS = 60 * 60 * 1000;          // drop pending ads after 1 h
+const REGISTRATION_RATE_WINDOW_MS = 10 * 60 * 1000;
+const REGISTRATION_RATE_LIMIT = 3;              // 3 registrations per IP per window
+const ALLOWED_IMAGE_RE = /jpeg|jpg|png|gif|webp/;
 
 const upload = multer({
-	storage,
+	storage: multer.memoryStorage(),
 	limits: {
-		fileSize: 5 * 1024 * 1024 // 5MB limit
+		fileSize: 5 * 1024 * 1024,
+		files: 1,
 	},
 	fileFilter: (req, file, cb) => {
-		// Accept only image files
-		const allowedTypes = /jpeg|jpg|png|gif|webp/;
-		const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-		const mimetype = allowedTypes.test(file.mimetype);
-		
-		if (extname && mimetype) {
-			return cb(null, true);
-		} else {
-			cb(new Error('Only image files are allowed'));
+		const extOk = ALLOWED_IMAGE_RE.test(path.extname(file.originalname).toLowerCase());
+		const mimeOk = ALLOWED_IMAGE_RE.test(file.mimetype);
+		if (extOk && mimeOk) cb(null, true);
+		else cb(new Error('Only image files (JPEG, PNG, GIF, WebP) are allowed'));
+	},
+});
+
+// In-memory rate limit (IP → [timestamps]) so a single attacker
+// can't drown the server in pending registrations.
+const _registrationHits = new Map();
+function registrationRateLimit(req, res, next) {
+	const ip = req.ip || req.connection?.remoteAddress || 'unknown';
+	const now = Date.now();
+	const hits = (_registrationHits.get(ip) || []).filter(t => now - t < REGISTRATION_RATE_WINDOW_MS);
+	if (hits.length >= REGISTRATION_RATE_LIMIT) {
+		return res.status(429).json({
+			success: false,
+			message: 'Too many advertiser registrations from your IP. Please try again later.',
+		});
+	}
+	hits.push(now);
+	_registrationHits.set(ip, hits);
+	next();
+}
+
+// Periodic GC for pending advertisers that never paid. Frees the
+// in-memory image buffer too so the heap doesn't grow without
+// bound when bots blast the endpoint.
+const _pendingGcHandle = setInterval(() => {
+	const cutoff = Date.now() - PENDING_TTL_MS;
+	let dropped = 0;
+	for (const adv of Array.from(advertisers.values())) {
+		if (adv.bidStatus !== 'pending') continue;
+		const createdAt = new Date(adv.createdAt).getTime();
+		if (Number.isFinite(createdAt) && createdAt < cutoff) {
+			advertisers.delete(adv.id);
+			dropped++;
 		}
 	}
-});
+	if (dropped > 0) {
+		console.log(`[Advertisers] GC'd ${dropped} unpaid pending registration(s).`);
+		schedulePersist();
+	}
+}, 5 * 60 * 1000);
+if (_pendingGcHandle.unref) _pendingGcHandle.unref();
 
 /**
  * Sanitize text to prevent XSS
@@ -183,65 +216,80 @@ function updateBidRankings() {
  * @desc Register a new advertiser
  * @access Public
  */
-router.post('/', upload.single('adImage'), async (req, res) => {
+router.post('/', registrationRateLimit, upload.single('adImage'), async (req, res) => {
 	try {
 		const { name, email, walletAddress, adText, adLink, bidAmount, cellCount } = req.body;
-		
-		// Validate required fields
+
 		if (!name || !email || !walletAddress || !adText || !adLink || !bidAmount || !cellCount) {
-			return res.status(400).json({ 
+			return res.status(400).json({
 				success: false,
-				message: 'All fields are required' 
+				message: 'All fields are required',
 			});
 		}
-		
-		// Validate image upload
 		if (!req.file) {
-			return res.status(400).json({ 
+			return res.status(400).json({
 				success: false,
-				message: 'Ad image is required' 
+				message: 'Ad image is required',
 			});
 		}
-		
-		// Create advertiser
+
+		// Image bytes are held in memory ONLY until the advertiser is
+		// activated by an admin. They never touch disk for unpaid
+		// registrations — this was the previous abuse vector.
+		const pendingImage = {
+			buffer: req.file.buffer,
+			ext: path.extname(req.file.originalname).toLowerCase(),
+			mimetype: req.file.mimetype,
+			receivedAt: Date.now(),
+		};
+
 		const advertiser = {
 			id: uuidv4(),
 			name: sanitizeText(name),
 			email: sanitizeText(email),
 			walletAddress: sanitizeText(walletAddress),
-			adText: sanitizeText(adText),
+			adText: sanitizeText(adText).slice(0, 64),
 			adLink: sanitizeText(adLink),
-			adImage: `/uploads/ads/${req.file.filename}`,
+			adImage: null, // populated on activation
 			bidAmount: parseFloat(bidAmount),
-			cellCount: parseInt(cellCount),
-			bidStatus: 'pending', // Start as pending until payment confirmed
+			cellCount: parseInt(cellCount, 10),
+			bidStatus: 'pending',
 			impressions: 0,
 			clicks: 0,
 			cellsSponsored: 0,
 			createdAt: new Date().toISOString(),
-			updatedAt: new Date().toISOString()
+			updatedAt: new Date().toISOString(),
 		};
-		
+
+		// Stash pending image bytes on a non-enumerable property so it
+		// doesn't sneak into JSON persistence or REST responses.
+		Object.defineProperty(advertiser, 'pendingImage', {
+			value: pendingImage,
+			enumerable: false,
+			writable: true,
+			configurable: true,
+		});
+
 		advertisers.set(advertiser.id, advertiser);
 		schedulePersist();
 
 		res.status(201).json({
 			success: true,
-			message: 'Advertiser registered successfully. Activate by sending payment.',
+			message: 'Advertiser registered. Your image will be published once payment is confirmed.',
 			advertiser: {
 				id: advertiser.id,
 				name: advertiser.name,
 				bidAmount: advertiser.bidAmount,
 				cellCount: advertiser.cellCount,
 				bidStatus: advertiser.bidStatus,
-				walletAddress: advertiser.walletAddress
-			}
+				walletAddress: advertiser.walletAddress,
+			},
 		});
 	} catch (error) {
 		console.error('Error registering advertiser:', error);
-		res.status(500).json({ 
+		res.status(500).json({
 			success: false,
-			message: 'Server error' 
+			message: 'Server error',
 		});
 	}
 });
@@ -287,17 +335,35 @@ router.post('/:id/activate', requireAdmin, async (req, res) => {
 		advertiser.activatedAt = new Date().toISOString();
 		advertiser.updatedAt = new Date().toISOString();
 
+		// Flush the pending image bytes to disk now that the
+		// advertiser has actually paid. The buffer was held
+		// in-memory on the (non-enumerable) `pendingImage` field; we
+		// drop the reference once written so it can be GC'd.
+		if (advertiser.pendingImage && advertiser.pendingImage.buffer) {
+			try {
+				const ext = (advertiser.pendingImage.ext || '.png').replace(/[^a-z0-9.]/g, '');
+				const filename = `${advertiser.id}${ext}`;
+				const filepath = path.join(ADS_DIR, filename);
+				fs.writeFileSync(filepath, advertiser.pendingImage.buffer);
+				advertiser.adImage = `/uploads/ads/${filename}`;
+			} catch (writeErr) {
+				console.error('[Advertisers] Failed to persist activated image:', writeErr.message);
+			}
+			advertiser.pendingImage = null;
+		}
+
 		updateBidRankings();
 		schedulePersist();
-		
+
 		res.json({
 			success: true,
 			message: 'Advertiser activated successfully',
 			advertiser: {
 				id: advertiser.id,
 				name: advertiser.name,
-				bidStatus: advertiser.bidStatus
-			}
+				bidStatus: advertiser.bidStatus,
+				adImage: advertiser.adImage,
+			},
 		});
 	} catch (error) {
 		console.error('Error activating advertiser:', error);
@@ -727,6 +793,11 @@ module.exports = router;
 module.exports.loadAdvertisersFromDisk = loadAdvertisersFromDisk;
 module.exports.flushAdvertisersSync = flushAdvertisersSync;
 module.exports.pickAdvertiserForBoat = pickAdvertiserForBoat;
+// Test-only: clear the in-process IP→hits map so suites that run
+// register multiple times don't trip the rate limit on each other.
+module.exports.__resetRegistrationRateLimit = function () {
+	_registrationHits.clear();
+};
 
 
 

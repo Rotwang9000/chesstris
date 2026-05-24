@@ -22,7 +22,16 @@
 const World = require('../world/World');
 
 const FLASH_DURATION_MS = 700;
-const MAX_CASCADE_ITERATIONS = 16;
+// 8 is enough to handle even the wildest legitimate chain — beyond
+// that we're almost certainly in a feedback loop and should just
+// stop instead of continuing to spam clears at every connected
+// client. (Was 16; AI bots were hitting the cap every ~10 s and
+// flooding the activity log + sound channels.)
+const MAX_CASCADE_ITERATIONS = 8;
+// Throttle the "hit cap" warning to once per player per minute so a
+// chronically over-active bot doesn't paper the server log.
+const CAP_LOG_COOLDOWN_MS = 60 * 1000;
+const _lastCapLogAt = new Map();
 
 function sleep(ms) {
 	return new Promise(resolve => setTimeout(resolve, ms));
@@ -182,10 +191,15 @@ function createLineClearService({ io, gameManager, broadcaster, integrityService
 		}
 
 		if (iterations >= MAX_CASCADE_ITERATIONS) {
-			console.warn(
-				`[LineClear] Cascade hit hard cap (${MAX_CASCADE_ITERATIONS}) for ${playerId}; ` +
-				`stopping to avoid infinite loop.`
-			);
+			const last = _lastCapLogAt.get(playerId) || 0;
+			const now = Date.now();
+			if (now - last >= CAP_LOG_COOLDOWN_MS) {
+				_lastCapLogAt.set(playerId, now);
+				console.warn(
+					`[LineClear] Cascade hit hard cap (${MAX_CASCADE_ITERATIONS}) for ${playerId}; ` +
+					`further hits within ${Math.round(CAP_LOG_COOLDOWN_MS / 1000)}s will be silent.`
+				);
+			}
 		}
 
 		return { rows: allRows, cols: allCols, iterations, settleOutcomes: allSettleOutcomes };

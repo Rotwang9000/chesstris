@@ -619,20 +619,32 @@ colours is a trophy of conquest.
     on is kept with them. They can then be moved off the outcrop by their
     owner (or wait for a tetromino to bridge back).
 11. **Longship fleet** - between the islands a small fleet of Viking
-    longships drifts in slow loops around the world. Sails carry adverts
-    from the active bid ranking; when no advertiser has paid for a sail
-    slot the boats sail past with a "Your Ad Here →" placeholder banner.
-    Clicking a longship opens the advertiser's landing page in a new tab
-    (or the `/advertise` sign-up form for placeholder boats). Knights
-    will eventually be able to "go viking" and ride them between islands
-    (see `server/world/boats.js` for the data model used by the
-    in-progress system).
-12. **Islands have rock bases** - every cell carries a tapered earth
-    pillar that descends from the cell bottom down to the water surface.
-    Purely visual — it doesn't change pathing or chess movement — but it
-    makes the islands read as actually sitting on the sea rather than
-    floating in mid-air. The pillars decay and respawn with their parent
-    cells automatically.
+    longships wanders the sea (random waypoints inside a 52-unit box
+    rather than a fixed orbit, so they pass close to islands rather
+    than clumping on the horizon). Sails carry adverts from the active
+    bid ranking; when no advertiser has paid for a sail slot the boats
+    sail past with a "Your Ad Here →" placeholder banner. Clicking a
+    longship opens the advertiser's landing page in a new tab (or the
+    `/advertise` sign-up form for placeholder boats). Far boats fade
+    into the fog and beyond ~70 units they're culled entirely so the
+    GPU doesn't redraw them. In the retro render profile the boats
+    rebuild as low-poly box-mast ships with pixel-art sail textures.
+    Knights will eventually be able to "go viking" and ride them
+    between islands (see `server/world/boats.js` for the data model
+    used by the in-progress system).
+12. **Islands sit on the sea** - the water surface was raised and each
+    cell carries a short tapered earth pillar that bridges the gap
+    down to the water. Purely visual — it doesn't change pathing or
+    chess movement — but it makes the islands read as actually
+    floating on the sea rather than perched on tall stilts. The
+    pillars decay and respawn with their parent cells automatically.
+13. **Sail-ad uploads only ever go live after payment** - the
+    `/advertise` form streams the artwork into server memory but
+    never writes it to disk until an admin activates the slot after
+    the SOL payment lands. Unpaid registrations are dropped after an
+    hour, and each IP can register at most three pending slots in any
+    10-minute window, so the public uploads dir can't be used as a
+    free file host.
 
 ---
 
