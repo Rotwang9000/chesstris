@@ -21,14 +21,19 @@
  * a chess piece does.
  */
 
-import { getTHREE, getScene } from './gameContext.js';
+import { getTHREE, getScene, getCamera } from './gameContext.js';
 
 let boatGroup = null;
-const boatVisuals = new Map(); // id → { group, sailMesh, ad, target, prev, lerpT, lerpDur, bobPhase, bobAmp }
-let sailTextureCache = new Map(); // adImage src → THREE.Texture
+const boatVisuals = new Map(); // id → { root, sailMesh, advertiser, ... }
+let sailTextureCache = new Map(); // cacheKey → THREE.Texture
 
 const LERP_DEFAULT_MS = 600;
 const BOB_AMP_DEFAULT = 0.18;
+
+// 1.8 wide × 1.4 tall sail; we render the texture at 360 × 280 so the
+// strokes look crisp without blowing GPU memory.
+const SAIL_TEX_W = 360;
+const SAIL_TEX_H = 280;
 
 /**
  * Lazy-create the boat group inside the active scene so we don't
@@ -112,24 +117,32 @@ function buildLongship(THREE) {
 	spar.position.set(0, 2.45, 0);
 	group.add(spar);
 
-	// Sail — flat rectangle hanging from the spar. Default to a
-	// striped red/white viking sail texture; replaced when an
-	// advertiser image arrives. We keep the sail two-sided so the
-	// ship looks the same from either heading.
+	// Sail — flat rectangle hanging from the spar. Texture starts as
+	// the placeholder (red/white stripes + "Your Ad Here →") and is
+	// replaced by `syncBoats` once the server tells us which
+	// advertiser this boat is carrying. Two-sided so the ship looks
+	// the same from either heading.
 	const sailGeom = new THREE.PlaneGeometry(1.8, 1.4);
 	const sailMat = new THREE.MeshStandardMaterial({
-		color: 0xfbfbfb,
+		color: 0xffffff,
 		side: THREE.DoubleSide,
 		roughness: 0.75,
 		metalness: 0.0,
-		map: _makeDefaultSailTexture(THREE),
+		map: _buildSailTexture(THREE, null),
 		transparent: false,
 	});
 	const sailMesh = new THREE.Mesh(sailGeom, sailMat);
 	sailMesh.position.set(0, 1.7, 0);
 	sailMesh.castShadow = false;
 	sailMesh.receiveShadow = false;
+	sailMesh.userData.isSail = true;
 	group.add(sailMesh);
+
+	// Make every descendant traceable back to the root so the click
+	// raycaster can find which boat we hit even when an inner mesh
+	// (sail/hull/shield) is the intersection target.
+	group.userData.isBoat = true;
+	group.traverse(node => { node.userData = node.userData || {}; node.userData.boatRoot = group; });
 
 	// Decorative shield strip along each side of the hull.
 	const shieldGeo = new THREE.CircleGeometry(0.18, 12);
@@ -154,42 +167,117 @@ function buildLongship(THREE) {
 }
 
 /**
- * Build a procedural red/white striped texture that's used until
- * (or when) a boat has no advertiser banner.
+ * Build the per-sail canvas used as a texture. The sail always shows
+ * a red/white viking stripe pattern as the background; if the
+ * advertiser carries an image we draw it on top, and if they have a
+ * name/text we paint that in a dark banner along the bottom so the
+ * brand is always legible.
+ *
+ * Returns the canvas (caller wraps it in a CanvasTexture).
  */
-function _makeDefaultSailTexture(THREE) {
+function _drawSailCanvas(advertiser) {
 	const canvas = document.createElement('canvas');
-	canvas.width = 128;
-	canvas.height = 128;
+	canvas.width = SAIL_TEX_W;
+	canvas.height = SAIL_TEX_H;
 	const ctx = canvas.getContext('2d');
-	ctx.fillStyle = '#fefefe';
-	ctx.fillRect(0, 0, 128, 128);
-	ctx.fillStyle = '#c62828';
-	for (let i = 0; i < 4; i++) {
-		ctx.fillRect(0, i * 32 + 8, 128, 16);
+
+	const isPlaceholder = !advertiser || advertiser.placeholder === true;
+
+	ctx.fillStyle = '#f8f0e3';
+	ctx.fillRect(0, 0, SAIL_TEX_W, SAIL_TEX_H);
+	ctx.fillStyle = isPlaceholder ? '#b71c1c' : '#7b2e2e';
+	const stripeCount = 4;
+	const stripeH = SAIL_TEX_H / (stripeCount * 2 + 1);
+	for (let i = 0; i < stripeCount; i++) {
+		ctx.fillRect(0, stripeH + i * stripeH * 2, SAIL_TEX_W, stripeH);
 	}
-	const tex = new THREE.CanvasTexture(canvas);
-	tex.colorSpace = THREE.SRGBColorSpace || tex.colorSpace;
-	tex.needsUpdate = true;
-	return tex;
+
+	const brand = (advertiser && (advertiser.name || advertiser.adText)) || '';
+	if (brand) {
+		const bannerH = Math.round(SAIL_TEX_H * 0.32);
+		const bannerY = SAIL_TEX_H - bannerH;
+		ctx.fillStyle = 'rgba(20, 20, 20, 0.78)';
+		ctx.fillRect(0, bannerY, SAIL_TEX_W, bannerH);
+		ctx.fillStyle = isPlaceholder ? '#ffd54f' : '#fff8e1';
+		ctx.font = `700 ${Math.round(bannerH * 0.45)}px "Trebuchet MS", "Arial", sans-serif`;
+		ctx.textAlign = 'center';
+		ctx.textBaseline = 'middle';
+		const label = brand.length > 22 ? brand.slice(0, 21) + '…' : brand;
+		ctx.fillText(label, SAIL_TEX_W / 2, bannerY + bannerH / 2);
+	}
+
+	return canvas;
 }
 
 /**
- * Load an advertiser image and turn it into a sail texture. Cached
- * so we don't re-decode the same image for every boat.
+ * Compose a sail texture for an advertiser. When the advertiser
+ * carries an image we draw the image on top of the stripe pattern.
+ * Falls back to the procedural stripes + name banner when no image
+ * is available (placeholder case).
+ *
+ * Cached per advertiser-id so we don't redraw and re-upload the
+ * same canvas for every boat.
  */
-function _loadSailTexture(THREE, src) {
-	if (!src) return null;
-	const cached = sailTextureCache.get(src);
+function _buildSailTexture(THREE, advertiser) {
+	const cacheKey = `${advertiser?.id || 'default'}::${advertiser?.adImage || ''}`;
+	const cached = sailTextureCache.get(cacheKey);
 	if (cached) return cached;
-	const loader = new THREE.TextureLoader();
-	const tex = loader.load(src, () => {
-		tex.needsUpdate = true;
-	});
-	tex.colorSpace = THREE.SRGBColorSpace || tex.colorSpace;
-	tex.center.set(0.5, 0.5);
-	sailTextureCache.set(src, tex);
-	return tex;
+
+	const baseCanvas = _drawSailCanvas(advertiser);
+	const texture = new THREE.CanvasTexture(baseCanvas);
+	texture.colorSpace = THREE.SRGBColorSpace || texture.colorSpace;
+	texture.needsUpdate = true;
+	sailTextureCache.set(cacheKey, texture);
+
+	const adImage = advertiser?.adImage;
+	if (adImage) {
+		// Draw the image onto the same canvas asynchronously, then
+		// refresh the texture. We deliberately blit on TOP of the
+		// stripes so the brand banner along the bottom remains
+		// legible.
+		const img = new Image();
+		img.crossOrigin = 'anonymous';
+		img.onload = () => {
+			try {
+				const ctx = baseCanvas.getContext('2d');
+				// Leave room for the brand banner at the bottom.
+				const targetH = Math.round(SAIL_TEX_H * 0.68);
+				const aspect = img.width / img.height;
+				let drawW = SAIL_TEX_W;
+				let drawH = SAIL_TEX_W / aspect;
+				if (drawH > targetH) {
+					drawH = targetH;
+					drawW = targetH * aspect;
+				}
+				const dx = (SAIL_TEX_W - drawW) / 2;
+				const dy = (targetH - drawH) / 2;
+				ctx.drawImage(img, dx, dy, drawW, drawH);
+				// Redraw the brand banner so it sits above the image.
+				const brand = (advertiser.name || advertiser.adText) || '';
+				if (brand) {
+					const bannerH = Math.round(SAIL_TEX_H * 0.32);
+					const bannerY = SAIL_TEX_H - bannerH;
+					ctx.fillStyle = 'rgba(20, 20, 20, 0.78)';
+					ctx.fillRect(0, bannerY, SAIL_TEX_W, bannerH);
+					ctx.fillStyle = '#fff8e1';
+					ctx.font = `700 ${Math.round(bannerH * 0.45)}px "Trebuchet MS", "Arial", sans-serif`;
+					ctx.textAlign = 'center';
+					ctx.textBaseline = 'middle';
+					const label = brand.length > 22 ? brand.slice(0, 21) + '…' : brand;
+					ctx.fillText(label, SAIL_TEX_W / 2, bannerY + bannerH / 2);
+				}
+				texture.needsUpdate = true;
+			} catch (err) {
+				console.warn('[boats] failed to composite ad image onto sail:', err && err.message);
+			}
+		};
+		img.onerror = () => {
+			console.warn('[boats] sail image failed to load:', adImage);
+		};
+		img.src = adImage;
+	}
+
+	return texture;
 }
 
 /**
@@ -263,16 +351,20 @@ export function syncBoats(boats) {
 			if (Number.isFinite(boat.heading)) entry.heading = boat.heading;
 		}
 
-		// Swap sail texture if the advertiser changed.
-		const adKey = boat.advertiser?.adImage || '';
+		// Swap sail texture if the advertiser changed. We key off the
+		// advertiser id + image so re-issuing the same advertiser
+		// (e.g. after rotation) doesn't trigger an avoidable redraw.
+		const advertiser = boat.advertiser || null;
+		const adKey = `${advertiser?.id || 'default'}::${advertiser?.adImage || ''}`;
 		if (adKey !== entry.adKey) {
 			entry.adKey = adKey;
-			const tex = adKey ? _loadSailTexture(THREE, adKey) : _makeDefaultSailTexture(THREE);
+			entry.advertiser = advertiser;
+			entry.root.userData.advertiser = advertiser;
+			const tex = _buildSailTexture(THREE, advertiser);
 			if (tex && entry.sailMesh && entry.sailMesh.material) {
 				entry.sailMesh.material.map = tex;
 				entry.sailMesh.material.needsUpdate = true;
 			}
-			entry.advertiser = boat.advertiser || null;
 		}
 	}
 
@@ -313,6 +405,43 @@ export function animateBoats(timeSec) {
 		root.rotation.z = Math.sin(timeSec * 0.55 + entry.bobPhase * 0.7) * 0.04;
 		root.rotation.x = Math.sin(timeSec * 0.45 + entry.bobPhase * 0.3) * 0.03;
 	}
+}
+
+/**
+ * Resolve a click on the canvas to the advertiser whose boat was
+ * hit, if any. Used by the input layer to open the ad's landing
+ * page when the user clicks a sailing longship. Pure geometry —
+ * doesn't open links itself.
+ *
+ * @param {THREE.Vector2} mouse  NDC mouse position (-1..1)
+ * @returns {{ advertiser: object|null, boatId: string|null }|null}
+ *          The clicked advertiser + boat id, or null if no boat
+ *          was hit.
+ */
+export function tryBoatClick(mouse) {
+	if (!boatGroup || boatGroup.children.length === 0) return null;
+	const THREE = getTHREE();
+	const camera = getCamera();
+	if (!THREE || !camera || !mouse) return null;
+	const raycaster = new THREE.Raycaster();
+	raycaster.setFromCamera(mouse, camera);
+	const hits = raycaster.intersectObject(boatGroup, true);
+	if (hits.length === 0) return null;
+
+	for (const hit of hits) {
+		let root = hit.object;
+		while (root && !root.userData?.isBoat) root = root.parent;
+		if (!root) continue;
+		let boatId = null;
+		for (const [id, entry] of boatVisuals.entries()) {
+			if (entry.root === root) { boatId = id; break; }
+		}
+		return {
+			advertiser: root.userData?.advertiser || null,
+			boatId,
+		};
+	}
+	return null;
 }
 
 /**

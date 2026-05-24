@@ -690,23 +690,36 @@ loadAdvertisersFromDisk();
  *
  * @returns {{id: string, name: string, adImage: string|null, adLink: string|null, adText: string|null}|null}
  */
+// Shown on any boat sail when no paid advertisers are active so the
+// fleet doesn't sail past empty — gives a visible "advertise here"
+// call-to-action that links back to the advertiser sign-up flow.
+const PLACEHOLDER_SAIL_AD = Object.freeze({
+	id: 'sail-placeholder',
+	name: 'Your Ad Here',
+	adImage: null,
+	adLink: '/advertise',
+	adText: 'Advertise on a Tetches sail →',
+	placeholder: true,
+});
+
 let boatRotationIndex = 0;
 function pickAdvertiserForBoat() {
 	if (bidRanking.length === 0) {
 		updateBidRankings();
-		if (bidRanking.length === 0) return null;
+		if (bidRanking.length === 0) return PLACEHOLDER_SAIL_AD;
 	}
 	const entry = bidRanking[boatRotationIndex % bidRanking.length];
 	boatRotationIndex = (boatRotationIndex + 1) % bidRanking.length;
-	if (!entry) return null;
+	if (!entry) return PLACEHOLDER_SAIL_AD;
 	const advertiser = advertisers.get(entry.id);
-	if (!advertiser) return null;
+	if (!advertiser) return PLACEHOLDER_SAIL_AD;
 	return {
 		id: advertiser.id,
 		name: advertiser.name || null,
 		adImage: advertiser.adImage || null,
 		adLink: advertiser.adLink || null,
 		adText: advertiser.adText || null,
+		placeholder: false,
 	};
 }
 

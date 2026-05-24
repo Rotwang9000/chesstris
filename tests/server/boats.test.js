@@ -72,6 +72,32 @@ describe('BoatManager (server/world/boats)', () => {
 		expect(moved).toBeGreaterThan(0);
 	});
 
+	test('snapshot propagates the placeholder flag for unpaid sails', () => {
+		const placeholderManager = createBoatManager({
+			io: null,
+			pickAdvertiser: () => ({
+				id: 'sail-placeholder',
+				name: 'Your Ad Here',
+				adImage: null,
+				adLink: '/advertise',
+				adText: 'Advertise on a Tetches sail →',
+				placeholder: true,
+			}),
+		});
+		placeholderManager.start();
+		try {
+			const [boat] = placeholderManager.getSnapshot();
+			expect(boat.advertiser).toMatchObject({
+				id: 'sail-placeholder',
+				name: 'Your Ad Here',
+				adLink: '/advertise',
+				placeholder: true,
+			});
+		} finally {
+			placeholderManager.stop();
+		}
+	});
+
 	test('addPassenger / removePassenger round-trip', () => {
 		const [first] = manager.getSnapshot();
 		const passenger = { pieceId: 'p1-KNIGHT', type: 'KNIGHT', player: 'p1' };

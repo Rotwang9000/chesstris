@@ -620,10 +620,19 @@ colours is a trophy of conquest.
     owner (or wait for a tetromino to bridge back).
 11. **Longship fleet** - between the islands a small fleet of Viking
     longships drifts in slow loops around the world. Sails carry adverts
-    from the active bid ranking; the boats are passive set-dressing
-    today, but knights will eventually be able to "go viking" and ride
-    them between islands (see `server/world/boats.js` for the data model
-    used by the in-progress system).
+    from the active bid ranking; when no advertiser has paid for a sail
+    slot the boats sail past with a "Your Ad Here →" placeholder banner.
+    Clicking a longship opens the advertiser's landing page in a new tab
+    (or the `/advertise` sign-up form for placeholder boats). Knights
+    will eventually be able to "go viking" and ride them between islands
+    (see `server/world/boats.js` for the data model used by the
+    in-progress system).
+12. **Islands have rock bases** - every cell carries a tapered earth
+    pillar that descends from the cell bottom down to the water surface.
+    Purely visual — it doesn't change pathing or chess movement — but it
+    makes the islands read as actually sitting on the sea rather than
+    floating in mid-air. The pillars decay and respawn with their parent
+    cells automatically.
 
 ---
 

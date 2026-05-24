@@ -43,6 +43,22 @@ function ensureRenderCache(THREE) {
 			depthWrite: false,
 			side: THREE.DoubleSide,
 		});
+
+		// Tapered "rock" pillar that sits beneath every cell so the
+		// island reads as floating on the sea rather than hovering in
+		// mid-air. 4 radial segments → square cross-section that
+		// aligns with the cube above. Top almost matches the cell
+		// width (0.94) and tapers inwards by the time it reaches the
+		// waterline. Height covers the gap between cell bottom
+		// (~ -0.47) and the water surface (~ -2.0).
+		cache.islandBaseGeometry = new THREE.CylinderGeometry(0.46, 0.22, 1.55, 4, 1, false);
+		cache.islandBaseMaterial = new THREE.MeshStandardMaterial({
+			color: 0x6b4a2b,
+			roughness: 0.95,
+			metalness: 0.0,
+			flatShading: true,
+		});
+
 		ensureRenderCache._cache = cache;
 	}
 	return ensureRenderCache._cache;
@@ -68,6 +84,24 @@ function createCloudPuff(THREE, renderCache, x, z) {
 	// `WATER_SURFACE_Y` mirrors the water plane in scene.js — keep
 	// these in sync if the sea height ever moves.
 	const WATER_SURFACE_Y = -2.0;
+
+	// Rocky island base: bridges the gap between cell bottom (~ -0.47)
+	// and the water surface so cells don't look like they're hovering
+	// in mid-air. Goes in FIRST so subsequent foam meshes render on
+	// top of it.
+	const base = new THREE.Mesh(renderCache.islandBaseGeometry, renderCache.islandBaseMaterial);
+	// Geometry is centred on origin: 1.55 tall ⇒ top at +0.775, bottom
+	// at -0.775. Position so the top sits just under the cell.
+	base.position.set(0, -0.47 - 0.775, 0);
+	// 4-sided cylinder has vertices on axes (diamond shape from above);
+	// rotate 45° + a per-cell jitter so the flat faces line up with
+	// the cube and each island looks unique.
+	base.rotation.y = Math.PI / 4 + ((seed & 0xff) / 255 - 0.5) * 0.35;
+	base.scale.set(1 + r1 * 0.4, 1 + r2 * 0.15, 1 + r3 * 0.4);
+	base.castShadow = false;
+	base.receiveShadow = false;
+	base.userData = { isIslandBase: true };
+	group.add(base);
 
 	const main = new THREE.Mesh(renderCache.cloudGeometry, renderCache.cloudMaterial);
 	main.position.set(0, WATER_SURFACE_Y, 0);

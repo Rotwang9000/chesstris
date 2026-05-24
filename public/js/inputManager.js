@@ -17,6 +17,7 @@ import { playSound, initSoundManager } from './audio/soundManager.js';
 import { setupKeyboardChess } from './keyboardChess.js';
 import { setupTouchGestures } from './touchGestures.js';
 import { setupTouchControlPad } from './touchControlPad.js';
+import { tryBoatClick } from './boatsRenderer.js';
 
 let _onTetrisPhaseClick = null;
 
@@ -63,11 +64,37 @@ export function setupInputHandlers() {
 			const target = e.target;
 			const isUIElement = target.closest('button, input, select, a, .player-list-container, #loading, .tutorial-message');
 			if (isUIElement) return;
-			if (gameState.turnPhase !== 'chess') return;
 
 			const m = getMouse();
 			m.x = ((e.clientX - canvasRect.left) / canvasRect.width) * 2 - 1;
 			m.y = -((e.clientY - canvasRect.top) / canvasRect.height) * 2 + 1;
+
+			// Boats are clickable in every phase — clicking a sailing
+			// longship opens the advertiser's landing page (or the
+			// in-house /advertise sign-up when the boat is carrying
+			// the placeholder advert).
+			try {
+				const boatHit = tryBoatClick(m);
+				if (boatHit && boatHit.advertiser) {
+					const ad = boatHit.advertiser;
+					const link = ad.adLink || (ad.placeholder ? '/advertise' : null);
+					if (link) {
+						window.open(link, '_blank', 'noopener');
+						if (typeof showToastMessage === 'function') {
+							showToastMessage(ad.placeholder
+								? 'Opening advertiser sign-up…'
+								: `Opening ${ad.name || 'advertiser'}…`, 2500);
+						}
+						e.stopPropagation();
+						e.preventDefault();
+						return;
+					}
+				}
+			} catch (err) {
+				console.warn('[boats] click handler failed:', err && err.message);
+			}
+
+			if (gameState.turnPhase !== 'chess') return;
 
 			if (!gameState.processingMove) performRaycast();
 

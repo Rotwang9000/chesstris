@@ -149,6 +149,7 @@ function createBoatManager({ io = null, pickAdvertiser = null, persistence = nul
 					adImage: b.advertiser.adImage,
 					adLink: b.advertiser.adLink,
 					adText: b.advertiser.adText,
+					placeholder: b.advertiser.placeholder === true,
 				  }
 				: null,
 		}));

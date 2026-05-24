@@ -45,10 +45,14 @@ boatManager.start();
 ### `routes/advertisers.js` — `pickAdvertiserForBoat()`
 
 A small wrapper round the existing `bidRanking` array. Returns a
-sanitised advertiser blob (`{ id, name, adImage, adLink, adText }`)
-or `null` when there are no active advertisers. Boats keep their
-own rotation index so they don't fight the
-`/api/advertisers/next` endpoint for slot order.
+sanitised advertiser blob
+(`{ id, name, adImage, adLink, adText, placeholder }`); if no paid
+advertisers are active it falls back to a frozen
+`PLACEHOLDER_SAIL_AD` (`{ id: 'sail-placeholder', name: 'Your Ad
+Here', adLink: '/advertise', placeholder: true, … }`) so every
+boat always has *something* to show and the user can click through
+to the sign-up form. Boats keep their own rotation index so they
+don't fight the `/api/advertisers/next` endpoint for slot order.
 
 ### Boat data shape (over the wire)
 
@@ -89,9 +93,40 @@ own rotation index so they don't fight the
 
 Each longship is built from primitives (hull box + two prow/stern
 cones, mast + spar cylinders, double-sided sail plane, six
-coloured shield decals along each side). Sail textures are loaded
-once per advertiser image and cached in a module-local
-`Map<src, THREE.Texture>`.
+coloured shield decals along each side).
+
+### Sail texturing
+
+Every sail is drawn onto a 360 × 280 canvas:
+
+1. A red/white viking stripe pattern as the background.
+2. The advertiser's image composited on top (if any), centred and
+   scaled to fit in the upper ~68 % of the sail.
+3. A dark banner across the bottom 32 % with the advertiser's
+   name (cropped to 22 chars). Placeholder boats use a yellow
+   accent so the call-to-action stands out.
+
+Each composited texture is cached by
+`${advertiser.id}::${advertiser.adImage || ''}` so the same
+advertiser appearing on multiple boats decodes the image once.
+Image loading is async — the canvas is shown immediately with the
+stripes + brand banner, then the image gets blitted in on top
+once it loads and the texture is flagged `needsUpdate`.
+
+### Boats are clickable
+
+`tryBoatClick(mouse)` (also exported from `boatsRenderer.js`)
+raycasts against the `boatFleet` group and returns
+`{ advertiser, boatId }` for the boat under the cursor. The
+top-level click handler in `public/js/inputManager.js` calls it
+before doing any chess raycasting, so a click on a passing
+longship always wins over a same-frame chess interaction:
+
+- paid ad → `window.open(advertiser.adLink, '_blank')`
+- placeholder → opens `/advertise` so the user can buy a sail
+
+Click handling is intentionally phase-independent: boats are
+clickable in both tetris and chess phases.
 
 ### Network bridge
 
