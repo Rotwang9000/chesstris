@@ -180,6 +180,20 @@ function sanitizeText(text) {
 }
 
 /**
+ * Write an uploaded image buffer to disk with a safe filename.
+ * @returns {string|null} public URL path or null on failure
+ */
+function persistAdImageFile(advertiserId, file) {
+	if (!file || !file.buffer) return null;
+	const ext = path.extname(file.originalname || '').toLowerCase().replace(/[^a-z0-9.]/g, '') || '.png';
+	if (!ALLOWED_IMAGE_RE.test(ext.replace('.', ''))) return null;
+	const filename = `${advertiserId}${ext}`;
+	const filepath = path.join(ADS_DIR, filename);
+	fs.writeFileSync(filepath, file.buffer);
+	return `/uploads/ads/${filename}`;
+}
+
+/**
  * Update bid rankings based on cost per cell
  */
 function updateBidRankings() {
@@ -593,9 +607,8 @@ router.put('/:id', requireAdmin, upload.single('adImage'), async (req, res) => {
 		if (req.body.cellCount) advertiser.cellCount = parseInt(req.body.cellCount);
 		if (req.body.bidStatus) advertiser.bidStatus = req.body.bidStatus;
 		
-		// Update image if provided
+		// Update image if provided (memory storage — must write explicitly)
 		if (req.file) {
-			// Delete old image if it exists
 			if (advertiser.adImage) {
 				const oldImagePath = path.join(__dirname, '../public', advertiser.adImage);
 				if (fs.existsSync(oldImagePath)) {
@@ -606,8 +619,14 @@ router.put('/:id', requireAdmin, upload.single('adImage'), async (req, res) => {
 					}
 				}
 			}
-			
-			advertiser.adImage = `/uploads/ads/${req.file.filename}`;
+			const saved = persistAdImageFile(advertiser.id, req.file);
+			if (!saved) {
+				return res.status(400).json({
+					success: false,
+					message: 'Invalid image upload',
+				});
+			}
+			advertiser.adImage = saved;
 		}
 		
 		advertiser.updatedAt = new Date().toISOString();

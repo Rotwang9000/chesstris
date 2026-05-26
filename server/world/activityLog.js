@@ -142,6 +142,15 @@ function createActivityLogService({ io, persistence, maxEvents = DEFAULT_MAX_EVE
 		});
 	}
 
+	function recordKingCaptured({ captorId, captorName, defeatedId, defeatedName }) {
+		return record('king_captured', {
+			captorId,
+			captorName,
+			defeatedId,
+			defeatedName,
+		});
+	}
+
 	// ── Per-piece events ──────────────────────────────────────────────
 	//
 	// Emitted from `server/game/pieces.removePiece` (and friends). The
@@ -278,6 +287,7 @@ function createActivityLogService({ io, persistence, maxEvents = DEFAULT_MAX_EVE
 		recordIslandDecayed,
 		recordTerritoryCaptured,
 		recordKingDetonation,
+		recordKingCaptured,
 		recordPieceLost,
 		recordPiecesLost,
 		recordPieceCaptured,

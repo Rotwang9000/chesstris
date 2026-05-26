@@ -127,9 +127,14 @@ function createApp({ projectRoot = process.cwd() } = {}) {
 	}
 
 	app.get('/js/*', (req, res, next) => {
-		const file = path.join(projectRoot, 'public', req.url);
+		const rel = String(req.path || '').replace(/^\/js\//, '');
+		if (!rel || rel.includes('..')) {
+			res.status(400).end();
+			return;
+		}
+		const file = path.join(projectRoot, 'public', 'js', rel);
 		if (!fs.existsSync(file) && fs.existsSync(`${file}.js`)) {
-			res.redirect(`${req.url}.js`);
+			res.redirect(`${req.path}.js`);
 			return;
 		}
 		next();

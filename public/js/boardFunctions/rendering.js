@@ -119,12 +119,16 @@ function classifyCell(cellData) {
 	let isHomeZone = false;
 	let homePlayer = null;
 	let tetrominoPlayer = null;
+	let isExHome = false;
 
 	if (Array.isArray(cellData)) {
 		const homeZone = cellData.find(item => item && item.type === 'home');
 		if (homeZone) { isHomeZone = true; homePlayer = homeZone.player; }
 		const tet = cellData.find(item => item && item.type === 'tetromino');
-		if (tet) tetrominoPlayer = tet.player;
+		if (tet) {
+			tetrominoPlayer = tet.player;
+			if (tet.fromHomeZone === true) isExHome = true;
+		}
 	} else if (cellData && typeof cellData === 'object') {
 		if (cellData.type === 'home' || cellData.homeZone) {
 			isHomeZone = true;
@@ -134,7 +138,7 @@ function classifyCell(cellData) {
 			tetrominoPlayer = cellData.player;
 		}
 	}
-	return { isHomeZone, homePlayer, tetrominoPlayer };
+	return { isHomeZone, homePlayer, tetrominoPlayer, isExHome };
 }
 
 function isCellDisconnected(gameState, x, z, owner) {
@@ -146,7 +150,18 @@ function isCellDisconnected(gameState, x, z, owner) {
 }
 
 function chooseAppearance(classification, gameState, x, z) {
-	const { isHomeZone, homePlayer, tetrominoPlayer } = classification;
+	const { isHomeZone, homePlayer, tetrominoPlayer, isExHome } = classification;
+	if (isExHome && tetrominoPlayer) {
+		return {
+			kind: 'exhome',
+			color: getPlayerColor(tetrominoPlayer, gameState, 'tetromino'),
+			roughness: 0.5,
+			metalness: 0.05,
+			transparent: true,
+			opacity: 0.72,
+			decaying: false,
+		};
+	}
 	if (isHomeZone) {
 		const decaying = isCellDisconnected(gameState, x, z, homePlayer);
 		return {
@@ -375,7 +390,10 @@ export function renderBoard(gameState, boardGroup, _createFloatingIsland, THREE)
 		for (const cloud of cloudsToRemove) boardGroup.remove(cloud);
 	}
 
-	if (gameState.chessPieces === undefined || gameState.chessPieces.length === 0) {
+	// Only back-fill from the board when the server has never sent a
+	// `chessPieces` array. Re-extracting when the list is empty
+	// resurrects ghost pieces from stale chess markers left on cells.
+	if (!Array.isArray(gameState.chessPieces)) {
 		gameState.chessPieces = extractChessPiecesFromCells(gameState);
 	}
 

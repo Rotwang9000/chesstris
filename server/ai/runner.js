@@ -31,6 +31,9 @@ const {
 const TICK_CHECK_MS = 1000;
 const RESPAWN_DELAY_MS = 5000;
 const AI_TARGET_COUNT = 3;
+/** Respawn when an AI has this many pieces or fewer and no owned terrain. */
+const AI_MAROONED_PIECE_MAX = 4;
+const AI_STUCK_NO_OP_THRESHOLD = 6;
 
 function createAiRunner({
 	io,
@@ -83,10 +86,25 @@ function createAiRunner({
 		}
 	}
 
+	function aiOwnsTerrain(world, computerId) {
+		const cells = world.board?.cells;
+		if (!cells) return false;
+		for (const cellContents of Object.values(cells)) {
+			if (!Array.isArray(cellContents)) continue;
+			if (cellContents.some(
+				item => item && String(item.player) === String(computerId) && item.type !== 'home'
+			)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	function performComputerAction(computerId) {
 		const world = World.getWorld();
 		const computerPlayer = World.getPlayer(computerId);
 		if (!world || !computerPlayer || !computerPlayer.isComputer) return;
+		if (computerPlayer.eliminated || computerPlayer.pendingRespawn) return;
 
 		const strategy = computerPlayer.strategy || generateComputerStrategy(computerPlayer.difficulty);
 
@@ -101,6 +119,17 @@ function createAiRunner({
 			return;
 		}
 
+		const kingPiece = aiPieces.find(
+			p => String(p.type).toUpperCase() === 'KING'
+		);
+		if (aiPieces.length <= AI_MAROONED_PIECE_MAX && !aiOwnsTerrain(world, computerId) && kingPiece) {
+			console.log(
+				`[AI] ${computerId} marooned (${aiPieces.length} pieces, no cells) — respawning.`
+			);
+			handleAiKingOnlyDetonation(computerId, kingPiece);
+			return;
+		}
+
 		let actionType;
 		if (checkForThreatenedPieces(world, computerId) && Math.random() < strategy.defensiveness) {
 			actionType = 'chess';
@@ -112,10 +141,26 @@ function createAiRunner({
 			actionType = Math.random() < strategy.buildSpeed ? 'tetromino' : 'chess';
 		}
 
+		let acted = false;
 		if (actionType === 'tetromino') {
-			aiActions.performStrategicTetrominoPlacement(computerId);
+			acted = !!aiActions.performStrategicTetrominoPlacement(computerId);
 		} else {
-			aiActions.performStrategicChessMove(computerId, kingCaptureService);
+			acted = !!aiActions.performStrategicChessMove(computerId, kingCaptureService);
+		}
+
+		if (acted) {
+			computerPlayer.aiStuckTicks = 0;
+			return;
+		}
+
+		computerPlayer.aiStuckTicks = (computerPlayer.aiStuckTicks || 0) + 1;
+		if (computerPlayer.aiStuckTicks >= AI_STUCK_NO_OP_THRESHOLD && kingPiece) {
+			console.log(
+				`[AI] ${computerId} stuck (${computerPlayer.aiStuckTicks} idle ticks, ` +
+				`${aiPieces.length} pieces) — forcing respawn.`
+			);
+			computerPlayer.aiStuckTicks = 0;
+			handleAiKingOnlyDetonation(computerId, kingPiece);
 		}
 	}
 

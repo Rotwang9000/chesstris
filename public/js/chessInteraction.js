@@ -70,6 +70,52 @@ export function findChessPieceMeshAt(x, z) {
 	return null;
 }
 
+/** Remove a piece mesh from the scene and dispose GPU resources. */
+export function disposeChessPieceMesh(pieceMesh) {
+	if (!pieceMesh) return;
+	const chessPiecesGroup = getChessPiecesGroup();
+	try {
+		if (chessPiecesGroup) chessPiecesGroup.remove(pieceMesh);
+		pieceMesh.traverse(child => {
+			if (!child?.isMesh) return;
+			if (child.geometry) child.geometry.dispose();
+			if (child.material) {
+				if (Array.isArray(child.material)) {
+					child.material.forEach(m => m && m.dispose && m.dispose());
+				} else if (child.material.dispose) {
+					child.material.dispose();
+				}
+			}
+		});
+	} catch (_err) { /* best-effort */ }
+}
+
+/**
+ * Remove every chess piece mesh on a board cell except an optional keeper.
+ * Fixes stacked pawn+knight ghosts after captures.
+ */
+export function removeChessMeshesAtCell(x, z, exceptPieceId = null) {
+	const chessPiecesGroup = getChessPiecesGroup();
+	if (!chessPiecesGroup || !Number.isFinite(x) || !Number.isFinite(z)) return 0;
+
+	const keepId = exceptPieceId != null ? String(exceptPieceId) : null;
+	let removed = 0;
+	const toRemove = [];
+
+	for (const child of chessPiecesGroup.children) {
+		const pos = child?.userData?.position;
+		if (!pos || Number(pos.x) !== Number(x) || Number(pos.z) !== Number(z)) continue;
+		if (keepId && child.userData?.id && String(child.userData.id) === keepId) continue;
+		toRemove.push(child);
+	}
+
+	for (const mesh of toRemove) {
+		disposeChessPieceMesh(mesh);
+		removed++;
+	}
+	return removed;
+}
+
 // ── Raycasting ──────────────────────────────────────────────────────────────
 
 // Tracks {pieceId -> lastClickAt} for the double-click rule on pieces
@@ -82,6 +128,100 @@ function isOrthogonallyAdjacent(a, b) {
 	const dx = Math.abs(Number(a.x) - Number(b.x));
 	const dz = Math.abs(Number(a.z) - Number(b.z));
 	return (dx + dz === 1);
+}
+
+function resolveMoveHighlightUserData(intersections) {
+	if (!intersections || intersections.length === 0) return null;
+	for (let i = 0; i < intersections.length; i++) {
+		let node = intersections[i].object;
+		while (node) {
+			if (node.userData?.moveTarget) return node.userData;
+			node = node.parent;
+		}
+	}
+	return null;
+}
+
+function tryMoveViaHighlightRaycast(raycaster) {
+	if (!raycaster || !window.moveHighlightsGroup || window.moveHighlightsGroup.children.length === 0) {
+		return false;
+	}
+	const hits = raycaster.intersectObjects(window.moveHighlightsGroup.children, true);
+	const data = resolveMoveHighlightUserData(hits);
+	if (!data) return false;
+	moveChessPieceToCell(data.x, data.z);
+	return true;
+}
+
+/**
+ * Execute a pending chess move (highlight or capture) even when the client
+ * is in the tetris phase — e.g. the player selected a piece then started
+ * dropping without clearing selection.
+ */
+export function tryPriorityChessMoveClick(mouse) {
+	const gameState = getGameState();
+	if (!gameState?.selectedChessPiece || gameState.processingMove) return false;
+	if (!Array.isArray(gameState.validMoves) || gameState.validMoves.length === 0) return false;
+
+	const raycaster = getRaycaster();
+	const camera = getCamera();
+	const pointer = mouse || getMouse();
+	if (!raycaster || !camera || !pointer) return false;
+
+	raycaster.setFromCamera(pointer, camera);
+	if (tryMoveViaHighlightRaycast(raycaster)) return true;
+
+	const chessPiecesGroup = getChessPiecesGroup();
+	const boardGroup = getBoardGroup();
+	const PIECE_TYPES = ['chess', 'chessPiece', 'ROOK', 'KNIGHT', 'BISHOP', 'QUEEN', 'KING', 'PAWN'];
+
+	if (chessPiecesGroup) {
+		const pieceHits = raycaster.intersectObjects([chessPiecesGroup], true);
+		for (let i = 0; i < pieceHits.length; i++) {
+			let parentObj = pieceHits[i].object;
+			const scene = getScene();
+			while (parentObj.parent
+				&& parentObj.parent !== chessPiecesGroup
+				&& parentObj.parent !== scene) {
+				parentObj = parentObj.parent;
+			}
+			if (!parentObj.userData) continue;
+			if (!PIECE_TYPES.includes(parentObj.userData.type) && !parentObj.userData.pieceType) continue;
+			const pos = parentObj.userData.position;
+			if (!pos) continue;
+			const isCaptureTarget = gameState.validMoves.some(
+				m => m && Number(m.x) === Number(pos.x) && Number(m.z) === Number(pos.z),
+			);
+			if (isCaptureTarget) {
+				moveChessPieceToCell(pos.x, pos.z);
+				return true;
+			}
+		}
+	}
+
+	if (boardGroup) {
+		const boardHits = raycaster.intersectObjects([boardGroup], true);
+		for (let i = 0; i < boardHits.length; i++) {
+			let parentObj = boardHits[i].object;
+			const scene = getScene();
+			while (parentObj.parent
+				&& parentObj.parent !== boardGroup
+				&& parentObj.parent !== scene) {
+				parentObj = parentObj.parent;
+			}
+			if (parentObj.userData?.type !== 'cell' || !parentObj.userData.position) continue;
+			const { x, z } = parentObj.userData.position;
+			const isValidMove = gameState.validMoves.some(
+				m => m && Number(m.x) === Number(x) && Number(m.z) === Number(z),
+			);
+			if (isValidMove) {
+				moveChessPieceToCell(x, z);
+				return true;
+			}
+		}
+	}
+
+	return false;
 }
 
 function pieceIsAdjacentToValidMove(pieceMesh, validMoves) {
@@ -115,17 +255,7 @@ export function performRaycast() {
 
 	raycaster.setFromCamera(mouse, camera);
 
-	// Check move highlights first
-	if (window.moveHighlightsGroup && window.moveHighlightsGroup.children.length > 0) {
-		const moveHighlights = raycaster.intersectObjects(window.moveHighlightsGroup.children, true);
-		if (moveHighlights.length > 0) {
-			const highlight = moveHighlights[0].object;
-			if (highlight.userData && highlight.userData.moveTarget) {
-				moveChessPieceToCell(highlight.userData.x, highlight.userData.z);
-				return;
-			}
-		}
-	}
+	if (tryMoveViaHighlightRaycast(raycaster)) return;
 
 	const pieceIntersections = chessPiecesGroup
 		? raycaster.intersectObjects([chessPiecesGroup], true)
@@ -172,6 +302,16 @@ export function performRaycast() {
 			const piecePlayer = chessPieceHit.userData.player;
 			const isLocalPlayerPiece = String(piecePlayer) === String(gameState.localPlayerId);
 			if (!isLocalPlayerPiece) {
+				const enemyPos = chessPieceHit.userData.position;
+				if (enemyPos) {
+					const isCaptureTarget = (gameState.validMoves || []).some(
+						m => m && Number(m.x) === Number(enemyPos.x) && Number(m.z) === Number(enemyPos.z),
+					);
+					if (isCaptureTarget) {
+						moveChessPieceToCell(enemyPos.x, enemyPos.z);
+						return;
+					}
+				}
 				showPieceInfo(chessPieceHit);
 				return;
 			}
@@ -220,12 +360,10 @@ export function performRaycast() {
 			if (isValidMove) {
 				moveChessPieceToCell(cellPosition.x, cellPosition.z);
 			} else {
-				// Clicking an empty / non-target cell while a piece is
-				// selected should cancel the selection (and dismiss any
-				// pending detonate button), so the player isn't locked
-				// out of clicking elsewhere on the board.
 				clearChessSelection();
 			}
+		} else {
+			showCellInfo(cellHit);
 		}
 	} else if (gameState.selectedChessPiece && !gameState.processingMove) {
 		// Click on empty space (sky / off-board) — treat as deselect.
@@ -485,6 +623,8 @@ export function moveChessPieceToCell(x, z) {
 
 			if (success) {
 				updateGameStateAfterChessMove(pieceData, x, z);
+				removeChessMeshesAtCell(x, z, pieceId);
+				gameState._forceUpdate = true;
 				gameState.turnPhase = 'tetris';
 				cancelSkipChessTimer();
 				updateGameStatusDisplay();
@@ -669,6 +809,12 @@ function updateGameStateAfterChessMove(piece, toX, toZ) {
 	const gameState = getGameState();
 
 	if (gameState.chessPieces && Array.isArray(gameState.chessPieces)) {
+		gameState.chessPieces = gameState.chessPieces.filter(p => {
+			if (!p || String(p.id) === String(piece.id)) return true;
+			const pos = p.position;
+			if (!pos) return true;
+			return !(Number(pos.x) === Number(toX) && Number(pos.z) === Number(toZ));
+		});
 		const idx = gameState.chessPieces.findIndex(p => p && p.id === piece.id);
 		if (idx >= 0 && gameState.chessPieces[idx]?.position) {
 			gameState.chessPieces[idx].position.x = toX;
@@ -997,6 +1143,64 @@ function runDetonationExplosion(pieceMesh) {
 }
 
 // ── Info popups ─────────────────────────────────────────────────────────────
+
+function describeCellContents(cellData) {
+	if (!cellData) return 'Empty cell';
+	const items = Array.isArray(cellData) ? cellData : [cellData];
+	const parts = [];
+	for (const item of items) {
+		if (!item || !item.type) continue;
+		if (item.type === 'tetromino' && item.fromHomeZone) {
+			parts.push(`ex-home terrain (${item.player || '?'})`);
+		} else if (item.type === 'tetromino') {
+			parts.push(`tetromino (${item.player || '?'})`);
+		} else if (item.type === 'chess') {
+			parts.push(`chess marker: ${item.pieceType || 'piece'}`);
+		} else if (item.type === 'home') {
+			parts.push(`home zone (${item.player || '?'})`);
+		} else {
+			parts.push(item.type);
+		}
+	}
+	return parts.length ? parts.join(', ') : 'Unknown cell contents';
+}
+
+export function showCellInfo(cellMesh) {
+	if (!cellMesh?.userData?.position) return;
+	const { x, z } = cellMesh.userData.position;
+	const gameState = getGameState();
+	const key = `${x},${z}`;
+	const cellData = gameState?.board?.cells?.[key] || cellMesh.userData.data;
+	const summary = describeCellContents(cellData);
+	const piece = Array.isArray(gameState?.chessPieces)
+		? gameState.chessPieces.find(p => p?.position?.x === x && p?.position?.z === z)
+		: null;
+	const pieceLine = piece
+		? ` Piece: ${piece.type} (${piece.player}).`
+		: '';
+	showToastMessage(`Cell (${x}, ${z}): ${summary}.${pieceLine}`, { duration: 5000 });
+}
+
+/**
+ * Raycast the board in any turn phase and show cell details (tetris or chess).
+ */
+export function inspectCellAtMouse(mouse) {
+	const raycaster = getRaycaster();
+	const camera = getCamera();
+	const boardGroup = getBoardGroup();
+	if (!raycaster || !camera || !boardGroup || !mouse) return false;
+	raycaster.setFromCamera(mouse, camera);
+	const hits = raycaster.intersectObject(boardGroup, true);
+	for (const hit of hits) {
+		let obj = hit.object;
+		while (obj && obj.userData?.type !== 'cell') obj = obj.parent;
+		if (obj?.userData?.type === 'cell') {
+			showCellInfo(obj);
+			return true;
+		}
+	}
+	return false;
+}
 
 export function showPieceInfo(piece) {
 	if (!piece || !piece.userData) return;

@@ -53,6 +53,7 @@ import { initCameraControlsHelp } from './cameraControlsHelp.js';
 import { setChessPiecesGroup as setWingsChessGroup } from './wingAnimations.js';
 import { preserveCentreMarker, translatePosition } from './centreBoardMarker.js';
 import { updateChessPieces } from './updateChessPieces.js';
+import { refreshSponsoredCells } from './sponsoredCells.js';
 import chessPieceCreator from './chessPieceCreator.js';
 import {
 	setChessPiecesGroup as setPieceHighlightGroup,
@@ -60,6 +61,7 @@ import {
 	highlightCurrentPlayerPieces
 } from './pieceHighlightManager.js';
 import * as animationsModule from './animations.js';
+import { clearChessSelection } from './chessInteraction.js';
 
 // ── Backward-compatible re-exports ──────────────────────────────────────────
 
@@ -76,6 +78,7 @@ let _axisHelpersCtrl = null;
 
 export function handleTetrisPhaseClick() {
 	try {
+		clearChessSelection();
 		gameState.turnPhase = 'tetris';
 		if (!gameState.currentTetromino && typeof tetrominoModule.initializeNextTetromino === 'function') {
 			gameState.currentTetromino = tetrominoModule.initializeNextTetromino(gameState);
@@ -343,7 +346,15 @@ function setupEventSystem() {
 				const li = document.getElementById('loading-indicator');
 				if (li) li.style.display = 'none';
 			}
-			if (e.detail.chessPieces && getBoardGroup()) updateBoardVisuals();
+			if (e.detail.chessPieces && getBoardGroup()) {
+				updateBoardVisuals();
+			} else if (Array.isArray(e.detail.chessPieces)) {
+				const chessPiecesGroup = getChessPiecesGroup();
+				const camera = getCamera();
+				if (chessPiecesGroup && camera) {
+					updateChessPieces(chessPiecesGroup, camera, { ...gameState, _forceUpdate: true });
+				}
+			}
 
 			if (!gameState._cameraFlownToPlayer && gameState.localPlayerId && gameState.chessPieces?.length > 0) {
 				const king = boardFunctions.getPlayersKing(gameState, gameState.localPlayerId, false);
@@ -473,6 +484,12 @@ function updateBoardVisuals() {
 		if (typeof boardFunctions?.renderBoard === 'function') {
 			boardFunctions.renderBoard(gameState, boardGroup, sceneModule.createFloatingIsland, THREE);
 		}
+
+		refreshSponsoredCells(gameState, boardGroup, THREE).catch((sponsorErr) => {
+			if (gameState.debugMode) {
+				console.warn('Sponsored cells refresh failed:', sponsorErr);
+			}
+		});
 
 		let chessPiecesGroup = getChessPiecesGroup();
 		if (!chessPiecesGroup) {

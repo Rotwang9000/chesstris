@@ -56,7 +56,13 @@ export function extractChessPiecesFromCells(gameState) {
 			if (!cellData) continue;
 
 			if (Array.isArray(cellData)) {
-				const chessPiece = cellData.find(item => item && item.type === 'chess' && item.pieceType);
+				const chessMarkers = cellData.filter(
+					item => item && item.type === 'chess' && (item.pieceType || item.pieceId),
+				);
+				if (chessMarkers.length > 1 && gameState?.debugMode) {
+					console.warn(`Cell (${x},${z}) has ${chessMarkers.length} chess markers — using first only`);
+				}
+				const chessPiece = chessMarkers[0];
 				if (chessPiece) out.push(buildPieceEntry(chessPiece, x, z));
 				continue;
 			}

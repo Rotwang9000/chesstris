@@ -144,17 +144,20 @@ export function createCutePiece(THREE, pieceTypeNum, pieceTypeName, player, x, z
 			box(0.2, 0.2, 0.2, 0.57);
 			box(0.08, 0.12, 0.08, 0.73);
 			break;
-		case 3: { // Knight
+		case 3: { // Knight — compact horse silhouette
 			box(0.45, 0.12, 0.45, 0.06);
-			box(0.25, 0.3, 0.25, 0.27);
-			const head = box(0.2, 0.22, 0.18, 0.53);
-			head.position.z = 0.04;
-			const snout = box(0.14, 0.12, 0.22, 0.44);
-			snout.position.z = 0.16;
-			const earL = box(0.06, 0.1, 0.06, 0.68);
-			earL.position.x = -0.06;
-			const earR = box(0.06, 0.1, 0.06, 0.68);
-			earR.position.x = 0.06;
+			box(0.22, 0.22, 0.22, 0.24);
+			const neck = box(0.14, 0.28, 0.12, 0.40);
+			neck.position.z = 0.06;
+			neck.rotation.x = -0.25;
+			const head = box(0.18, 0.20, 0.16, 0.58);
+			head.position.set(0, 0, 0.14);
+			const snout = box(0.12, 0.10, 0.18, 0.50);
+			snout.position.set(0, -0.02, 0.24);
+			const earL = box(0.05, 0.09, 0.05, 0.72);
+			earL.position.set(-0.08, 0.06, 0.10);
+			const earR = box(0.05, 0.09, 0.05, 0.72);
+			earR.position.set(0.08, 0.06, 0.10);
 			break;
 		}
 		case 2: // Rook

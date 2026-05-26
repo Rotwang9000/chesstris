@@ -27,10 +27,11 @@ let isOpen = false;
 // `false` = show every event, `true` = only events involving the local
 // player. The user asked for "a filter so we can select just what
 // happened to our own player".
-let filterMineOnly = false;
+let filterMineOnly = true;
 const FILTER_PREF_KEY = 'tetches.activityLog.mineOnly';
 try {
-	filterMineOnly = window.localStorage?.getItem(FILTER_PREF_KEY) === '1';
+	const stored = window.localStorage?.getItem(FILTER_PREF_KEY);
+	filterMineOnly = stored === null ? true : stored === '1';
 } catch (_) { /* localStorage unavailable — fine */ }
 
 /**
@@ -61,6 +62,8 @@ function isLocalPlayerEvent(ev) {
 	if (p.toPlayerId != null && String(p.toPlayerId) === me) return true;
 	if (p.capturedBy && p.capturedBy.playerId != null
 		&& String(p.capturedBy.playerId) === me) return true;
+	if (p.captorId != null && String(p.captorId) === me) return true;
+	if (p.defeatedId != null && String(p.defeatedId) === me) return true;
 	return false;
 }
 
@@ -91,8 +94,18 @@ function pieceIcon(pieceType) {
 	}
 }
 
+function resolvePlayerName(playerId, fallbackName) {
+	if (fallbackName) return fallbackName;
+	if (playerId == null) return 'Unknown';
+	const gs = typeof window !== 'undefined' ? window.gameState : null;
+	const rec = gs?.players?.[playerId];
+	return rec?.name || String(playerId);
+}
+
 function describeEvent(ev) {
-	const who = ev.payload && ev.payload.playerName ? ev.payload.playerName : 'Someone';
+	const who = ev.payload && ev.payload.playerName
+		? ev.payload.playerName
+		: resolvePlayerName(ev.payload?.playerId, null);
 	switch (ev.type) {
 		case 'tetromino_placed': {
 			const at = ev.payload && Number.isFinite(ev.payload.x) ? `(${ev.payload.x}, ${ev.payload.z})` : '';
@@ -248,9 +261,19 @@ function describeEvent(ev) {
 				target: null,
 			};
 		}
+		case 'king_captured': {
+			const cap = resolvePlayerName(ev.payload?.captorId, ev.payload?.captorName);
+			const defeated = resolvePlayerName(ev.payload?.defeatedId, ev.payload?.defeatedName);
+			return {
+				icon: '\u265A',
+				color: '#f66',
+				text: `${cap} captured ${defeated}'s king — ${defeated}'s army now fights for ${cap}`,
+				target: null,
+			};
+		}
 		case 'chess_piece_captured': {
 			const cap = ev.payload.capturedBy || {};
-			const capName = cap.playerId || 'opponent';
+			const capName = resolvePlayerName(cap.playerId, cap.playerName);
 			const at = Number.isFinite(ev.payload.x)
 				? ` (${ev.payload.x}, ${ev.payload.z})` : '';
 			return {

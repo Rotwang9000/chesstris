@@ -16,6 +16,7 @@ import gameState from './utils/gameState.js';
 import * as tetrominoModule from './tetromino.js'; // Import tetromino module for socket events
 import { initFloatingBanner } from './floatingBanner.js'; // Import floating banner for ads
 import { initSponsorSystem } from '../utils/sponsors.js'; // Import sponsor system
+import { disposeBoats } from './boatsRenderer.js';
 
 
 // Global state
@@ -111,6 +112,12 @@ function setupRenderModeToggle(profile) {
 		// modes use 3D geometry, so existing meshes must be replaced.
 		if (gs && typeof gameCore.forceChessPieceRebuild === 'function') {
 			gameCore.forceChessPieceRebuild();
+		}
+
+		try {
+			disposeBoats();
+		} catch (e) {
+			console.warn('Could not dispose boats after profile switch:', e);
 		}
 
 		console.log('Switched render mode to', next, 'without page reload');

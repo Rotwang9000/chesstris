@@ -642,17 +642,16 @@ class BoardManager {
 	_cellHasClearableContent(board, x, z) {
 		const cellContents = this.getCell(board, x, z);
 		if (!Array.isArray(cellContents) || cellContents.length === 0) return false;
-		// For *line scanning* a chess-occupied cell still counts as
-		// "filled" — the piece itself sits on something a tetromino put
-		// there. We only strip the tetromino content during the
-		// destructive step (`_clearLine`), and only after the integrity
-		// pass has had a chance to mark stranded chess cells for decay.
+		// Only live tetromino terrain extends a line-clear run. Chess
+		// markers alone must not count — otherwise a row of pieces
+		// sitting on ex-home (`fromHomeZone`) blocks would qualify,
+		// every piece would lift off, and the cyan terrain would stay
+		// put (players reported "4 rows cleared" with nothing vanishing).
 		return cellContents.some(item => {
 			if (!item) return false;
+			if (item.type !== 'tetromino') return false;
 			if (item.fromHomeZone === true) return false;
-			return !(item.type === cells.HOME_TYPE
-				|| item.type === cells.SPECIAL_TYPE
-				|| item.type === cells.CENTRE_TYPE);
+			return true;
 		});
 	}
 

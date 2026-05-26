@@ -266,6 +266,42 @@ describe('BoardManager', () => {
 			expect(game.chessPieces.find(p => p.id === 'pawn-1')).toBeUndefined();
 		});
 
+		test('a row of chess on ex-home terrain alone does not qualify as a line clear', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+			game.chessPieces = [];
+			for (let x = 0; x < 8; x++) {
+				boardManager.setCell(game.board, x, 20, [
+					{
+						type: 'tetromino',
+						pieceType: 'home_converted',
+						player: 'p1',
+						fromHomeZone: true,
+					},
+					{
+						type: 'chess',
+						player: 'p1',
+						pieceId: `pawn-${x}`,
+						pieceType: 'pawn',
+					},
+				]);
+				game.chessPieces.push({
+					id: `pawn-${x}`,
+					type: 'PAWN',
+					player: 'p1',
+					position: { x, z: 20 },
+				});
+			}
+
+			const { rows } = boardManager.checkAndClearLines(game);
+			expect(rows).toHaveLength(0);
+			for (let x = 0; x < 8; x++) {
+				const cell = boardManager.getCell(game.board, x, 20);
+				expect(cell).not.toBeNull();
+				expect(cell.some(item => item.fromHomeZone === true)).toBe(true);
+			}
+		});
+
 		test('an airborne piece survives when gravity drags a supporting cell back under it', () => {
 			const game = createGame(boardManager);
 			addPlayer(game, 'p1');

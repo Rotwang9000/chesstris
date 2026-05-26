@@ -17,7 +17,10 @@
 import gameState from '../utils/gameState.js';
 import * as NetworkManager from '../utils/networkManager.js';
 import { showToastMessage } from '../showToastMessage.js';
-import { clearChessSelection, findChessPieceMeshAt, clearInFlightMove } from '../chessInteraction.js';
+import {
+	clearChessSelection, findChessPieceMeshAt, clearInFlightMove,
+	removeChessMeshesAtCell, disposeChessPieceMesh,
+} from '../chessInteraction.js';
 import {
 	ensureActivityLogUI,
 	pushActivityEvent,
@@ -33,7 +36,9 @@ import {
 } from '../wingAnimations.js';
 import { cancelSkipChessTimer, cancelSkipDropTimer } from '../skipChessButton.js';
 import { updateNextPieceHint } from '../tetromino/nextPiece.js';
-import { getChessPiecesGroup } from '../gameContext.js';
+import { getChessPiecesGroup, getCamera } from '../gameContext.js';
+import { updateChessPieces } from '../updateChessPieces.js';
+import { disposeBoats } from '../boatsRenderer.js';
 import {
 	showPromotionRedeemDialog,
 	showKingBattleOverlay,
@@ -44,7 +49,6 @@ import {
 } from '../uiOverlays.js';
 import { playSound } from '../audio/soundManager.js';
 import { mountMuteButton } from '../audio/muteButton.js';
-import { syncBoats } from '../boatsRenderer.js';
 
 // `king_detonation` and `island_decay` cap how many simultaneous
 // particle animations we'll spawn so a 100×100 detonation doesn't pin
@@ -198,11 +202,16 @@ function handleRowCleared(payload) {
 		}
 
 		if (!isLocalActor) return;
+		const cellsCleared = Number(payload?.cellsCleared);
+		const iter = Number(payload?.iteration);
+		const suffix = Number.isFinite(iter) && iter > 0 ? ` (chain ×${iter + 1})` : '';
+		if (Number.isFinite(cellsCleared) && cellsCleared === 0) {
+			showToastMessage(`Pieces displaced — terrain unchanged${suffix}`);
+			return;
+		}
 		const parts = [];
 		if (rows.length) parts.push(`row${rows.length === 1 ? '' : 's'} ${rows.join(', ')}`);
 		if (cols.length) parts.push(`col${cols.length === 1 ? '' : 's'} ${cols.join(', ')}`);
-		const iter = Number(payload?.iteration);
-		const suffix = Number.isFinite(iter) && iter > 0 ? ` (chain ×${iter + 1})` : '';
 		showToastMessage(`Line cleared!${suffix} ${parts.join(' · ')}`);
 	} catch (e) {
 		console.error('Error handling row_cleared:', e);
@@ -293,7 +302,21 @@ function handleChessCapture(payload) {
 			pieceMesh = findChessPieceMeshAt(x, z);
 		}
 
-		showChessCaptureAnimation(x, z, gameState, { pieceMesh });
+		const keeperId = payload?.capturedBy?.pieceId || null;
+		if (capturedId) {
+			const group = getChessPiecesGroup();
+			if (group && Array.isArray(group.children)) {
+				for (const child of group.children) {
+					if (child?.userData?.id && String(child.userData.id) === String(capturedId)) {
+						disposeChessPieceMesh(child);
+						break;
+					}
+				}
+			}
+		}
+		removeChessMeshesAtCell(x, z, keeperId);
+
+		showChessCaptureAnimation(x, z, gameState, { pieceMesh: null });
 	} catch (e) {
 		console.error('Error handling chess_capture:', e);
 	}
@@ -593,10 +616,6 @@ function handleKingCaptured(payload) {
 	try {
 		const { captorId, captorName, defeatedId, defeatedName, defeatedColor, inheritedPawnCount } = payload || {};
 		if (!captorId || !defeatedId) return;
-		// Only spotlight king-captures we're a party to — captor or
-		// captured. Big modal + sting for two strangers on the other
-		// side of the world is what made a busy match feel like an
-		// air-raid drill.
 		const localId = gameState.localPlayerId;
 		const involvesUs = localId && (
 			String(captorId) === String(localId)
@@ -604,7 +623,28 @@ function handleKingCaptured(payload) {
 		);
 		if (!involvesUs) return;
 		try { playSound('kingFall'); } catch (_e) { /* sound is best-effort */ }
+
+		const weWereDefeated = String(defeatedId) === String(localId);
+		if (weWereDefeated) {
+			showToastMessage(
+				`Your king was captured. Your army now fights for ${captorName || captorId} ` +
+				`(pieces turn their colour) until suicidal pawns detonate.`,
+				{ variant: 'alert', duration: 9000 }
+			);
+		} else {
+			showToastMessage(
+				`You captured ${defeatedName || defeatedId}'s king — their forces are now yours.`,
+				{ variant: 'success', duration: 6000 }
+			);
+		}
+
 		showKingBattleOverlay(captorId, captorName, defeatedId, defeatedName, defeatedColor, inheritedPawnCount);
+
+		const group = getChessPiecesGroup();
+		const camera = getCamera();
+		if (group && camera) {
+			updateChessPieces(group, camera, { ...gameState, _forceUpdate: true });
+		}
 	} catch (e) {
 		console.error('Error handling king_captured:', e);
 	}
@@ -714,6 +754,7 @@ function handleKingDuelAnnounced(payload) {
 export function setupNetworkEvents(hooks = {}) {
 	if (networkEventsInitialised) return;
 	networkEventsInitialised = true;
+	try { disposeBoats(); } catch (_e) { /* fleet retired */ }
 
 	if (!NetworkManager || typeof NetworkManager.on !== 'function') {
 		console.warn('setupNetworkEvents: NetworkManager not available');
@@ -740,6 +781,13 @@ export function setupNetworkEvents(hooks = {}) {
 		if (state.fullUpdate === false && Array.isArray(state.boardChanges)) {
 			applyBoardDelta(state);
 			dispatchGameUpdate({ ...state, board: gameState.board });
+			if (Array.isArray(state.chessPieces)) {
+				const group = getChessPiecesGroup();
+				const camera = getCamera();
+				if (group && camera) {
+					updateChessPieces(group, camera, { ...gameState, _forceUpdate: true });
+				}
+			}
 			return;
 		}
 		dispatchGameUpdate(state);
@@ -895,33 +943,6 @@ export function setupNetworkEvents(hooks = {}) {
 		gameState.powerUps = list.filter(o => o && o.id !== payload.orbId);
 		dispatchGameUpdate({ powerUps: gameState.powerUps.slice() });
 	});
-
-	// Viking longship fleet — drifting boats with adverts on their
-	// sails. The server broadcasts a fresh snapshot every ~500 ms;
-	// the client interpolates between snapshots so the boats glide
-	// smoothly rather than teleporting.
-	NetworkManager.on('boats_update', (payload) => {
-		if (!payload) return;
-		try {
-			syncBoats(Array.isArray(payload.boats) ? payload.boats : []);
-		} catch (err) {
-			console.warn('[boats_update] sync failed:', err && err.message);
-		}
-	});
-
-	// Request a one-shot snapshot on first connection so the fleet
-	// paints immediately instead of waiting for the next broadcast.
-	try {
-		const socket = NetworkManager.getSocket && NetworkManager.getSocket();
-		if (socket) {
-			socket.emit('get_boats', (resp) => {
-				if (!resp || !Array.isArray(resp.boats)) return;
-				try { syncBoats(resp.boats); } catch (err) {
-					console.warn('[get_boats] sync failed:', err && err.message);
-				}
-			});
-		}
-	} catch (_e) { /* best-effort */ }
 
 	// Promotion credits — the local player only. The server pushes the
 	// full list on join (and after every credit lifecycle event); we

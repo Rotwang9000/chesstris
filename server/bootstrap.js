@@ -314,9 +314,8 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 	aiRunner.ensureRoster();
 	integrityService.processWorldIntegrityMaintenance({ emitAnimation: false, broadcast: false });
 
-	// Kick off the longship fleet. `start` spawns the boats and
-	// arms the internal tick + broadcast intervals.
-	boatManager.start();
+	// Viking longships disabled — advertising is on sponsored cells again.
+	// if (boatManager) boatManager.start();
 
 	// ── Sockets ───────────────────────────────────────────────────────────
 	const handleConnection = createConnectionHandler({

@@ -8,7 +8,7 @@
  *      sponsored-cell mechanic for a simpler, less intrusive
  *      advertising surface.
  *
- * The manager keeps a small pool of boats (six by default). Each
+ * The manager keeps a small pool of boats (two by default). Each
  * boat travels in a slow loop around the edge of the world. On
  * every loop a fresh advertiser is pulled from `pickAdvertiserForBoat`
  * so the same boat doesn't carry the same banner forever.
@@ -19,7 +19,9 @@
  * validator is the right place to mutate that, not this file.
  */
 
-const BOAT_COUNT = 6;
+// Rare fleet — two longships at most so they feel like occasional
+// visitors rather than a harbour full of traffic.
+const BOAT_COUNT = 2;
 // Boats no longer travel a fixed orbit. Each picks a random target
 // inside the wander box and sails toward it; once it gets close it
 // picks another. This makes the fleet wander among the islands
@@ -41,14 +43,16 @@ const BOAT_SPEED_UPS = 1.2;        // units per second (slow drift)
 // (see `_randomWaypoint`) this gives the fleet enough spacing that
 // usually only one boat is close to the viewer at a time — which
 // is what the user asked for.
-const BOAT_SEPARATION_RADIUS = 12;
-const BOAT_SEPARATION_PUSH = 2.6;
-const BOAT_WAYPOINT_MIN_SPACING = 14;
-// How far a boat will stay clear of any occupied chess cell. Cells
-// are 0.94-unit cubes, so 1.9 leaves a comfortable hull-of-water
-// gap around each island. We use the same value for steering and
-// for the waypoint-rejection radius.
-const BOAT_CELL_AVOID_RADIUS = 1.9;
+// Scaled longships on the client are ~1.7× a ~7-unit hull, so the
+// centre must stay well clear of cell centres or the mesh clips
+// straight through islands.
+// Match the scaled client hull (~1.7× the ~4.4-unit mesh).
+const BOAT_HULL_RADIUS = 8;
+const CELL_HALF = 0.5;
+const BOAT_CELL_CLEARANCE = BOAT_HULL_RADIUS + CELL_HALF + 1;
+const BOAT_SEPARATION_RADIUS = 40;
+const BOAT_SEPARATION_PUSH = 4.5;
+const BOAT_WAYPOINT_MIN_SPACING = 38;
 const BOAT_TURN_RATE = 1.4;         // rad/s — how fast prow can swing
 const BOAT_SEA_Y = -0.30;           // surface level for hulls (water
 //                                     plane lives at y=-0.50 in
@@ -57,7 +61,7 @@ const AD_REFRESH_MS = 90 * 1000;
 const TICK_MS = 200;
 const BROADCAST_MS = 500;
 const CENTRE_REFRESH_MS = 5 * 1000; // re-check world centre this often
-const OCCUPIED_REFRESH_MS = 2 * 1000; // re-fetch the cell set this often
+const OCCUPIED_REFRESH_MS = 800; // re-fetch the cell set this often
 
 function makeBoatId(idx) {
 	return `boat-${idx + 1}-${Math.random().toString(36).slice(2, 6)}`;
@@ -127,17 +131,85 @@ function createBoatManager({
 		}
 	}
 
-	function _pointInsideCell(x, z) {
-		// Treat each occupied cell as a square of half-side
-		// BOAT_CELL_AVOID_RADIUS. Cheaper than circle tests and lines
-		// up with the cube geometry of the islands.
+	function _distToCellFootprint(bx, bz, cx, cz) {
+		const nearestX = Math.max(cx - CELL_HALF, Math.min(bx, cx + CELL_HALF));
+		const nearestZ = Math.max(cz - CELL_HALF, Math.min(bz, cz + CELL_HALF));
+		return Math.hypot(bx - nearestX, bz - nearestZ);
+	}
+
+	function _minDistanceToCells(x, z) {
+		if (occupiedCells.length === 0) return Infinity;
+		let best = Infinity;
 		for (const cell of occupiedCells) {
-			if (Math.abs(cell.x - x) <= BOAT_CELL_AVOID_RADIUS &&
-				Math.abs(cell.z - z) <= BOAT_CELL_AVOID_RADIUS) {
-				return true;
-			}
+			const gap = _distToCellFootprint(x, z, cell.x, cell.z) - BOAT_HULL_RADIUS;
+			if (gap < best) best = gap;
 		}
-		return false;
+		return best;
+	}
+
+	function _pointInsideCell(x, z) {
+		return _minDistanceToCells(x, z) < 0.05;
+	}
+
+	function _resolveCellPenetration(x, z) {
+		let px = x;
+		let pz = z;
+		for (let pass = 0; pass < 12; pass++) {
+			let moved = false;
+			for (const cell of occupiedCells) {
+				const nearestX = Math.max(cell.x - CELL_HALF, Math.min(px, cell.x + CELL_HALF));
+				const nearestZ = Math.max(cell.z - CELL_HALF, Math.min(pz, cell.z + CELL_HALF));
+				const dx = px - nearestX;
+				const dz = pz - nearestZ;
+				const dist = Math.hypot(dx, dz);
+				if (dist >= BOAT_HULL_RADIUS) continue;
+				moved = true;
+				if (dist < 0.001) {
+					const ox = px - cell.x;
+					const oz = pz - cell.z;
+					const od = Math.hypot(ox, oz) || 1;
+					const push = BOAT_HULL_RADIUS + CELL_HALF + 0.15;
+					px = cell.x + (ox / od) * push;
+					pz = cell.z + (oz / od) * push;
+				} else {
+					const overlap = BOAT_HULL_RADIUS - dist + 0.05;
+					px += (dx / dist) * overlap;
+					pz += (dz / dist) * overlap;
+				}
+			}
+			if (!moved) break;
+		}
+		return { x: px, z: pz };
+	}
+
+	function _waypointOutsidePlayArea() {
+		// Pick a point on a ring just outside the occupied-cell bbox
+		// when random sampling keeps failing (dense worlds).
+		if (occupiedCells.length === 0) {
+			const angle = Math.random() * Math.PI * 2;
+			const r = wanderHalf * 0.85;
+			return {
+				x: wanderCentre.x + Math.cos(angle) * r,
+				z: wanderCentre.z + Math.sin(angle) * r,
+			};
+		}
+		let minX = Infinity; let maxX = -Infinity;
+		let minZ = Infinity; let maxZ = -Infinity;
+		for (const c of occupiedCells) {
+			if (c.x < minX) minX = c.x;
+			if (c.x > maxX) maxX = c.x;
+			if (c.z < minZ) minZ = c.z;
+			if (c.z > maxZ) maxZ = c.z;
+		}
+		const midX = (minX + maxX) / 2;
+		const midZ = (minZ + maxZ) / 2;
+		const span = Math.max(maxX - minX, maxZ - minZ, 4);
+		const ring = span / 2 + BOAT_CELL_CLEARANCE + 4;
+		const angle = Math.random() * Math.PI * 2;
+		return {
+			x: midX + Math.cos(angle) * ring,
+			z: midZ + Math.sin(angle) * ring,
+		};
 	}
 
 	function _pointTooCloseToOtherBoats(x, z, ignoreBoat) {
@@ -151,31 +223,27 @@ function createBoatManager({
 	}
 
 	function _randomWaypoint(forBoat = null) {
-		// Try a handful of candidates so we usually pick a spot that
-		// isn't already inside a cell or right next to another boat.
-		// If every candidate is bad we still return SOMETHING so the
-		// boat keeps moving (a degenerate world with cells everywhere
-		// is unlikely but possible).
+		// Prefer open water: among valid candidates pick the one
+		// farthest from any cell centre. Never fall back to a point
+		// inside an island — that was causing hulls to clip through
+		// cells when every random draw failed.
 		let best = null;
-		for (let attempt = 0; attempt < 16; attempt++) {
+		let bestClearance = -1;
+		for (let attempt = 0; attempt < 48; attempt++) {
 			const candidate = {
 				x: wanderCentre.x + (Math.random() - 0.5) * 2 * wanderHalf,
 				z: wanderCentre.z + (Math.random() - 0.5) * 2 * wanderHalf,
 			};
-			if (_pointInsideCell(candidate.x, candidate.z)) {
-				best = best || candidate;
-				continue;
+			if (_pointInsideCell(candidate.x, candidate.z)) continue;
+			if (forBoat && _pointTooCloseToOtherBoats(candidate.x, candidate.z, forBoat)) continue;
+			const clearance = _minDistanceToCells(candidate.x, candidate.z);
+			if (clearance > bestClearance) {
+				bestClearance = clearance;
+				best = candidate;
 			}
-			if (forBoat && _pointTooCloseToOtherBoats(candidate.x, candidate.z, forBoat)) {
-				best = best || candidate;
-				continue;
-			}
-			return candidate;
 		}
-		return best || {
-			x: wanderCentre.x + (Math.random() - 0.5) * 2 * wanderHalf,
-			z: wanderCentre.z + (Math.random() - 0.5) * 2 * wanderHalf,
-		};
+		if (best) return best;
+		return _waypointOutsidePlayArea();
 	}
 
 	function _spawnBoat(idx) {
@@ -269,34 +337,51 @@ function createBoatManager({
 				stepZ += (oz / od) * push;
 			}
 
-			// Cell avoidance: nudge the hull away from any cell whose
-			// centre is within the avoid radius. This is what stops
-			// boats sailing visibly *through* islands.
+			// Cell avoidance: push away from the cell footprint (not
+			// just its centre) so corners can't be clipped diagonally.
 			for (const cell of occupiedCells) {
-				const cx = boat.position.x - cell.x;
-				const cz = boat.position.z - cell.z;
+				const nearestX = Math.max(cell.x - CELL_HALF, Math.min(boat.position.x, cell.x + CELL_HALF));
+				const nearestZ = Math.max(cell.z - CELL_HALF, Math.min(boat.position.z, cell.z + CELL_HALF));
+				const cx = boat.position.x - nearestX;
+				const cz = boat.position.z - nearestZ;
 				const cd = Math.hypot(cx, cz);
-				if (cd > BOAT_CELL_AVOID_RADIUS || cd < 0.001) continue;
-				const push = (1 - cd / BOAT_CELL_AVOID_RADIUS) * BOAT_CELL_AVOID_RADIUS * dt;
+				const gap = cd - BOAT_HULL_RADIUS;
+				if (gap > 1.2 || cd < 0.001) continue;
+				const strength = gap <= 0
+					? 3.5
+					: (1 - gap / 1.2);
+				const push = strength * BOAT_SEPARATION_PUSH * dt;
 				stepX += (cx / cd) * push;
 				stepZ += (cz / cd) * push;
 			}
 
-			// Apply the step, but if it would still leave us inside a
-			// cell after the nudge above, abort the forward motion
-			// and pick a new waypoint — we'd rather stop dead than
-			// clip through an island.
-			const nextX = boat.position.x + stepX;
-			const nextZ = boat.position.z + stepZ;
-			if (_pointInsideCell(nextX, nextZ)) {
+			// Sub-step long moves so we don't tunnel through islands
+			// between 200 ms ticks.
+			let px = boat.position.x;
+			let pz = boat.position.z;
+			const stepLen = Math.hypot(stepX, stepZ);
+			const subSteps = Math.max(1, Math.ceil(stepLen / 0.35));
+			const fracX = stepX / subSteps;
+			const fracZ = stepZ / subSteps;
+			let blocked = false;
+			for (let s = 0; s < subSteps; s++) {
+				const tryX = px + fracX;
+				const tryZ = pz + fracZ;
+				if (_pointInsideCell(tryX, tryZ)) {
+					blocked = true;
+					break;
+				}
+				const resolved = _resolveCellPenetration(tryX, tryZ);
+				px = resolved.x;
+				pz = resolved.z;
+			}
+			if (blocked) {
 				boat.waypoint = _randomWaypoint(boat);
 			} else {
-				boat.position.x = nextX;
-				boat.position.z = nextZ;
+				boat.position.x = px;
+				boat.position.z = pz;
 			}
-			// Bobbing on the swell (kept on the manager so the client
-			// doesn't have to reinvent the phase).
-			boat.position.y = BOAT_SEA_Y + Math.sin(now * 0.0011 + boat.phase) * 0.08;
+			boat.position.y = BOAT_SEA_Y;
 		}
 		_refreshSails();
 	}
@@ -407,5 +492,6 @@ module.exports = {
 	// passing without revising every call-site at once.
 	BOAT_WANDER_HALF: BOAT_WANDER_HALF_DEFAULT,
 	BOAT_SEA_Y,
-	BOAT_CELL_AVOID_RADIUS,
+	BOAT_CELL_CLEARANCE,
+	BOAT_HULL_RADIUS,
 };

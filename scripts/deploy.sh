@@ -84,11 +84,11 @@ elif command -v pm2 &>/dev/null; then
 	_pm2_on_host=true
 	# Check if we can actually talk to a PM2 daemon
 	if pm2 ping &>/dev/null 2>&1; then
+		mkdir -p "${DEPLOY_DIR}/logs"
 		if pm2 describe "$PM2_NAME" &>/dev/null; then
-			pm2 restart "$PM2_NAME" --update-env
-		else
-			pm2 start "${DEPLOY_DIR}/ecosystem.config.cjs" --only "$PM2_NAME"
+			pm2 delete "$PM2_NAME" &>/dev/null || true
 		fi
+		pm2 start "${DEPLOY_DIR}/ecosystem.config.cjs" --only "$PM2_NAME"
 		pm2 save
 		echo "PM2 restarted ${PM2_NAME} directly"
 		_pm2_on_host=false

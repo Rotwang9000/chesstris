@@ -289,7 +289,7 @@ function rejectionMessageForReason(response) {
 				rejectionEffect = FAILURE_EFFECTS.DISSOLVE_FALL;
 				break;
 			case 'no_path_to_king':
-				message = 'No king path - tetromino dissolved into sand.';
+				message = 'Each block must connect through your cells back to your king — you cannot bridge across only enemy territory.';
 				rejectionEffect = FAILURE_EFFECTS.DISSOLVE_FALL;
 				break;
 			default:

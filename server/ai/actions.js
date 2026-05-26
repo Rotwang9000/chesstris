@@ -25,16 +25,16 @@ function createAiActions({
 	function performStrategicTetrominoPlacement(computerId) {
 		const world = World.getWorld();
 		const computerPlayer = World.getPlayer(computerId);
-		if (!world || !computerPlayer) return;
+		if (!world || !computerPlayer) return false;
 
 		const board = world.board;
 		const pieceType = TETROMINO_TYPES[Math.floor(Math.random() * TETROMINO_TYPES.length)];
 		const rotation = Math.floor(Math.random() * 4);
 		const shape = gameManager.tetrominoManager.getTetrisPieceShape(pieceType, rotation);
-		if (!shape) return;
+		if (!shape) return false;
 
 		const anchors = collectPlacementAnchors(world, computerId);
-		if (anchors.length === 0) return;
+		if (anchors.length === 0) return false;
 
 		const maxAttempts = 60;
 		const offsetRange = 4;
@@ -88,8 +88,9 @@ function createAiActions({
 			});
 
 			if (spectatorRegistry) spectatorRegistry.broadcastUpdate(computerId, world);
-			return;
+			return true;
 		}
+		return false;
 	}
 
 	function collectPlacementAnchors(world, computerId) {
@@ -121,21 +122,21 @@ function createAiActions({
 	function performStrategicChessMove(computerId, kingCaptureService) {
 		const world = World.getWorld();
 		const computerPlayer = World.getPlayer(computerId);
-		if (!world || !computerPlayer) return;
+		if (!world || !computerPlayer) return false;
 
 		const chessPieces = world.chessPieces || [];
 		const ownedPieces = chessPieces.filter(piece =>
 			piece && piece.player === computerId && piece.position
 			&& Number.isFinite(piece.position.x) && Number.isFinite(piece.position.z)
 		);
-		if (ownedPieces.length === 0) return;
+		if (ownedPieces.length === 0) return false;
 
 		const existingCells = [];
 		for (const key of Object.keys(world.board?.cells || {})) {
 			const [x, z] = key.split(',').map(Number);
 			if (Number.isFinite(x) && Number.isFinite(z)) existingCells.push({ x, z });
 		}
-		if (existingCells.length === 0) return;
+		if (existingCells.length === 0) return false;
 
 		const maxAttempts = 80;
 		for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -195,11 +196,13 @@ function createAiActions({
 			}
 
 			if (spectatorRegistry) spectatorRegistry.broadcastUpdate(computerId, world);
-			return;
+			return true;
 		}
+		return false;
 	}
 
 	function applyChessMove(world, piece, targetX, targetZ, computerId) {
+		const computerPlayer = world.players?.[computerId];
 		const sourceCell = gameManager.boardManager.getCell(world.board, piece.position.x, piece.position.z);
 		if (!sourceCell) return { success: false };
 
@@ -240,6 +243,7 @@ function createAiActions({
 						activityLog: gameManager.activityLog || null,
 						capturedBy: {
 							playerId: computerId,
+							playerName: computerPlayer?.name || computerPlayer?.username || computerId,
 							pieceId: piece.id,
 							pieceType: pieces.pieceLabel(piece),
 						},
@@ -270,7 +274,7 @@ function createAiActions({
 		const aiPlayer = world.players?.[computerId];
 		const aiColor = aiPlayer?.color;
 		const targetCellContents = Array.isArray(targetCell)
-			? targetCell.filter(item => item && item.type !== 'chess')
+			? cells.stripAllChessMarkers(targetCell)
 			: [];
 		const aiPreviousOwners = new Set();
 		for (const item of targetCellContents) {

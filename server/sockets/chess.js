@@ -331,11 +331,13 @@ function registerChessHandlers(socket, ctx) {
 							}
 						}
 
+						const captorPlayer = world.players?.[playerId];
 						pieces.removePiece(world, target, {
 							reason: pieces.REMOVAL_REASONS.CAPTURED,
 							activityLog,
 							capturedBy: {
 								playerId,
+								playerName: captorPlayer?.name || captorPlayer?.username || playerId,
 								pieceType: String(piece.type || '').toLowerCase(),
 								pieceId: piece.id,
 							},
@@ -364,7 +366,7 @@ function registerChessHandlers(socket, ctx) {
 			// intrinsic to that player's home zone, per the bible.
 			const playerColor = world.players?.[playerId]?.color;
 			const targetCellContents = Array.isArray(targetCell)
-				? targetCell.filter(item => item && item.type !== 'chess')
+				? cells.stripAllChessMarkers(targetCell)
 				: [];
 			// Note the previous owner of the destination's non-home,
 			// non-chess content so we can log the territory grab — the

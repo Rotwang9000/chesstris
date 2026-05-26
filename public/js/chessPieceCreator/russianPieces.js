@@ -157,88 +157,81 @@ export function createRussianKnightPiece(materialKey, isLocalPlayer, customMater
 	const THREE = getTHREE();
 	const group = new THREE.Group();
 	const materials = resolveMaterials(materialKey, customMaterials);
-	const seg = isLocalPlayer ? 16 : 10;
+	const seg = isLocalPlayer ? 20 : 12;
 
-	const base = new THREE.Mesh(new THREE.CylinderGeometry(0.20, 0.26, 0.12, seg), materials.primary);
-	base.position.y = 0.06;
-	base.castShadow = true;
-	base.receiveShadow = true;
-	group.add(base);
+	const plinth = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.28, 0.11, seg), materials.primary);
+	plinth.position.y = 0.055;
+	plinth.castShadow = true;
+	plinth.receiveShadow = true;
+	group.add(plinth);
 
-	const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.18, 0.18, seg), materials.primary);
-	pedestal.position.y = 0.21;
+	const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.20, 0.16, seg), materials.primary);
+	pedestal.position.y = 0.19;
 	pedestal.castShadow = true;
 	pedestal.receiveShadow = true;
 	group.add(pedestal);
 
-	const neckSteps = isLocalPlayer ? 7 : 4;
-	for (let i = 0; i < neckSteps; i++) {
-		const t = i / neckSteps;
-		const botR = 0.13 - t * 0.04;
-		const topR = 0.12 - t * 0.04;
-		const h = 0.05;
-		const section = new THREE.Mesh(
-			new THREE.CylinderGeometry(topR, botR, h, seg > 10 ? 10 : seg),
-			materials.primary,
-		);
-		const arch = Math.sin(t * Math.PI * 0.6) * 0.12;
-		section.position.set(0, 0.33 + i * 0.05, arch);
-		section.rotation.x = -(t * 0.5);
-		section.castShadow = true;
-		section.receiveShadow = true;
-		group.add(section);
-	}
+	// Curved neck — smooth arch instead of stacked blocks.
+	const neckCurve = new THREE.CatmullRomCurve3([
+		new THREE.Vector3(0, 0.30, -0.02),
+		new THREE.Vector3(0, 0.42, 0.04),
+		new THREE.Vector3(0, 0.54, 0.10),
+		new THREE.Vector3(0, 0.66, 0.16),
+	]);
+	const neckGeo = new THREE.TubeGeometry(neckCurve, isLocalPlayer ? 16 : 10, 0.09, seg, false);
+	const neck = new THREE.Mesh(neckGeo, materials.primary);
+	neck.castShadow = true;
+	neck.receiveShadow = true;
+	group.add(neck);
 
-	const cranium = new THREE.Mesh(new THREE.SphereGeometry(0.10, seg, seg > 10 ? 10 : seg), materials.secondary);
-	cranium.scale.set(0.85, 1.1, 1.5);
-	cranium.position.set(0, 0.64, 0.14);
-	cranium.rotation.x = -0.4;
-	cranium.castShadow = true;
-	cranium.receiveShadow = true;
-	group.add(cranium);
+	const head = new THREE.Mesh(
+		new THREE.SphereGeometry(0.11, seg, seg > 10 ? 12 : 8),
+		materials.secondary,
+	);
+	head.scale.set(0.75, 1.05, 1.35);
+	head.position.set(0, 0.72, 0.20);
+	head.rotation.x = -0.25;
+	head.rotation.y = 0.08;
+	head.castShadow = true;
+	head.receiveShadow = true;
+	group.add(head);
 
-	const muzzleGeo = new THREE.CylinderGeometry(0.045, 0.065, 0.22, 8);
-	const muzzle = new THREE.Mesh(muzzleGeo, materials.secondary);
-	muzzle.position.set(0, 0.54, 0.26);
-	muzzle.rotation.x = -Math.PI / 3;
-	muzzle.castShadow = true;
-	muzzle.receiveShadow = true;
-	group.add(muzzle);
+	const snout = new THREE.Mesh(
+		new THREE.BoxGeometry(0.09, 0.07, 0.20),
+		materials.secondary,
+	);
+	snout.position.set(0, 0.66, 0.34);
+	snout.rotation.x = -0.35;
+	snout.castShadow = true;
+	group.add(snout);
 
 	for (let side = -1; side <= 1; side += 2) {
-		const nostril = new THREE.Mesh(new THREE.SphereGeometry(0.018, 6, 6), materials.accent);
-		nostril.position.set(side * 0.03, 0.46, 0.35);
-		group.add(nostril);
+		const ear = new THREE.Mesh(new THREE.ConeGeometry(0.028, 0.11, 6), materials.accent);
+		ear.position.set(side * 0.07, 0.82, 0.14);
+		ear.rotation.z = side * 0.35;
+		ear.castShadow = true;
+		group.add(ear);
 	}
 
-	const jaw = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.03, 0.14), materials.secondary);
-	jaw.position.set(0, 0.50, 0.22);
-	jaw.rotation.x = -Math.PI / 4;
-	jaw.castShadow = true;
-	group.add(jaw);
+	// Mane — subtle crest along the neck.
+	const maneCount = isLocalPlayer ? 5 : 3;
+	for (let i = 0; i < maneCount; i++) {
+		const t = (i + 1) / (maneCount + 1);
+		const pt = neckCurve.getPoint(t);
+		const mane = new THREE.Mesh(
+			new THREE.BoxGeometry(0.04, 0.10, 0.02),
+			materials.accent,
+		);
+		mane.position.set(pt.x, pt.y + 0.06, pt.z - 0.05);
+		mane.rotation.x = -0.35 - t * 0.2;
+		mane.castShadow = true;
+		group.add(mane);
+	}
 
 	if (isLocalPlayer) {
 		for (let side = -1; side <= 1; side += 2) {
-			const ear = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.13, 6), materials.accent);
-			ear.position.set(side * 0.055, 0.74, 0.09);
-			ear.rotation.x = -0.2;
-			ear.rotation.z = side * 0.2;
-			ear.castShadow = true;
-			group.add(ear);
-		}
-
-		for (let i = 0; i < 5; i++) {
-			const ridge = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.035, 0.025), materials.accent);
-			const t = i / 5;
-			ridge.position.set(0, 0.52 + i * 0.045, -0.03 - t * 0.04);
-			ridge.rotation.x = 0.25;
-			ridge.castShadow = true;
-			group.add(ridge);
-		}
-
-		for (let side = -1; side <= 1; side += 2) {
-			const eye = new THREE.Mesh(new THREE.SphereGeometry(0.018, 8, 8), materials.accent);
-			eye.position.set(side * 0.07, 0.63, 0.22);
+			const eye = new THREE.Mesh(new THREE.SphereGeometry(0.014, 8, 8), materials.accent);
+			eye.position.set(side * 0.05, 0.74, 0.30);
 			group.add(eye);
 		}
 	}

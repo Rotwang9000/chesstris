@@ -5,7 +5,7 @@ const {
 	BOAT_COUNT,
 	BOAT_WANDER_HALF_DEFAULT,
 	BOAT_SEA_Y,
-	BOAT_CELL_AVOID_RADIUS,
+	BOAT_CELL_CLEARANCE,
 } = require('../../server/world/boats');
 
 describe('BoatManager (server/world/boats)', () => {
@@ -117,12 +117,17 @@ describe('BoatManager (server/world/boats)', () => {
 		avoidManager.start();
 		try {
 			// No boat may spawn inside the island.
+			const hullR = require('../../server/world/boats').BOAT_HULL_RADIUS;
+			const footprintGap = (bx, bz, cx, cz) => {
+				const nearestX = Math.max(cx - 0.5, Math.min(bx, cx + 0.5));
+				const nearestZ = Math.max(cz - 0.5, Math.min(bz, cz + 0.5));
+				return Math.hypot(bx - nearestX, bz - nearestZ) - hullR;
+			};
 			for (const boat of avoidManager.getSnapshot()) {
-				const insideCell = cells.some(c =>
-					Math.abs(boat.position.x - c.x) <= BOAT_CELL_AVOID_RADIUS &&
-					Math.abs(boat.position.z - c.z) <= BOAT_CELL_AVOID_RADIUS
-				);
-				expect(insideCell).toBe(false);
+				for (const c of cells) {
+					expect(footprintGap(boat.position.x, boat.position.z, c.x, c.z))
+						.toBeGreaterThanOrEqual(-0.1);
+				}
 			}
 			// And after several seconds of simulated drift they still
 			// don't end up clipping through it.
@@ -131,11 +136,10 @@ describe('BoatManager (server/world/boats)', () => {
 				avoidManager.tick();
 			}
 			for (const boat of avoidManager.getSnapshot()) {
-				const insideCell = cells.some(c =>
-					Math.abs(boat.position.x - c.x) <= BOAT_CELL_AVOID_RADIUS &&
-					Math.abs(boat.position.z - c.z) <= BOAT_CELL_AVOID_RADIUS
-				);
-				expect(insideCell).toBe(false);
+				for (const c of cells) {
+					expect(footprintGap(boat.position.x, boat.position.z, c.x, c.z))
+						.toBeGreaterThanOrEqual(-0.1);
+				}
 			}
 		} finally {
 			avoidManager.stop();

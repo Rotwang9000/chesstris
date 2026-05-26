@@ -11,13 +11,14 @@ import {
 } from './gameContext.js';
 import * as tetrominoModule from './tetromino.js';
 import { boardFunctions } from './boardFunctions.js';
-import { performRaycast, clearChessSelection } from './chessInteraction.js';
+import {
+	performRaycast, clearChessSelection, inspectCellAtMouse, tryPriorityChessMoveClick,
+} from './chessInteraction.js';
 import { showToastMessage } from './showToastMessage.js';
 import { playSound, initSoundManager } from './audio/soundManager.js';
 import { setupKeyboardChess } from './keyboardChess.js';
 import { setupTouchGestures } from './touchGestures.js';
 import { setupTouchControlPad } from './touchControlPad.js';
-import { tryBoatClick } from './boatsRenderer.js';
 
 let _onTetrisPhaseClick = null;
 
@@ -69,32 +70,20 @@ export function setupInputHandlers() {
 			m.x = ((e.clientX - canvasRect.left) / canvasRect.width) * 2 - 1;
 			m.y = -((e.clientY - canvasRect.top) / canvasRect.height) * 2 + 1;
 
-			// Boats are clickable in every phase — clicking a sailing
-			// longship opens the advertiser's landing page (or the
-			// in-house /advertise sign-up when the boat is carrying
-			// the placeholder advert).
-			try {
-				const boatHit = tryBoatClick(m);
-				if (boatHit && boatHit.advertiser) {
-					const ad = boatHit.advertiser;
-					const link = ad.adLink || (ad.placeholder ? '/advertise' : null);
-					if (link) {
-						window.open(link, '_blank', 'noopener');
-						if (typeof showToastMessage === 'function') {
-							showToastMessage(ad.placeholder
-								? 'Opening advertiser sign-up…'
-								: `Opening ${ad.name || 'advertiser'}…`, 2500);
-						}
-						e.stopPropagation();
-						e.preventDefault();
-						return;
-					}
+			if (gameState.turnPhase !== 'chess') {
+				if (!gameState.processingMove && tryPriorityChessMoveClick(m)) {
+					return;
 				}
-			} catch (err) {
-				console.warn('[boats] click handler failed:', err && err.message);
+				if (gameState.selectedChessPiece) {
+					showToastMessage(
+						'Finish your tetromino drop first, or press Escape to deselect your piece.',
+						4000,
+					);
+					return;
+				}
+				inspectCellAtMouse(m);
+				return;
 			}
-
-			if (gameState.turnPhase !== 'chess') return;
 
 			if (!gameState.processingMove) performRaycast();
 

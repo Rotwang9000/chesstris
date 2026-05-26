@@ -515,7 +515,8 @@ export function setupLights(scene, options = {}) {
 	if (lowQuality) {
 		// Deep space background - dark with purple/blue gradient feel
 		scene.background = new THREE.Color(0x0a0a1a); // Deep space dark blue
-		scene.fog = new THREE.Fog(0x0a0a2a, 80, 200); // Very subtle space fog
+		// Push fog out so distant islands and longships stay visible.
+		scene.fog = new THREE.Fog(0x0a0a2a, 140, 320);
 		
 		// Create starfield
 		createStarfield(scene, THREE);
@@ -636,12 +637,12 @@ function addWaterPlane(scene, THREE) {
 	geometry.computeVertexNormals();
 
 	const material = new THREE.MeshStandardMaterial({
-		color: 0x1f6dab,
-		roughness: 0.7,
-		metalness: 0.15,
+		color: 0x2d8fd4,
+		roughness: 0.35,
+		metalness: 0.25,
 		transparent: true,
-		opacity: 0.78,
-		side: THREE.DoubleSide,
+		opacity: 0.94,
+		side: THREE.FrontSide,
 	});
 
 	const water = new THREE.Mesh(geometry, material);
@@ -698,8 +699,8 @@ export function updateWaterPlane(scene) {
 	for (let i = 0; i < positions.count; i++) {
 		const x = positions.getX(i);
 		const z = positions.getZ(i);
-		const ripple = Math.sin(x * 0.08 + t * 0.7) * 0.12
-			+ Math.cos(z * 0.07 - t * 0.55) * 0.1;
+		const ripple = Math.sin(x * 0.06 + t * 0.45) * 0.05
+			+ Math.cos(z * 0.05 - t * 0.4) * 0.04;
 		positions.setY(i, base[i] + ripple);
 	}
 	positions.needsUpdate = true;

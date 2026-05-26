@@ -76,6 +76,19 @@ function createKingCaptureService({ io, gameManager, broadcaster, activityLog = 
 
 		World.markDirty();
 
+		if (activityLog && typeof activityLog.recordKingCaptured === 'function') {
+			try {
+				activityLog.recordKingCaptured({
+					captorId,
+					captorName: captorPlayer.name || captorId,
+					defeatedId,
+					defeatedName: defeatedPlayer.name || defeatedId,
+				});
+			} catch (logErr) {
+				console.warn('[KingCapture] activity log failed:', logErr.message);
+			}
+		}
+
 		io.to(world.id).emit('king_captured', {
 			captorId,
 			captorName: captorPlayer.name || captorId,

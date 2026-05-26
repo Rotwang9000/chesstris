@@ -625,15 +625,27 @@ export function showChessCaptureAnimation(x, z, gameState, options = {}) {
 				if (p.material) p.material.dispose();
 			}
 		} catch (_err) { /* best-effort cleanup */ }
-		if (pieceFadeState) {
-			for (const entry of pieceFadeState.initial) {
-				try {
-					if (entry.mesh && entry.mesh.material) {
-						entry.mesh.material.opacity = entry.originalOpacity ?? 1;
-						entry.mesh.material.transparent = !!entry.originalTransparent;
+		if (pieceMesh) {
+			try {
+				const chessPiecesGroup = gameState?.chessPiecesGroup
+					|| (typeof window !== 'undefined' && window.chessPiecesGroup);
+				if (chessPiecesGroup && pieceMesh.parent === chessPiecesGroup) {
+					chessPiecesGroup.remove(pieceMesh);
+				} else if (pieceMesh.parent) {
+					pieceMesh.parent.remove(pieceMesh);
+				}
+				pieceMesh.traverse(child => {
+					if (!child?.isMesh) return;
+					if (child.geometry) child.geometry.dispose();
+					if (child.material) {
+						if (Array.isArray(child.material)) {
+							child.material.forEach(m => m && m.dispose && m.dispose());
+						} else if (child.material.dispose) {
+							child.material.dispose();
+						}
 					}
-				} catch (_err) { /* leave restoration best-effort */ }
-			}
+				});
+			} catch (_err) { /* removal is best-effort */ }
 		}
 	};
 

@@ -50,6 +50,11 @@ function findChess(items) {
 	return findItem(items, item => item.type === CHESS_TYPE);
 }
 
+/** Remove every chess marker from a cell array (invariant: at most one). */
+function stripAllChessMarkers(items) {
+	return asArray(items).filter(item => item && item.type !== CHESS_TYPE);
+}
+
 function findCentre(items) {
 	return findItem(items, item => item.type === CENTRE_TYPE);
 }
@@ -328,4 +333,5 @@ module.exports = {
 	transferOwnership,
 	stripClearable,
 	stripForLineClear,
+	stripAllChessMarkers,
 };

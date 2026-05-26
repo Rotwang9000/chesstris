@@ -27,9 +27,9 @@ let boatGroup = null;
 const boatVisuals = new Map(); // id → { root, sailMesh, advertiser, ... }
 let sailTextureCache = new Map(); // cacheKey → THREE.Texture
 let lastBuildProfile = null;     // 'normal' | 'cute' | 'retro' — rebuild boats when this changes
+let lastServerBoats = [];        // latest snapshot — used to rebuild after profile toggle
 
-const LERP_DEFAULT_MS = 600;
-const BOB_AMP_DEFAULT = 0.18;
+const LERP_DEFAULT_MS = 950;
 
 // Whole-fleet scale. The longships used to be roughly cell-sized,
 // which made the sail-mounted ads hard to read and left no room
@@ -137,6 +137,7 @@ function buildLongship(THREE, profile = 'normal') {
 	const isRetro = pal.isRetro;
 	const isCute = pal.isCute;
 	const group = new THREE.Group();
+	const canCapsule = isCute && typeof THREE.CapsuleGeometry === 'function';
 
 	const woodMat = new THREE.MeshStandardMaterial({
 		color: pal.hullColor,
@@ -146,12 +147,6 @@ function buildLongship(THREE, profile = 'normal') {
 	});
 	const darkWoodMat = woodMat.clone();
 	darkWoodMat.color = new THREE.Color(pal.hullDark);
-	const ropeMat = new THREE.MeshStandardMaterial({
-		color: pal.ropeColor,
-		roughness: 0.95,
-		metalness: 0.0,
-	});
-
 	// Hull. Cute mode swaps the rectangular box for a soft
 	// rounded-bar (capsule-like) hull so the boat reads as a
 	// friendly bath-toy rather than a war vessel.
@@ -159,12 +154,17 @@ function buildLongship(THREE, profile = 'normal') {
 	const hullWidth = 1.3;
 	const hullHeight = 0.7;
 	let hull;
-	if (isCute) {
+	if (canCapsule) {
 		const hullGeom = new THREE.CapsuleGeometry(hullWidth / 2, hullLength * 0.55, 4, 12);
-		hullGeom.rotateZ(Math.PI / 2); // capsule's long axis becomes Z
+		hullGeom.rotateZ(Math.PI / 2);
 		hullGeom.rotateY(Math.PI / 2);
 		hull = new THREE.Mesh(hullGeom, woodMat);
-		hull.scale.set(1, 0.55, 1); // flatten so it sits low in the water
+		hull.scale.set(1, 0.55, 1);
+	} else if (isCute) {
+		// Rounded hull when CapsuleGeometry is missing (older THREE builds).
+		const hullGeom = new THREE.SphereGeometry(hullWidth * 0.55, 14, 10);
+		hull = new THREE.Mesh(hullGeom, woodMat);
+		hull.scale.set(1, 0.5, hullLength / (hullWidth * 1.1));
 	} else {
 		hull = new THREE.Mesh(
 			new THREE.BoxGeometry(hullWidth, hullHeight, hullLength),
@@ -257,24 +257,6 @@ function buildLongship(THREE, profile = 'normal') {
 	spar.position.set(0, 3.0, 0);
 	group.add(spar);
 
-	// Rigging — two diagonal ropes from spar ends to the prow/stern
-	// deck. Adds depth to the silhouette in cute/normal mode.
-	if (pal.detail >= 1) {
-		const ropeLength = Math.hypot(1.3, 2.5);
-		for (const sx of [-1, 1]) {
-			for (const sz of [-1, 1]) {
-				const rope = new THREE.Mesh(
-					new THREE.CylinderGeometry(0.012, 0.012, ropeLength, 6),
-					ropeMat
-				);
-				rope.position.set(sx * 0.65, 1.8, sz * (hullLength / 2 - 0.2));
-				rope.lookAt(0, 3.0, 0);
-				rope.rotateX(Math.PI / 2);
-				group.add(rope);
-			}
-		}
-	}
-
 	// Oars sticking out of the rowing benches (normal mode only).
 	if (pal.detail >= 2) {
 		const oarMat = new THREE.MeshStandardMaterial({
@@ -360,7 +342,25 @@ function buildLongship(THREE, profile = 'normal') {
 		}
 	});
 
+	_applyBoatRenderFlags(group, profile);
 	return { group, sailMesh };
+}
+
+/**
+ * Cute/retro fog starts close to the camera; longships otherwise
+ * vanish into the background even when the server places them correctly.
+ */
+function _applyBoatRenderFlags(root, profile) {
+	const ignoreFog = profile === 'cute' || profile === 'retro';
+	root.traverse(node => {
+		if (!node.isMesh || !node.material) return;
+		const mats = Array.isArray(node.material) ? node.material : [node.material];
+		for (const mat of mats) {
+			if (ignoreFog) mat.fog = false;
+			mat.transparent = false;
+			mat.opacity = 1;
+		}
+	});
 }
 
 /**
@@ -507,6 +507,9 @@ export function syncBoats(boats) {
 	const group = ensureBoatGroup();
 	if (!THREE || !group) return;
 
+	const list = Array.isArray(boats) ? boats : [];
+	lastServerBoats = list;
+
 	const profile = _resolveRenderProfile();
 	// If the render profile flipped (e.g. cute → retro) tear the
 	// existing boats down so we rebuild them with the right
@@ -532,7 +535,6 @@ export function syncBoats(boats) {
 	}
 	lastBuildProfile = profile;
 
-	const list = Array.isArray(boats) ? boats : [];
 	const seen = new Set();
 
 	for (const boat of list) {
@@ -541,8 +543,15 @@ export function syncBoats(boats) {
 
 		let entry = boatVisuals.get(boat.id);
 		if (!entry) {
-			const built = buildLongship(THREE, profile);
+			let built;
+			try {
+				built = buildLongship(THREE, profile);
+			} catch (err) {
+				console.warn('[boats] buildLongship failed, using normal fallback:', err && err.message);
+				built = buildLongship(THREE, 'normal');
+			}
 			group.add(built.group);
+			_applyBoatRenderFlags(built.group, profile);
 			entry = {
 				root: built.group,
 				sailMesh: built.sailMesh,
@@ -558,8 +567,6 @@ export function syncBoats(boats) {
 					z: boat.position?.z ?? 0,
 				},
 				heading: boat.heading ?? 0,
-				bobPhase: Math.random() * Math.PI * 2,
-				bobAmp: BOB_AMP_DEFAULT * (0.8 + Math.random() * 0.4),
 				lerpT: 1,
 				lerpDur: LERP_DEFAULT_MS,
 				lerpedAt: performance.now(),
@@ -612,15 +619,37 @@ export function syncBoats(boats) {
 
 /**
  * Per-frame animation. Interpolates each boat from its previous
- * position to the latest target and adds a gentle bob on the sea
- * swell so the boats don't look static between server snapshots.
+ * position to the latest target. No bob/roll — that fought the
+ * network lerp and read as stutter.
  *
  * @param {number} timeSec  performance.now() / 1000
  */
+function _boatFadeThresholds() {
+	const profile = _resolveRenderProfile();
+	// Cute mode often uses a wider overview; keep boats visible longer.
+	if (profile === 'cute') {
+		return { near: 110, far: 150, hide: 185 };
+	}
+	return { near: BOAT_FADE_NEAR, far: BOAT_FADE_FAR, hide: BOAT_FAR_HIDE };
+}
+
+/**
+ * Rebuild the fleet immediately after a render-profile toggle
+ * (cute / normal / retro) instead of waiting for the next
+ * `boats_update` tick.
+ */
+export function refreshBoatsAfterProfileChange() {
+	lastBuildProfile = null;
+	if (lastServerBoats.length > 0) {
+		syncBoats(lastServerBoats);
+	}
+}
+
 export function animateBoats(timeSec) {
 	const now = performance.now();
 	const camera = getCamera();
 	const camPos = camera ? camera.position : null;
+	const fade = _boatFadeThresholds();
 
 	for (const entry of boatVisuals.values()) {
 		const root = entry.root;
@@ -630,31 +659,44 @@ export function animateBoats(timeSec) {
 		const px = entry.prev.x + (entry.target.x - entry.prev.x) * ease;
 		const pz = entry.prev.z + (entry.target.z - entry.prev.z) * ease;
 		const py = entry.prev.y + (entry.target.y - entry.prev.y) * ease;
-		root.position.set(px, py + Math.sin(timeSec * 0.8 + entry.bobPhase) * entry.bobAmp, pz);
+		root.position.set(px, py, pz);
 		root.rotation.y = entry.heading;
-		root.rotation.z = Math.sin(timeSec * 0.55 + entry.bobPhase * 0.7) * 0.04;
-		root.rotation.x = Math.sin(timeSec * 0.45 + entry.bobPhase * 0.3) * 0.03;
+		root.rotation.z = 0;
+		root.rotation.x = 0;
 
-		// Distance-based culling + fade. Cheap: one squared-distance
-		// per boat per frame. Beyond BOAT_FAR_HIDE the boat is
-		// invisible (skip submit). Between BOAT_FADE_NEAR and
-		// BOAT_FADE_FAR we tween opacity so the cull isn't a hard
-		// pop. Inside BOAT_FADE_NEAR we leave the materials opaque
-		// (avoids per-frame churn on transparent state).
+		// Distance-based culling + fade (normal mode only). Cute/retro
+		// fog already handles distance; fading here left boats invisible.
+		const profile = _resolveRenderProfile();
+		if (profile === 'cute' || profile === 'retro') {
+			if (!root.visible) root.visible = true;
+			if (entry.lastOpacity !== 1) {
+				root.traverse(node => {
+					if (!node.isMesh || !node.material) return;
+					const mats = Array.isArray(node.material) ? node.material : [node.material];
+					for (const mat of mats) {
+						mat.transparent = false;
+						mat.opacity = 1;
+					}
+				});
+				entry.lastOpacity = 1;
+			}
+			continue;
+		}
+
 		if (camPos) {
 			const dx = root.position.x - camPos.x;
 			const dy = root.position.y - camPos.y;
 			const dz = root.position.z - camPos.z;
 			const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
 			let opacity;
-			if (dist <= BOAT_FADE_NEAR) opacity = 1;
-			else if (dist >= BOAT_FAR_HIDE) opacity = 0;
-			else if (dist >= BOAT_FADE_FAR) {
+			if (dist <= fade.near) opacity = 1;
+			else if (dist >= fade.hide) opacity = 0;
+			else if (dist >= fade.far) {
 				// 0.5 → 0 across the far-fade band
-				opacity = 0.5 * Math.max(0, 1 - (dist - BOAT_FADE_FAR) / (BOAT_FAR_HIDE - BOAT_FADE_FAR));
+				opacity = 0.5 * Math.max(0, 1 - (dist - fade.far) / (fade.hide - fade.far));
 			} else {
 				// 1 → 0.5 between the near and far fade thresholds
-				opacity = 1 - (dist - BOAT_FADE_NEAR) / (BOAT_FADE_FAR - BOAT_FADE_NEAR) * 0.5;
+				opacity = 1 - (dist - fade.near) / (fade.far - fade.near) * 0.5;
 			}
 			const visible = opacity > 0.01;
 			if (root.visible !== visible) root.visible = visible;

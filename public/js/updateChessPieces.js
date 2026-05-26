@@ -541,6 +541,16 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 			!Number.isFinite(inFlight.startedAt)
 				|| (now - inFlight.startedAt) < PIN_SAFETY_MS
 		);
+		// One mesh per board cell — drop stale ghosts (e.g. captured pawn
+		// under the capturing knight) that survived a partial sync.
+		const cellToCanonicalId = new Map();
+		for (const piece of chessPieces) {
+			if (!piece?.position) continue;
+			const key = `${piece.position.x},${piece.position.z}`;
+			const pid = piece.id || `${piece.player}-${piece.type}-${piece.position.x}-${piece.position.z}`;
+			cellToCanonicalId.set(key, String(pid));
+		}
+
 		const currentPieces = [...chessPiecesGroup.children];
 		let piecesRemoved = 0;
 
@@ -582,6 +592,32 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 				console.error('Error removing chess piece:', removeErr);
 			}
 		});
+
+		for (const pieceMesh of [...chessPiecesGroup.children]) {
+			try {
+				const pos = pieceMesh?.userData?.position;
+				const meshId = pieceMesh?.userData?.id;
+				if (!pos || !meshId) continue;
+				const key = `${pos.x},${pos.z}`;
+				const canonicalId = cellToCanonicalId.get(key);
+				if (!canonicalId) continue;
+				if (String(meshId) === canonicalId) continue;
+				if (inFlightStillValid && inFlightId && String(meshId) === inFlightId) continue;
+				if (pieceMesh.userData.airborne) continue;
+				chessPiecesGroup.remove(pieceMesh);
+				if (pieceMesh.geometry) pieceMesh.geometry.dispose();
+				if (pieceMesh.material) {
+					if (Array.isArray(pieceMesh.material)) {
+						pieceMesh.material.forEach(m => m && m.dispose && m.dispose());
+					} else if (pieceMesh.material.dispose) {
+						pieceMesh.material.dispose();
+					}
+				}
+				piecesRemoved++;
+			} catch (dedupeErr) {
+				console.error('Error deduping chess piece at cell:', dedupeErr);
+			}
+		}
 
 		// If we're here due to a forced update but nothing actually changed,
 		// we can skip the verbose logging at the end
@@ -770,10 +806,11 @@ function getChessPieceColor(piece, gameState) {
 		return boardFunctions.getPlayerColor(piece.player, gameState, 'chess');
 	}
 	
-	// Fallback if the centralized function isn't available
-	// Always color current player pieces as red
-	if (gameState && gameState.currentPlayer && String(piece.player) === String(gameState.currentPlayer)) {
-		return 0xAA0000; // Red for current player's pieces
+	// Fallback: highlight only the local human's pieces (not whoever's
+	// tetris turn is active — that made opponents look "yours").
+	const localId = gameState && (gameState.localPlayerId || gameState.myPlayerId);
+	if (localId && String(piece.player) === String(localId)) {
+		return 0xAA0000;
 	}
 	
 	// Player 1 is usually white
