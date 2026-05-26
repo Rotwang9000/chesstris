@@ -157,84 +157,140 @@ export function createRussianKnightPiece(materialKey, isLocalPlayer, customMater
 	const THREE = getTHREE();
 	const group = new THREE.Group();
 	const materials = resolveMaterials(materialKey, customMaterials);
-	const seg = isLocalPlayer ? 20 : 12;
+	const seg = isLocalPlayer ? 18 : 10;
 
-	const plinth = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.28, 0.11, seg), materials.primary);
-	plinth.position.y = 0.055;
+	// ── Plinth (matches the other pieces for a consistent footprint) ──
+	const plinth = new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.29, 0.10, seg), materials.primary);
+	plinth.position.y = 0.05;
 	plinth.castShadow = true;
 	plinth.receiveShadow = true;
 	group.add(plinth);
 
-	const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.20, 0.16, seg), materials.primary);
-	pedestal.position.y = 0.19;
-	pedestal.castShadow = true;
-	pedestal.receiveShadow = true;
-	group.add(pedestal);
+	const band = new THREE.Mesh(new THREE.TorusGeometry(0.23, 0.018, 8, 24), materials.accent);
+	band.rotation.x = Math.PI / 2;
+	band.position.y = 0.11;
+	group.add(band);
 
-	// Curved neck — smooth arch instead of stacked blocks.
-	const neckCurve = new THREE.CatmullRomCurve3([
-		new THREE.Vector3(0, 0.30, -0.02),
-		new THREE.Vector3(0, 0.42, 0.04),
-		new THREE.Vector3(0, 0.54, 0.10),
-		new THREE.Vector3(0, 0.66, 0.16),
-	]);
-	const neckGeo = new THREE.TubeGeometry(neckCurve, isLocalPlayer ? 16 : 10, 0.09, seg, false);
-	const neck = new THREE.Mesh(neckGeo, materials.primary);
-	neck.castShadow = true;
-	neck.receiveShadow = true;
-	group.add(neck);
+	// ── Body / withers ──────────────────────────────────────────────
+	// Broad tapered base supporting the head. Slightly tapered up to
+	// give a "stout cavalry horse" look rather than a delicate column.
+	const body = new THREE.Mesh(new THREE.CylinderGeometry(0.21, 0.18, 0.24, seg), materials.primary);
+	body.position.set(0, 0.22, 0);
+	body.castShadow = true;
+	body.receiveShadow = true;
+	group.add(body);
 
-	const head = new THREE.Mesh(
-		new THREE.SphereGeometry(0.11, seg, seg > 10 ? 12 : 8),
-		materials.secondary,
-	);
-	head.scale.set(0.75, 1.05, 1.35);
-	head.position.set(0, 0.72, 0.20);
-	head.rotation.x = -0.25;
-	head.rotation.y = 0.08;
+	// Small chest disc to soften the body-to-head transition.
+	const withers = new THREE.Mesh(new THREE.SphereGeometry(0.20, seg, 12), materials.primary);
+	withers.scale.set(1.0, 0.55, 1.05);
+	withers.position.set(0, 0.36, 0.02);
+	withers.castShadow = true;
+	withers.receiveShadow = true;
+	group.add(withers);
+
+	// ── Head + neck as ONE extruded silhouette ──────────────────────
+	// User feedback: "Knights need to not poke their heads so far out.
+	// They aren't racehorses trying to get over the line! The head
+	// needs some rounding."
+	//
+	// The earlier silhouette poked out to x=0.54 which dominated the
+	// piece. We now keep the muzzle within x≈0.38 and round the
+	// forehead, brow and chin so the head looks like a stout knight
+	// pony rather than a stretched racehorse.
+	const headShape = new THREE.Shape();
+	headShape.moveTo(-0.04, 0.30);        // base of neck (back)
+	// Arched neck — gentler curve than before
+	headShape.bezierCurveTo(-0.07, 0.42, -0.05, 0.54, 0.02, 0.62);
+	// Poll → forehead — pulled in so the head doesn't lunge forward
+	headShape.bezierCurveTo(0.08, 0.70, 0.16, 0.74, 0.24, 0.72);
+	// Rounded brow
+	headShape.bezierCurveTo(0.32, 0.70, 0.36, 0.66, 0.38, 0.60);
+	// Soft rounded muzzle tip
+	headShape.bezierCurveTo(0.40, 0.54, 0.38, 0.50, 0.34, 0.48);
+	// Underside of muzzle
+	headShape.bezierCurveTo(0.28, 0.46, 0.22, 0.46, 0.16, 0.48);
+	// Throat / jaw curve
+	headShape.bezierCurveTo(0.08, 0.50, 0.04, 0.54, 0.04, 0.54);
+	// Close back to start
+	headShape.bezierCurveTo(0.00, 0.50, 0.00, 0.40, -0.04, 0.30);
+
+	const headGeo = new THREE.ExtrudeGeometry(headShape, {
+		depth: 0.24,
+		bevelEnabled: true,
+		bevelSize: 0.045,         // bigger bevel = more rounding
+		bevelThickness: 0.045,
+		bevelSegments: isLocalPlayer ? 4 : 2,
+		curveSegments: isLocalPlayer ? 20 : 10,
+	});
+	headGeo.translate(0, 0, -0.12);
+	const head = new THREE.Mesh(headGeo, materials.primary);
 	head.castShadow = true;
 	head.receiveShadow = true;
 	group.add(head);
 
-	const snout = new THREE.Mesh(
-		new THREE.BoxGeometry(0.09, 0.07, 0.20),
-		materials.secondary,
-	);
-	snout.position.set(0, 0.66, 0.34);
-	snout.rotation.x = -0.35;
-	snout.castShadow = true;
-	group.add(snout);
+	// Subtle muzzle patch in the secondary material so the round nose
+	// reads as a separate feature at distance.
+	const muzzlePatch = new THREE.Mesh(new THREE.SphereGeometry(0.08, seg, 10), materials.secondary);
+	muzzlePatch.scale.set(0.6, 0.55, 1.05);
+	muzzlePatch.position.set(0.36, 0.52, 0);
+	muzzlePatch.castShadow = true;
+	group.add(muzzlePatch);
 
+	// ── Eyes + nostrils (local only) ─────────────────────────────────
+	if (isLocalPlayer) {
+		for (let side = -1; side <= 1; side += 2) {
+			const eye = new THREE.Mesh(new THREE.SphereGeometry(0.018, 10, 10), materials.accent);
+			eye.position.set(0.24, 0.69, side * 0.115);
+			group.add(eye);
+
+			const nostril = new THREE.Mesh(new THREE.SphereGeometry(0.013, 8, 8), materials.accent);
+			nostril.position.set(0.37, 0.54, side * 0.045);
+			group.add(nostril);
+		}
+	}
+
+	// ── Ears ────────────────────────────────────────────────────────
+	// Smaller and pulled inwards so they sit ON the head, not perched
+	// like rabbit ears.
 	for (let side = -1; side <= 1; side += 2) {
-		const ear = new THREE.Mesh(new THREE.ConeGeometry(0.028, 0.11, 6), materials.accent);
-		ear.position.set(side * 0.07, 0.82, 0.14);
-		ear.rotation.z = side * 0.35;
+		const ear = new THREE.Mesh(new THREE.ConeGeometry(0.034, 0.10, 6), materials.primary);
+		ear.position.set(0.14, 0.82, side * 0.085);
+		ear.rotation.z = -0.20;
+		ear.rotation.x = side * 0.12;
 		ear.castShadow = true;
 		group.add(ear);
 	}
 
-	// Mane — subtle crest along the neck.
-	const maneCount = isLocalPlayer ? 5 : 3;
-	for (let i = 0; i < maneCount; i++) {
-		const t = (i + 1) / (maneCount + 1);
-		const pt = neckCurve.getPoint(t);
-		const mane = new THREE.Mesh(
-			new THREE.BoxGeometry(0.04, 0.10, 0.02),
-			materials.accent,
-		);
-		mane.position.set(pt.x, pt.y + 0.06, pt.z - 0.05);
-		mane.rotation.x = -0.35 - t * 0.2;
-		mane.castShadow = true;
-		group.add(mane);
-	}
+	// ── Flowing mane ────────────────────────────────────────────────
+	const maneShape = new THREE.Shape();
+	maneShape.moveTo(0.12, 0.78);
+	maneShape.quadraticCurveTo(0.04, 0.70, -0.02, 0.58);
+	maneShape.quadraticCurveTo(-0.10, 0.46, -0.10, 0.34);
+	maneShape.quadraticCurveTo(-0.08, 0.30, -0.04, 0.30);
+	maneShape.quadraticCurveTo(-0.02, 0.42, 0.04, 0.52);
+	maneShape.quadraticCurveTo(0.10, 0.62, 0.16, 0.76);
+	maneShape.closePath();
 
-	if (isLocalPlayer) {
-		for (let side = -1; side <= 1; side += 2) {
-			const eye = new THREE.Mesh(new THREE.SphereGeometry(0.014, 8, 8), materials.accent);
-			eye.position.set(side * 0.05, 0.74, 0.30);
-			group.add(eye);
-		}
-	}
+	const maneGeo = new THREE.ExtrudeGeometry(maneShape, {
+		depth: 0.13,
+		bevelEnabled: true,
+		bevelSize: 0.015,
+		bevelThickness: 0.015,
+		bevelSegments: 2,
+		curveSegments: isLocalPlayer ? 14 : 7,
+	});
+	maneGeo.translate(0, 0, -0.065);
+	const mane = new THREE.Mesh(maneGeo, materials.accent);
+	mane.castShadow = true;
+	mane.receiveShadow = true;
+	group.add(mane);
+
+	// Forelock — between the ears.
+	const forelock = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.09, 6), materials.accent);
+	forelock.position.set(0.18, 0.80, 0);
+	forelock.rotation.z = -0.32;
+	forelock.castShadow = true;
+	group.add(forelock);
 
 	return group;
 }

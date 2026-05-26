@@ -16,11 +16,89 @@ const pieces = require('../game/pieces');
 const territory = require('../game/territory');
 
 /**
- * Remove a pawn from the board and add a promotion credit to the
- * owner's bank. Idempotent: if a credit for this pawn already exists
- * (because the chess_move auto-bank fired first), the explicit
- * `promote_pawn` socket call returns the existing one instead of
- * double-counting.
+ * Mark a pawn as frozen, awaiting deployment of a captured piece.
+ *
+ * Per the bible's revised promotion rule: when a pawn reaches the
+ * promotion threshold it is NOT consumed. Instead it freezes in
+ * place, the cell becomes home-like (immune to line-clear and
+ * decay), and the player is offered the chance to swap the pawn
+ * for a piece they have previously captured. The choice is always
+ * optional and can be deferred indefinitely — clicking the frozen
+ * pawn re-opens the deployment dialog.
+ *
+ * Idempotent: re-calling on a pawn already marked is a no-op that
+ * re-emits the event so reconnecting clients can resync.
+ */
+function markPawnAwaitingPromotion(world, playerId, pawn, { broadcaster, activityLog, io }) {
+	const player = world.players?.[playerId];
+	if (!player) return null;
+	if (!pawn || pawn.type !== 'PAWN') return null;
+
+	const wasAlready = !!pawn.awaitingPromotion;
+	pawn.awaitingPromotion = true;
+	pawn.awaitingPromotionAt = pawn.awaitingPromotionAt || Date.now();
+
+	// Mirror the flag onto the chess marker so cell-level helpers
+	// (line-clear scan, decay, etc.) can detect "frozen" cells
+	// without having to cross-reference world.chessPieces.
+	const pos = pawn.position || {};
+	const key = `${pos.x},${pos.z}`;
+	const cellContents = world.board?.cells?.[key];
+	if (Array.isArray(cellContents)) {
+		for (const item of cellContents) {
+			if (!item) continue;
+			if (item.type !== 'chess') continue;
+			if (String(item.pieceId) !== String(pawn.id)) continue;
+			item.awaitingPromotion = true;
+		}
+	}
+
+	World.markDirty();
+
+	if (!wasAlready && activityLog && typeof activityLog.recordPawnAwaitingPromotion === 'function') {
+		try {
+			activityLog.recordPawnAwaitingPromotion({
+				playerId,
+				playerName: player.username || player.name || playerId,
+				pieceId: pawn.id,
+				x: pos.x,
+				z: pos.z,
+			});
+		} catch (logErr) {
+			console.warn('[Chess] awaiting-promotion log failed:', logErr.message);
+		}
+	}
+
+	if (io && world?.id) {
+		try {
+			io.to(world.id).emit('pawn_awaiting_promotion', {
+				playerId,
+				pieceId: pawn.id,
+				x: pos.x,
+				z: pos.z,
+				awaitingSince: pawn.awaitingPromotionAt,
+				firstTime: !wasAlready,
+			});
+		} catch (emitErr) {
+			console.warn('[Chess] pawn_awaiting_promotion emit failed:', emitErr.message);
+		}
+	}
+
+	try { broadcaster && broadcaster.broadcastGameUpdate(); }
+	catch (broadcastErr) { console.warn('[Chess] broadcast failed:', broadcastErr.message); }
+
+	if (!wasAlready) {
+		console.log(
+			`Player ${playerId} pawn ${pawn.id} frozen at (${pos.x}, ${pos.z}) — awaiting promotion.`
+		);
+	}
+	return pawn;
+}
+
+/**
+ * Legacy credit-banking flow — kept so persisted worlds that still
+ * carry `promotionCredits` can drain them via the old redeem path.
+ * No new credits should be created on the live server.
  */
 function bankPromotionCredit(world, playerId, pawn, { broadcaster, activityLog, io }) {
 	const player = world.players?.[playerId];
@@ -190,6 +268,16 @@ function registerChessHandlers(socket, ctx) {
 				socket.emit('chessFailed', { message: msg });
 				logRejection(activityLog, world, player, piece, targetPosition, 'not_your_piece', msg);
 				if (callback) callback({ success: false, error: msg });
+				return;
+			}
+
+			// Frozen pawns can't move — they're waiting for the player
+			// to deploy a captured piece in their place.
+			if (piece.awaitingPromotion) {
+				const msg = 'Pawn is frozen — deploy a captured piece or skip to dismiss.';
+				socket.emit('chessFailed', { message: msg, reason: 'awaiting_promotion', pieceId });
+				logRejection(activityLog, world, player, piece, targetPosition, 'awaiting_promotion', msg);
+				if (callback) callback({ success: false, error: msg, reason: 'awaiting_promotion' });
 				return;
 			}
 
@@ -403,6 +491,19 @@ function registerChessHandlers(socket, ctx) {
 				}
 			}
 
+			// Capture the original (pre-move) coordinates BEFORE we
+			// overwrite `piece.position` — the forward-distance
+			// helper compares them to the new position. Without this
+			// the freeze never trips because forwardDistance is the
+			// only thing the promotion guard inspects.
+			if (piece.type === 'PAWN') {
+				gameManager.chessManager.updatePawnForwardDistance(
+					piece,
+					originalPosition.x, originalPosition.z,
+					targetPosition.x, targetPosition.z,
+				);
+			}
+
 			piece.position = targetPosition;
 			piece.hasMoved = true;
 			piece.moveCount = (piece.moveCount || 0) + 1;
@@ -492,22 +593,24 @@ function registerChessHandlers(socket, ctx) {
 				return;
 			}
 
-			// Auto-bank a promotion credit if this pawn has walked the
-			// full promotion distance. The pawn is consumed; the
-			// player redeems the credit later via `redeem_promotion`
-			// against a captured-piece basket entry. We use
-			// `forwardDistance` (net forward progress) rather than
-			// `moveCount` so capture-shuffling and lateral moves don't
-			// trigger a fake promotion.
+			// Pawn promotion: when net forward progress crosses the
+			// threshold, the pawn freezes in place and the cell
+			// becomes home-like. The player can then optionally swap
+			// the frozen pawn for a captured piece via
+			// `deploy_promotion`. We use `forwardDistance` (net
+			// forward progress) rather than `moveCount` so
+			// capture-shuffling and lateral moves don't trigger a
+			// fake promotion.
 			if (piece.type === 'PAWN'
+				&& !piece.awaitingPromotion
 				&& (piece.forwardDistance || 0) >= GAME_RULES.PAWN_PROMOTION_DISTANCE
 			) {
 				try {
-					bankPromotionCredit(world, playerId, piece, {
+					markPawnAwaitingPromotion(world, playerId, piece, {
 						broadcaster, activityLog, io,
 					});
-				} catch (bankErr) {
-					console.warn('[Chess] auto-bank promotion failed:', bankErr.message);
+				} catch (markErr) {
+					console.warn('[Chess] freeze-for-promotion failed:', markErr.message);
 				}
 			}
 
@@ -697,6 +800,135 @@ function registerChessHandlers(socket, ctx) {
 			});
 		} catch (error) {
 			console.error('Error processing redeem_promotion:', error);
+			if (callback) callback({ success: false, error: error.message });
+		}
+	});
+
+	// deploy_promotion: spend a captured-piece basket entry to replace
+	// a frozen pawn (awaitingPromotion) with the chosen piece type
+	// in-place. The frozen pawn must still be on the board; deploying
+	// keeps the same cell (which is locked as home-like while frozen).
+	socket.on('deploy_promotion', (data, callback) => {
+		try {
+			const world = World.getWorld();
+			const player = World.getPlayer(playerId);
+			if (!player) {
+				if (callback) callback({ success: false, error: 'Not registered' });
+				return;
+			}
+			if (player.eliminated) {
+				if (callback) callback({ success: false, error: 'Player is eliminated' });
+				return;
+			}
+
+			const pawnId = data && data.pawnId;
+			const requestedType = String((data && data.capturedType) || '').toUpperCase();
+			const validTypes = ['QUEEN', 'ROOK', 'BISHOP', 'KNIGHT'];
+			if (!validTypes.includes(requestedType)) {
+				if (callback) callback({ success: false, error: 'Invalid captured type' });
+				return;
+			}
+
+			const pawn = (world.chessPieces || []).find(p =>
+				p && String(p.id) === String(pawnId)
+				&& String(p.player) === String(playerId)
+				&& p.type === 'PAWN'
+				&& p.awaitingPromotion === true,
+			);
+			if (!pawn) {
+				if (callback) callback({ success: false, error: 'Frozen pawn not found' });
+				return;
+			}
+
+			const basket = Array.isArray(player.capturedBasket) ? player.capturedBasket : null;
+			const basketIdx = basket
+				? basket.findIndex(item => String(item?.type || '').toUpperCase() === requestedType)
+				: -1;
+			if (basketIdx < 0) {
+				if (callback) callback({
+					success: false,
+					error: `No captured ${requestedType} in basket`,
+				});
+				return;
+			}
+
+			const targetX = pawn.position?.x;
+			const targetZ = pawn.position?.z;
+			const orientation = Number.isFinite(pawn.orientation) ? pawn.orientation : 0;
+
+			// Remove the frozen pawn first; this strips its chess marker
+			// from the cell, leaving the supporting terrain intact (which
+			// `addPiece` will re-anchor with the new chess marker).
+			pieces.removePiece(world, pawn.id, {
+				reason: 'promoted_to_credit',
+				activityLog,
+				silent: true,
+			});
+
+			const piece = pieces.addPiece(world, {
+				type: requestedType,
+				player: playerId,
+				x: targetX,
+				z: targetZ,
+				orientation,
+				reason: 'promotion_deploy',
+				activityLog,
+			});
+			if (!piece) {
+				if (callback) callback({ success: false, error: 'Failed to spawn piece' });
+				return;
+			}
+
+			basket.splice(basketIdx, 1);
+			World.markDirty();
+
+			if (activityLog && typeof activityLog.recordPromotionRedeemed === 'function') {
+				try {
+					activityLog.recordPromotionRedeemed({
+						playerId,
+						playerName: player.username || player.name || playerId,
+						capturedType: requestedType.toLowerCase(),
+						pieceId: piece.id,
+						x: targetX,
+						z: targetZ,
+					});
+				} catch (logErr) {
+					console.warn('[Chess] deploy log failed:', logErr.message);
+				}
+			}
+
+			try {
+				io.to(world.id).emit('pawn_promotion_deployed', {
+					playerId,
+					pawnId: pawn.id,
+					pieceId: piece.id,
+					pieceType: requestedType,
+					x: targetX,
+					z: targetZ,
+				});
+			} catch (emitErr) {
+				console.warn('[Chess] pawn_promotion_deployed emit failed:', emitErr.message);
+			}
+
+			broadcaster.broadcastGameUpdate();
+			if (typeof broadcaster.emitCapturedBasket === 'function') {
+				try { broadcaster.emitCapturedBasket(playerId); }
+				catch (basketErr) { console.warn('[Chess] basket emit failed:', basketErr.message); }
+			}
+
+			console.log(
+				`Player ${playerId} deployed ${requestedType} at (${targetX}, ${targetZ}) ` +
+				`replacing frozen pawn ${pawn.id}.`
+			);
+
+			if (callback) callback({
+				success: true,
+				pieceId: piece.id,
+				pieceType: requestedType,
+				position: { x: targetX, z: targetZ },
+			});
+		} catch (error) {
+			console.error('Error processing deploy_promotion:', error);
 			if (callback) callback({ success: false, error: error.message });
 		}
 	});

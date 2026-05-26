@@ -255,6 +255,15 @@ function createActivityLogService({ io, persistence, maxEvents = DEFAULT_MAX_EVE
 		});
 	}
 
+	// A pawn has reached the promotion distance and is now frozen
+	// awaiting deployment of a captured piece. Recorded once per
+	// pawn (the freeze logic is idempotent).
+	function recordPawnAwaitingPromotion({ playerId, playerName, pieceId, x, z }) {
+		return record('pawn_awaiting_promotion', {
+			playerId, playerName, pieceId, x, z,
+		});
+	}
+
 	// A banked promotion credit was redeemed: a captured piece was
 	// deployed at `(x, z)` (either the credit's original cell, or the
 	// fallback nearest-to-king cell if the original was gone).
@@ -301,6 +310,7 @@ function createActivityLogService({ io, persistence, maxEvents = DEFAULT_MAX_EVE
 		recordPowerupClaimed,
 		recordPowerupExpired,
 		recordPawnPromotedToCredit,
+		recordPawnAwaitingPromotion,
 		recordPromotionRedeemed,
 		recordChat,
 		maxEvents,

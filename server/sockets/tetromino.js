@@ -112,7 +112,13 @@ function registerTetrominoHandlers(socket, ctx) {
 				}
 			}
 
-			integrityService.runIslandIntegrityPass({ emitAnimation: false });
+			// NOTE: We deliberately do NOT run the island integrity
+			// pass here. The line-clear cascade (kicked off below)
+			// can reconnect cells via gravity, so stripping
+			// "disconnected" pieces now risks removing pieces that
+			// would have been saved a moment later. Integrity runs
+			// at the tail of the cascade instead — see
+			// `LineClearService.runCascade`.
 
 			world.lastAction = {
 				type: 'tetromino_placed',

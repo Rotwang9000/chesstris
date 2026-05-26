@@ -63,10 +63,13 @@ const SIMPLE_FORWARD_EVENTS = Object.freeze([
 	'powerup_spawned',
 	'powerup_claimed',
 	'powerup_expired',
-	// Promotion credits
+	// Promotion credits (legacy; new flow uses pawn_awaiting_promotion)
 	'promotion_credits',
 	'promotion_credit_added',
 	'promotion_credit_redeemed',
+	// Frozen-pawn promotion flow
+	'pawn_awaiting_promotion',
+	'pawn_promotion_deployed',
 	// Pause / resume
 	'player_pause_state',
 	// Viking longship fleet (drifting boats with adverts on sails)

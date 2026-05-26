@@ -68,9 +68,26 @@ function homeZoneCentre(zone) {
  * king always gets *some* cell to land on (we'll overwrite whatever
  * is there with a king-anchor — better than letting the king vanish).
  */
-function findRespawnCell(world, targetX, targetZ, maxRadius = 6) {
+/**
+ * Pick a sensible cell for a king respawn.
+ *
+ * Order of preference:
+ *   1. An EXISTING cell owned by the player and free of other chess
+ *      pieces — anywhere in their territory. Avoids respawning the
+ *      king onto a stranded island that island-decay is about to wipe.
+ *   2. The home centre — even if there's no cell there, we create a
+ *      fresh home anchor in `respawnKing` so the king has somewhere
+ *      to sit.
+ *   3. Anywhere within `maxRadius` of the home centre that's
+ *      clear of other chess markers (legacy fallback).
+ *
+ * Returns `{ x, z, needsAnchor: boolean }` where `needsAnchor=true`
+ * means the caller should also stamp a fresh tetromino/home anchor
+ * on the destination so the king isn't floating in the void.
+ */
+function findRespawnCell(world, playerId, targetX, targetZ, maxRadius = 6) {
 	if (!world || !world.board || !world.board.cells) {
-		return { x: targetX, z: targetZ };
+		return { x: targetX, z: targetZ, needsAnchor: true };
 	}
 	const cells = world.board.cells;
 	const hasOtherChess = (key) => {
@@ -78,17 +95,55 @@ function findRespawnCell(world, targetX, targetZ, maxRadius = 6) {
 		if (!Array.isArray(items)) return false;
 		return items.some(item => item && item.type === 'chess');
 	};
-	for (let radius = 0; radius <= maxRadius; radius++) {
+	const isOwnedExistingCell = (key) => {
+		const items = cells[key];
+		if (!Array.isArray(items) || items.length === 0) return false;
+		// Single-owner cell test — anything the player owns counts,
+		// including home and tetromino markers.
+		for (const item of items) {
+			if (!item) continue;
+			if (item.player == null) continue;
+			if (String(item.player) === String(playerId)) return true;
+		}
+		return false;
+	};
+
+	// 1. Walk all owned cells, pick one closest to the home centre.
+	let best = null;
+	let bestDist = Infinity;
+	for (const key of Object.keys(cells)) {
+		if (hasOtherChess(key)) continue;
+		if (!isOwnedExistingCell(key)) continue;
+		const [cx, cz] = key.split(',').map(Number);
+		if (!Number.isFinite(cx) || !Number.isFinite(cz)) continue;
+		const d = Math.abs(cx - targetX) + Math.abs(cz - targetZ);
+		if (d < bestDist) {
+			bestDist = d;
+			best = { x: cx, z: cz, needsAnchor: false };
+		}
+	}
+	if (best) return best;
+
+	// 2. Home centre — always a safe fallback even if the cell is empty.
+	//    `respawnKing` will lay down a fresh anchor below.
+	if (!hasOtherChess(`${targetX},${targetZ}`)) {
+		return { x: targetX, z: targetZ, needsAnchor: true };
+	}
+
+	// 3. Spiral out from the home centre looking for an empty square.
+	for (let radius = 1; radius <= maxRadius; radius++) {
 		for (let dx = -radius; dx <= radius; dx++) {
 			for (let dz = -radius; dz <= radius; dz++) {
 				if (Math.max(Math.abs(dx), Math.abs(dz)) !== radius) continue;
 				const x = targetX + dx;
 				const z = targetZ + dz;
-				if (!hasOtherChess(`${x},${z}`)) return { x, z };
+				if (!hasOtherChess(`${x},${z}`)) {
+					return { x, z, needsAnchor: !isOwnedExistingCell(`${x},${z}`) };
+				}
 			}
 		}
 	}
-	return { x: targetX, z: targetZ };
+	return { x: targetX, z: targetZ, needsAnchor: true };
 }
 
 function createKingLifeService({ io, broadcaster, persistence, activityLog = null } = {}) {
@@ -154,7 +209,7 @@ function createKingLifeService({ io, broadcaster, persistence, activityLog = nul
 		const fromZ = Number.isFinite(oldPos?.z) ? oldPos.z : null;
 		const zone = world.homeZones ? world.homeZones[playerId] : null;
 		const centre = homeZoneCentre(zone) || { x: 0, z: 0 };
-		const target = findRespawnCell(world, centre.x, centre.z);
+		const target = findRespawnCell(world, playerId, centre.x, centre.z);
 
 		// Strip the king's current chess marker before we move it so
 		// the destination cell isn't left with a stale "king is also
@@ -174,13 +229,19 @@ function createKingLifeService({ io, broadcaster, persistence, activityLog = nul
 		// landed on one). The bumped piece doesn't get re-homed — it
 		// just falls out of play; rare enough we accept it.
 		const withoutChess = existing.filter(item => !(item && item.type === 'chess'));
-		withoutChess.push({
-			type: 'tetromino',
-			pieceType: 'king_anchor',
-			player: playerId,
-			placedAt: Date.now(),
-			isKingAnchor: true,
-		});
+		// Only stamp a fresh king anchor when the destination doesn't
+		// already have player-owned content. `findRespawnCell` prefers
+		// existing owned cells precisely so the king lands on supported
+		// ground instead of floating on a newly minted island.
+		if (target.needsAnchor) {
+			withoutChess.push({
+				type: 'tetromino',
+				pieceType: 'king_anchor',
+				player: playerId,
+				placedAt: Date.now(),
+				isKingAnchor: true,
+			});
+		}
 		withoutChess.push({
 			type: 'chess',
 			player: playerId,

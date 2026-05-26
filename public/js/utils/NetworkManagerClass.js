@@ -715,6 +715,28 @@ export default class NetworkManager {
 	}
 
 	/**
+	 * Deploy a captured piece into a frozen pawn's cell. The pawn must
+	 * have `awaitingPromotion` set (it is automatically marked when the
+	 * pawn crosses `PAWN_PROMOTION_DISTANCE` net forward squares). One
+	 * matching entry is consumed from the player's captured basket.
+	 *
+	 * @param {string} pawnId        ID of the frozen pawn.
+	 * @param {string} capturedType  'QUEEN' | 'ROOK' | 'BISHOP' | 'KNIGHT'.
+	 * @param {Function} [callback]  Invoked with the server ack payload.
+	 */
+	deployPromotion(pawnId, capturedType, callback) {
+		if (!this.isConnected() || !this.socket) {
+			if (typeof callback === 'function') {
+				callback({ success: false, error: 'Not connected' });
+			}
+			return;
+		}
+		this.socket.emit('deploy_promotion', { pawnId, capturedType }, (ack) => {
+			if (typeof callback === 'function') callback(ack);
+		});
+	}
+
+	/**
 	 * Submit response to a King's Duel mini-game.
 	 * @param {string} duelId
 	 * @param {number} placement - Cell index where the player hid their king (0-7)

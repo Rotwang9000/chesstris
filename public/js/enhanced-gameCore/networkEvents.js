@@ -41,6 +41,7 @@ import { updateChessPieces } from '../updateChessPieces.js';
 import { disposeBoats } from '../boatsRenderer.js';
 import {
 	showPromotionRedeemDialog,
+	showFrozenPawnPromotionDialog,
 	showKingBattleOverlay,
 	showKingDuelOverlay,
 	handleDuelRoundResult,
@@ -992,6 +993,61 @@ export function setupNetworkEvents(hooks = {}) {
 			} catch (uiErr) {
 				console.warn('[promotion_credit_added] UI failed:', uiErr);
 			}
+		}
+	});
+
+	// Frozen-pawn promotion: server tells us a pawn has reached the
+	// promotion line and is now locked in place. Mark it on local
+	// state (so the renderer can draw the glow halo immediately) and
+	// pop the deployment dialog for the local player.
+	NetworkManager.on('pawn_awaiting_promotion', (payload) => {
+		if (!payload || !payload.pieceId) return;
+		const isLocal = payload.playerId && payload.playerId === gameState.localPlayerId;
+		const list = Array.isArray(gameState.chessPieces) ? gameState.chessPieces : null;
+		if (list) {
+			const piece = list.find(p => p && String(p.id) === String(payload.pieceId));
+			if (piece) {
+				piece.awaitingPromotion = true;
+				piece.awaitingPromotionAt = payload.awaitingSince || Date.now();
+			}
+		}
+		if (isLocal) {
+			try { playSound('promotion'); } catch (_e) { /* sound is best-effort */ }
+			if (payload.firstTime !== false) {
+				// `forceShow` lets the dialog open even when the local
+				// chessPieces array hasn't received the awaitingPromotion
+				// flag yet (the trailing game_update can be a beat behind
+				// this event). Otherwise the "nothing happens" symptom
+				// the user reported would re-occur on a slow snapshot.
+				try { showFrozenPawnPromotionDialog(payload.pieceId, { forceShow: true }); }
+				catch (uiErr) { console.warn('[pawn_awaiting_promotion] UI failed:', uiErr); }
+			}
+		}
+	});
+
+	// Pawn promotion deployed: server replaced the frozen pawn with a
+	// captured piece. Drop the local frozen marker preemptively so the
+	// halo disappears without waiting for the broadcast; surface a
+	// confirmation toast for the local player.
+	NetworkManager.on('pawn_promotion_deployed', (payload) => {
+		if (!payload || !payload.pawnId) return;
+		const pieces = Array.isArray(gameState.chessPieces) ? gameState.chessPieces : null;
+		if (pieces) {
+			const stale = pieces.find(p => p && String(p.id) === String(payload.pawnId));
+			if (stale) {
+				stale.awaitingPromotion = false;
+				delete stale.awaitingPromotionAt;
+			}
+		}
+		const isLocal = payload.playerId && payload.playerId === gameState.localPlayerId;
+		if (!isLocal) return;
+		try {
+			showToastMessage(
+				`${payload.pieceType || 'Piece'} deployed at (${payload.x}, ${payload.z})`,
+				3500,
+			);
+		} catch (toastErr) {
+			console.warn('[pawn_promotion_deployed] toast failed:', toastErr);
 		}
 	});
 

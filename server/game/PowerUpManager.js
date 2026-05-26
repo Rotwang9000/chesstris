@@ -153,11 +153,34 @@ function createPowerUpManager({
 		return Number.isFinite(n) ? Math.round(n) : NaN;
 	}
 
+	function isInsideAnyHomeZone(world, x, z) {
+		const homeZones = world?.homeZones;
+		if (!homeZones || typeof homeZones !== 'object') return false;
+		for (const zone of Object.values(homeZones)) {
+			if (!zone) continue;
+			const minX = Number(zone.x);
+			const minZ = Number(zone.z);
+			const width = Number(zone.width || 8);
+			const height = Number(zone.height || 2);
+			if (!Number.isFinite(minX) || !Number.isFinite(minZ)) continue;
+			if (x >= minX && x < minX + width && z >= minZ && z < minZ + height) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	function isCellAvailableForOrb(world, x, z) {
 		const key = `${x},${z}`;
 		const cellContents = world.board?.cells?.[key];
 		// Empty host cell — first tetromino to bridge wins.
 		if (Array.isArray(cellContents) && cellContents.length > 0) return false;
+		// Refuse cells that fall inside ANY player's home-zone rectangle.
+		// Even when those cells happen to be empty (decayed / cleared),
+		// the user reads them as "their home" and the orb appearing
+		// there looks invasive. The user reported: "A bonus orb appeared
+		// for a while inside someone's home cells."
+		if (isInsideAnyHomeZone(world, x, z)) return false;
 		const orbs = world.powerUps || [];
 		for (const orb of orbs) {
 			if (orb && normalizeCoord(orb.x) === x && normalizeCoord(orb.z) === z) return false;

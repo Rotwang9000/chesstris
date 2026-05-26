@@ -46,6 +46,7 @@ const { createKingDuelService } = require('./king/duels');
 const { createKingDetonationService } = require('./king/detonation');
 const { createKingLifeService } = require('./king/kingLives');
 const { createLoneKingSweepService } = require('./king/loneKingSweep');
+const { createMissingKingSweepService } = require('./king/missingKingSweep');
 const { createActivityLogService } = require('./world/activityLog');
 const { createLineClearService } = require('./game/LineClearService');
 const { createPowerUpManager } = require('./game/PowerUpManager');
@@ -242,6 +243,11 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		activityLog,
 	});
 
+	const missingKingSweep = createMissingKingSweepService({
+		broadcaster,
+		persistence,
+	});
+
 	const powerUpManager = createPowerUpManager({
 		io,
 		broadcaster,
@@ -314,6 +320,38 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 	aiRunner.ensureRoster();
 	integrityService.processWorldIntegrityMaintenance({ emitAnimation: false, broadcast: false });
 
+	// Backfill forwardDistance for pawns restored from snapshots taken
+	// before that field was tracked. Without this, veteran pawns sitting
+	// deep in enemy territory still report `forwardDistance: 0` and can
+	// never trigger the new frozen-pawn promotion flow.
+	try {
+		const backfilled = gameManager.chessManager.backfillPawnForwardDistance(World.getWorld());
+		if (backfilled > 0) {
+			console.log(`[Startup] Backfilled forwardDistance on ${backfilled} veteran pawns.`);
+			persistence.markDirty();
+		}
+	} catch (err) {
+		console.warn('[Startup] Pawn forwardDistance backfill failed:', err.message);
+	}
+
+	// Rescue any persisted player whose king vanished without going
+	// through the king-life service. Without this they're stuck — the
+	// client tetromino spawn pipeline needs a king anchor to position
+	// new pieces. Also dedupes duplicate chess-piece entries.
+	try {
+		const result = missingKingSweep.tick();
+		if (result.rescued.length > 0) {
+			console.log(
+				`[Startup] Rescued ${result.rescued.length} player(s) with missing kings.`,
+			);
+		}
+		if (result.deduped > 0) {
+			console.log(`[Startup] Deduped ${result.deduped} chess-piece entries.`);
+		}
+	} catch (err) {
+		console.warn('[Startup] Missing-king rescue failed:', err.message);
+	}
+
 	// Viking longships disabled — advertising is on sponsored cells again.
 	// if (boatManager) boatManager.start();
 
@@ -335,6 +373,7 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		activityLog,
 		pauseService,
 		boatManager,
+		missingKingSweep,
 	});
 	io.on('connection', socket => {
 		metrics.setSocketCount(io.engine.clientsCount);
@@ -355,6 +394,19 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		setInterval(() => worldGravity.tick(), GRAVITY_TICK_MS),
 		setInterval(() => loneKingSweep.tick(), LONE_KING_SWEEP_MS),
 		setInterval(() => ghostPlayerSweep.tick(), GHOST_PLAYER_SWEEP_MS),
+		// Continuously trim duplicate AI players (e.g. when respawn
+		// races leave extra "AI Standard" littering the board). Cheap
+		// enough to run at the same cadence as the ghost sweep.
+		setInterval(() => {
+			try { aiRunner.trimDuplicateAis(); }
+			catch (err) { logger.warn({ err: err.message }, 'AI trim tick failed'); }
+		}, GHOST_PLAYER_SWEEP_MS),
+		// Rescue stuck players (missing king + pieces, not eliminated)
+		// and dedupe chess pieces on a slow cadence. Cheap; idempotent.
+		setInterval(() => {
+			try { missingKingSweep.tick(); }
+			catch (err) { logger.warn({ err: err.message }, 'missing-king sweep tick failed'); }
+		}, GHOST_PLAYER_SWEEP_MS * 3),
 		setInterval(() => powerUpManager.tick(), POWER_UP_TICK_MS),
 		setInterval(() => {
 			try { metrics.refreshWorldGauges(World.getWorld()); }

@@ -167,7 +167,10 @@ function createLineClearService({ io, gameManager, broadcaster, integrityService
 			World.markDirty();
 			persistence.markDirty();
 
-			integrityService.runIslandIntegrityPass({ emitAnimation: true });
+			// Integrity used to run per-iteration here, but the user
+			// reported pieces being stripped from a cell that was
+			// about to reconnect on the NEXT iteration. We now only
+			// run it once after the whole cascade settles (see below).
 
 			broadcaster.broadcastGameUpdate();
 			io.to(worldId).emit('row_cleared', {
@@ -188,6 +191,18 @@ function createLineClearService({ io, gameManager, broadcaster, integrityService
 			recordRowsCleared(world, playerId, applied);
 
 			iterations++;
+		}
+
+		// Always run a final integrity pass after the cascade settles —
+		// even if no rows cleared — so a placement that creates a
+		// genuine orphan island still gets decayed, but only AFTER
+		// gravity has had a chance to put cells back. This is the order
+		// the user asked for: "the clearing due to not connected needs
+		// to happen after the clearing due to 8 together".
+		try {
+			integrityService.runIslandIntegrityPass({ emitAnimation: iterations > 0 });
+		} catch (integrityErr) {
+			console.warn('[LineClear] final integrity pass failed:', integrityErr.message);
 		}
 
 		if (iterations >= MAX_CASCADE_ITERATIONS) {

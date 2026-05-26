@@ -26,10 +26,15 @@ const pieces = require('./pieces');
 // `_PIECE_` thresholds because losing a piece is much more painful than
 // losing terrain, and players have repeatedly reported feeling cheated
 // when pieces evaporate while they're composing a chat message.
-const DISCONNECTED_MOVE_LIMIT = 6;
-const DISCONNECTED_PIECE_MOVE_LIMIT = 12;
+//
+// User directive (2026-05): "dissolves should be mostly based on moves
+// but with a 10-min timer in case they make no moves in that time".
+// We raise the move limits so they are clearly primary, and keep the
+// time backstops at 10 / 15 minutes so AFK players can still be reaped.
+const DISCONNECTED_MOVE_LIMIT = 15;
+const DISCONNECTED_PIECE_MOVE_LIMIT = 30;
 const DISCONNECTED_TIME_LIMIT_MS   = 10 * 60 * 1000; // 10 minutes
-const DISCONNECTED_PIECE_TIME_LIMIT_MS = 20 * 60 * 1000; // 20 minutes
+const DISCONNECTED_PIECE_TIME_LIMIT_MS = 15 * 60 * 1000; // 15 minutes
 
 class IslandManager {
 	constructor() {
@@ -396,6 +401,21 @@ class IslandManager {
 			return !!(set && set.has(`${x},${z}`));
 		};
 
+		// Cells holding a pawn that's awaiting promotion are frozen —
+		// the cell is treated as home-like until the pawn is either
+		// promoted or captured. Decay must skip them entirely so the
+		// player doesn't lose the locked-in promotion square.
+		const isAwaitingPromotionCell = (playerId, x, z) => {
+			const cellContents = game.board.cells[`${x},${z}`];
+			if (!Array.isArray(cellContents)) return false;
+			return cellContents.some(item =>
+				item
+				&& item.type === 'chess'
+				&& item.awaitingPromotion === true
+				&& String(item.player) === String(playerId),
+			);
+		};
+
 		for (const island of disconnectedIslands) {
 			const { playerId, cells } = island;
 			const pid = String(playerId);
@@ -436,6 +456,7 @@ class IslandManager {
 					kingLifeService: this.kingLifeService || null,
 					protect: (piece, pos) => {
 						if (isProtectedHomeCell(playerId, pos.x, pos.z)) return true;
+						if (isAwaitingPromotionCell(playerId, pos.x, pos.z)) return true;
 						// Knights are exempt from disconnection-decay.
 						if (piece && String(piece.type || '').toUpperCase() === 'KNIGHT') return true;
 						return false;
@@ -449,6 +470,15 @@ class IslandManager {
 
 			for (const cell of cells) {
 				if (isProtectedHomeCell(playerId, cell.x, cell.z)) continue;
+				if (isAwaitingPromotionCell(playerId, cell.x, cell.z)) {
+					// Same treatment as a knight cell: refresh the grace
+					// timer so we don't re-log every pass.
+					game.disconnectedSince[`${pid}:${cell.x},${cell.z}`] = {
+						since: now,
+						moveSnapshot: currentMoves,
+					};
+					continue;
+				}
 				if (isKnightCell(playerId, cell.x, cell.z)) {
 					// Keep the cell so the knight has something to
 					// stand on. Refresh the grace timer so we don't

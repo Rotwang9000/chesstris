@@ -314,6 +314,14 @@ function processPlaceTetromino() {
 	const placedTetrominoSponsor = gameState.currentTetromino.sponsor;
 	cleanupGhostPiece(gameState);
 
+	// Lightweight feedback while the server is making up its mind.
+	// Previously the screen sat there silently and clicks on chess
+	// pieces did nothing because the phase hadn't flipped yet.
+	if (typeof showToastMessage === 'function') {
+		try { showToastMessage('Placing…', 900); }
+		catch (_) { /* toast is best-effort */ }
+	}
+
 	sendTetrominoPlacementToServer(gameState.currentTetromino, gameState)
 		.then(response => {
 			if (response && response.placedCells) {
@@ -461,6 +469,41 @@ function processCleanup(message) {
 	if (newTetromino) {
 		gameState.currentTetromino = newTetromino;
 		gameState.currentTetromino.heightAboveBoard = gameState.TETROMINO_START_HEIGHT || 20;
+		// Spawn the 3D mesh too — without this the user sees nothing
+		// after a failed placement and a stray Space-bar drop has no
+		// visible source. The render call also tears down any stale
+		// ghost from the previous piece.
+		try { renderTetromino(gameState); }
+		catch (renderErr) { console.warn('Failed to render replacement tetromino:', renderErr); }
+	} else {
+		// Spawn returned null — almost always because the player has
+		// no king to anchor against. Don't leave the user stuck with
+		// no piece and no recourse. Ask the server for a fresh one
+		// (and a rescued king if necessary) and surface a clear toast
+		// so they know something's being done.
+		console.warn('Tetromino spawn returned null — requesting server-side recovery');
+		if (typeof showToastMessage === 'function') {
+			try { showToastMessage('Recovering game state…', 1500); }
+			catch (_) { /* best-effort */ }
+		}
+		try {
+			const networkManager = window.NetworkManager;
+			if (networkManager && typeof networkManager.sendMessage === 'function') {
+				networkManager.sendMessage('request_tetromino', {})
+					.then((response) => {
+						if (response && response.success && response.tetromino) {
+							gameState.currentTetromino = response.tetromino;
+							gameState.currentTetromino.heightAboveBoard = gameState.TETROMINO_START_HEIGHT || 20;
+							try { renderTetromino(gameState); }
+							catch (renderErr) { console.warn('Recovery render failed:', renderErr); }
+							if (typeof window.updateBoardVisuals === 'function') window.updateBoardVisuals();
+						}
+					})
+					.catch((err) => console.warn('Server-side tetromino recovery rejected:', err));
+			}
+		} catch (recoveryErr) {
+			console.warn('Server-side tetromino recovery failed:', recoveryErr);
+		}
 	}
 	cancelSkipChessTimer();
 	updateNextPieceHint(gameState);

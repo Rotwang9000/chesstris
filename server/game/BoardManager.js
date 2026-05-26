@@ -597,7 +597,8 @@ class BoardManager {
 				// players reported losing pieces "across the gap".
 				if (this.cellHasHomeMarker(game.board, x, z)
 					|| this._cellIsDegradedHomeOnly(game.board, x, z)
-					|| this._cellIsOwnedByPausedPlayer(game, x, z)) {
+					|| this._cellIsOwnedByPausedPlayer(game, x, z)
+					|| cells.hasAwaitingPromotion(this.getCell(game.board, x, z))) {
 					closeRun(scan - 1);
 					continue;
 				}

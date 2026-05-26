@@ -46,7 +46,7 @@ describe('Constants — bible compliance', () => {
 
 	test('game rules match bible', () => {
 		expect(GAME_RULES.REQUIRED_CELLS_FOR_ROW_CLEARING).toBe(8);
-		expect(GAME_RULES.PAWN_PROMOTION_DISTANCE).toBe(9);
+		expect(GAME_RULES.PAWN_PROMOTION_DISTANCE).toBe(8);
 		expect(GAME_RULES.AUTO_QUEEN_TIMEOUT_MS).toBe(15_000);
 		expect(GAME_RULES.SUICIDAL_PAWN_DELAY_MS).toBe(3_000);
 		expect(GAME_RULES.SUICIDAL_PAWN_INTERVAL_MS).toBe(500);

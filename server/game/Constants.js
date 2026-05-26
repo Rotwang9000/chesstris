@@ -137,9 +137,12 @@ const GAME_RULES = Object.freeze({
 	REQUIRED_CELLS_FOR_ROW_CLEARING: 8,
 
 	// Pawns may promote after this much net forward distance from their
-	// starting row (orientation-aware). The player chooses Q/R/B/N or
-	// auto-promotes to Queen after the timeout.
-	PAWN_PROMOTION_DISTANCE: 9,
+	// starting row (orientation-aware). 8 cells matches the line-clear
+	// length — getting a pawn that far up requires either capturing
+	// pieces or having a row clear away the cells in front, so the
+	// threshold is naturally hard-earned. The player chooses Q/R/B/N
+	// or auto-promotes to Queen after the timeout.
+	PAWN_PROMOTION_DISTANCE: 8,
 	AUTO_QUEEN_TIMEOUT_MS: 15_000,
 
 	// On king capture, defeated player's pawns become suicidal:

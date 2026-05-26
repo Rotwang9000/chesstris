@@ -23,9 +23,15 @@ const RETRO_REMOTE = Object.freeze({ home: 0x332200, default: 0xff8800 });
 function isLocal(playerId, gameState) {
 	if (!gameState) return false;
 	const id = String(playerId);
-	return id === String(gameState.currentPlayer)
-		|| id === String(gameState.myPlayerId)
-		|| id === String(gameState.localPlayerId);
+	// CRITICAL: never check `currentPlayer` here. `currentPlayer` is
+	// "whose turn is it" in the player-bar semantics — completely
+	// unrelated to "is this MY player". Previously this comparison
+	// caused every chess piece owned by the active-turn player to be
+	// repainted in the local warm-wood palette, which the user saw
+	// as "all the pieces flick to the same colour as mine".
+	const localId = gameState.localPlayerId || gameState.myPlayerId;
+	if (!localId) return false;
+	return id === String(localId);
 }
 
 function hashString(str) {

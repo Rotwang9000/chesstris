@@ -50,7 +50,8 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 			const pz = (pos && pos.z !== undefined) ? pos.z : piece.z;
 			const orientation = Number.isFinite(piece.orientation) ? piece.orientation : '';
 			const hasMoved = piece.hasMoved ? 1 : 0;
-			return `${piece.id}-${piece.type}-${piece.player}-${px}-${pz}-${hasMoved}-${orientation}`;
+			const awaiting = piece.awaitingPromotion ? 1 : 0;
+			return `${piece.id}-${piece.type}-${piece.player}-${px}-${pz}-${hasMoved}-${orientation}-${awaiting}`;
 		}).sort().join('|');
 	}
 	
@@ -217,6 +218,19 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 		// The board cells are positioned directly at their coordinates without any group offset
 		chessPiecesGroup.position.set(0, 0, 0);
 
+		// Hoist the in-flight optimistic-move pin so the per-piece loop
+		// can suppress *position* updates (not just removals) while a
+		// tween is running. Without this a heartbeat `game_update`
+		// arriving mid-animation snaps the moving mesh back to its old
+		// cell, then forward again when the ack lands.
+		const PIN_SAFETY_MS = 2000;
+		const inFlight = gameState?.inFlightMove;
+		const inFlightId = inFlight?.pieceId ? String(inFlight.pieceId) : null;
+		const inFlightStillValid = inFlight && (
+			!Number.isFinite(inFlight.startedAt)
+				|| (now - inFlight.startedAt) < PIN_SAFETY_MS
+		);
+
 		chessPieces.forEach(piece => {
 			try {
 				// Skip invalid pieces
@@ -301,7 +315,20 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 						// Y position and the surrounding XZ until the
 						// settle phase removes the airborne flag.
 						const isAirborne = existingPiece.userData && existingPiece.userData.airborne;
-						if (!isAirborne && (
+						// Don't yank pieces that are mid-tween either.
+						// `inFlightMove` covers the optimistic-move
+						// window; without this guard a heartbeat
+						// `game_update` that arrives mid-animation
+						// (server hasn't seen the move yet) snaps the
+						// mesh back to its old square, which is the
+						// "flick back then forward" the user reported.
+						const isPinned = !!(
+							inFlight
+							&& inFlightId
+							&& String(pieceId) === inFlightId
+							&& inFlightStillValid
+						);
+						if (!isAirborne && !isPinned && (
 							existingPiece.position.x !== adjustX
 							|| existingPiece.position.z !== adjustZ
 							|| existingPiece.position.y !== 0.5
@@ -438,7 +465,9 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 					pieceMesh.userData.captureCount = Number.isFinite(piece.captureCount) ? piece.captureCount : 0;
 					pieceMesh.userData.distanceTravelled = Number.isFinite(piece.distanceTravelled) ? piece.distanceTravelled : 0;
 					pieceMesh.userData.forwardDistance = Number.isFinite(piece.forwardDistance) ? piece.forwardDistance : 0;
-					
+					pieceMesh.userData.awaitingPromotion = piece.awaitingPromotion === true;
+					applyAwaitingPromotionHalo(pieceMesh, THREE);
+
 					// Add an invisible, larger hitbox so clicks reliably register on pieces (esp. from far camera angles)
 					try {
 						if (pieceMesh.getObjectByName && !pieceMesh.getObjectByName('raycast-hitbox')) {
@@ -527,20 +556,9 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 		});
 
 		// Remove any pieces that are no longer in the game. Honour the
-		// in-flight optimistic move pin so a `game_update` arriving
-		// mid-animation can't yank the moving mesh out from underneath
-		// the tween — that race was the root cause of the user's
-		// "knight just disappeared" report. The pin is cleared once the
-		// move ack arrives (success or failure) by `chessInteraction.js`.
-		// We also stop pruning the piece for a short safety window so a
-		// failed ack still has time to revert visually.
-		const inFlight = gameState?.inFlightMove;
-		const inFlightId = inFlight?.pieceId ? String(inFlight.pieceId) : null;
-		const PIN_SAFETY_MS = 2000;
-		const inFlightStillValid = inFlight && (
-			!Number.isFinite(inFlight.startedAt)
-				|| (now - inFlight.startedAt) < PIN_SAFETY_MS
-		);
+		// in-flight optimistic move pin (hoisted earlier) so a
+		// `game_update` arriving mid-animation can't yank the moving
+		// mesh out from underneath the tween.
 		// One mesh per board cell — drop stale ghosts (e.g. captured pawn
 		// under the capturing knight) that survived a partial sync.
 		const cellToCanonicalId = new Map();
@@ -785,6 +803,65 @@ function toHexNumber(colour) {
 	// CSS color set. We can't use it directly here without a THREE
 	// reference, but the parsed integer is what most callers need.
 	return null;
+}
+
+// Animated yellow halo that hovers around frozen pawns. Shared geometry
+// + material across all halos; per-mesh user data stores the animation
+// start so each pulses independently.
+const HALO_NAME = 'awaiting-promotion-halo';
+
+function applyAwaitingPromotionHalo(pieceMesh, THREE) {
+	if (!pieceMesh || !pieceMesh.getObjectByName) return;
+	const existing = pieceMesh.getObjectByName(HALO_NAME);
+	if (!pieceMesh.userData?.awaitingPromotion) {
+		if (existing) {
+			pieceMesh.remove(existing);
+			if (existing.geometry) existing.geometry.dispose();
+			if (existing.material && existing.material.dispose) existing.material.dispose();
+		}
+		return;
+	}
+	if (existing) return;
+
+	if (!applyAwaitingPromotionHalo._geometry) {
+		applyAwaitingPromotionHalo._geometry = new THREE.RingGeometry(0.46, 0.6, 32);
+	}
+	const material = new THREE.MeshBasicMaterial({
+		color: 0xffd54a,
+		transparent: true,
+		opacity: 0.55,
+		side: THREE.DoubleSide,
+		depthTest: false,
+		depthWrite: false,
+	});
+	const halo = new THREE.Mesh(applyAwaitingPromotionHalo._geometry, material);
+	halo.name = HALO_NAME;
+	halo.rotation.x = -Math.PI / 2;
+	halo.position.set(0, 0.05, 0);
+	halo.renderOrder = 999;
+	halo.userData.bornAt = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+	pieceMesh.add(halo);
+}
+
+/**
+ * Tick every visible halo so it pulses. Called from the main render
+ * loop; cheap when nobody has a frozen pawn (loop exits immediately).
+ *
+ * @param {THREE.Group} chessPiecesGroup
+ */
+export function updateAwaitingPromotionHalos(chessPiecesGroup) {
+	if (!chessPiecesGroup || !Array.isArray(chessPiecesGroup.children)) return;
+	const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+	for (const pieceMesh of chessPiecesGroup.children) {
+		const halo = pieceMesh && pieceMesh.getObjectByName && pieceMesh.getObjectByName(HALO_NAME);
+		if (!halo) continue;
+		const t = (now - (halo.userData.bornAt || now)) / 1000;
+		const pulse = 0.4 + 0.25 * Math.sin(t * 3.2);
+		if (halo.material) halo.material.opacity = pulse;
+		const scale = 1 + 0.08 * Math.sin(t * 3.2);
+		halo.scale.set(scale, scale, 1);
+		halo.rotation.z = t * 0.6;
+	}
 }
 
 /**

@@ -843,6 +843,17 @@ class ChessManager {
 	
 	/**
 	 * Update the pawn's net forward distance from its start position.
+	 * Public wrapper around `_updatePawnForwardDistance` so the socket
+	 * handler (which doesn't go through `executeChessMove`) can keep
+	 * the field in sync — otherwise pawns never accumulate progress
+	 * and never trigger the promotion freeze.
+	 */
+	updatePawnForwardDistance(piece, fromX, fromZ, toX, toZ) {
+		this._updatePawnForwardDistance(piece, fromX, fromZ, toX, toZ);
+	}
+
+	/**
+	 * Update the pawn's net forward distance from its start position.
 	 * @private
 	 */
 	_updatePawnForwardDistance(piece, fromX, fromZ, toX, toZ) {
@@ -858,8 +869,83 @@ class ChessManager {
 	}
 
 	/**
-	 * Check for pawn promotion — triggers after 9 squares forward
-	 * from starting position (net forward distance, not total moves).
+	 * Veteran pawns persisted before forwardDistance tracking was added
+	 * have `forwardDistance: 0` even when they're several squares deep
+	 * into enemy territory. Recompute it from the home zone's pawn row
+	 * (orientation-aware) so they can still reach the promotion line.
+	 *
+	 * Safe to call repeatedly — pawns whose forwardDistance is already
+	 * non-zero are left alone. Pawns without a known home zone (e.g.
+	 * the player record is gone) are skipped.
+	 *
+	 * @param {Object} game - The game object
+	 * @returns {number} number of pawns that were backfilled
+	 */
+	backfillPawnForwardDistance(game) {
+		if (!game || !Array.isArray(game.chessPieces)) return 0;
+		const homeZones = game.homeZones || {};
+		let count = 0;
+		for (const piece of game.chessPieces) {
+			if (!piece || piece.type !== 'PAWN') continue;
+			if ((piece.forwardDistance || 0) > 0) continue;
+			const home = homeZones[piece.player];
+			if (!home) continue;
+			const orientation = Number.isFinite(piece.orientation) ? piece.orientation : 0;
+			// Pawns start on the row adjacent to the main piece row.
+			// initializeChessPieces() places them at z=home.z+1 for
+			// orientation 0 (and the mirror for the other orientations).
+			let startZ = home.z;
+			let startX = home.x;
+			switch (orientation) {
+				case 0: startZ = home.z + 1; break;
+				case 2: startZ = home.z; break; // pieces at top, pawns at home.z+1 (verified later)
+				case 1: startX = home.x + 1; break;
+				case 3: startX = home.x; break;
+			}
+			const pos = piece.position || {};
+			const toX = Number(pos.x);
+			const toZ = Number(pos.z);
+			if (!Number.isFinite(toX) || !Number.isFinite(toZ)) continue;
+			let dist = 0;
+			switch (orientation) {
+				case 0: dist = toZ - startZ; break;
+				case 1: dist = toX - startX; break;
+				case 2: dist = startZ - toZ; break;
+				case 3: dist = startX - toX; break;
+			}
+			if (dist > 0) {
+				piece.forwardDistance = dist;
+				count++;
+				// If the pawn is already deep enough to promote, freeze
+				// it immediately so the player can deploy when they're
+				// next on the board. Mirror the flag onto the cell so
+				// line-clears and decay respect the lock right away.
+				if (
+					!piece.awaitingPromotion
+					&& dist >= GAME_RULES.PAWN_PROMOTION_DISTANCE
+				) {
+					piece.awaitingPromotion = true;
+					piece.awaitingPromotionAt = Date.now();
+					const cellKey = `${toX},${toZ}`;
+					const cellContents = game.board?.cells?.[cellKey];
+					if (Array.isArray(cellContents)) {
+						for (const item of cellContents) {
+							if (!item) continue;
+							if (item.type !== 'chess') continue;
+							if (String(item.pieceId) !== String(piece.id)) continue;
+							item.awaitingPromotion = true;
+						}
+					}
+				}
+			}
+		}
+		return count;
+	}
+
+	/**
+	 * Check for pawn promotion — triggers after PAWN_PROMOTION_DISTANCE
+	 * squares forward from starting position (net forward distance,
+	 * not total moves).
 	 * @param {Object} game - The game object
 	 * @param {Object} piece - The chess piece (pawn)
 	 * @private

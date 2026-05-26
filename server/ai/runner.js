@@ -104,7 +104,37 @@ function createAiRunner({
 		const world = World.getWorld();
 		const computerPlayer = World.getPlayer(computerId);
 		if (!world || !computerPlayer || !computerPlayer.isComputer) return;
-		if (computerPlayer.eliminated || computerPlayer.pendingRespawn) return;
+		if (computerPlayer.pendingRespawn) return;
+
+		// AI players that were marked `eliminated` (e.g. by the
+		// ghost-sweep or by a previous king capture that never finished
+		// its respawn) used to spin forever doing nothing because every
+		// tick returned here. Recover them automatically: if they still
+		// have a king on the board, clear the flag; otherwise kick off a
+		// fresh respawn so the seat is filled again.
+		if (computerPlayer.eliminated) {
+			const aiPieces = (world.chessPieces || []).filter(
+				p => p && String(p.player) === String(computerId)
+			);
+			const kingPiece = aiPieces.find(p => String(p.type).toUpperCase() === 'KING');
+			if (kingPiece) {
+				console.log(
+					`[AI] ${computerId} was flagged eliminated but still has a king — clearing flag.`
+				);
+				computerPlayer.eliminated = false;
+				delete computerPlayer.eliminatedAt;
+				World.markDirty();
+			} else {
+				console.log(`[AI] ${computerId} eliminated with no king — respawning fresh seat.`);
+				computerPlayer.pendingRespawn = true;
+				const difficulty = computerPlayer.difficulty || COMPUTER_DIFFICULTY.MEDIUM;
+				const minMoveInterval = computerPlayer.minMoveInterval
+					|| MIN_COMPUTER_MOVE_INTERVAL_MS[difficulty]
+					|| 10000;
+				setTimeout(() => respawnAfterDetonation(computerId, difficulty, minMoveInterval), 0);
+				return;
+			}
+		}
 
 		const strategy = computerPlayer.strategy || generateComputerStrategy(computerPlayer.difficulty);
 
@@ -266,13 +296,86 @@ function createAiRunner({
 	 * tick intervals to any AI players already in the world (their
 	 * strategy callbacks aren't persisted).
 	 */
+	/**
+	 * Remove every AI player except the strongest representative for
+	 * each difficulty in `AI_ROSTER_TEMPLATE`. "Strongest" is defined
+	 * as: most chess pieces, with most recent activity used to break
+	 * ties. Duplicate AIs accumulate when respawn races or persistence
+	 * restores stale records — without this trim the world can carry
+	 * 5+ "AI Standard" littering the map.
+	 *
+	 * @returns {number} number of AI players removed
+	 */
+	function trimDuplicateAis() {
+		const world = World.getWorld();
+		if (!world) return 0;
+		const allAi = World.listComputerPlayers();
+		if (allAi.length === 0) return 0;
+
+		// Bucket by difficulty
+		const byDifficulty = new Map();
+		const pieceCount = new Map();
+		for (const piece of (world.chessPieces || [])) {
+			if (!piece || !piece.player) continue;
+			pieceCount.set(String(piece.player), (pieceCount.get(String(piece.player)) || 0) + 1);
+		}
+		for (const ai of allAi) {
+			const key = ai.difficulty || 'medium';
+			if (!byDifficulty.has(key)) byDifficulty.set(key, []);
+			byDifficulty.get(key).push(ai);
+		}
+
+		let removed = 0;
+		for (const [, list] of byDifficulty.entries()) {
+			if (list.length <= 1) continue;
+			// Sort: most pieces first, then most recent activity.
+			list.sort((a, b) => {
+				const pa = pieceCount.get(String(a.id)) || 0;
+				const pb = pieceCount.get(String(b.id)) || 0;
+				if (pa !== pb) return pb - pa;
+				const ta = Number(a.lastChessMoveAt || a.lastTetrominoPlacementAt || 0);
+				const tb = Number(b.lastChessMoveAt || b.lastTetrominoPlacementAt || 0);
+				return tb - ta;
+			});
+			// Keep [0], remove the rest.
+			for (let i = 1; i < list.length; i++) {
+				const dupe = list[i];
+				console.log(
+					`[AI] Trimming duplicate ${dupe.name || dupe.id} (${dupe.difficulty}) ` +
+					`— keeping ${list[0].name || list[0].id}.`,
+				);
+				try { stopAiPlayer(dupe.id); } catch (_e) { /* ignore */ }
+				try { World.removePlayer(dupe.id); } catch (_e) { /* ignore */ }
+				removed++;
+			}
+		}
+
+		if (removed > 0) {
+			persistence.markDirty();
+			try { broadcaster.broadcastGameUpdate({ forceFullUpdate: true }); }
+			catch (_e) { /* best-effort */ }
+		}
+		return removed;
+	}
+
 	function ensureRoster() {
 		const world = World.getWorld();
 		if (!world) return;
 
+		// Trim first so the top-up logic below sees a clean count.
+		trimDuplicateAis();
+
 		const existingAi = World.listComputerPlayers();
 		for (const ai of existingAi) {
 			if (!ai.strategy) ai.strategy = generateComputerStrategy(ai.difficulty || 'medium');
+			// Stale `pendingRespawn` from before a restart would keep the
+			// AI inert forever. The respawn setTimeout is gone, so reset
+			// it now — `performComputerAction` will respawn properly if
+			// the AI truly has no king.
+			if (ai.pendingRespawn) {
+				console.log(`[AI] Clearing stale pendingRespawn on ${ai.id} during boot.`);
+				ai.pendingRespawn = false;
+			}
 			startAiPlayer(ai.id);
 		}
 
@@ -306,6 +409,7 @@ function createAiRunner({
 		registerAi,
 		addComputerPlayer,
 		ensureRoster,
+		trimDuplicateAis,
 		stopAll,
 	};
 }

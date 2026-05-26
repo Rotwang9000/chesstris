@@ -50,7 +50,7 @@ piece distribution (no long droughts of a single shape).
 ### Pawn specifics
 - First move may advance one or two squares forward (orientation-aware).
 - Diagonal capture one square forward.
-- **Promotion** at `PAWN_PROMOTION_DISTANCE = 9` squares net forward distance:
+- **Promotion** at `PAWN_PROMOTION_DISTANCE = 8` squares net forward distance:
   the player chooses Queen, Rook, Bishop, or Knight. Auto-promotes to Queen
   after 15 seconds.
 

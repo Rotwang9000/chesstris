@@ -8,7 +8,7 @@
 import * as NetworkManager from './utils/networkManager.js';
 import { highlightPlayerPieces, removePlayerPiecesHighlight } from './pieceHighlightManager.js';
 import { showToastMessage } from './showToastMessage.js';
-import { showPromotionRedeemDialog } from './uiOverlays.js';
+import { showPromotionRedeemDialog, showFrozenPawnPromotionDialog } from './uiOverlays.js';
 import { promptInlineRename } from './renameDialog.js';
 
 // State tracking variables
@@ -820,6 +820,40 @@ function addPlayerToBar(playerBar, playerId, playerInfo, gameState) {
 		playerElement.appendChild(basketDisplay);
 	}
 
+	// Frozen-pawn badge — counts pawns awaiting promotion. Clicking
+	// it re-opens the deployment dialog for the oldest frozen pawn,
+	// mirroring the in-world "click the pawn" affordance for players
+	// whose camera is pointed elsewhere.
+	const frozenPawns = (playerInfo.frozenPawns || []).filter(p => p && p.id);
+	if (frozenPawns.length > 0) {
+		const frozenBadge = document.createElement('div');
+		frozenBadge.textContent = `\u2744${frozenPawns.length}`;
+		Object.assign(frozenBadge.style, {
+			marginLeft: '6px',
+			fontSize: '12px',
+			padding: '2px 6px',
+			borderRadius: '3px',
+			backgroundColor: 'rgba(212,175,55,0.18)',
+			color: '#ffd97a',
+			fontFamily: 'serif',
+			letterSpacing: '1px',
+			border: '1px solid rgba(212,175,55,0.55)',
+		});
+		if (isLocalPlayer) {
+			frozenBadge.title = 'Pawn(s) awaiting promotion. Click to deploy a captured piece.';
+			frozenBadge.style.cursor = 'pointer';
+			frozenBadge.style.boxShadow = '0 0 6px rgba(255,217,122,0.45)';
+			frozenBadge.addEventListener('click', (e) => {
+				e.stopPropagation();
+				try { showFrozenPawnPromotionDialog(frozenPawns[0].id); }
+				catch (err) { console.warn('Failed to open frozen-pawn dialog:', err); }
+			});
+		} else {
+			frozenBadge.title = `${frozenPawns.length} pawn(s) awaiting promotion`;
+		}
+		playerElement.appendChild(frozenBadge);
+	}
+
 	// Promotion-credits badge. Only meaningful for the local player —
 	// other players' credits are private (the server doesn't expose
 	// per-credit positions). The badge is clickable and opens the
@@ -1044,9 +1078,16 @@ export function updateUnifiedPlayerBar(gameState) {
 			if (!player) return '';
 			return `${playerId}-${player.name || ''}-${player.score || 0}-${player.isActive ? 1 : 0}-${player.eliminated ? 1 : 0}-${player.paused ? 1 : 0}-${player.color || ''}-${player.capturedCount || 0}`;
 		}).sort().join('|');
-		
-		// Add current player to hash
+
+		// Add current player + frozen-pawn signature to hash so the
+		// frozen badges refresh whenever a pawn reaches the line
+		// or gets deployed.
 		currentHash += `|currentPlayer:${gameState.currentPlayer || ''}`;
+		const frozenPieces = (Array.isArray(gameState.chessPieces) ? gameState.chessPieces : [])
+			.filter(p => p && p.awaitingPromotion === true)
+			.map(p => `${p.player}:${p.id}`)
+			.sort();
+		currentHash += `|frozen:${frozenPieces.join(',')}`;
 	}
 	
 	// Force update every 20 intervals
@@ -1115,9 +1156,17 @@ export function updateUnifiedPlayerBar(gameState) {
 			if (b === localPlayerId) return 1;
 			return 0;
 		});
+		const allPieces = Array.isArray(gameState.chessPieces) ? gameState.chessPieces : [];
 		sortedIds.forEach(playerId => {
 			const player = gameState.players[playerId];
 			if (!player) return;
+
+			const frozenPawns = allPieces
+				.filter(p => p
+					&& p.awaitingPromotion === true
+					&& String(p.player) === String(playerId)
+					&& String(p.type).toUpperCase() === 'PAWN')
+				.map(p => ({ id: p.id, x: p.position?.x, z: p.position?.z }));
 
 			addPlayerToBar(
 				playerBar,
@@ -1128,6 +1177,7 @@ export function updateUnifiedPlayerBar(gameState) {
 					score: player.score || 0,
 					capturedCount: player.capturedCount || 0,
 					capturedSummary: player.capturedSummary || {},
+					frozenPawns,
 				},
 				gameState
 			);

@@ -33,6 +33,7 @@ function buildPieceEntry(piece, x, z) {
 		player,
 		color: piece.color ?? 0xcccccc,
 		orientation: piece.orientation ?? 0,
+		awaitingPromotion: piece.awaitingPromotion === true,
 	};
 }
 

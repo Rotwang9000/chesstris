@@ -9,7 +9,143 @@ import * as NetworkManager from './utils/networkManager.js';
 import { getGameState } from './gameContext.js';
 import { showToastMessage } from './showToastMessage.js';
 
-// ── Promotion Redeem (spend a credit + captured piece to deploy) ───────────
+// ── Frozen-pawn promotion: deploy a captured piece in place of the pawn ────
+
+const SYMBOLS = { QUEEN: '\u265B', ROOK: '\u265C', BISHOP: '\u265D', KNIGHT: '\u265E' };
+const FROZEN_OVERLAY_ID = 'frozen-pawn-promotion-overlay';
+
+/**
+ * Open the deployment dialog for a specific frozen pawn. The pawn ID
+ * is anchored in the dialog so re-opens (via clicking the pawn) always
+ * target the same piece even if the local player has multiple frozen
+ * pawns.
+ *
+ * The dialog lists all `QUEEN/ROOK/BISHOP/KNIGHT` entries from the
+ * captured basket with deploy buttons; an empty basket shows a clear
+ * "no pieces captured yet" message. Skip / Close always available
+ * (frozen pawn stays put until either captured by an enemy or the
+ * player picks a piece).
+ *
+ * @param {string} pawnId
+ * @param {Object} [opts]
+ * @param {Object} [opts.summary]   Optional pre-summarised `{ QUEEN: n, ... }`.
+ *                                  Reads `gameState.capturedBasket` if omitted.
+ */
+export function showFrozenPawnPromotionDialog(pawnId, opts = {}) {
+	const gameState = getGameState();
+	const pieces = Array.isArray(gameState?.chessPieces) ? gameState.chessPieces : [];
+	let pawn = pieces.find(p => p && String(p.id) === String(pawnId));
+
+	// First-time we open the dialog the awaiting-promotion flag may not
+	// yet have been synced through the gameState.chessPieces array (the
+	// `pawn_awaiting_promotion` event can land a beat before the
+	// follow-up `game_update`). If the network handler asserts via
+	// `opts.forceShow` we trust the server and patch the local flag so
+	// the rest of the flow works regardless.
+	if (pawn && !pawn.awaitingPromotion && opts.forceShow) {
+		pawn.awaitingPromotion = true;
+		pawn.awaitingPromotionAt = pawn.awaitingPromotionAt || Date.now();
+	}
+
+	if (!pawn || (!pawn.awaitingPromotion && !opts.forceShow)) {
+		showToastMessage('That pawn is no longer frozen — nothing to deploy.', 3000);
+		return;
+	}
+
+	const existing = document.getElementById(FROZEN_OVERLAY_ID);
+	if (existing) existing.remove();
+
+	const choices = ['QUEEN', 'ROOK', 'BISHOP', 'KNIGHT'];
+	let summary = opts.summary;
+	if (!summary) {
+		const basket = Array.isArray(gameState?.capturedBasket) ? gameState.capturedBasket : [];
+		summary = basket.reduce((acc, item) => {
+			const t = String(item?.type || '').toUpperCase();
+			if (choices.includes(t)) acc[t] = (acc[t] || 0) + 1;
+			return acc;
+		}, {});
+	}
+	const available = choices.filter(t => Number(summary?.[t] || 0) > 0);
+
+	const overlay = document.createElement('div');
+	overlay.id = FROZEN_OVERLAY_ID;
+	overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:10000;display:flex;align-items:center;justify-content:center;';
+	overlay.addEventListener('click', (e) => {
+		if (e.target === overlay) overlay.remove();
+	});
+
+	const dialog = document.createElement('div');
+	dialog.style.cssText = 'background:#1a1a2e;border:2px solid #d4af37;border-radius:12px;padding:24px;text-align:center;color:#fff;font-family:"Playfair Display",serif;min-width:340px;max-width:480px;box-shadow:0 0 36px rgba(212,175,55,0.35);';
+
+	const pos = pawn.position || {};
+	const cellLabel = (Number.isFinite(pos.x) && Number.isFinite(pos.z))
+		? `(${pos.x}, ${pos.z})`
+		: 'this cell';
+	dialog.innerHTML = `
+		<h3 style="margin:0 0 8px;color:#d4af37;font-size:22px;">Frozen Pawn</h3>
+		<p style="margin:0 0 14px;font-size:13px;opacity:0.85;">
+			Your pawn at ${cellLabel} has reached the promotion line and is locked in place.
+			Deploy a captured piece in its square, or close this dialog and come back later
+			by clicking the frozen pawn.
+		</p>
+	`;
+
+	if (available.length === 0) {
+		const note = document.createElement('div');
+		note.style.cssText = 'padding:14px;margin-bottom:12px;font-size:13px;color:#ffd97a;border:1px dashed rgba(212,175,55,0.4);border-radius:6px;line-height:1.45;';
+		note.textContent = 'You have no captured pieces yet. Capture an enemy Queen, Rook, Bishop or Knight and you can deploy it here.';
+		dialog.appendChild(note);
+	} else {
+		const heading = document.createElement('div');
+		heading.style.cssText = 'font-size:12px;opacity:0.7;margin-bottom:8px;letter-spacing:1px;text-transform:uppercase;';
+		heading.textContent = 'Deploy from your captured basket';
+		dialog.appendChild(heading);
+
+		const row = document.createElement('div');
+		row.style.cssText = 'display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin-bottom:14px;';
+		available.forEach(type => {
+			const count = Number(summary[type] || 0);
+			const btn = document.createElement('button');
+			btn.textContent = `${SYMBOLS[type]} ${type} \u00D7${count}`;
+			btn.style.cssText = 'padding:10px 16px;background:#1a3e2a;color:#a8e6a3;border:1px solid #4caf50;border-radius:6px;cursor:pointer;font-size:15px;font-family:inherit;';
+			btn.addEventListener('mouseenter', () => { btn.style.background = '#244e34'; });
+			btn.addEventListener('mouseleave', () => { btn.style.background = '#1a3e2a'; });
+			btn.addEventListener('click', () => {
+				btn.disabled = true;
+				btn.style.opacity = '0.6';
+				NetworkManager.deployPromotion(pawnId, type, (result) => {
+					if (result && result.success) {
+						overlay.remove();
+					} else {
+						const err = (result && result.error) || 'Deployment failed';
+						showToastMessage(`Deploy failed: ${err}`, 3000);
+						btn.disabled = false;
+						btn.style.opacity = '1';
+					}
+				});
+			});
+			row.appendChild(btn);
+		});
+		dialog.appendChild(row);
+	}
+
+	const buttons = document.createElement('div');
+	buttons.style.cssText = 'display:flex;gap:8px;justify-content:center;';
+
+	const skip = document.createElement('button');
+	skip.textContent = available.length === 0 ? 'Close' : 'Skip for now';
+	skip.style.cssText = 'padding:8px 16px;background:transparent;color:#ccc;border:1px solid #555;border-radius:6px;cursor:pointer;font-size:13px;font-family:inherit;';
+	skip.addEventListener('mouseenter', () => { skip.style.borderColor = '#888'; skip.style.color = '#eee'; });
+	skip.addEventListener('mouseleave', () => { skip.style.borderColor = '#555'; skip.style.color = '#ccc'; });
+	skip.addEventListener('click', () => overlay.remove());
+	buttons.appendChild(skip);
+
+	dialog.appendChild(buttons);
+	overlay.appendChild(dialog);
+	document.body.appendChild(overlay);
+}
+
+// ── Promotion Redeem (legacy credit-based dialog) ──────────────────────────
 
 /**
  * Show a dialog letting the local player spend a banked promotion
@@ -27,13 +163,12 @@ import { showToastMessage } from './showToastMessage.js';
  */
 export function showPromotionRedeemDialog(opts = {}) {
 	const choices = ['QUEEN', 'ROOK', 'BISHOP', 'KNIGHT'];
-	const SYMBOLS = { QUEEN: '\u265B', ROOK: '\u265C', BISHOP: '\u265D', KNIGHT: '\u265E' };
 	const gameState = getGameState();
 	const credits = Array.isArray(opts.credits)
 		? opts.credits
 		: (Array.isArray(gameState?.promotionCredits) ? gameState.promotionCredits : []);
 	if (credits.length === 0) {
-		showToastMessage('No promotion credits to redeem yet. Walk a pawn 9 cells forward first.', 3500);
+		showToastMessage('No promotion credits to redeem yet. Walk a pawn 8 cells forward first.', 3500);
 		return;
 	}
 	let summary = opts.summary;

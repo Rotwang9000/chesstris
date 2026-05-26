@@ -554,6 +554,84 @@ step-by-step "ship tetches.com on 95.216.77.237" runbook.
   immediately on click without waiting for the next
   `game_update`.
 
+### Stuck-state recovery: missing king + duplicate pieces (26 May 2026)
+
+A live debug uncovered a worst-case persistence corruption: a human
+player's king vanished from `world.chessPieces` without
+`kingLifeService.handleKingDeath` ever firing, and two of their other
+pieces had been spliced into the array twice with identical IDs.
+Symptom: the client tetromino spawn pipeline (`determineInitialTetrominoPosition`)
+returned `null` because `getPlayersKing` found no king, so the player
+sat on the title screen with no falling piece and no way to escape —
+even after a page reload (the broken state lived on the server).
+
+Fixes:
+
+1. `server/king/missingKingSweep.js` — new service.
+   `tick()` dedupes `world.chessPieces` by id (first occurrence wins)
+   and respawns a fresh king at the home-zone centre for every
+   non-eliminated, non-AI player with chess pieces but no king. Sets
+   `kingLives` to the default if missing and clears any stale
+   `pendingRespawn` flag. Forces a full `game_update` broadcast.
+2. `server/bootstrap.js` — calls `missingKingSweep.tick()` on boot
+   immediately after the integrity / AI roster passes, and re-runs
+   it every `GHOST_PLAYER_SWEEP_MS * 3` (60 s) thereafter.
+3. `server/world/World.js#restoreWorldFromSnapshot` — dedupes
+   `chessPieces` by id when restoring persistence so the next boot
+   doesn't replay the same corruption.
+4. `server/sockets/join.js` — the `join_game` handler runs the
+   sweep once per join so a stuck user is rescued immediately when
+   they reload, rather than having to wait up to a minute.
+5. `public/js/tetromino/movementQueue.js#processCleanup` — when the
+   client `initializeNextTetromino` returns `null` (king missing),
+   the queue now sends `request_tetromino` to the server with a
+   "Recovering game state…" toast instead of leaving the player
+   with an invisible piece and a hung Space key.
+
+### Player-pieces colour flicker on mode switch (26 May 2026)
+
+Every chess piece briefly turned the local player's warm wood colour
+half a second after switching render modes, then snapped back to its
+real colour. Root cause: `public/js/boardFunctions/colours.js#isLocal`
+checked `gameState.currentPlayer` (which is **"whose turn is it"** in
+the player-bar semantics — entirely unrelated to "which player am
+I"). When the active turn flipped to another player, all of *their*
+pieces were repainted in the local palette. Fix: `isLocal` now reads
+only `gameState.localPlayerId` (or `myPlayerId` as a fallback) and
+never `currentPlayer`. The flicker is gone.
+
+### Bonus orbs no longer drift into home cells (26 May 2026)
+
+`PowerUpManager.isCellAvailableForOrb` previously only rejected
+non-empty cells. If a cell was empty but inside another player's
+home-zone rectangle (e.g. after the zone degraded and lost its home
+markers), an orb could still land there. Added an
+`isInsideAnyHomeZone` guard so the spawn loop refuses to drop an orb
+inside any player's home-zone rectangle, occupied or not.
+
+### Advertiser activation is public again (26 May 2026)
+
+`POST /api/advertisers/:id/activate` was decorated with
+`requireAdmin` — wrong, that's the **paying customer's** endpoint for
+confirming their transaction signature. Production responded with
+"Admin endpoints are disabled (ADMIN_TOKEN not configured on this
+server)." for anyone connecting a wallet. Removed the middleware and
+documented the access policy in the JSDoc block above the route.
+`public/advertise.html` also now ships `@solana/web3.js` from
+`unpkg.com` so the wallet flow can sign + send the transaction in
+the page instead of falling through to the manual signature flow.
+
+### Knight head: less forward poke, rounder profile (26 May 2026)
+
+`createRussianKnightPiece` in
+`public/js/chessPieceCreator/russianPieces.js` was redrawn so the
+head silhouette sits over the body rather than reaching forward like
+a racehorse stretching for the finish line. The muzzle now stops at
+x≈0.38 instead of x≈0.54, the forehead/chin curves are gentler, and
+the extrude bevel was bumped from 0.025 to 0.045 so the whole head
+reads as soft + rounded at all view angles. Ears, mane and forelock
+positions were nudged back in line with the new head.
+
 **Still on the list:**
 
 - **Replay system.** Export activity log + viewer route.

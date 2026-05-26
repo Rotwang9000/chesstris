@@ -96,6 +96,10 @@ export function redeemPromotion(capturedType, creditId, callback) {
 	return networkManagerInstance.redeemPromotion(capturedType, creditId, callback);
 }
 
+export function deployPromotion(pawnId, capturedType, callback) {
+	return networkManagerInstance.deployPromotion(pawnId, capturedType, callback);
+}
+
 export function getStatus() {
 	if (networkManagerInstance && typeof networkManagerInstance.getStatus === 'function') {
 		return networkManagerInstance.getStatus();

@@ -26,6 +26,7 @@ import {
 } from './skipChessButton.js';
 import { updateNextPieceHint } from './tetromino/nextPiece.js';
 import { showToastMessage } from './showToastMessage.js';
+import { showFrozenPawnPromotionDialog } from './uiOverlays.js';
 
 /**
  * In-flight chess move tracker.
@@ -251,7 +252,18 @@ export function performRaycast() {
 	const gameState = getGameState();
 
 	if (!raycaster || !camera) return;
-	if (!gameState || gameState.turnPhase !== 'chess') return;
+	if (!gameState) return;
+	if (gameState.turnPhase !== 'chess') {
+		// During the brief send/ack window (`isSubmittingTetrominoPlacement`)
+		// the player is still nominally in the tetris phase, so chess
+		// raycasts get dropped silently. Surfacing a toast here means
+		// the user gets a clear "Confirming placement…" message instead
+		// of clicks that simply do nothing.
+		if (gameState.isSubmittingTetrominoPlacement) {
+			showToastMessage('Confirming placement — chess phase will open in a moment.', 1800);
+		}
+		return;
+	}
 
 	raycaster.setFromCamera(mouse, camera);
 
@@ -314,6 +326,18 @@ export function performRaycast() {
 				}
 				showPieceInfo(chessPieceHit);
 				return;
+			}
+
+			// Frozen pawn → re-open the promotion deployment dialog
+			// instead of selecting. Always available so the player
+			// can come back to deploy whenever they're ready.
+			if (chessPieceHit.userData?.awaitingPromotion) {
+				const pieceId = chessPieceHit.userData.id;
+				if (pieceId) {
+					try { showFrozenPawnPromotionDialog(pieceId); }
+					catch (err) { console.warn('[FrozenPawn] dialog failed:', err); }
+					return;
+				}
 			}
 
 			// Click on the piece that's already selected → deselect.
@@ -500,20 +524,27 @@ export function highlightValidMoves(validMoves) {
 		scene.add(window.moveHighlightsGroup);
 	}
 
-	if (!window._moveHighlightCache) {
-		window._moveHighlightCache = {
+	const isRetroProfile = !!(gameState.retroMode || gameState.renderProfile === 'retro');
+	const cacheKey = isRetroProfile ? '_moveHighlightCacheRetro' : '_moveHighlightCache';
+	if (!window[cacheKey]) {
+		// Retro cells are bright green for owned territory, so the
+		// default phosphor-green ring is invisible on top. Use amber
+		// for the standard target and a deeper red-orange for captures.
+		const moveColour = isRetroProfile ? 0xFFB300 : 0x33FF66;
+		const captureColour = isRetroProfile ? 0xFF6A00 : 0xFF3355;
+		window[cacheKey] = {
 			geo: new THREE.RingGeometry(0.18, 0.42, 32),
 			matMove: new THREE.MeshBasicMaterial({
-				color: 0x33FF66, transparent: true, opacity: 0.7,
+				color: moveColour, transparent: true, opacity: 0.85,
 				side: THREE.DoubleSide, depthTest: false, depthWrite: false,
 			}),
 			matCapture: new THREE.MeshBasicMaterial({
-				color: 0xFF3355, transparent: true, opacity: 0.85,
+				color: captureColour, transparent: true, opacity: 0.9,
 				side: THREE.DoubleSide, depthTest: false, depthWrite: false,
 			}),
 		};
 	}
-	const hlCache = window._moveHighlightCache;
+	const hlCache = window[cacheKey];
 
 	validMoves.forEach(move => {
 		const absPos = translatePosition({ x: move.x, z: move.z }, gameState, true);
@@ -639,7 +670,14 @@ export function moveChessPieceToCell(x, z) {
 					}
 				}
 
-				clearInFlightMove(gameState);
+				// IMPORTANT: do not clear `inFlightMove` here. The server
+				// will broadcast a stale chessPieces snapshot for one or
+				// two more ticks before catching up; if we drop the pin
+				// now the smart-merge can't protect the optimistic
+				// position and the piece flicks back to its source. The
+				// PIN_SAFETY_MS timer in updateChessPieces releases it
+				// after 2s as a safety net, and any incoming snapshot
+				// that already has the piece at (x, z) is harmless.
 				showTemporaryMessage('Move successful.', 'success');
 				return;
 			}
@@ -819,6 +857,11 @@ function updateGameStateAfterChessMove(piece, toX, toZ) {
 		if (idx >= 0 && gameState.chessPieces[idx]?.position) {
 			gameState.chessPieces[idx].position.x = toX;
 			gameState.chessPieces[idx].position.z = toZ;
+			// Stamp the optimistic move so the smart-merge in
+			// gameState.update() keeps this local position until the
+			// server's chessPieces snapshot catches up. See the
+			// docblock on `mergeChessPieces`.
+			gameState.chessPieces[idx].clientMovedAt = Date.now();
 		}
 	}
 

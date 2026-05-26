@@ -311,9 +311,12 @@ router.post('/', registrationRateLimit, upload.single('adImage'), async (req, re
 /**
  * @route POST /api/advertisers/:id/activate
  * @desc Activate an advertiser after payment verification
- * @access Public (requires transaction signature)
+ * @access Public — the advertiser themselves must supply the transaction
+ *   signature for their pending registration. Future hardening should verify
+ *   the signature against the Solana network (see TODO below), but this
+ *   endpoint MUST NOT be admin-only — that breaks the self-serve flow.
  */
-router.post('/:id/activate', requireAdmin, async (req, res) => {
+router.post('/:id/activate', async (req, res) => {
 	try {
 		const { id } = req.params;
 		const { transactionSignature } = req.body;

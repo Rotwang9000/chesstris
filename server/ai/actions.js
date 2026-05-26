@@ -315,6 +315,15 @@ function createAiActions({
 		let movedPiece = piece;
 		if (pieceIndex !== -1) {
 			movedPiece = world.chessPieces[pieceIndex];
+			// Track net forward progress for the AI's pawns too —
+			// otherwise AI pawns never trigger the promotion freeze.
+			if (movedPiece.type === 'PAWN' && gameManager.chessManager) {
+				gameManager.chessManager.updatePawnForwardDistance(
+					movedPiece,
+					originalPosition.x, originalPosition.z,
+					targetX, targetZ,
+				);
+			}
 			movedPiece.position = { x: targetX, z: targetZ };
 			movedPiece.hasMoved = true;
 			world.chessPieces[pieceIndex] = movedPiece;

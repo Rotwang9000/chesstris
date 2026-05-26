@@ -64,7 +64,9 @@ function ensureCard() {
 	cardEl.setAttribute('aria-live', 'polite');
 	Object.assign(cardEl.style, {
 		position: 'fixed',
-		right: '18px',
+		// Sit to the left of the sound + activity-log icons (which
+		// occupy the rightmost ~56px at the bottom of the viewport).
+		right: '70px',
 		bottom: '18px',
 		minWidth: '180px',
 		maxWidth: '260px',

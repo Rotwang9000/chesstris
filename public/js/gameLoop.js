@@ -18,6 +18,7 @@ import { updateChessPieces } from './updateChessPieces.js';
 import { handleMouseHover } from './chessInteraction.js';
 import { syncPowerUps, animatePowerUps } from './powerUpRenderer.js';
 import { syncNameplates, animateNameplates } from './nameplateRenderer.js';
+import { updateAwaitingPromotionHalos } from './updateChessPieces.js';
 
 // ── Timing state ────────────────────────────────────────────────────────────
 
@@ -324,6 +325,16 @@ function animate(time) {
 				animateNameplates(time * 0.001);
 			} catch (e) {
 				console.error('Error syncing nameplates:', e);
+			}
+
+			// Glow halo on any frozen pawn awaiting promotion. Skips the
+			// loop entirely when nobody has one queued.
+			try {
+				const piecesGroup = gameState.chessPiecesGroup
+					|| (typeof window !== 'undefined' && window.chessPiecesGroup);
+				if (piecesGroup) updateAwaitingPromotionHalos(piecesGroup);
+			} catch (e) {
+				console.error('Error animating awaiting-promotion halos:', e);
 			}
 		}
 

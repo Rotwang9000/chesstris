@@ -316,11 +316,38 @@ function restoreWorldFromSnapshot(snapshot) {
 		if (!Array.isArray(p.promotionCredits)) p.promotionCredits = [];
 		if (!Array.isArray(p.capturedStyles)) p.capturedStyles = [];
 	}
+	// Dedupe restored chess pieces by id. Earlier code paths could
+	// occasionally double-push the same piece (e.g. the chess-move
+	// handler reassigning `chessPieces[idx] = piece` while a stale
+	// duplicate sat further along the array). Restoring the snapshot
+	// as-is would replay the corruption forever; cleaning it here is
+	// cheap and idempotent.
+	let restoredPieces = Array.isArray(snapshot.chessPieces) ? snapshot.chessPieces : [];
+	{
+		const seen = new Set();
+		const deduped = [];
+		let droppedDuplicates = 0;
+		for (const piece of restoredPieces) {
+			if (!piece || !piece.id) {
+				deduped.push(piece);
+				continue;
+			}
+			const id = String(piece.id);
+			if (seen.has(id)) { droppedDuplicates++; continue; }
+			seen.add(id);
+			deduped.push(piece);
+		}
+		if (droppedDuplicates > 0) {
+			console.log(`[World] Restore deduped ${droppedDuplicates} duplicate chess piece(s).`);
+		}
+		restoredPieces = deduped;
+	}
+
 	world = {
 		...fresh,
 		...snapshot,
 		board: snapshot.board,
-		chessPieces: Array.isArray(snapshot.chessPieces) ? snapshot.chessPieces : [],
+		chessPieces: restoredPieces,
 		islands: Array.isArray(snapshot.islands) ? snapshot.islands : [],
 		players,
 		homeZones: snapshot.homeZones || {},

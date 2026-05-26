@@ -16,6 +16,7 @@ function registerJoinHandlers(socket, ctx) {
 		lifecycleService,
 		persistence,
 		gameManager,
+		missingKingSweep,
 	} = ctx;
 
 	socket.on('join_game', (data, callback) => {
@@ -52,6 +53,19 @@ function registerJoinHandlers(socket, ctx) {
 			if (integrityResult.changed) {
 				persistence.markDirty();
 				broadcaster.broadcastGameUpdate();
+			}
+
+			// Rescue the player on the spot if their persisted state is
+			// missing a king (corruption case — see missingKingSweep
+			// docs). Without this the user is locked out: the client's
+			// tetromino spawn returns null because there's no king to
+			// anchor against. Reloading wouldn't help either — the bad
+			// state lives on the server.
+			if (missingKingSweep && typeof missingKingSweep.tick === 'function') {
+				try { missingKingSweep.tick(); }
+				catch (rescueErr) {
+					console.warn('[Join] Missing-king rescue failed:', rescueErr.message);
+				}
 			}
 
 			const playersList = broadcaster.buildPlayersList();

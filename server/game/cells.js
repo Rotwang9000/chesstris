@@ -106,6 +106,23 @@ function hasChess(items) {
 	return hasItemType(items, CHESS_TYPE);
 }
 
+/**
+ * Does this cell hold a chess marker for a pawn currently frozen
+ * awaiting promotion? Such cells are treated like home cells: they
+ * block line-clear runs, protect their supporting terrain from being
+ * stripped, and survive island decay until the pawn is either
+ * promoted or captured.
+ */
+function hasAwaitingPromotion(items) {
+	const arr = asArray(items);
+	for (const item of arr) {
+		if (!item) continue;
+		if (item.type !== CHESS_TYPE) continue;
+		if (item.awaitingPromotion === true) return true;
+	}
+	return false;
+}
+
 function hasTerrain(items) {
 	return hasItemType(items, TETROMINO_TYPE);
 }
@@ -199,6 +216,7 @@ function isClearable(items) {
  */
 function isLineClearTarget(items) {
 	if (hasHome(items)) return false;
+	if (hasAwaitingPromotion(items)) return false;
 	if (onlyDegradedOrMarkers(items)) return false;
 	return asArray(items).some(item => {
 		if (!item) return false;
@@ -334,4 +352,5 @@ module.exports = {
 	stripClearable,
 	stripForLineClear,
 	stripAllChessMarkers,
+	hasAwaitingPromotion,
 };

@@ -392,10 +392,27 @@ Frontend presentation:
 
 ### Pawn promotion
 
-When a pawn has moved **9 squares forward** from its starting position, the
-player is offered a choice to promote it to a **Queen, Rook, Bishop, or
-Knight**. (The constant `PAWN_PROMOTION_DISTANCE = 9` governs this.) If no
-choice is made within 15 seconds, the pawn auto-promotes to Queen.
+When a pawn has moved **8 squares forward** from its starting position
+(net forward progress; `PAWN_PROMOTION_DISTANCE = 8` governs this), it
+**freezes in place**:
+
+- The pawn stops accepting move commands and the cell it stands on is
+  treated as **home-like** — it cannot be cleared by line-clears, decayed
+  by island disconnection, or otherwise removed.
+- A glowing yellow halo pulses around the frozen pawn so it's
+  unmistakable on the board.
+- Clicking the frozen pawn opens the **deployment dialog**, which lists
+  the pieces (Queen / Rook / Bishop / Knight) in your captured basket.
+  Selecting one replaces the frozen pawn with that piece in-place and
+  consumes the basket entry. **Skip** dismisses the dialog without
+  consuming anything; the pawn stays frozen indefinitely until either
+  promoted or captured by an enemy.
+- An empty basket shows a "capture a piece to deploy here" message; the
+  dialog re-opens automatically every time you click the frozen pawn.
+
+Since 8 cells in a row is also the line-clear length, the pawn must
+either **capture pieces** or **wait for a row clear** to remove the cells
+in front of it before it can promote.
 
 ### King capture and consequences
 
@@ -652,7 +669,7 @@ colours is a trophy of conquest.
 
 ```
 REQUIRED_CELLS_FOR_ROW_CLEARING     = 8
-PAWN_PROMOTION_DISTANCE             = 9
+PAWN_PROMOTION_DISTANCE             = 8
 HOME_ZONE_WIDTH                     = 8
 HOME_ZONE_HEIGHT                    = 2
 HOME_ZONE_DISTANCE                  = 16     (pawn-clash spacing)
