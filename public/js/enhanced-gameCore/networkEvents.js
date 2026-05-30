@@ -27,6 +27,13 @@ import {
 	loadActivityLogSnapshot,
 	toggleActivityLog,
 } from '../activityLog.js';
+import {
+	onCheckStart,
+	onCheckClear,
+	onCheckExpired,
+	onCheckGameUpdate,
+	initCheckAlert,
+} from '../checkAlert.js';
 import { updateGameStatusDisplay } from '../createLoadingIndicator.js';
 import * as tetrominoModule from '../tetromino.js';
 import { flashCellsBeforeClear, showChessCaptureAnimation } from '../tetromino/animations.js';
@@ -83,6 +90,45 @@ function dispatchGameUpdate(detail) {
 		window.dispatchEvent(new CustomEvent('gameupdate', { detail }));
 	} catch (error) {
 		console.warn('networkEvents: failed to dispatch gameupdate event:', error);
+	}
+}
+
+let versionBannerShown = false;
+function showVersionMismatchBanner({ serverVersion, clientVersion }) {
+	if (versionBannerShown) return;
+	versionBannerShown = true;
+	console.warn(
+		`[Version] Client bundle ${clientVersion} differs from server ${serverVersion} — prompting refresh.`
+	);
+	try {
+		const existing = document.getElementById('version-mismatch-banner');
+		if (existing) return;
+		const banner = document.createElement('div');
+		banner.id = 'version-mismatch-banner';
+		banner.style.cssText = [
+			'position:fixed', 'top:0', 'left:0', 'right:0',
+			'z-index:99999',
+			'padding:10px 14px',
+			'background:#ffba00', 'color:#1c1c1c',
+			'font-family:sans-serif', 'font-weight:600', 'font-size:14px',
+			'box-shadow:0 2px 12px rgba(0,0,0,0.3)',
+			'display:flex', 'align-items:center', 'justify-content:center',
+			'gap:14px',
+		].join(';');
+		banner.innerHTML = `
+			<span>A newer version of Tetches is available. Refresh to pick up the latest fixes.</span>
+			<button id="version-mismatch-refresh" style="padding:6px 14px;border:0;border-radius:4px;cursor:pointer;background:#1c1c1c;color:#fff;font-weight:700;">Refresh now</button>
+			<button id="version-mismatch-dismiss" style="padding:6px 10px;border:0;border-radius:4px;cursor:pointer;background:transparent;color:#1c1c1c;font-weight:600;">Later</button>
+		`;
+		document.body.appendChild(banner);
+		document.getElementById('version-mismatch-refresh')?.addEventListener('click', () => {
+			window.location.reload();
+		});
+		document.getElementById('version-mismatch-dismiss')?.addEventListener('click', () => {
+			banner.remove();
+		});
+	} catch (err) {
+		console.warn('Failed to render version-mismatch banner:', err);
 	}
 }
 
@@ -421,7 +467,7 @@ function handleKingDetonation(payload, { showGameOverPulseOverlay }) {
 				if (isLocalDetonation) {
 					showToastMessage('Your king has detonated!', { variant: 'alert', duration: 6000 });
 				} else if (isAi) {
-					showToastMessage('An AI was reduced to a lone king — Lemmings!', { duration: 4500 });
+					showToastMessage('An AI was reduced to a lone king — Bye Bye!', { duration: 4500 });
 				} else {
 					showToastMessage('An opponent detonated their king!', { duration: 4500 });
 				}
@@ -695,10 +741,10 @@ function handleKingEliminated(payload) {
 			gameState.players[payload.playerId].kingLives = 0;
 		}
 		if (isLocal) {
-			showToastMessage(
-				'Your king has fallen for the last time. Game over!',
-				{ variant: 'alert', duration: 8000 }
-			);
+			// The on-screen drama (explosions + "GAME OVER" pulse) is owned
+			// by the king_detonation event that always accompanies a final
+			// death now, so we don't double-toast here — just the death
+			// sound, which pairs with the detonation animation.
 			try { playSound('kingFall'); } catch (_e) { /* sound is best-effort */ }
 		}
 		// Remote eliminations are intentionally silent — the activity
@@ -761,6 +807,8 @@ export function setupNetworkEvents(hooks = {}) {
 		console.warn('setupNetworkEvents: NetworkManager not available');
 		return;
 	}
+	try { initCheckAlert(); }
+	catch (e) { console.warn('initCheckAlert failed:', e); }
 
 	NetworkManager.on('game_state', (payload) => {
 		const state = payload?.state || payload;
@@ -809,6 +857,24 @@ export function setupNetworkEvents(hooks = {}) {
 		dispatchGameUpdate({ localPlayerId: payload.playerId });
 	});
 
+	// Server tells us which client build it expects. If our bundle is
+	// older we render a non-blocking "please refresh" banner so the
+	// player picks up bug fixes / rule changes. A cheating front-end
+	// that spoofs an old bundle version still works, but at least it
+	// can't claim "I didn't know" — and all of its game-state changes
+	// are server-validated anyway.
+	NetworkManager.on('server_version', (payload) => {
+		try {
+			const serverVersion = String(payload?.bundleVersion || '');
+			const clientVersion = String(window.__BUNDLE_VERSION__ || '');
+			if (!serverVersion || !clientVersion) return;
+			if (serverVersion === clientVersion) return;
+			showVersionMismatchBanner({ serverVersion, clientVersion });
+		} catch (err) {
+			console.warn('server_version handler failed:', err);
+		}
+	});
+
 	const safe = (label, fn) => (payload) => {
 		try { fn(payload); } catch (e) { console.error(`Error handling ${label}:`, e); }
 	};
@@ -829,6 +895,30 @@ export function setupNetworkEvents(hooks = {}) {
 	NetworkManager.on('king_captured', handleKingCaptured);
 	NetworkManager.on('king_respawned', handleKingRespawned);
 	NetworkManager.on('king_eliminated', handleKingEliminated);
+	// Check (deferred king-capture). The server holds the would-be
+	// capture for `CHECK_DEADLINE_MS` so the defender has a chance to
+	// escape. `chess_check` is the warning, `chess_check_cleared` is
+	// the defender's successful escape, and `chess_check_expired` is
+	// the timer running out (the king capture follows immediately).
+	NetworkManager.on('chess_check', safe('chess_check', (payload) => {
+		try { onCheckStart(payload); }
+		catch (e) { console.warn('checkAlert start failed:', e); }
+	}));
+	NetworkManager.on('chess_check_cleared', safe('chess_check_cleared', () => {
+		try { onCheckClear(); }
+		catch (e) { console.warn('checkAlert clear failed:', e); }
+	}));
+	NetworkManager.on('chess_check_expired', safe('chess_check_expired', () => {
+		try { onCheckExpired(); }
+		catch (e) { console.warn('checkAlert expired failed:', e); }
+	}));
+	NetworkManager.on('game_update', safe('game_update', (payload) => {
+		// `pendingCheck` rides on every `game_update` payload (set or
+		// null). Treat it as the source of truth so late-joiners and
+		// reconnects also surface any active warning.
+		try { onCheckGameUpdate(payload); }
+		catch (e) { console.warn('checkAlert game_update reconcile failed:', e); }
+	}));
 	NetworkManager.on('suicidal_pawn', handleSuicidalPawn);
 	NetworkManager.on('king_duel_start', handleKingDuelStart);
 	NetworkManager.on('king_duel_round_result', safe('king_duel_round_result', handleDuelRoundResult));

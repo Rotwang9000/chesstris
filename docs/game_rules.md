@@ -44,15 +44,21 @@ piece distribution (no long droughts of a single shape).
    and the chess marker is appended at the destination.
 5. **Cell ownership transfer** — landing on an enemy cell claims its non-home
    content for the mover; island decay then runs on the previous owner.
-6. **No check / checkmate** — only king capture. Moving into check is legal.
+6. **Check (king-capture grace)** — a move that would capture a king is
+   deferred; the defender gets one timed escape move (20 s) before the capture
+   auto-resolves. The same attacker only grants this grace twice; the third
+   attack takes the king directly. No classical checkmate.
 7. **No en passant**.
 
 ### Pawn specifics
 - First move may advance one or two squares forward (orientation-aware).
 - Diagonal capture one square forward.
 - **Promotion** at `PAWN_PROMOTION_DISTANCE = 8` squares net forward distance:
-  the player chooses Queen, Rook, Bishop, or Knight. Auto-promotes to Queen
-  after 15 seconds.
+  the pawn **freezes in place** and its cell becomes home-like (cannot be
+  cleared or decayed). Clicking it opens a deployment dialog to swap it for a
+  Queen / Rook / Bishop / Knight from your **captured basket** (you must have
+  captured that piece type). Deploying is optional and can be deferred
+  indefinitely; the pawn stays frozen until promoted or captured.
 
 ### Castling
 Standard rules: neither king nor rook has moved; all cells between them exist

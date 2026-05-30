@@ -5,29 +5,32 @@
  * tracking impressions and clicks, and managing the bidding system.
  */
 
-// Sponsor cache to avoid excessive API calls
+// Sponsor cache to avoid excessive API calls. We DELIBERATELY use a
+// short cache (700 ms — long enough to share a sponsor across the
+// near-simultaneous calls a single placement triggers, short enough
+// that subsequent placements get a fresh roll of the rotation dice).
 const sponsorCache = {
 	currentSponsor: null,
 	lastFetch: 0,
-	cacheDuration: 5000, // Cache for 5 seconds
-	
+	cacheDuration: 700,
+
 	isValid() {
 		return this.currentSponsor && (Date.now() - this.lastFetch) < this.cacheDuration;
 	},
-	
+
 	set(sponsor) {
 		this.currentSponsor = sponsor;
 		this.lastFetch = Date.now();
 	},
-	
+
 	get() {
 		return this.isValid() ? this.currentSponsor : null;
 	},
-	
+
 	clear() {
 		this.currentSponsor = null;
 		this.lastFetch = 0;
-	}
+	},
 };
 
 /**
@@ -43,18 +46,25 @@ export async function fetchNextSponsor() {
 	
 	try {
 		const response = await fetch('/api/advertisers/next');
-		
+
+		// 204 No Content means "no ad this time" — the server
+		// throttles ads so they don't appear on every placement.
+		// We deliberately do NOT cache "no ad", so the next request
+		// has a fresh roll of the dice.
+		if (response.status === 204) {
+			return null;
+		}
+
 		if (!response.ok) {
 			if (response.status === 404) {
-				// No sponsors available
 				return null;
 			}
 			console.warn('Failed to fetch sponsor:', response.statusText);
 			return null;
 		}
-		
+
 		const data = await response.json();
-		
+
 		if (!data || !data.success) {
 			return null;
 		}
@@ -109,22 +119,54 @@ export async function addSponsorToTetromino(tetromino) {
 }
 
 /**
- * Record an impression for a sponsor
- * @param {string} sponsorId - The sponsor ID
+ * Record an impression for a sponsor. `cells` is the cell-weight
+ * the impression spans (1 for a single decal, 2 for a wide image
+ * spread across two flank cells). The server charges the campaign
+ * accordingly.
+ * @param {string} sponsorId
+ * @param {number} [cells=1]
  */
-export async function recordImpression(sponsorId) {
+export async function recordImpression(sponsorId, cells = 1) {
 	if (!sponsorId) return;
-	
+
 	try {
 		await fetch(`/api/advertisers/${sponsorId}/impression`, {
 			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json'
-			}
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ cells }),
 		});
 	} catch (error) {
 		console.error('Error recording impression:', error);
 	}
+}
+
+/**
+ * Fetch the full pool of eligible sponsors. Cached for 30 s on the
+ * client because rotation rarely changes that fast and the in-game
+ * cell-decoration loop calls this every frame the board updates.
+ */
+const _activeCache = { list: null, fetchedAt: 0, ms: 30000 };
+export async function fetchActiveSponsors() {
+	if (_activeCache.list && (Date.now() - _activeCache.fetchedAt) < _activeCache.ms) {
+		return _activeCache.list;
+	}
+	try {
+		const res = await fetch('/api/advertisers/active');
+		if (!res.ok) return _activeCache.list || [];
+		const data = await res.json();
+		const list = (data && data.advertisers) || [];
+		_activeCache.list = list;
+		_activeCache.fetchedAt = Date.now();
+		return list;
+	} catch (err) {
+		console.warn('fetchActiveSponsors error:', err);
+		return _activeCache.list || [];
+	}
+}
+
+export function invalidateActiveSponsorsCache() {
+	_activeCache.list = null;
+	_activeCache.fetchedAt = 0;
 }
 
 /**
@@ -174,62 +216,80 @@ export async function getSponsorStats(sponsorId) {
 	}
 }
 
+// How long the click-driven popup stays open before fading out.
+// User: "the sponsor message should only come up with a click or
+// tap of the cell and go away after a while."
+const AD_POPUP_AUTOHIDE_MS = 12000;
+let _adAutoHideTimer = null;
+
 /**
- * Display sponsor information in the UI
- * @param {Object} sponsor - The sponsor object
+ * Display sponsor information in the popup. Click-driven only — the
+ * popup opens when the player clicks a sponsored cell (see
+ * `chessInteraction.js#showCellInfo`) and auto-hides after
+ * `AD_POPUP_AUTOHIDE_MS`. The fresh call resets the timer so a
+ * second click within the window keeps it visible.
+ * @param {Object} sponsor — sponsor object with id/name/image/adText/adUrl
  */
 export function displaySponsorInfo(sponsor) {
 	if (!sponsor) return;
-	
+
 	const adContainer = document.getElementById('sponsor-ad');
 	if (!adContainer) {
 		console.warn('Sponsor ad container not found');
 		return;
 	}
-	
+
 	const nameEl = document.getElementById('sponsor-name');
 	const imageEl = document.getElementById('sponsor-image');
 	const messageEl = document.getElementById('sponsor-message');
 	const linkEl = document.getElementById('sponsor-link');
-	
+
 	if (nameEl) nameEl.textContent = sponsor.name || 'Sponsor';
-	if (imageEl) imageEl.src = sponsor.image || '';
+	if (imageEl) imageEl.src = sponsor.image || sponsor.adImage || '';
 	if (messageEl) messageEl.textContent = sponsor.adText || '';
-	
+
 	if (linkEl) {
 		linkEl.onclick = () => {
-			handleSponsorClick(sponsor.id, sponsor.adUrl);
+			handleSponsorClick(sponsor.id, sponsor.adUrl || sponsor.adLink);
 			hideSponsorAd();
 		};
 	}
-	
+
 	adContainer.style.display = 'block';
-	
-	// Auto-hide after 10 seconds
-	setTimeout(() => {
+	if (_adAutoHideTimer) clearTimeout(_adAutoHideTimer);
+	_adAutoHideTimer = setTimeout(() => {
 		hideSponsorAd();
-	}, 10000);
+		_adAutoHideTimer = null;
+	}, AD_POPUP_AUTOHIDE_MS);
 }
 
 /**
- * Hide the sponsor ad container
+ * Hide the sponsor ad container and cancel any pending auto-hide
+ * timer so it doesn't fire on a popup that's already gone.
  */
 export function hideSponsorAd() {
 	const adContainer = document.getElementById('sponsor-ad');
 	if (adContainer) {
 		adContainer.style.display = 'none';
 	}
+	if (_adAutoHideTimer) {
+		clearTimeout(_adAutoHideTimer);
+		_adAutoHideTimer = null;
+	}
 }
 
 /**
- * Show sponsor ad when tetromino is placed
- * Call this function when a tetromino with a sponsor is placed on the board
- * @param {Object} tetromino - The placed tetromino (may have sponsor property)
+ * Hook called when a tetromino with a sponsor is placed.
+ * NO-OP: we used to auto-display the popup here, but the user asked
+ * for the ad box to only show on click. The sponsor info is now
+ * surfaced when the player clicks a sponsored cell (see
+ * `chessInteraction.js#showCellInfo`).
+ * @param {Object} _tetromino
  */
-export function onTetrominoPlaced(tetromino) {
-	if (tetromino && tetromino.sponsor) {
-		displaySponsorInfo(tetromino.sponsor);
-	}
+export function onTetrominoPlaced(_tetromino) {
+	// Intentionally empty. Kept exported so existing call sites in
+	// the legacy spawn / placement flow can be safely no-ops without
+	// a refactor.
 }
 
 /**

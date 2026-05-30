@@ -130,6 +130,11 @@ function createLineClearService({ io, gameManager, broadcaster, integrityService
 				}
 			}
 
+			let applyRows = rows;
+			let applyCols = cols;
+			let applyRowRuns = rowRuns;
+			let applyColRuns = colRuns;
+
 			if (animate) {
 				io.to(worldId).emit('cells_clearing', {
 					playerId,
@@ -141,9 +146,25 @@ function createLineClearService({ io, gameManager, broadcaster, integrityService
 					iteration: iterations,
 				});
 				await sleep(FLASH_DURATION_MS);
+
+				// The board can change during the flash window (another
+				// player's move, or someone pausing mid-flash). Re-scan
+				// and only clear lines that are STILL clearable, using
+				// the FRESH run bounds — so we never strip a cell that
+				// became protected during the flash, and never clear more
+				// than we flashed (we intersect with the original set).
+				// (LC-C2)
+				const fresh = boardManager.findClearableLines(world);
+				const freshRowSet = new Set(fresh.rows);
+				const freshColSet = new Set(fresh.cols);
+				applyRows = rows.filter(r => freshRowSet.has(r));
+				applyCols = cols.filter(c => freshColSet.has(c));
+				applyRowRuns = fresh.rowRuns;
+				applyColRuns = fresh.colRuns;
+				if (applyRows.length === 0 && applyCols.length === 0) break;
 			}
 
-			const applied = boardManager.applyClearedLines(world, rows, cols, { rowRuns, colRuns });
+			const applied = boardManager.applyClearedLines(world, applyRows, applyCols, { rowRuns: applyRowRuns, colRuns: applyColRuns });
 
 			// Bail if the apply step (somehow) did nothing — this can
 			// happen if another action modified the board during the

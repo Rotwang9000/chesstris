@@ -5,7 +5,10 @@
  * and maintains game state integrity.
  */
 
-const { expect, describe, it, beforeEach, afterEach, jest } = require('@jest/globals');
+// NOTE: `jest` is intentionally NOT destructured here — babel-jest's hoist
+// plugin injects a `jest` binding, so re-declaring it via @jest/globals is a
+// parse-time "already declared" error. The global `jest` is used directly.
+const { expect, describe, it, beforeEach, afterEach } = require('@jest/globals');
 const express = require('express');
 const request = require('supertest');
 const { createTestProxy } = require('../setup-extensions.js');
@@ -16,6 +19,9 @@ const {
 
 // Create a mock Express app for testing
 const mockApp = express();
+// Parse JSON bodies — without this every POST route's `req.body` is
+// undefined and the destructuring throws a 500 before any assertion.
+mockApp.use(express.json());
 mockApp.post('/api/games/:gameId/state', (req, res) => {
   res.status(403).json({ error: 'Forbidden' });
 });

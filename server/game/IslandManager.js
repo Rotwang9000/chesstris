@@ -29,12 +29,25 @@ const pieces = require('./pieces');
 //
 // User directive (2026-05): "dissolves should be mostly based on moves
 // but with a 10-min timer in case they make no moves in that time".
-// We raise the move limits so they are clearly primary, and keep the
-// time backstops at 10 / 15 minutes so AFK players can still be reaped.
+// The MOVE limit is the primary metric for active players. The TIME
+// limit is an IDLE backstop — it ticks against the player's last
+// chess move / tetromino placement, NOT against the island's age.
+// An active player who can't reconnect this particular island won't
+// get punished for it just because the wall clock keeps moving; they
+// only get punished if they stop playing for too long.
 const DISCONNECTED_MOVE_LIMIT = 15;
 const DISCONNECTED_PIECE_MOVE_LIMIT = 30;
-const DISCONNECTED_TIME_LIMIT_MS   = 10 * 60 * 1000; // 10 minutes
-const DISCONNECTED_PIECE_TIME_LIMIT_MS = 15 * 60 * 1000; // 15 minutes
+const DISCONNECTED_IDLE_LIMIT_MS   = 10 * 60 * 1000; // 10 minutes of inactivity
+const DISCONNECTED_PIECE_IDLE_LIMIT_MS = 15 * 60 * 1000; // 15 minutes of inactivity
+
+function lastActionAt(player) {
+	if (!player) return 0;
+	return Math.max(
+		Number(player.lastChessMoveAt) || 0,
+		Number(player.lastTetrominoPlacementAt) || 0,
+		Number(player.lastActiveAt) || 0,
+	);
+}
 
 class IslandManager {
 	constructor() {
@@ -301,12 +314,23 @@ class IslandManager {
 				if (!pos) return false;
 				return cells.some(cell => cell.x === pos.x && cell.z === pos.z);
 			});
-			const timeLimitMs = hasPiece ? DISCONNECTED_PIECE_TIME_LIMIT_MS : DISCONNECTED_TIME_LIMIT_MS;
+			const idleLimitMs = hasPiece ? DISCONNECTED_PIECE_IDLE_LIMIT_MS : DISCONNECTED_IDLE_LIMIT_MS;
 			const moveLimit = hasPiece ? DISCONNECTED_PIECE_MOVE_LIMIT : DISCONNECTED_MOVE_LIMIT;
 			const player = game.players && game.players[pid];
 			const currentMoves = (player && Number.isFinite(player.moveCount)) ? player.moveCount : 0;
 			const movesSince = Math.max(0, currentMoves - meta.moveSnapshot);
-			const remainingMs = Math.max(0, timeLimitMs - (now - meta.since));
+			// "Time left" is now measured against the player's last
+			// action (or, for islands that formed during an idle
+			// window, against the island itself — whichever is
+			// later). So an active player who can't reconnect this
+			// island doesn't see the clock burn down just because
+			// real time is passing, AND an idle player who returns
+			// to a newly-formed island still gets a full grace
+			// window before it dissolves.
+			const lastAct = lastActionAt(player) || meta.since;
+			const idleAnchor = Math.max(lastAct, meta.since);
+			const idleMs = Math.max(0, now - idleAnchor);
+			const remainingMs = Math.max(0, idleLimitMs - idleMs);
 			const remainingMoves = Math.max(0, moveLimit - movesSince);
 			report.push({
 				playerId,
@@ -314,7 +338,7 @@ class IslandManager {
 				remainingMs,
 				remainingMoves,
 				hasPiece,
-				timeLimitMs,
+				timeLimitMs: idleLimitMs,
 				moveLimit,
 			});
 		}
@@ -416,6 +440,42 @@ class IslandManager {
 			);
 		};
 
+		// MULTI-KING PROTECTION (bible §15.2 cross-anchor rule).
+		// A cell that carries content from MORE THAN ONE player gets a
+		// safety net: as long as ANY of those other owners still has a
+		// live path back to their own king through this cell, NOBODY's
+		// content on the cell is decayed. The cell is "anchored" by
+		// the other player's connectivity even if it isn't anchored to
+		// the player being decayed.
+		//
+		// Why this rule:
+		//   * It mirrors the user's intuition — a cell sitting on
+		//     someone else's living territory shouldn't quietly vanish
+		//     because YOUR end of the bridge collapsed.
+		//   * It can't be exploited to make territory immortal — both
+		//     owners still need their own connectivity; if BOTH lose
+		//     it, the cell falls normally.
+		//   * It dovetails with how the cell-physically-deletes logic
+		//     already works (the cell already survives if any owner's
+		//     content remains).
+		const isMultiKingAnchoredCell = (playerId, x, z) => {
+			const cellContents = game.board.cells[`${x},${z}`];
+			if (!Array.isArray(cellContents)) return false;
+			const otherOwners = new Set();
+			for (const item of cellContents) {
+				if (!item || item.player == null) continue;
+				const op = String(item.player);
+				if (op === String(playerId)) continue;
+				if (op === 'system' || op === 'home') continue;
+				otherOwners.add(op);
+			}
+			if (otherOwners.size === 0) return false;
+			for (const other of otherOwners) {
+				if (this.hasPathToKing(game, x, z, other)) return true;
+			}
+			return false;
+		};
+
 		for (const island of disconnectedIslands) {
 			const { playerId, cells } = island;
 			const pid = String(playerId);
@@ -426,12 +486,29 @@ class IslandManager {
 			const player = game.players && game.players[pid];
 			const currentMoves = (player && Number.isFinite(player.moveCount)) ? player.moveCount : 0;
 			const movesSince = Math.max(0, currentMoves - meta.moveSnapshot);
+			const lastAct = lastActionAt(player) || meta.since;
+			// The idle clock starts at MAX(islandFormed, lastMove):
+			//   - Active player: lastMove ≈ now → idleMs ≈ 0, safe.
+			//   - Idle player whose island just formed: clock starts
+			//     at islandFormed so they still get a full grace
+			//     window after coming back online.
+			//   - Idle player whose island formed long ago: clock
+			//     starts at lastMove, so the limit fires as soon as
+			//     they've been quiet long enough.
+			const idleAnchor = Math.max(lastAct, meta.since);
+			const idleMs = Math.max(0, now - idleAnchor);
 
 			const moveLimit = hasPiece ? DISCONNECTED_PIECE_MOVE_LIMIT : DISCONNECTED_MOVE_LIMIT;
-			const timeLimit = hasPiece ? DISCONNECTED_PIECE_TIME_LIMIT_MS : DISCONNECTED_TIME_LIMIT_MS;
+			const idleLimit = hasPiece ? DISCONNECTED_PIECE_IDLE_LIMIT_MS : DISCONNECTED_IDLE_LIMIT_MS;
+			// MOVE-based primary, IDLE-based fallback. The previous
+			// implementation ticked the time limit against wall-clock
+			// regardless of activity, which let an active player's
+			// disconnected island evaporate at 10 min even though they
+			// were busy elsewhere. Now the time limit only fires when
+			// the player has gone quiet for too long.
 			const decayReason =
 				movesSince >= moveLimit ? 'moves'
-					: islandAge >= timeLimit ? 'time'
+					: idleMs >= idleLimit ? 'idle'
 						: null;
 
 			if (!decayReason) {
@@ -459,6 +536,8 @@ class IslandManager {
 						if (isAwaitingPromotionCell(playerId, pos.x, pos.z)) return true;
 						// Knights are exempt from disconnection-decay.
 						if (piece && String(piece.type || '').toUpperCase() === 'KNIGHT') return true;
+						// Multi-king-anchor protection.
+						if (isMultiKingAnchoredCell(playerId, pos.x, pos.z)) return true;
 						return false;
 					},
 				}
@@ -489,6 +568,17 @@ class IslandManager {
 					};
 					continue;
 				}
+				if (isMultiKingAnchoredCell(playerId, cell.x, cell.z)) {
+					// Cross-anchored cell — another player's living
+					// territory keeps the cell alive even though our
+					// own end is disconnected. Refresh the grace
+					// timer so the BFS doesn't keep retrying it.
+					game.disconnectedSince[`${pid}:${cell.x},${cell.z}`] = {
+						since: now,
+						moveSnapshot: currentMoves,
+					};
+					continue;
+				}
 
 				const key = `${cell.x},${cell.z}`;
 				const cellContents = game.board.cells[key];
@@ -507,7 +597,8 @@ class IslandManager {
 				log(
 					`Cleared player ${playerId} content at (${cell.x}, ${cell.z}) due to ` +
 					`${decayReason}-based decay (moves=${movesSince}/${moveLimit}, ` +
-					`age=${Math.round(islandAge / 1000)}s/${Math.round(timeLimit / 1000)}s, ` +
+					`idle=${Math.round(idleMs / 1000)}s/${Math.round(idleLimit / 1000)}s, ` +
+					`age=${Math.round(islandAge / 1000)}s, ` +
 					`hasPiece=${hasPiece})`
 				);
 			}
@@ -707,7 +798,12 @@ class IslandManager {
 
 IslandManager.DISCONNECTED_MOVE_LIMIT = DISCONNECTED_MOVE_LIMIT;
 IslandManager.DISCONNECTED_PIECE_MOVE_LIMIT = DISCONNECTED_PIECE_MOVE_LIMIT;
-IslandManager.DISCONNECTED_TIME_LIMIT_MS = DISCONNECTED_TIME_LIMIT_MS;
-IslandManager.DISCONNECTED_PIECE_TIME_LIMIT_MS = DISCONNECTED_PIECE_TIME_LIMIT_MS;
+// Older names kept as aliases for any test / outside caller that
+// still looks them up via the class. The values are the idle limits;
+// the old "time since island formed" semantic has been retired.
+IslandManager.DISCONNECTED_TIME_LIMIT_MS = DISCONNECTED_IDLE_LIMIT_MS;
+IslandManager.DISCONNECTED_PIECE_TIME_LIMIT_MS = DISCONNECTED_PIECE_IDLE_LIMIT_MS;
+IslandManager.DISCONNECTED_IDLE_LIMIT_MS = DISCONNECTED_IDLE_LIMIT_MS;
+IslandManager.DISCONNECTED_PIECE_IDLE_LIMIT_MS = DISCONNECTED_PIECE_IDLE_LIMIT_MS;
 
 module.exports = IslandManager;

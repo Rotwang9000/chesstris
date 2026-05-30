@@ -188,107 +188,118 @@ export function createRussianKnightPiece(materialKey, isLocalPlayer, customMater
 	withers.receiveShadow = true;
 	group.add(withers);
 
-	// ── Head + neck as ONE extruded silhouette ──────────────────────
-	// User feedback: "Knights need to not poke their heads so far out.
-	// They aren't racehorses trying to get over the line! The head
-	// needs some rounding."
-	//
-	// The earlier silhouette poked out to x=0.54 which dominated the
-	// piece. We now keep the muzzle within x≈0.38 and round the
-	// forehead, brow and chin so the head looks like a stout knight
-	// pony rather than a stretched racehorse.
-	const headShape = new THREE.Shape();
-	headShape.moveTo(-0.04, 0.30);        // base of neck (back)
-	// Arched neck — gentler curve than before
-	headShape.bezierCurveTo(-0.07, 0.42, -0.05, 0.54, 0.02, 0.62);
-	// Poll → forehead — pulled in so the head doesn't lunge forward
-	headShape.bezierCurveTo(0.08, 0.70, 0.16, 0.74, 0.24, 0.72);
-	// Rounded brow
-	headShape.bezierCurveTo(0.32, 0.70, 0.36, 0.66, 0.38, 0.60);
-	// Soft rounded muzzle tip
-	headShape.bezierCurveTo(0.40, 0.54, 0.38, 0.50, 0.34, 0.48);
-	// Underside of muzzle
-	headShape.bezierCurveTo(0.28, 0.46, 0.22, 0.46, 0.16, 0.48);
-	// Throat / jaw curve
-	headShape.bezierCurveTo(0.08, 0.50, 0.04, 0.54, 0.04, 0.54);
-	// Close back to start
-	headShape.bezierCurveTo(0.00, 0.50, 0.00, 0.40, -0.04, 0.30);
+	// ── Neck + head as proper 3D primitives ─────────────────────────
+	// Previous attempts used a 2D extruded silhouette which read as
+	// a thin slab and made the head look like a paper cut-out from
+	// every non-side angle. Users called it "silly", "demented",
+	// "not round". We now build the head as a stout 3D sphere with
+	// a chubby muzzle ball, the neck as a cylinder, and the mane as
+	// a slim curved slab tucked behind the head. Everything stays
+	// pulled in close to the column — no racehorse lunge.
 
-	const headGeo = new THREE.ExtrudeGeometry(headShape, {
-		depth: 0.24,
-		bevelEnabled: true,
-		bevelSize: 0.045,         // bigger bevel = more rounding
-		bevelThickness: 0.045,
-		bevelSegments: isLocalPlayer ? 4 : 2,
-		curveSegments: isLocalPlayer ? 20 : 10,
-	});
-	headGeo.translate(0, 0, -0.12);
-	const head = new THREE.Mesh(headGeo, materials.primary);
-	head.castShadow = true;
-	head.receiveShadow = true;
-	group.add(head);
+	// Short arched neck. A simple cylinder tilted slightly forward.
+	const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.115, 0.155, 0.22, seg), materials.primary);
+	neck.position.set(0.04, 0.46, 0);
+	neck.rotation.z = -0.28;            // tilt forward, gentle
+	neck.castShadow = true;
+	neck.receiveShadow = true;
+	group.add(neck);
 
-	// Subtle muzzle patch in the secondary material so the round nose
-	// reads as a separate feature at distance.
-	const muzzlePatch = new THREE.Mesh(new THREE.SphereGeometry(0.08, seg, 10), materials.secondary);
-	muzzlePatch.scale.set(0.6, 0.55, 1.05);
-	muzzlePatch.position.set(0.36, 0.52, 0);
-	muzzlePatch.castShadow = true;
-	group.add(muzzlePatch);
+	// Main cranium — a fat sphere, slightly squashed top-to-bottom
+	// so it looks like a pony skull, not an egg.
+	const HEAD_CENTRE = { x: 0.16, y: 0.66, z: 0 };
+	const cranium = new THREE.Mesh(new THREE.SphereGeometry(0.16, seg, 12), materials.primary);
+	cranium.scale.set(1.05, 0.95, 0.95); // a touch wider than tall
+	cranium.position.set(HEAD_CENTRE.x, HEAD_CENTRE.y, HEAD_CENTRE.z);
+	cranium.castShadow = true;
+	cranium.receiveShadow = true;
+	group.add(cranium);
+
+	// Muzzle / nose — a smaller sphere fused to the front of the
+	// cranium. Sits low (mid-face) and forward, but never beyond
+	// x≈0.34 so the head never "pokes out".
+	const muzzle = new THREE.Mesh(new THREE.SphereGeometry(0.105, seg, 12), materials.primary);
+	muzzle.scale.set(1.0, 0.78, 0.85);
+	muzzle.position.set(0.27, 0.58, 0);
+	muzzle.castShadow = true;
+	muzzle.receiveShadow = true;
+	group.add(muzzle);
+
+	// Nose tip in the secondary palette so the muzzle reads as a
+	// separate feature from distance.
+	const noseTip = new THREE.Mesh(new THREE.SphereGeometry(0.055, seg, 10), materials.secondary);
+	noseTip.scale.set(0.95, 0.75, 0.85);
+	noseTip.position.set(0.33, 0.555, 0);
+	noseTip.castShadow = true;
+	group.add(noseTip);
+
+	// Cheek roundness — pair of small spheres on either side of the
+	// head, blending into the cranium. Gives the side profile some
+	// volume so the head reads round from every angle.
+	for (let side = -1; side <= 1; side += 2) {
+		const cheek = new THREE.Mesh(new THREE.SphereGeometry(0.075, seg, 10), materials.primary);
+		cheek.scale.set(0.9, 0.85, 1.05);
+		cheek.position.set(0.20, 0.61, side * 0.10);
+		cheek.castShadow = true;
+		group.add(cheek);
+	}
 
 	// ── Eyes + nostrils (local only) ─────────────────────────────────
 	if (isLocalPlayer) {
 		for (let side = -1; side <= 1; side += 2) {
-			const eye = new THREE.Mesh(new THREE.SphereGeometry(0.018, 10, 10), materials.accent);
-			eye.position.set(0.24, 0.69, side * 0.115);
+			const eye = new THREE.Mesh(new THREE.SphereGeometry(0.020, 10, 10), materials.accent);
+			eye.position.set(0.22, 0.70, side * 0.118);
 			group.add(eye);
 
 			const nostril = new THREE.Mesh(new THREE.SphereGeometry(0.013, 8, 8), materials.accent);
-			nostril.position.set(0.37, 0.54, side * 0.045);
+			nostril.position.set(0.33, 0.555, side * 0.040);
 			group.add(nostril);
 		}
 	}
 
 	// ── Ears ────────────────────────────────────────────────────────
-	// Smaller and pulled inwards so they sit ON the head, not perched
-	// like rabbit ears.
+	// Small, pulled inwards, tilted forward — sit ON the cranium
+	// rather than projecting like rabbit ears.
 	for (let side = -1; side <= 1; side += 2) {
-		const ear = new THREE.Mesh(new THREE.ConeGeometry(0.034, 0.10, 6), materials.primary);
-		ear.position.set(0.14, 0.82, side * 0.085);
-		ear.rotation.z = -0.20;
-		ear.rotation.x = side * 0.12;
+		const ear = new THREE.Mesh(new THREE.ConeGeometry(0.034, 0.09, 6), materials.primary);
+		ear.position.set(0.13, 0.81, side * 0.088);
+		ear.rotation.z = -0.15;
+		ear.rotation.x = side * 0.18;
 		ear.castShadow = true;
 		group.add(ear);
 	}
 
-	// ── Flowing mane ────────────────────────────────────────────────
+	// ── Mane ─────────────────────────────────────────────────────────
+	// Curved thin slab tucked behind the cranium and along the
+	// neck. Slim enough to not obscure the head profile but thick
+	// enough to read as hair at distance.
 	const maneShape = new THREE.Shape();
-	maneShape.moveTo(0.12, 0.78);
-	maneShape.quadraticCurveTo(0.04, 0.70, -0.02, 0.58);
-	maneShape.quadraticCurveTo(-0.10, 0.46, -0.10, 0.34);
-	maneShape.quadraticCurveTo(-0.08, 0.30, -0.04, 0.30);
-	maneShape.quadraticCurveTo(-0.02, 0.42, 0.04, 0.52);
-	maneShape.quadraticCurveTo(0.10, 0.62, 0.16, 0.76);
+	maneShape.moveTo(0.08, 0.80);
+	maneShape.quadraticCurveTo(-0.02, 0.74, -0.06, 0.62);
+	maneShape.quadraticCurveTo(-0.10, 0.50, -0.08, 0.36);
+	maneShape.quadraticCurveTo(-0.04, 0.32, 0.00, 0.34);
+	maneShape.quadraticCurveTo(-0.02, 0.46, 0.04, 0.56);
+	maneShape.quadraticCurveTo(0.08, 0.66, 0.12, 0.78);
 	maneShape.closePath();
 
 	const maneGeo = new THREE.ExtrudeGeometry(maneShape, {
-		depth: 0.13,
+		depth: 0.11,
 		bevelEnabled: true,
-		bevelSize: 0.015,
-		bevelThickness: 0.015,
+		bevelSize: 0.02,
+		bevelThickness: 0.02,
 		bevelSegments: 2,
 		curveSegments: isLocalPlayer ? 14 : 7,
 	});
-	maneGeo.translate(0, 0, -0.065);
+	maneGeo.translate(0, 0, -0.055);
 	const mane = new THREE.Mesh(maneGeo, materials.accent);
 	mane.castShadow = true;
 	mane.receiveShadow = true;
 	group.add(mane);
 
-	// Forelock — between the ears.
-	const forelock = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.09, 6), materials.accent);
-	forelock.position.set(0.18, 0.80, 0);
-	forelock.rotation.z = -0.32;
+	// Forelock — small tuft between the ears.
+	const forelock = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.07, 6), materials.accent);
+	forelock.position.set(0.17, 0.79, 0);
+	forelock.rotation.z = -0.25;
 	forelock.castShadow = true;
 	group.add(forelock);
 
@@ -637,17 +648,39 @@ export function createRussianKingPiece(materialKey, isLocalPlayer, customMateria
 }
 
 /**
- * Map a numeric piece type to the matching Russian builder.
- * Defaults to pawn for unknown types.
+ * Per-type uniform size, encoding chess rank as scale — the oldest,
+ * most legible "tell them apart at a glance" cue there is, and the one
+ * the cute set was missing (every piece shared the same ~0.5-unit
+ * footprint, so a field of one player's pieces read as identical green
+ * blobs). Pawns shrink, royalty grows; the base stays seated on the
+ * cell because every builder grows upward from y=0. Footprints stay
+ * well inside a cell (max radius ≈ 0.29 × 1.24 ≈ 0.36 < 0.5).
+ */
+const PIECE_SIZE_BY_TYPE = Object.freeze({
+	1: 0.82, // pawn   — clearly the smallest
+	2: 0.96, // rook   — short and stout
+	3: 1.02, // knight
+	4: 1.08, // bishop — taller
+	5: 1.16, // queen
+	6: 1.24, // king   — towers over the rest
+});
+
+/**
+ * Map a numeric piece type to the matching Russian builder, then apply
+ * the per-type size cue. Defaults to pawn for unknown types.
  */
 export function buildRussianPiece(pieceTypeNum, materialKey, isLocalPlayer, customMaterials = null) {
+	let piece;
 	switch (pieceTypeNum) {
-		case 6: return createRussianKingPiece(materialKey, isLocalPlayer, customMaterials);
-		case 5: return createRussianQueenPiece(materialKey, isLocalPlayer, customMaterials);
-		case 4: return createRussianBishopPiece(materialKey, isLocalPlayer, customMaterials);
-		case 3: return createRussianKnightPiece(materialKey, isLocalPlayer, customMaterials);
-		case 2: return createRussianRookPiece(materialKey, isLocalPlayer, customMaterials);
+		case 6: piece = createRussianKingPiece(materialKey, isLocalPlayer, customMaterials); break;
+		case 5: piece = createRussianQueenPiece(materialKey, isLocalPlayer, customMaterials); break;
+		case 4: piece = createRussianBishopPiece(materialKey, isLocalPlayer, customMaterials); break;
+		case 3: piece = createRussianKnightPiece(materialKey, isLocalPlayer, customMaterials); break;
+		case 2: piece = createRussianRookPiece(materialKey, isLocalPlayer, customMaterials); break;
 		case 1:
-		default: return createRussianPawnPiece(materialKey, isLocalPlayer, customMaterials);
+		default: piece = createRussianPawnPiece(materialKey, isLocalPlayer, customMaterials); break;
 	}
+	const size = PIECE_SIZE_BY_TYPE[pieceTypeNum] || PIECE_SIZE_BY_TYPE[1];
+	piece.scale.setScalar(size);
+	return piece;
 }

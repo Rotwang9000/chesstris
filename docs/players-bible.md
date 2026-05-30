@@ -243,8 +243,11 @@ disappear:
    broadcasts a `game_update`, and emits the usual `row_cleared` toast.
 4. Gravity may have created a brand-new clearable line — a **cascade**.
    The server goes back to step 1 and flashes again before clearing
-   the next wave. The cascade is capped at 16 iterations as a safety
-   net.
+   the next wave. The cascade is capped at 8 iterations
+   (`MAX_CASCADE_ITERATIONS`) as a safety net. Before each wave is
+   applied the server re-scans and only clears lines that are *still*
+   clearable, so a cell that became protected during the 700 ms flash
+   (e.g. a player paused mid-cascade) is never stripped.
 
 The `row_cleared` payload now carries an `iteration` field (0 for the
 first clear, 1 for the next link in the cascade, etc.) so the UI can
@@ -338,9 +341,11 @@ conditions:
   detection runs on the previous owner — this can disconnect and destroy
   their territory. This is a key strategic mechanic: moving pieces onto enemy
   cells claims them for your empire.
-- **Moving into check is permitted.** There is no check/checkmate concept in
-  Tetches - only king capture. Moving your king into danger is legal but
-  unwise.
+- **Check (king-capture grace).** There is no classical checkmate, but a king
+  is not taken instantly. When a move *would* capture an enemy king, the
+  capture is **deferred** and the defender is given one timed move to escape
+  or take the attacker (see "Check" below). Moving your king into danger is
+  legal but unwise — you may not get a second grace window.
 
 ### Castling
 
@@ -414,6 +419,32 @@ Since 8 cells in a row is also the line-clear length, the pawn must
 either **capture pieces** or **wait for a row clear** to remove the cells
 in front of it before it can promote.
 
+### Check (king-capture grace)
+
+A king is never taken on the spot. When any move would capture an enemy
+king, the server opens a **pending check** instead of resolving the
+capture:
+
+1. The attacking piece is **frozen in place** (it does not move yet) and the
+   defender is notified with an on-screen banner; their camera flies to their
+   king and a countdown begins (`CHECK_DEADLINE_MS = 20 s`).
+2. While in check the defender's **tetromino fall is paused**, and their next
+   chess move **must be a legal escape** — either move the king to a square no
+   enemy piece can reach, or capture the attacker. Any other move is rejected.
+   (The king may *not* move onto a square still threatened by another piece —
+   real-chess style.)
+3. If the defender escapes in time, the check clears and the attacker must
+   re-issue any move on its own clock.
+4. If the deadline passes with no escape, the deferred capture executes
+   automatically.
+
+**Anti-stall limit:** the *same* attacking piece may grant the defender a
+grace window at most `MAX_CHECK_DEFERS_PER_PIECE = 2` times. On the third
+attack from that piece the king is **captured directly**, with no further
+escape window — this stops one piece shuffling in and out of range to freeze
+a defender indefinitely. The counter lives on the attacking piece, so it
+resets naturally when that piece is captured or removed.
+
 ### King capture and consequences
 
 Capturing an opponent's king triggers a dramatic sequence:
@@ -461,8 +492,24 @@ is in progress.
 ### One king rule
 
 Each player has exactly one king at all times. Kings cannot be purchased.
-A player whose king is captured is eliminated (their pieces and territory
+A player whose king is **captured** is eliminated (their pieces and territory
 transfer to the captor as described above).
+
+### King lives & a dramatic end
+
+A king has **three lives** (`KING_INITIAL_LIVES`). Losing a king to a
+*non-intentional* cause — falling into the water after a row clear, an island
+decaying out from under it, an invalid/unsupported position — does **not** end
+the game: the king respawns at the home-zone centre on a fresh anchor and the
+player loses one life (`king_respawned`). Intentional/terminal removals
+(capture, voluntary detonation, leaving) bypass the life cost.
+
+When the **last life is spent**, the player is eliminated *and* their king
+detonates lemming-style: every cell they own explodes furthest-from-king first
+and all their remaining pieces are consumed in the blast — the same animation as
+a voluntary/lone-king self-destruct, so the run ends with a bang rather than the
+king silently vanishing while everything else sits there. (See
+`server/king/kingLives.js` + `server/king/detonation.js`.)
 
 ---
 
@@ -482,8 +529,8 @@ server runs island detection:
 
    | Trigger | Terrain-only island | Piece-bearing island |
    |---|---|---|
-   | Owning-player moves since disconnection | **6** | **12** |
-   | Wall-clock backstop (AFK players) | **10 minutes** | **20 minutes** |
+   | Owning-player moves since disconnection (`DISCONNECTED_MOVE_LIMIT` / `DISCONNECTED_PIECE_MOVE_LIMIT`) | **15** | **30** |
+   | Wall-clock **idle** backstop (`DISCONNECTED_IDLE_LIMIT_MS` / `DISCONNECTED_PIECE_IDLE_LIMIT_MS`) | **10 minutes** | **15 minutes** |
 
    A move is one tetromino placement *or* one chess move (the
    "Skip chess move" button also counts as a move so a player can't
@@ -669,7 +716,7 @@ colours is a trophy of conquest.
 
 ```
 REQUIRED_CELLS_FOR_ROW_CLEARING     = 8
-PAWN_PROMOTION_DISTANCE             = 8
+PAWN_PROMOTION_DISTANCE             = 8      (pawn then freezes & deploys; see §9)
 HOME_ZONE_WIDTH                     = 8
 HOME_ZONE_HEIGHT                    = 2
 HOME_ZONE_DISTANCE                  = 16     (pawn-clash spacing)
@@ -677,10 +724,17 @@ HOME_ZONE_DEGRADATION_INTERVAL      = 150 000 ms (2.5 min)
 MAX_PLAYERS_PER_GAME                = 32
 CHESS_MOVE_COOLDOWN_MS              = 500
 TETROMINO_PLACEMENT_COOLDOWN_MS     = 800
-AUTO_QUEEN_TIMEOUT_MS               = 15 000
 SUICIDAL_PAWN_DELAY_MS              = 3 000
 SUICIDAL_PAWN_INTERVAL_MS           = 500
 SIMULTANEOUS_CAPTURE_WINDOW_MS      = 1 000
+CHECK_DEADLINE_MS                   = 20 000 (king-capture grace window; see §9)
+MAX_CHECK_DEFERS_PER_PIECE          = 2      (then the attacker captures direct)
+FLASH_DURATION_MS                   = 700    (row-clear flash before the cut)
+MAX_CASCADE_ITERATIONS             = 8
+DISCONNECTED_MOVE_LIMIT             = 15     (terrain-only island decay)
+DISCONNECTED_PIECE_MOVE_LIMIT       = 30     (piece-bearing island decay)
+DISCONNECTED_IDLE_LIMIT_MS          = 600 000 ms (10 min AFK backstop)
+DISCONNECTED_PIECE_IDLE_LIMIT_MS    = 900 000 ms (15 min AFK backstop)
 KING_DUEL_TIMEOUT_MS                = 10 000
 KING_DUEL_GRID_COLS                 = 4
 KING_DUEL_GRID_ROWS                 = 2

@@ -146,7 +146,13 @@ function findRespawnCell(world, playerId, targetX, targetZ, maxRadius = 6) {
 	return { x: targetX, z: targetZ, needsAnchor: true };
 }
 
-function createKingLifeService({ io, broadcaster, persistence, activityLog = null } = {}) {
+function createKingLifeService({
+	io,
+	broadcaster,
+	persistence,
+	activityLog = null,
+	kingDetonationService = null,
+} = {}) {
 	if (!io) throw new Error('createKingLifeService: io required');
 	if (!broadcaster) throw new Error('createKingLifeService: broadcaster required');
 	if (!persistence) throw new Error('createKingLifeService: persistence required');
@@ -188,7 +194,16 @@ function createKingLifeService({ io, broadcaster, persistence, activityLog = nul
 		if (remaining <= 0) {
 			emitFinalDeath({ world, playerId, playerName, piece, reason });
 			persistence.markDirty();
-			return { respawned: false, remainingLives: 0, final: true };
+			// Go out with a bang: detonate the king lemming-style so the
+			// player's remaining pieces and every cell they own explode in
+			// rings instead of the king quietly vanishing while everything
+			// else just sits there. Deferred to the next tick so we never
+			// mutate `world.chessPieces` (collateral piece removal) while a
+			// caller — settle / island-decay — is mid-iteration over it.
+			const detonating = scheduleFinalDetonation({
+				playerId, kingPieceId: piece.id, reason, isComputer: !!player.isComputer,
+			});
+			return { respawned: false, remainingLives: 0, final: true, detonating };
 		}
 
 		const result = respawnKing({ world, player, playerId, piece, reason });
@@ -201,6 +216,31 @@ function createKingLifeService({ io, broadcaster, persistence, activityLog = nul
 		persistence.markDirty();
 		try { broadcaster.broadcastGameUpdate(); } catch (_e) { /* best-effort */ }
 		return { respawned: true, remainingLives: remaining, ...result };
+	}
+
+	/**
+	 * Kick off the lemming-style king detonation that ends a player's
+	 * run. Returns `true` if a detonation was scheduled (so the caller's
+	 * `removePiece` knows NOT to splice the king — the detonation service
+	 * removes it at the end of the animation), `false` if no detonation
+	 * service is wired (caller should fall through to the plain removal).
+	 *
+	 * The reason carries an `ai_` prefix for bots so clients show the
+	 * right toast ("An AI was reduced … Bye Bye!" vs an opponent message).
+	 */
+	function scheduleFinalDetonation({ playerId, kingPieceId, reason, isComputer }) {
+		if (!kingDetonationService || typeof kingDetonationService.detonateKing !== 'function') {
+			return false;
+		}
+		const detonationReason = `${isComputer ? 'ai_' : ''}lives_exhausted_${reason || 'unknown'}`;
+		setImmediate(() => {
+			try {
+				kingDetonationService.detonateKing({ playerId, kingPieceId, reason: detonationReason });
+			} catch (err) {
+				console.error('[KingLives] final detonation failed:', err.message);
+			}
+		});
+		return true;
 	}
 
 	function respawnKing({ world, player, playerId, piece }) {

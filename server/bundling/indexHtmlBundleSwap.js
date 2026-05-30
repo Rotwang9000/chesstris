@@ -27,7 +27,14 @@ const BUNDLE_HREF = 'dist/app.bundle.js';
 
 function buildBundleScriptTag(version) {
 	const v = version ? `?v=${version}` : '';
-	return `<script src="${BUNDLE_HREF}${v}" defer></script>`;
+	// Embed the bundle version on `window.__BUNDLE_VERSION__` so
+	// client-side code can compare against the version advertised by
+	// the server on socket connect. A stale tab open since before a
+	// redeploy will mismatch and prompt the user to refresh.
+	const versionPin = version
+		? `<script>window.__BUNDLE_VERSION__=${JSON.stringify(String(version))};</script>`
+		: '';
+	return `${versionPin}<script src="${BUNDLE_HREF}${v}" defer></script>`;
 }
 
 /**
@@ -98,7 +105,20 @@ function createIndexHtmlBundleSwap({ projectRoot } = {}) {
 	const bundleStatus = () =>
 		bundleExists ? `bundled (mtime ${bundleVersion})` : 'unbundled (no app.bundle.js)';
 
-	return { middleware, bundleStatus };
+	/**
+	 * Expose the live bundle version so the server can advertise it
+	 * to clients via the socket handshake. Stale clients use this to
+	 * detect that a redeploy has happened and prompt the player to
+	 * refresh — important because cheating / older front-ends could
+	 * otherwise stay connected indefinitely on logic that's drifted
+	 * out of sync with the current server.
+	 */
+	const getBundleVersion = () => {
+		refreshBundleStatus();
+		return bundleVersion || '';
+	};
+
+	return { middleware, bundleStatus, getBundleVersion };
 }
 
 module.exports = { createIndexHtmlBundleSwap };

@@ -1046,6 +1046,18 @@ class BoardManager {
 			return aKey - bKey;
 		});
 
+		// Track only the moves that actually happened. The old code
+		// would shift every `eligibleChess` piece by its computed
+		// (dx, dz) below — even when the cell move itself was skipped
+		// here for collision. That left the chess piece's logical
+		// position pointing at a square where its supporting cell
+		// hadn't actually moved, so the next integrity sweep removed
+		// the piece for `no_supporting_cell`. Player report:
+		// "a pawn which was on one of the cells that moved back
+		// towards the king found itself in a gap somehow… the cell
+		// it was on just moved, not cleared, it should have been OK."
+		const successfulMoves = new Map();
+
 		for (const cell of moves) {
 			const oldKey = `${cell.x},${cell.z}`;
 			const newX = cell.x + cell.dx;
@@ -1062,6 +1074,7 @@ class BoardManager {
 
 			game.board.cells[newKey] = cell.contents;
 			delete game.board.cells[oldKey];
+			successfulMoves.set(oldKey, { x: newX, z: newZ });
 
 			for (const item of cell.contents) {
 				if (!item) continue;
@@ -1071,34 +1084,39 @@ class BoardManager {
 				}
 				if (item.x !== undefined) item.x = newX;
 				if (item.z !== undefined) item.z = newZ;
+				// Some chess markers carry a direct reference to the
+				// canonical piece (`item.chessPiece = piece`). The
+				// post-loop below will catch these via the map lookup,
+				// but mutating it here too keeps the cell-content view
+				// in lock-step for any code that reads it before the
+				// post-loop runs.
+				if (item.chessPiece && item.chessPiece.position) {
+					item.chessPiece.position.x = newX;
+					item.chessPiece.position.z = newZ;
+				}
 			}
 		}
 
-		// Mirror the shift on the top-level chessPieces array so
-		// positions stay in lock-step with the board (the cell-array
-		// chess marker is moved above, but the canonical piece record
-		// lives on `game.chessPieces`). Only pieces whose cell was
-		// eligible per the connectivity check above get to ride along
-		// — pieces stranded by mixed-owner gaps or broken chains stay
-		// where they are.
+		// Mirror the actually-applied moves onto the top-level
+		// chessPieces array. We deliberately key off `successfulMoves`
+		// (cells that really did slide) rather than `eligibleChess`
+		// (cells that COULD have slid) — see the comment above
+		// `successfulMoves`. Pieces in collision-skipped cells stay
+		// put with their supporting terrain.
 		if (Array.isArray(game.chessPieces)) {
 			for (const piece of game.chessPieces) {
 				if (!piece || !piece.position) continue;
-				if (rowSet.has(piece.position.z) || colSet.has(piece.position.x)) continue;
 				const pieceKey = `${piece.position.x},${piece.position.z}`;
-				if (!eligibleChess.has(pieceKey)) continue;
-				const king = playerKing[piece.player];
-				if (!king) continue;
-				const dx = computeShift(king.x, piece.position.x, clearedCols);
-				const dz = computeShift(king.z, piece.position.z, clearedRows);
-				if (dx) piece.position.x += dx;
-				if (dz) piece.position.z += dz;
+				const dest = successfulMoves.get(pieceKey);
+				if (!dest) continue;
+				piece.position.x = dest.x;
+				piece.position.z = dest.z;
 			}
 		}
 
 		if (moves.length > 0) {
 			log(
-				`Applied gravity: ${moves.length} cell${moves.length === 1 ? '' : 's'} ` +
+				`Applied gravity: ${successfulMoves.size}/${moves.length} cell${moves.length === 1 ? '' : 's'} ` +
 				`moved towards kings (rows=[${clearedRows.join(',')}] cols=[${clearedCols.join(',')}])`
 			);
 		}

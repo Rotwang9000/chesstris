@@ -18,9 +18,81 @@ function createKingCaptureService({ io, gameManager, broadcaster, activityLog = 
 	if (!gameManager) throw new Error('createKingCaptureService: gameManager required');
 	if (!broadcaster) throw new Error('createKingCaptureService: broadcaster required');
 
+	// Wired post-construction (bootstrap) to avoid a circular dep — the
+	// duel service is built with a reference to THIS service.
+	let duelService = null;
+	function setDuelService(svc) { duelService = svc; }
+
+	/**
+	 * Single entry-point for "a king was just taken" used by BOTH the
+	 * human chess handler and the AI. Previously the AI called
+	 * `executeKingCapture` directly, skipping the simultaneous-capture
+	 * window and King's-Duel detection that the human path had — so an
+	 * AI could never be drawn into a duel and its captures weren't
+	 * recorded in `pendingKingCaptures`. Centralising it keeps the two
+	 * paths identical.
+	 *
+	 * If an opposing capture is already pending within
+	 * `SIMULTANEOUS_CAPTURE_WINDOW_MS` (both kings fell almost together)
+	 * we hand off to a King's Duel instead of resolving immediately;
+	 * otherwise we record the capture and execute it.
+	 *
+	 * @returns {{executed:boolean, duel?:boolean, duelId?:string,
+	 *           alreadyEliminated?:boolean}}
+	 */
+	function resolveKingCapture({ captorId, defeatedId } = {}) {
+		const world = World.getWorld();
+		if (!world) return { executed: false };
+		if (!Array.isArray(world.pendingKingCaptures)) world.pendingKingCaptures = [];
+
+		const defeatedRecord = world.players && world.players[defeatedId];
+		if (defeatedRecord && defeatedRecord.eliminated) {
+			return { executed: false, alreadyEliminated: true };
+		}
+
+		const now = Date.now();
+		const captureWindow = GAME_RULES.SIMULTANEOUS_CAPTURE_WINDOW_MS || 1000;
+
+		const reverseCapture = world.pendingKingCaptures.find(
+			c => String(c.captorId) === String(defeatedId)
+				&& String(c.defeatedId) === String(captorId)
+				&& (now - c.timestamp) < captureWindow
+		);
+		if (reverseCapture && duelService && typeof duelService.startDuel === 'function') {
+			world.pendingKingCaptures = world.pendingKingCaptures.filter(c => c !== reverseCapture);
+			const duelId = duelService.startDuel(defeatedId, captorId);
+			World.markDirty();
+			return { executed: false, duel: true, duelId };
+		}
+
+		world.pendingKingCaptures.push({ captorId, defeatedId, timestamp: now });
+		world.pendingKingCaptures = world.pendingKingCaptures.filter(
+			c => (now - c.timestamp) < captureWindow * 2
+		);
+		World.markDirty();
+
+		executeKingCapture(captorId, defeatedId);
+		return { executed: true };
+	}
+
 	function executeKingCapture(captorId, defeatedId) {
 		const world = World.getWorld();
 		if (!world) return;
+
+		// Idempotency guard: a king capture transfers the loser's
+		// pieces + territory and pushes a prison entry — all
+		// destructive, none safe to repeat. Duplicate calls can arrive
+		// from the simultaneous-capture window, a check expiry racing a
+		// direct capture, or duplicate socket events. If the loser is
+		// already flagged eliminated, this capture has already been
+		// processed — bail. (Chess-H6)
+		const defeatedRecord = world.players && world.players[defeatedId];
+		if (defeatedRecord && defeatedRecord.eliminated) {
+			console.warn(
+				`[KingCapture] ${defeatedId} already eliminated — ignoring duplicate capture by ${captorId}.`
+			);
+			return;
+		}
 
 		const captorPlayer = World.getPlayer(captorId) || {};
 		const defeatedPlayer = World.getPlayer(defeatedId) || {};
@@ -30,7 +102,6 @@ function createKingCaptureService({ io, gameManager, broadcaster, activityLog = 
 		// hide them and the home-zone allocator skips their coords on
 		// the next join (otherwise we keep anchoring fresh players to
 		// the corpse-king position forever).
-		const defeatedRecord = world.players && world.players[defeatedId];
 		if (defeatedRecord) {
 			defeatedRecord.eliminated = true;
 			defeatedRecord.eliminatedAt = Date.now();
@@ -52,11 +123,36 @@ function createKingCaptureService({ io, gameManager, broadcaster, activityLog = 
 			}
 		}
 
+		// Never hand the defeated player's KING to the captor. Doing so
+		// breaks the one-king rule and is the root of the user's "I
+		// captured a king but BECAME it / ended up with two kings" report.
+		// Every caller is supposed to remove the king before we get here
+		// (chess.js, the AI path and `checkService.expireCheck` all call
+		// `pieces.removePiece` first), but guard defensively: collect any
+		// lingering defeated king and delete it instead of transferring it.
+		// A respawn racing the capture, a stale persisted snapshot, or a
+		// future caller that forgets the pre-removal would otherwise
+		// re-introduce the bug.
+		const strayKings = [];
 		for (const piece of world.chessPieces) {
 			if (!piece || piece.player !== defeatedId) continue;
+			if (String(piece.type || '').toUpperCase() === 'KING') {
+				strayKings.push(piece);
+				continue;
+			}
 			piece.player = captorId;
 			piece.color = captorPlayer.color || piece.color;
 			if (piece.type === 'PAWN') piece.suicidal = true;
+		}
+		for (const king of strayKings) {
+			console.warn(
+				`[KingCapture] Defeated ${defeatedId} still had a live king ` +
+				`(${king.id}) at capture time — removing it rather than transferring (one-king-rule).`
+			);
+			pieces.removePiece(world, king, {
+				reason: pieces.REMOVAL_REASONS.CAPTURED,
+				silent: true,
+			});
 		}
 
 		for (const cell of Object.values(world.board.cells)) {
@@ -168,7 +264,7 @@ function createKingCaptureService({ io, gameManager, broadcaster, activityLog = 
 		step();
 	}
 
-	return { executeKingCapture };
+	return { executeKingCapture, resolveKingCapture, setDuelService };
 }
 
 module.exports = { createKingCaptureService };

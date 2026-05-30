@@ -43,6 +43,7 @@ function createAiRunner({
 	aiActions,
 	kingCaptureService,
 	kingDetonationService,
+	checkService = null,
 	persistence,
 	spectatorRegistry,
 }) {
@@ -56,6 +57,13 @@ function createAiRunner({
 	if (!persistence) throw new Error('createAiRunner: persistence required');
 
 	const tickIntervals = new Map();
+
+	// Dev stress-test escape hatch: when true, `trimDuplicateAis` is a
+	// no-op so a tester can pile on many bots of the same difficulty
+	// without the continuous trim collapsing them back to one-per-tier.
+	// Never set in production (guarded at the socket handler).
+	let trimSuspended = false;
+	function setTrimSuspended(value) { trimSuspended = !!value; }
 
 	function startAiPlayer(playerId) {
 		stopAiPlayer(playerId);
@@ -105,6 +113,21 @@ function createAiRunner({
 		const computerPlayer = World.getPlayer(computerId);
 		if (!world || !computerPlayer || !computerPlayer.isComputer) return;
 		if (computerPlayer.pendingRespawn) return;
+
+		// Highest-priority response: if this AI is the defender in a
+		// pending Check, try to escape NOW. Tetromino placement and
+		// other strategic moves are useless if the king is about to
+		// die — and they'd be rejected by the chess handler anyway
+		// (only escape moves are accepted while in check).
+		if (checkService && world.pendingCheck
+			&& String(world.pendingCheck.defenderId) === String(computerId)) {
+			const escaped = aiActions.performCheckEscape(
+				computerId, checkService, kingCaptureService
+			);
+			if (escaped) return;
+			// No escape available — let the deadline timer handle it.
+			return;
+		}
 
 		// AI players that were marked `eliminated` (e.g. by the
 		// ghost-sweep or by a previous king capture that never finished
@@ -175,7 +198,7 @@ function createAiRunner({
 		if (actionType === 'tetromino') {
 			acted = !!aiActions.performStrategicTetrominoPlacement(computerId);
 		} else {
-			acted = !!aiActions.performStrategicChessMove(computerId, kingCaptureService);
+			acted = !!aiActions.performStrategicChessMove(computerId, kingCaptureService, checkService);
 		}
 
 		if (acted) {
@@ -185,12 +208,30 @@ function createAiRunner({
 
 		computerPlayer.aiStuckTicks = (computerPlayer.aiStuckTicks || 0) + 1;
 		if (computerPlayer.aiStuckTicks >= AI_STUCK_NO_OP_THRESHOLD && kingPiece) {
-			console.log(
-				`[AI] ${computerId} stuck (${computerPlayer.aiStuckTicks} idle ticks, ` +
-				`${aiPieces.length} pieces) — forcing respawn.`
-			);
+			// Only RECYCLE (self-detonate + respawn) an AI that's
+			// genuinely out of options. An AI that still has a healthy
+			// roster AND owns terrain shouldn't blow itself up just
+			// because it whiffed a handful of move attempts — that
+			// produced the "AI suicides right after I capture one of
+			// its pieces, even though it had loads left" report. Give
+			// it a clean slate and let it try again next tick; the
+			// marooned / king-only guards above already catch the
+			// truly hopeless cases.
+			const ownsTerrain = aiOwnsTerrain(world, computerId);
+			const hasFightingForce = aiPieces.length > AI_MAROONED_PIECE_MAX;
 			computerPlayer.aiStuckTicks = 0;
-			handleAiKingOnlyDetonation(computerId, kingPiece);
+			if (ownsTerrain && hasFightingForce) {
+				console.log(
+					`[AI] ${computerId} stuck (idle) but still has ${aiPieces.length} ` +
+					`pieces and owns terrain — skipping turn instead of detonating.`
+				);
+			} else {
+				console.log(
+					`[AI] ${computerId} stuck and low on resources ` +
+					`(${aiPieces.length} pieces, terrain=${ownsTerrain}) — recycling.`
+				);
+				handleAiKingOnlyDetonation(computerId, kingPiece);
+			}
 		}
 	}
 
@@ -307,6 +348,7 @@ function createAiRunner({
 	 * @returns {number} number of AI players removed
 	 */
 	function trimDuplicateAis() {
+		if (trimSuspended) return 0;
 		const world = World.getWorld();
 		if (!world) return 0;
 		const allAi = World.listComputerPlayers();
@@ -410,6 +452,7 @@ function createAiRunner({
 		addComputerPlayer,
 		ensureRoster,
 		trimDuplicateAis,
+		setTrimSuspended,
 		stopAll,
 	};
 }

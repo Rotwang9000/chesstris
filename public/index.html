@@ -166,7 +166,11 @@
 			box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 		}
 		
-		/* Sponsor Ad Container */
+		/* Sponsor Ad Container. z-index used to be 500 which let the
+		   next-piece HUD (z-index 1000) overlap it — the user
+		   reported "the ad box appears under the next piece".
+		   1100 keeps it above the HUD but below modal dialogs
+		   (≥2000). */
 		#sponsor-ad {
 			position: fixed;
 			bottom: 20px;
@@ -176,7 +180,7 @@
 			border: 2px solid #ffcc00;
 			border-radius: 12px;
 			padding: 16px;
-			z-index: 500;
+			z-index: 1100;
 			display: none;
 			box-shadow: 0 8px 32px rgba(255, 204, 0, 0.3), 0 0 20px rgba(0, 0, 0, 0.5);
 			backdrop-filter: blur(10px);

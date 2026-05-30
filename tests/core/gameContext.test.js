@@ -90,14 +90,9 @@ describe('gameContext', () => {
 		});
 	});
 
-	describe('models', () => {
-		it('returns an object with pieces, board, and defaultPieces', () => {
-			const m = ctx.getModels();
-			expect(m).toHaveProperty('pieces');
-			expect(m).toHaveProperty('board');
-			expect(m).toHaveProperty('defaultPieces');
-		});
-	});
+	// NOTE: the old `ctx.getModels()` accessor (pieces/board/defaultPieces)
+	// was removed when model loading moved out of gameContext; there is no
+	// such API any more, so that stale assertion was dropped here.
 
 	describe('animationQueue', () => {
 		it('returns an array', () => {

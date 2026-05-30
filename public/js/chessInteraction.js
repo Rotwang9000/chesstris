@@ -27,6 +27,7 @@ import {
 import { updateNextPieceHint } from './tetromino/nextPiece.js';
 import { showToastMessage } from './showToastMessage.js';
 import { showFrozenPawnPromotionDialog } from './uiOverlays.js';
+import { displaySponsorInfo } from '../utils/sponsors.js';
 
 /**
  * In-flight chess move tracker.
@@ -650,11 +651,12 @@ export function moveChessPieceToCell(x, z) {
 	animateChessPieceMove(piece, originalX, originalZ, x, z, () => {
 		sendChessMoveToServer(pieceData, x, z, (success, responseData) => {
 			gameState.processingMove = false;
-			clearChessSelection();
 
-			if (success) {
-				updateGameStateAfterChessMove(pieceData, x, z);
-				removeChessMeshesAtCell(x, z, pieceId);
+			// Both a completed move and a committed king-threat ("check")
+			// spend the player's chess move for this turn, so the follow-up
+			// — advance to the tetris phase and spawn the next piece — is
+			// identical. Factored out so the two success paths can't drift.
+			const advanceToTetrisPhase = () => {
 				gameState._forceUpdate = true;
 				gameState.turnPhase = 'tetris';
 				cancelSkipChessTimer();
@@ -669,6 +671,36 @@ export function moveChessPieceToCell(x, z) {
 						tetrominoModule.renderTetromino(gameState);
 					}
 				}
+			};
+
+			// Deferred king capture — the server started a "check" and the
+			// attacker did NOT move (the king gets a grace window to
+			// escape). Don't leave the attacker sitting on the king's
+			// square as if it had captured (it would snap back when the
+			// authoritative snapshot arrived, looking like a glitch). Glide
+			// it back to where it really is; the on-board battle markers and
+			// CHECK banner (driven by the `chess_check` broadcast in
+			// checkAlert.js) make the clash obvious to both players.
+			if (success && responseData && responseData.check) {
+				clearChessSelection();
+				animateChessPieceMove(piece, x, z, originalX, originalZ, () => {
+					clearInFlightMove(gameState);
+				});
+				advanceToTetrisPhase();
+				showTemporaryMessage(
+					responseData.message
+						? `Check! ${responseData.message}`
+						: 'Check! Your piece has the enemy king pinned.',
+					'success',
+				);
+				return;
+			}
+
+			if (success) {
+				clearChessSelection();
+				updateGameStateAfterChessMove(pieceData, x, z);
+				removeChessMeshesAtCell(x, z, pieceId);
+				advanceToTetrisPhase();
 
 				// IMPORTANT: do not clear `inFlightMove` here. The server
 				// will broadcast a stale chessPieces snapshot for one or
@@ -682,6 +714,11 @@ export function moveChessPieceToCell(x, z) {
 				return;
 			}
 
+			// Rejected — the piece never actually moved, so the player
+			// stays in "chess mode" with this piece still selected. The
+			// rejection handler keeps the selection and re-shows the
+			// valid-move rings for revertible failures (only `piece_gone`
+			// drops the selection, because there's nothing left to move).
 			handleChessMoveRejection({
 				gameState,
 				piece,
@@ -711,6 +748,19 @@ function handleChessMoveRejection({
 	const reason = responseData?.reason || (responseData?.error === 'rate_limited' ? 'rate_limited' : null);
 	const retryAfterMs = Number(responseData?.retryAfterMs || 0);
 
+	// A rejected move never left the source square, so the player should
+	// stay in "chess mode" with the same piece selected and ready to try a
+	// different target. The selection itself is already intact (the move
+	// callback no longer clears it up-front); we just re-draw the
+	// valid-move rings that were cleared the moment the move was fired.
+	const keepChessMode = () => {
+		try {
+			if (gameState.selectedChessPiece && Array.isArray(gameState.validMoves) && gameState.validMoves.length) {
+				highlightValidMoves(gameState.validMoves);
+			}
+		} catch (_) { /* highlight is non-critical */ }
+	};
+
 	if (reason === 'rate_limited') {
 		// Rate-limited rejections still hold the piece at the destination
 		// briefly while the user reads the warning; we revert *and* clear
@@ -723,6 +773,7 @@ function handleChessMoveRejection({
 			seconds ? `Too fast. Try again in ${seconds}s.` : 'Too fast. Please wait a moment.',
 			'error',
 		);
+		keepChessMode();
 		return;
 	}
 
@@ -736,6 +787,9 @@ function handleChessMoveRejection({
 		// updateChessPieces sync to the canonical server state.
 		clearInFlightMove(gameState);
 		gameState._forceUpdate = true;
+		// Nothing left to move — drop out of chess mode rather than leaving
+		// a dangling selection on a piece that no longer exists.
+		clearChessSelection();
 		try { showToastMessage(
 			'That piece was already gone — the board has been refreshed.',
 			{ variant: 'alert', duration: 4500 },
@@ -755,6 +809,7 @@ function handleChessMoveRejection({
 			? 'That square is gone — board refreshed. Please pick a different target.'
 			: (responseData?.error || 'Move could not be applied — please try again.');
 		try { showToastMessage(message, { duration: 4500 }); } catch (_) { /* toast best-effort */ }
+		keepChessMode();
 		return;
 	}
 
@@ -773,11 +828,17 @@ function handleChessMoveRejection({
 		friendly_blocker: 'That square has one of your own pieces.',
 		same_square: 'Cannot move to the same square.',
 		not_your_piece: 'That piece belongs to someone else.',
+		paused: 'You are paused — press Resume to play.',
+		awaiting_promotion: 'That pawn is frozen — deploy a captured piece or skip.',
+		attacker_locked: 'That piece is committed to the check — wait for the defender.',
+		check_not_escaped: 'Your king is still threatened — pick a move that escapes.',
+		king_in_check: 'That king is already in check — wait for it to resolve.',
 	};
 	const friendly = reason && reasonToText[reason];
 	const errorMessage = friendly
 		|| (responseData?.error ? `Move failed: ${responseData.error}` : 'Move failed. Please try again.');
 	showTemporaryMessage(errorMessage, 'error');
+	keepChessMode();
 }
 
 export function animateChessPieceMove(piece, _fromX, _fromZ, toX, toZ, onComplete) {
@@ -1222,6 +1283,21 @@ export function showCellInfo(cellMesh) {
 		? ` Piece: ${piece.type} (${piece.player}).`
 		: '';
 	showToastMessage(`Cell (${x}, ${z}): ${summary}.${pieceLine}`, { duration: 5000 });
+
+	// Sponsored cell — surface the ad popup. This is the only place
+	// in the UI that opens the ad now; the auto-show on placement
+	// (and the floating banner) were removed because the user asked
+	// the ad box to "only show when clicked".
+	const sponsor = cellMesh.userData?.sponsor;
+	if (sponsor && sponsor.id) {
+		displaySponsorInfo({
+			id: sponsor.id,
+			name: sponsor.name,
+			image: sponsor.adImage || sponsor.image,
+			adText: sponsor.adText,
+			adUrl: sponsor.adLink || sponsor.adUrl,
+		});
+	}
 }
 
 /**

@@ -100,6 +100,10 @@ export function deployPromotion(pawnId, capturedType, callback) {
 	return networkManagerInstance.deployPromotion(pawnId, capturedType, callback);
 }
 
+export function submitDuelResponse(duelId, placement, guess) {
+	return networkManagerInstance.submitDuelResponse(duelId, placement, guess);
+}
+
 export function getStatus() {
 	if (networkManagerInstance && typeof networkManagerInstance.getStatus === 'function') {
 		return networkManagerInstance.getStatus();

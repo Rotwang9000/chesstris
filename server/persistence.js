@@ -174,6 +174,12 @@ function buildSnapshot() {
 			currentTurns: world.currentTurns,
 			kingPrison: Array.isArray(world.kingPrison) ? world.kingPrison : [],
 			pendingKingCaptures: Array.isArray(world.pendingKingCaptures) ? world.pendingKingCaptures : [],
+			// Persist any in-flight Check so a restart mid-window doesn't
+			// silently drop it. `checkService.rehydrate()` reschedules the
+			// deadline timer from `deadlineAt` on boot. (Chess-H1)
+			pendingCheck: (world.pendingCheck && typeof world.pendingCheck === 'object')
+				? world.pendingCheck
+				: null,
 			disconnectedSince: (world.disconnectedSince && typeof world.disconnectedSince === 'object')
 				? world.disconnectedSince
 				: {},

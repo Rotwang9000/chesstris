@@ -61,6 +61,179 @@ function dedupeChessPieces(world) {
 	return removed;
 }
 
+/**
+ * Position-collision sweep. After bug reports of "two pawns on the
+ * same cell" (player snapshot showed pawn-9 and pawn-11 both at
+ * (29, 39)), we sweep for chess pieces of the same player whose
+ * `position` matches another's. Root causes seen so far:
+ *
+ *   • `pieces.addPiece` orphans a previous occupant (it strips the
+ *     OLD marker but leaves the old piece in `world.chessPieces`
+ *     with its stale position). Common during power-up claims that
+ *     land on a cell that briefly held a piece.
+ *   • Stale `chess_move` paths re-stamp a missing source marker
+ *     and then push another marker onto an already-occupied target.
+ *   • Airborne settle bumping interleaved with relocate.
+ *
+ * Resolution: per `(playerId, x, z)` keep the piece whose chess
+ * marker is actually on the cell (the canonical occupant). If the
+ * cell has none of the candidates' markers, keep the most-recently
+ * moved piece (highest `moveCount`, ties broken by `id` asc). All
+ * losers are removed from `world.chessPieces`. Any stale markers
+ * for losers are stripped from the cell so the visual matches.
+ *
+ * @returns {number} number of pieces removed by position collision
+ */
+function dedupePiecePositions(world) {
+	if (!world || !Array.isArray(world.chessPieces)) return 0;
+	if (!world.board || !world.board.cells) return 0;
+
+	const groups = new Map();
+	for (const piece of world.chessPieces) {
+		if (!piece || !piece.position) continue;
+		const x = piece.position.x;
+		const z = piece.position.z;
+		if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
+		const key = `${piece.player}|${x},${z}`;
+		if (!groups.has(key)) groups.set(key, []);
+		groups.get(key).push(piece);
+	}
+
+	let removedCount = 0;
+	const survivors = new Set();
+	const losers = [];
+
+	for (const [key, list] of groups) {
+		if (list.length <= 1) continue;
+		const [playerPart, cellPart] = key.split('|');
+		const [x, z] = cellPart.split(',').map(Number);
+		const cell = Array.isArray(world.board.cells[`${x},${z}`])
+			? world.board.cells[`${x},${z}`]
+			: [];
+
+		// First preference: the candidate whose ID matches the cell
+		// marker — that's the piece the board is actually showing.
+		let winner = null;
+		for (const piece of list) {
+			const matchesCell = cell.some(item =>
+				item
+				&& item.type === 'chess'
+				&& String(item.pieceId || item?.chessPiece?.id || '') === String(piece.id)
+			);
+			if (matchesCell) { winner = piece; break; }
+		}
+		// Fallback: most-moved piece (most recent activity), with
+		// id-asc tiebreak for determinism. Pieces that have moved
+		// at all beat pristine ones because they're the ones that
+		// most likely *belong* here — the duplicates tend to be
+		// stale spawn-time entries.
+		if (!winner) {
+			winner = list.slice().sort((a, b) => {
+				const am = Number(a.moveCount) || 0;
+				const bm = Number(b.moveCount) || 0;
+				if (am !== bm) return bm - am;
+				return String(a.id).localeCompare(String(b.id));
+			})[0];
+		}
+
+		survivors.add(String(winner.id));
+		for (const piece of list) {
+			if (piece === winner) continue;
+			losers.push({ piece, x, z, playerId: playerPart });
+		}
+	}
+
+	if (losers.length === 0) return 0;
+
+	const loserIds = new Set(losers.map(l => String(l.piece.id)));
+	world.chessPieces = world.chessPieces.filter(piece => {
+		if (!piece || !piece.id) return true;
+		return !loserIds.has(String(piece.id));
+	});
+	removedCount = losers.length;
+
+	for (const { x, z, piece } of losers) {
+		const key = `${x},${z}`;
+		const cell = world.board.cells[key];
+		if (!Array.isArray(cell)) continue;
+		const filtered = cell.filter(item =>
+			!(item
+				&& item.type === 'chess'
+				&& String(item.pieceId || item?.chessPiece?.id || '') === String(piece.id))
+		);
+		if (filtered.length === 0) delete world.board.cells[key];
+		else world.board.cells[key] = filtered;
+	}
+
+	console.log(
+		`[MissingKing] Resolved ${removedCount} position-collision piece(s): `
+		+ losers.map(l => `${l.piece.type}@${l.x},${l.z}`).join(', ')
+	);
+	return removedCount;
+}
+
+/**
+ * One-king-rule repair. A player must own at most one king. The
+ * king-capture transfer historically handed a defeated player's live
+ * king to the captor (the "I captured a king and ended up with two
+ * kings" bug); a stale persisted snapshot can carry that corruption
+ * forward even after the code is fixed. This sweep retires the extras.
+ *
+ * Which king survives: the one nearest the player's home-zone centre
+ * (their *original* king spawns at home, so this keeps the legitimate
+ * one and drops an inherited/duplicate). Ties and missing home zones
+ * fall back to the lowest id for determinism.
+ *
+ * @returns {number} number of surplus kings removed
+ */
+function dedupeKings(world) {
+	if (!world || !Array.isArray(world.chessPieces)) return 0;
+
+	const kingsByPlayer = new Map();
+	for (const piece of world.chessPieces) {
+		if (!piece || !piece.player) continue;
+		if (String(piece.type || '').toUpperCase() !== 'KING') continue;
+		const pid = String(piece.player);
+		if (!kingsByPlayer.has(pid)) kingsByPlayer.set(pid, []);
+		kingsByPlayer.get(pid).push(piece);
+	}
+
+	let removed = 0;
+	for (const [pid, kings] of kingsByPlayer) {
+		if (kings.length <= 1) continue;
+
+		const homeZone = world.homeZones && world.homeZones[pid];
+		const centre = homeZoneCentre(homeZone);
+		const distToHome = (k) => {
+			const pos = k.position || {};
+			if (!centre || !Number.isFinite(pos.x) || !Number.isFinite(pos.z)) return Infinity;
+			return Math.abs(pos.x - centre.x) + Math.abs(pos.z - centre.z);
+		};
+
+		const survivor = kings.slice().sort((a, b) => {
+			const da = distToHome(a);
+			const db = distToHome(b);
+			if (da !== db) return da - db;
+			return String(a.id).localeCompare(String(b.id));
+		})[0];
+
+		for (const king of kings) {
+			if (king === survivor) continue;
+			console.warn(
+				`[MissingKing] ${pid} owned ${kings.length} kings — retiring surplus king ${king.id} ` +
+				`(keeping ${survivor.id} nearest home).`
+			);
+			pieces.removePiece(world, king, {
+				reason: pieces.REMOVAL_REASONS.DUPLICATE_KING,
+				silent: true,
+			});
+			removed++;
+		}
+	}
+
+	return removed;
+}
+
 function playerHasAnyPiece(world, playerId) {
 	if (!world || !Array.isArray(world.chessPieces)) return false;
 	for (const piece of world.chessPieces) {
@@ -132,9 +305,15 @@ function createMissingKingSweepService({ broadcaster, persistence }) {
 
 	function tick() {
 		const world = World.getWorld();
-		if (!world || !world.players) return { rescued: [], deduped: 0 };
+		if (!world || !world.players) return { rescued: [], deduped: 0, positionCollisions: 0 };
 
 		const deduped = dedupeChessPieces(world);
+		const positionCollisions = dedupePiecePositions(world);
+		// Restore the one-king rule BEFORE the no-king rescue below, so a
+		// player whose only "second" king is removed still ends the pass
+		// with a valid single king (rescued if the survivor logic somehow
+		// retired their last one — it never should, but belt-and-braces).
+		const surplusKings = dedupeKings(world);
 		const rescued = [];
 
 		for (const [pid, player] of Object.entries(world.players)) {
@@ -142,13 +321,17 @@ function createMissingKingSweepService({ broadcaster, persistence }) {
 			if (player.eliminated) continue;
 			if (player.pendingRespawn) continue;
 
-			// AI players are handled by the AI runner's own recovery
-			// logic — don't double-rescue and risk spawning two kings.
-			if (player.isComputer) continue;
-
 			if (!playerHasAnyPiece(world, pid)) continue;
 			if (playerHasKing(world, pid)) continue;
 
+			// AI players USED to be excluded here on the assumption
+			// the AI runner would self-recover. It doesn't — the
+			// runner's `onlyKingLeft` and `marooned` paths both
+			// require a king to detonate, so an AI that's lost its
+			// king but still has pawns is stuck forever (player
+			// reported: "AI Novice has 2 pieces, no king, doing
+			// nothing"). The runner ALSO checks `pendingRespawn`
+			// above, so a rescue here can't race with its respawn.
 			try {
 				const king = rescueOnePlayer(world, pid, player);
 				if (king) rescued.push(pid);
@@ -157,7 +340,7 @@ function createMissingKingSweepService({ broadcaster, persistence }) {
 			}
 		}
 
-		if (deduped > 0 || rescued.length > 0) {
+		if (deduped > 0 || positionCollisions > 0 || surplusKings > 0 || rescued.length > 0) {
 			persistence.markDirty();
 			try { broadcaster.broadcastGameUpdate({ forceFullUpdate: true }); }
 			catch (broadcastErr) {
@@ -165,7 +348,7 @@ function createMissingKingSweepService({ broadcaster, persistence }) {
 			}
 		}
 
-		return { rescued, deduped };
+		return { rescued, deduped, positionCollisions, surplusKings };
 	}
 
 	return { tick };
@@ -174,4 +357,6 @@ function createMissingKingSweepService({ broadcaster, persistence }) {
 module.exports = {
 	createMissingKingSweepService,
 	dedupeChessPieces,
+	dedupePiecePositions,
+	dedupeKings,
 };

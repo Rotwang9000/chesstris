@@ -309,7 +309,24 @@ export function showPlacementEffect(x, z, gameState) {
 	}
 
 	let lifetime = 0;
+	let disposed = false;
+	// Placement effects fire on EVERY tetromino drop, so an rAF-only
+	// cleanup that stalls (backgrounded tab / heavy load) leaks fast.
+	// Guaranteed disposal via setTimeout; `disposed` stops the rAF path
+	// double-freeing.
+	const cleanup = () => {
+		if (disposed) return;
+		disposed = true;
+		try {
+			targetScene.remove(particleGroup);
+			for (const p of particleGroup.children) {
+				if (p.geometry) p.geometry.dispose();
+				if (p.material) p.material.dispose();
+			}
+		} catch (_e) { /* cleanup best effort */ }
+	};
 	const animate = () => {
+		if (disposed) return;
 		lifetime++;
 		for (const particle of particleGroup.children) {
 			particle.position.x += particle.userData.velocity.x;
@@ -323,16 +340,11 @@ export function showPlacementEffect(x, z, gameState) {
 		if (lifetime < 18) {
 			requestAnimationFrame(animate);
 		} else {
-			try {
-				targetScene.remove(particleGroup);
-				for (const p of particleGroup.children) {
-					if (p.geometry) p.geometry.dispose();
-					if (p.material) p.material.dispose();
-				}
-			} catch (_e) { /* cleanup best effort */ }
+			cleanup();
 		}
 	};
 	animate();
+	setTimeout(cleanup, 1200);
 }
 
 // Maximum length (in cells) of any cleared-line highlight bar.
@@ -399,15 +411,25 @@ export function highlightClearedLines(rowIndices, colIndices, gameState) {
 
 		const startTime = Date.now();
 		const duration = 600;
+		let disposed = false;
+		// Guaranteed disposal: a line clear fires this on every clear, so
+		// rAF-only cleanup leaks the highlight bars under load/throttling.
+		const cleanup = () => {
+			if (disposed) return;
+			disposed = true;
+			scene.remove(highlight);
+			geometry.dispose();
+			material.dispose();
+		};
+		setTimeout(cleanup, duration + 250);
 		const tick = () => {
+			if (disposed) return;
 			const elapsed = Date.now() - startTime;
 			if (elapsed < duration) {
 				material.opacity = 0.4 * (1 - elapsed / duration);
 				requestAnimationFrame(tick);
 			} else {
-				scene.remove(highlight);
-				geometry.dispose();
-				material.dispose();
+				cleanup();
 			}
 		};
 		tick();
@@ -476,15 +498,31 @@ export function flashCellsBeforeClear(cells, durationMs, gameState) {
 
 	const startTime = Date.now();
 	const pulses = 3;
+	let disposed = false;
+
+	// Cleanup is GUARANTEED by wall-clock, not by the rAF loop reaching
+	// its final frame. Previously disposal only happened inside `tick`
+	// when `progress >= 1`; if rAF stalled (backgrounded tab, a heavy
+	// frame storm, or simply many simultaneous clears) the boxes were
+	// never removed and piled up in the scene root — a stress test saw
+	// 2.3k → 6.9k orphaned flash boxes. The setTimeout fires regardless,
+	// and `disposed` guards against the rAF path racing it.
+	const cleanup = () => {
+		if (disposed) return;
+		disposed = true;
+		for (const { mesh, geometry, material } of meshes) {
+			scene.remove(mesh);
+			geometry.dispose();
+			material.dispose();
+		}
+	};
+
 	const tick = () => {
+		if (disposed) return;
 		const elapsed = Date.now() - startTime;
 		const progress = elapsed / duration;
 		if (progress >= 1) {
-			for (const { mesh, geometry, material } of meshes) {
-				scene.remove(mesh);
-				geometry.dispose();
-				material.dispose();
-			}
+			cleanup();
 			return;
 		}
 
@@ -500,6 +538,9 @@ export function flashCellsBeforeClear(cells, durationMs, gameState) {
 		requestAnimationFrame(tick);
 	};
 	requestAnimationFrame(tick);
+	// Safety net: dispose ~250 ms after the animation should have ended
+	// even if not a single rAF tick ran.
+	setTimeout(cleanup, duration + 250);
 }
 
 /**

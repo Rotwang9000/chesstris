@@ -151,6 +151,15 @@ function createActivityLogService({ io, persistence, maxEvents = DEFAULT_MAX_EVE
 		});
 	}
 
+	function recordCheckStarted({ attackerId, defenderId, attackerPieceType, deadlineMs }) {
+		return record('chess_check', {
+			attackerId,
+			defenderId,
+			attackerPieceType,
+			deadlineMs,
+		});
+	}
+
 	// ── Per-piece events ──────────────────────────────────────────────
 	//
 	// Emitted from `server/game/pieces.removePiece` (and friends). The
@@ -297,6 +306,7 @@ function createActivityLogService({ io, persistence, maxEvents = DEFAULT_MAX_EVE
 		recordTerritoryCaptured,
 		recordKingDetonation,
 		recordKingCaptured,
+		recordCheckStarted,
 		recordPieceLost,
 		recordPiecesLost,
 		recordPieceCaptured,

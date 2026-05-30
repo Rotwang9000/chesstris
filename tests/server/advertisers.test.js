@@ -81,7 +81,7 @@ describe('Advertiser routes', () => {
 		}
 	});
 
-	test('register → activate → list → next', async () => {
+	test('register → activate (pay) → review → list → next', async () => {
 		const app = freshApp();
 
 		const reg = await request(app)
@@ -105,17 +105,35 @@ describe('Advertiser routes', () => {
 		const beforeActivation = fs.existsSync(path.join(ADS_DIR, `${id}.png`));
 		expect(beforeActivation).toBe(false);
 
-		const next404 = await request(app).get('/api/advertisers/next');
+		// `?force=1` bypasses the random ad-frequency gate so we test
+		// the rotation/eligibility logic deterministically rather than
+		// the "don't smother the world in ads" sampling.
+		const next404 = await request(app).get('/api/advertisers/next?force=1');
 		expect(next404.status).toBe(404);
 
+		// Pay → enters moderation (NOT live yet). This is the
+		// all-ages content-approval gate the spec requires: payment
+		// alone must never put artwork in front of players.
 		const act = await request(app)
 			.post(`/api/advertisers/${id}/activate`)
 			.send({ transactionSignature: 'sig-123' });
 		expect(act.status).toBe(200);
-		expect(act.body.advertiser.bidStatus).toBe('active');
-		expect(act.body.advertiser.adImage).toMatch(/^\/uploads\/ads\//);
-		// The bytes should now exist on disk.
+		expect(act.body.advertiser.bidStatus).toBe('pending_review');
+		// Still no PUBLIC image and still not served while in review.
 		const imageFilename = `${id}.png`;
+		expect(fs.existsSync(path.join(ADS_DIR, imageFilename))).toBe(false);
+		const nextDuringReview = await request(app).get('/api/advertisers/next?force=1');
+		expect(nextDuringReview.status).toBe(404);
+
+		// Moderator approves → now live. (`requireAdmin` is a no-op
+		// outside production, so no token needed in tests.)
+		const review = await request(app)
+			.post(`/api/advertisers/${id}/admin-review`)
+			.send({ action: 'approve' });
+		expect(review.status).toBe(200);
+		expect(review.body.advertiser.bidStatus).toBe('active');
+		expect(review.body.advertiser.adImage).toMatch(/^\/uploads\/ads\//);
+		// The bytes should now exist on the public disk.
 		expect(fs.existsSync(path.join(ADS_DIR, imageFilename))).toBe(true);
 		_testWrittenAdImages.add(imageFilename);
 
@@ -124,7 +142,7 @@ describe('Advertiser routes', () => {
 		expect(list.body.advertisers).toHaveLength(1);
 		expect(list.body.advertisers[0].bidStatus).toBe('active');
 
-		const next = await request(app).get('/api/advertisers/next');
+		const next = await request(app).get('/api/advertisers/next?force=1');
 		expect(next.status).toBe(200);
 		expect(next.body.id).toBe(id);
 	});
@@ -193,7 +211,7 @@ describe('Advertiser routes', () => {
 		expect(list.body.advertisers[0].id).toBe('persist-1');
 		expect(list.body.advertisers[0].bidStatus).toBe('active');
 
-		const next = await request(app).get('/api/advertisers/next');
+		const next = await request(app).get('/api/advertisers/next?force=1');
 		expect(next.status).toBe(200);
 		expect(next.body.id).toBe('persist-1');
 	});

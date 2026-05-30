@@ -14,6 +14,7 @@ const rateLimit = require('express-rate-limit');
 
 const apiRoutes = require('../routes/api');
 const advertiserRoutes = require('../routes/advertisers');
+const { router: walletAuthRouter } = require('../routes/walletAuth');
 const { mountAuthRoutes } = require('./auth/routes');
 const { parseAllowedOrigins, isOriginAllowed } = require('./security/origins');
 const metrics = require('./observability/metrics');
@@ -118,6 +119,7 @@ function createApp({ projectRoot = process.cwd() } = {}) {
 	const indexSwap = createIndexHtmlBundleSwap({ projectRoot });
 	app.use(indexSwap.middleware);
 	app._indexBundleStatus = indexSwap.bundleStatus;
+	app._getBundleVersion = indexSwap.getBundleVersion;
 
 	app.use('/node_modules', express.static(path.join(projectRoot, 'node_modules')));
 	app.use(express.static(path.join(projectRoot, 'public')));
@@ -152,6 +154,7 @@ function createApp({ projectRoot = process.cwd() } = {}) {
 
 	app.use('/api', apiRoutes);
 	app.use('/api/advertisers', advertiserRoutes);
+	app.use('/api/wallet-auth', walletAuthRouter);
 	mountAuthRoutes(app);
 
 	// Prometheus scrape target. Public for now (Prometheus on the

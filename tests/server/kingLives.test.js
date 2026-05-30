@@ -46,6 +46,20 @@ function makeActivityLog() {
 	};
 }
 
+function makeDetonationService() {
+	const calls = [];
+	return {
+		calls,
+		detonateKing(opts) { calls.push(opts); return { success: true }; },
+	};
+}
+
+// The final detonation is deferred to the next tick (setImmediate) so the
+// life service never mutates chessPieces while a caller is iterating it.
+function flushImmediate() {
+	return new Promise(resolve => setImmediate(resolve));
+}
+
 function seedWorldWithKing({ playerId = 'p1', kingAt = { x: 5, z: 5 } } = {}) {
 	World.resetWorld();
 	const world = World.getWorld();
@@ -125,6 +139,75 @@ describe('KingLifeService', () => {
 		expect(world.players.p1.eliminated).toBe(true);
 		expect(world.players.p1.kingLives).toBe(0);
 		expect(io._events.some(e => e.name === 'king_eliminated')).toBe(true);
+	});
+
+	test('final death detonates the king lemming-style when a detonation service is wired', async () => {
+		const { king } = seedWorldWithKing({ playerId: 'p1' });
+		const detonationService = makeDetonationService();
+		const service = createKingLifeService({
+			io: makeIo(), broadcaster: makeBroadcaster(), persistence: makePersistence(),
+			kingDetonationService: detonationService,
+		});
+
+		for (let i = 0; i < KING_INITIAL_LIVES - 1; i++) {
+			service.handleKingDeath(king, { reason: pieces.REMOVAL_REASONS.FELL_TO_WATER });
+		}
+		const finalOutcome = service.handleKingDeath(king, {
+			reason: pieces.REMOVAL_REASONS.FELL_TO_WATER,
+		});
+
+		expect(finalOutcome.final).toBe(true);
+		expect(finalOutcome.detonating).toBe(true);
+		expect(detonationService.calls).toHaveLength(0); // deferred
+
+		await flushImmediate();
+
+		expect(detonationService.calls).toHaveLength(1);
+		expect(detonationService.calls[0].playerId).toBe('p1');
+		expect(detonationService.calls[0].kingPieceId).toBe(king.id);
+		expect(String(detonationService.calls[0].reason)).toContain('lives_exhausted');
+		// Human player → no `ai_` prefix on the detonation reason.
+		expect(String(detonationService.calls[0].reason).startsWith('ai_')).toBe(false);
+	});
+
+	test('AI final death carries an ai_ detonation reason for client messaging', async () => {
+		const { king } = seedWorldWithKing({ playerId: 'p1' });
+		World.upsertPlayer('p1', { isComputer: true });
+		const detonationService = makeDetonationService();
+		const service = createKingLifeService({
+			io: makeIo(), broadcaster: makeBroadcaster(), persistence: makePersistence(),
+			kingDetonationService: detonationService,
+		});
+
+		World.getWorld().players.p1.kingLives = 1;
+		service.handleKingDeath(king, { reason: pieces.REMOVAL_REASONS.ISLAND_DECAY });
+		await flushImmediate();
+
+		expect(detonationService.calls).toHaveLength(1);
+		expect(String(detonationService.calls[0].reason).startsWith('ai_')).toBe(true);
+	});
+
+	test('removePiece leaves the king in play for the detonation service on final death', async () => {
+		const { world, king } = seedWorldWithKing();
+		const detonationService = makeDetonationService();
+		const service = createKingLifeService({
+			io: makeIo(), broadcaster: makeBroadcaster(), persistence: makePersistence(),
+			kingDetonationService: detonationService,
+		});
+		world.players.p1.kingLives = 1; // one life left → next death is final
+
+		const removed = pieces.removePiece(world, king, {
+			reason: pieces.REMOVAL_REASONS.FELL_TO_WATER,
+			kingLifeService: service,
+		});
+
+		// Not spliced — the detonation service owns the king and removes it
+		// at the end of the lemming animation.
+		expect(removed).toBeNull();
+		expect(world.chessPieces).toContain(king);
+
+		await flushImmediate();
+		expect(detonationService.calls).toHaveLength(1);
 	});
 
 	test('non-king pieces are ignored by the life service', () => {

@@ -9,6 +9,9 @@
 const World = require('../world/World');
 const cells = require('../game/cells');
 const pieces = require('../game/pieces');
+const { GAME_RULES } = require('../game/Constants');
+// Shared with the human chess handler so AI pawns freeze identically.
+const { markPawnAwaitingPromotion } = require('../game/promotion');
 
 const TETROMINO_TYPES = Object.freeze(['I', 'J', 'L', 'O', 'S', 'T', 'Z']);
 
@@ -70,7 +73,15 @@ function createAiActions({
 				}
 			}
 
-			integrityService.runIslandIntegrityPass({ emitAnimation: true });
+			// IMPORTANT: do NOT run island integrity here. The human
+			// placement path deliberately defers it to the tail of the
+			// line-clear cascade (see server/sockets/tetromino.js and
+			// LineClearService.runCascade) so gravity can reconnect
+			// stranded cells before anything is decayed. Running it
+			// pre-cascade here was stripping OTHER players' pieces/cells
+			// when an AI cleared a row — the "AI Expert cleared my far
+			// cells / my Queen's wings failed" report. The cascade's
+			// final integrity pass handles orphans correctly.
 			world.lastAction = {
 				type: 'tetromino_placed',
 				playerId: computerId,
@@ -119,15 +130,147 @@ function createAiActions({
 		return anchors;
 	}
 
-	function performStrategicChessMove(computerId, kingCaptureService) {
+	/**
+	 * AI escape under Check. Called from the runner when
+	 * `world.pendingCheck.defenderId === computerId`. We walk the AI's
+	 * pieces and every existing board cell looking for the first move
+	 * that `checkService.validateEscape` accepts (king out of danger
+	 * or attacker captured). If none exists, return false — the AI
+	 * will eat the deadline.
+	 *
+	 * We prefer king-moves first (most likely to escape) and then
+	 * captures-of-the-attacker, before falling back to the generic
+	 * "any-legal-move-that-resolves-the-threat" search. The first
+	 * accepted candidate is played; we don't pretend to evaluate
+	 * positions beyond that — the AI just survives a single tick.
+	 */
+	function performCheckEscape(computerId, checkService, kingCaptureService) {
+		const world = World.getWorld();
+		const computerPlayer = World.getPlayer(computerId);
+		if (!world || !computerPlayer || !checkService) return false;
+		if (!world.pendingCheck || String(world.pendingCheck.defenderId) !== String(computerId)) return false;
+
+		const attackerPieceId = world.pendingCheck.attackerPieceId;
+		const ownedPieces = (world.chessPieces || []).filter(piece =>
+			piece && piece.player === computerId && piece.position
+			&& Number.isFinite(piece.position.x) && Number.isFinite(piece.position.z)
+		);
+		if (ownedPieces.length === 0) return false;
+
+		const cellKeys = Object.keys(world.board?.cells || {});
+		const existingCells = [];
+		for (const key of cellKeys) {
+			const [x, z] = key.split(',').map(Number);
+			if (Number.isFinite(x) && Number.isFinite(z)) existingCells.push({ x, z });
+		}
+		if (existingCells.length === 0) return false;
+
+		// Build a ranked list of move candidates: king-moves first,
+		// then "capture-the-attacker" moves, then everything else.
+		const kingPieces = ownedPieces.filter(p => String(p.type || '').toUpperCase() === 'KING');
+		const attackerPiece = (world.chessPieces || []).find(p => p && String(p.id) === String(attackerPieceId));
+		const captureMoves = [];
+		const fallback = [];
+		const kingMoves = [];
+
+		for (const piece of ownedPieces) {
+			for (const target of existingCells) {
+				if (piece.position.x === target.x && piece.position.z === target.z) continue;
+				if (!gameManager.chessManager.isValidChessMove(world, piece, target.x, target.z)) continue;
+				const candidate = { piece, target };
+				if (kingPieces.includes(piece)) kingMoves.push(candidate);
+				else if (attackerPiece && target.x === attackerPiece.position.x && target.z === attackerPiece.position.z) {
+					captureMoves.push(candidate);
+				}
+				else fallback.push(candidate);
+			}
+		}
+		const ordered = kingMoves.concat(captureMoves, fallback);
+
+		for (const { piece, target } of ordered) {
+			const escape = checkService.validateEscape({
+				world, piece, toX: target.x, toZ: target.z,
+			});
+			if (!escape.ok) continue;
+
+			const moveResult = applyChessMove(world, piece, target.x, target.z, computerId);
+			if (!moveResult.success) continue;
+
+			computerPlayer.lastChessMoveAt = Date.now();
+			computerPlayer.moveCount = (computerPlayer.moveCount || 0) + 1;
+
+			integrityService.runIslandIntegrityPass({ emitAnimation: true });
+
+			world.lastAction = {
+				type: 'chess_move',
+				playerId: computerId,
+				data: {
+					pieceId: piece.id,
+					targetPosition: { x: target.x, z: target.z },
+					captured: moveResult.capturedPiece || null,
+					checkEscape: true,
+				},
+			};
+			World.markDirty();
+
+			broadcaster.broadcastGameUpdate();
+			io.to(world.id).emit('chess_move', {
+				playerId: computerId,
+				movedPiece: moveResult.movedPiece,
+				movedFrom: moveResult.from,
+				movedTo: moveResult.to,
+				capturedPiece: moveResult.capturedPieceSnapshot,
+			});
+
+			// Defender successfully escaped — clear the pending check.
+			try { checkService.cancelCheck(world, 'ai_escaped'); }
+			catch (e) { console.warn('[AI] check cancel failed:', e.message); }
+
+			if (moveResult.capturedPiece && moveResult.capturedPiece.type === 'KING' && kingCaptureService) {
+				// Escape-by-king-capture (defender takes the attacker
+				// king). Vanishingly rare but handle it cleanly — route
+				// through the shared resolver so it's duel-eligible and
+				// idempotent, exactly like the human path.
+				kingCaptureService.resolveKingCapture({
+					captorId: computerId, defeatedId: moveResult.capturedPiece.player,
+				});
+			}
+
+			if (spectatorRegistry) spectatorRegistry.broadcastUpdate(computerId, world);
+			console.log(
+				`[AI] ${computerId} escaped check via ${piece.type} → (${target.x}, ${target.z}).`
+			);
+			return true;
+		}
+
+		console.log(`[AI] ${computerId} found no legal escape — will be captured on deadline.`);
+		return false;
+	}
+
+	function performStrategicChessMove(computerId, kingCaptureService, checkService = null) {
 		const world = World.getWorld();
 		const computerPlayer = World.getPlayer(computerId);
 		if (!world || !computerPlayer) return false;
 
 		const chessPieces = world.chessPieces || [];
+		// Mirror the human chess handler: the ATTACKER PIECE in a
+		// pending check is locked, but the attacker's OTHER pieces
+		// can still move freely. Drop the locked piece from
+		// `ownedPieces` so the random-pick loop below never even
+		// tries it (avoids burning the 80 attempts on a piece that
+		// will always be rejected).
+		const lockedPieceId = (world.pendingCheck
+			&& String(world.pendingCheck.attackerId) === String(computerId))
+			? String(world.pendingCheck.attackerPieceId)
+			: null;
 		const ownedPieces = chessPieces.filter(piece =>
 			piece && piece.player === computerId && piece.position
 			&& Number.isFinite(piece.position.x) && Number.isFinite(piece.position.z)
+			&& (lockedPieceId === null || String(piece.id) !== lockedPieceId)
+			// Frozen pawns awaiting promotion can't move (mirrors the
+			// human handler) — skip them so the AI doesn't burn its
+			// attempts trying to march a locked pawn.
+			&& !piece.awaitingPromotion
 		);
 		if (ownedPieces.length === 0) return false;
 
@@ -146,7 +289,19 @@ function createAiActions({
 			if (piece.position.x === target.x && piece.position.z === target.z) continue;
 			if (!gameManager.chessManager.isValidChessMove(world, piece, target.x, target.z)) continue;
 
-			const moveResult = applyChessMove(world, piece, target.x, target.z, computerId);
+			const moveResult = applyChessMove(world, piece, target.x, target.z, computerId, { checkService });
+			// Deferred-check responses count as "acted" — the check
+			// service has emitted the warning, and we don't want the
+			// AI's stuck-counter ticking up for this case. Stamp the move
+			// time too so starting a check consumes the AI's turn (H7
+			// parity with the human handler) and the player reads as
+			// active for island-decay purposes.
+			if (moveResult.deferredCheck) {
+				computerPlayer.lastChessMoveAt = Date.now();
+				computerPlayer.moveCount = (computerPlayer.moveCount || 0) + 1;
+				World.markDirty();
+				return true;
+			}
 			if (!moveResult.success) continue;
 
 			computerPlayer.lastChessMoveAt = Date.now();
@@ -192,7 +347,12 @@ function createAiActions({
 			}
 
 			if (moveResult.capturedPiece && moveResult.capturedPiece.type === 'KING' && kingCaptureService) {
-				kingCaptureService.executeKingCapture(computerId, moveResult.capturedPiece.player);
+				// Shared with the human path — records the capture in the
+				// simultaneous-capture window and hands off to a King's
+				// Duel if the defender had just taken this AI's king too.
+				kingCaptureService.resolveKingCapture({
+					captorId: computerId, defeatedId: moveResult.capturedPiece.player,
+				});
 			}
 
 			if (spectatorRegistry) spectatorRegistry.broadcastUpdate(computerId, world);
@@ -201,7 +361,7 @@ function createAiActions({
 		return false;
 	}
 
-	function applyChessMove(world, piece, targetX, targetZ, computerId) {
+	function applyChessMove(world, piece, targetX, targetZ, computerId, { checkService = null } = {}) {
 		const computerPlayer = world.players?.[computerId];
 		const sourceCell = gameManager.boardManager.getCell(world.board, piece.position.x, piece.position.z);
 		if (!sourceCell) return { success: false };
@@ -223,6 +383,46 @@ function createAiActions({
 				const target = world.chessPieces.find(
 					p => p && String(p.id) === String(capturedPieceObj.pieceId)
 				);
+				// Deferred king-capture — same flow as the human chess
+				// handler. The AI's move is held back, the king isn't
+				// removed, the defender gets `CHECK_DEADLINE_MS` to
+				// escape. Resolution is handled by `checkService.expireCheck`
+				// (timeout) or `checkService.cancelCheck` (defender moved
+				// out of danger).
+				//
+				// A check window is already open on this king — don't let
+				// the AI skip the queue and instant-capture during the
+				// defender's grace window (Chess-C2 parity with the human
+				// handler). The AI will simply pick another move.
+				if (target && String(target.type || '').toUpperCase() === 'KING'
+					&& checkService && world.pendingCheck
+					&& String(world.pendingCheck.defenderId) === String(target.player)) {
+					return { success: false };
+				}
+
+				// Anti-spam: if this AI piece has used up its grace
+				// deferrals on this king, `startCheck` returns null and
+				// the AI's attack falls through to a normal capture.
+				if (target && String(target.type || '').toUpperCase() === 'KING'
+					&& checkService && !world.pendingCheck) {
+					const started = checkService.startCheck({
+						world,
+						attackerPiece: piece,
+						kingPiece: target,
+						queuedMove: {
+							captorId: computerId,
+							defeatedId: target.player,
+							toX: targetX,
+							toZ: targetZ,
+							attackerPieceId: piece.id,
+						},
+					});
+					if (started) {
+						return { success: false, deferredCheck: true };
+					}
+					// Else: defer denied — proceed with the normal
+					// capture below.
+				}
 				if (target) {
 					capturedPiece = target;
 					capturedPieceSnapshot = {
@@ -327,6 +527,21 @@ function createAiActions({
 			movedPiece.position = { x: targetX, z: targetZ };
 			movedPiece.hasMoved = true;
 			world.chessPieces[pieceIndex] = movedPiece;
+
+			// Freeze at the promotion threshold exactly like a human pawn
+			// (H5). Without this an AI pawn that completes the promotion
+			// walk just keeps marching as an unkillable super-pawn that
+			// never promotes. The marker is already stamped at the target
+			// cell above, so the freeze flag mirrors onto it correctly.
+			if (movedPiece.type === 'PAWN'
+				&& !movedPiece.awaitingPromotion
+				&& (movedPiece.forwardDistance || 0) >= GAME_RULES.PAWN_PROMOTION_DISTANCE) {
+				markPawnAwaitingPromotion(world, computerId, movedPiece, {
+					broadcaster,
+					activityLog: gameManager.activityLog || null,
+					io,
+				});
+			}
 		}
 
 		// AI moves were previously invisible in the activity log; only
@@ -365,6 +580,7 @@ function createAiActions({
 	return {
 		performStrategicTetrominoPlacement,
 		performStrategicChessMove,
+		performCheckEscape,
 	};
 }
 

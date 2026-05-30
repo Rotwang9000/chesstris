@@ -10,6 +10,13 @@ import { highlightPlayerPieces, removePlayerPiecesHighlight } from './pieceHighl
 import { showToastMessage } from './showToastMessage.js';
 import { showPromotionRedeemDialog, showFrozenPawnPromotionDialog } from './uiOverlays.js';
 import { promptInlineRename } from './renameDialog.js';
+import {
+	startAutoPauseWatcher,
+	isAutoPauseEnabled,
+	setAutoPauseEnabled,
+	getIdlePauseDelayMs,
+} from './autoPause.js';
+import { isCameraRelativeControls, setCameraRelativeControls } from './controlSettings.js';
 
 // State tracking variables
 let isBarVisible = false;
@@ -382,6 +389,14 @@ export function createUnifiedPlayerBar(gameState) {
 				⏸ Pause
 			</button>
 			<div id="pause-player-meta" style="margin-top: 4px; font-size: 10px; color: #aaa; text-align: center; min-height: 12px;"></div>
+			<label id="auto-pause-toggle-label" title="When idle for 5 minutes, automatically use one pause to protect your board. Uses one of your limited pauses." style="margin-top: 6px; display: flex; align-items: center; gap: 6px; font-size: 10px; color: #9cf; cursor: pointer; user-select: none;">
+				<input type="checkbox" id="auto-pause-toggle" style="cursor: pointer;" />
+				<span>Auto-pause when idle (5 min)</span>
+			</label>
+			<label id="camera-controls-toggle-label" title="Move pieces relative to the camera view — Left always nudges the piece left on screen, whichever way you've spun the board. Off by default." style="margin-top: 4px; display: flex; align-items: center; gap: 6px; font-size: 10px; color: #9cf; cursor: pointer; user-select: none;">
+				<input type="checkbox" id="camera-controls-toggle" style="cursor: pointer;" />
+				<span>Rotate controls with view</span>
+			</label>
 			<button id="exit-game-sidebar-btn" style="margin-top: 8px; padding: 5px; background: #600; color: #fff; border: 1px solid #f44; border-radius: 3px; cursor: pointer; font-size: 12px; width: 100%;">
 				Exit Game
 			</button>
@@ -474,7 +489,80 @@ function formatPauseMinutesLeft(status) {
 	return `${status.usesRemaining ?? 0} uses · ${remainingMin} min`;
 }
 
+const PAUSE_OVERLAY_ID = 'pause-overlay-banner';
+const PAUSE_OVERLAY_STYLE_ID = 'pause-overlay-style';
+
+function ensurePauseOverlayStyle() {
+	if (document.getElementById(PAUSE_OVERLAY_STYLE_ID)) return;
+	const style = document.createElement('style');
+	style.id = PAUSE_OVERLAY_STYLE_ID;
+	style.textContent = `
+		#${PAUSE_OVERLAY_ID} {
+			position: fixed;
+			inset: 0;
+			z-index: 11500;
+			pointer-events: none;
+			box-shadow: inset 0 0 0 4px rgba(102, 153, 255, 0.55),
+				inset 0 0 120px rgba(20, 40, 90, 0.45);
+			animation: pause-overlay-breathe 2.4s ease-in-out infinite;
+		}
+		#${PAUSE_OVERLAY_ID} .pause-overlay-pill {
+			position: absolute;
+			top: 14px;
+			left: 50%;
+			transform: translateX(-50%);
+			background: linear-gradient(180deg, rgba(40, 70, 150, 0.96) 0%, rgba(18, 32, 80, 0.96) 100%);
+			color: #eaf0ff;
+			padding: 10px 22px;
+			border: 2px solid #8fb0ff;
+			border-radius: 999px;
+			font-family: 'Segoe UI', system-ui, sans-serif;
+			font-size: 15px;
+			letter-spacing: 0.02em;
+			box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5);
+			white-space: nowrap;
+		}
+		#${PAUSE_OVERLAY_ID} .pause-overlay-pill b {
+			color: #ffd24c;
+			letter-spacing: 0.12em;
+		}
+		@keyframes pause-overlay-breathe {
+			0%, 100% { box-shadow: inset 0 0 0 4px rgba(102, 153, 255, 0.40), inset 0 0 120px rgba(20, 40, 90, 0.35); }
+			50% { box-shadow: inset 0 0 0 5px rgba(140, 180, 255, 0.75), inset 0 0 150px rgba(30, 55, 120, 0.55); }
+		}
+	`;
+	document.head.appendChild(style);
+}
+
+/**
+ * Show or hide the unmistakable "you are paused" overlay. The pause
+ * feature freezes the player's footprint and blocks their own moves
+ * server-side; this gives the matching visual so it's obvious the
+ * board is on hold and why a move was refused. Driven from the same
+ * pause-status plumbing as the button so the two never disagree.
+ */
+function applyPauseOverlay(status) {
+	const active = !!(status && status.active);
+	let overlay = document.getElementById(PAUSE_OVERLAY_ID);
+	if (!active) {
+		if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+		return;
+	}
+	if (!overlay) {
+		ensurePauseOverlayStyle();
+		overlay = document.createElement('div');
+		overlay.id = PAUSE_OVERLAY_ID;
+		overlay.innerHTML = `
+			<div class="pause-overlay-pill">
+				<b>⏸ PAUSED</b> — your zone &amp; pieces are protected. Press Resume to play.
+			</div>
+		`;
+		document.body.appendChild(overlay);
+	}
+}
+
 function applyPauseButtonState(status) {
+	applyPauseOverlay(status);
 	const btn = document.getElementById('pause-player-btn');
 	const meta = document.getElementById('pause-player-meta');
 	if (!btn) return;
@@ -586,7 +674,55 @@ function wirePauseButton() {
 		});
 	}
 
+	wireAutoPauseToggle();
+	wireCameraControlsToggle();
 	requestPauseStatus();
+}
+
+function wireCameraControlsToggle() {
+	const toggle = document.getElementById('camera-controls-toggle');
+	if (!toggle) return;
+	toggle.checked = isCameraRelativeControls();
+	toggle.addEventListener('change', () => {
+		setCameraRelativeControls(toggle.checked);
+		showToastMessage(toggle.checked
+			? 'Controls now follow the camera view.'
+			: 'Controls back to fixed (home) orientation.');
+	});
+}
+
+// ── Auto-pause-when-idle toggle ─────────────────────────────────────────────
+
+let autoPauseWatcherStarted = false;
+
+function wireAutoPauseToggle() {
+	const toggle = document.getElementById('auto-pause-toggle');
+	if (toggle) {
+		toggle.checked = isAutoPauseEnabled();
+		toggle.addEventListener('change', () => {
+			setAutoPauseEnabled(toggle.checked);
+			const mins = Math.round(getIdlePauseDelayMs() / 60000);
+			showToastMessage(toggle.checked
+				? `Auto-pause on — you'll pause after ${mins} min idle.`
+				: 'Auto-pause off.');
+		});
+	}
+
+	// The watcher itself only needs starting once per page load; the
+	// toggle's enabled flag is read live on each idle check, so a
+	// single watcher honours later on/off changes for free.
+	if (autoPauseWatcherStarted) return;
+	autoPauseWatcherStarted = true;
+	try {
+		startAutoPauseWatcher({
+			getPauseStatus: () => pauseStatusCache,
+			requestPause: () => sendPauseRequest('pause_player'),
+			requestResume: () => sendPauseRequest('resume_player'),
+		});
+	} catch (err) {
+		console.warn('[AutoPause] watcher failed to start:', err?.message || err);
+		autoPauseWatcherStarted = false;
+	}
 }
 
 /**

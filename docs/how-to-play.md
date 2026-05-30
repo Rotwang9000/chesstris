@@ -29,12 +29,15 @@ A spectator view will allow you to see from that player's, or other players' vie
   If it is not adjacent to a cell as it reaches board height it will just fall through the sky and fade away.
 
 - **Pawn Promotion:**  
-  Pawns are automatically promoted to knights once they have moved 8 spaces forward, increasing their utility in the late game.
+  Once a pawn has made 8 squares of net forward progress it **freezes in place** and its cell becomes home-like (it can't be cleared or decayed). Click the frozen pawn to open the deployment dialog and swap it for a **Queen, Rook, Bishop or Knight that you have previously captured** (your "captured basket"). Deploying is optional — the pawn stays put until you promote it or an enemy captures it.
+
+- **Check (king-capture grace):**  
+  Kings aren't taken instantly. When a move *would* capture an enemy king, the capture is deferred: the defender gets one timed move (20 seconds) to move the king to safety or capture the attacker, with an on-screen alert and a camera fly-to. Run out of time and the king falls. The same attacking piece only offers this grace twice — its third attack takes the king outright, so you can't stall forever.
 
 - **Real-time Actions (Global World):**  
   All players act in the same world at the same time. The server enforces per-action cooldowns so spamming gets rate-limited:
-  - Chess move cooldown: ~0.75s
-  - Tetromino placement cooldown: ~1.5s
+  - Chess move cooldown: ~0.5s
+  - Tetromino placement cooldown: ~0.8s
   
   The UI may still show “Tetris” vs “Chess” phases for clarity, but the server is authoritative.
 
@@ -53,16 +56,9 @@ A spectator view will allow you to see from that player's, or other players' vie
   3. This represents a "ransom" to allow the king to escape (and the defeated player to start a new game)
 
 - **Player Pause System:**  
-  Players can temporarily pause the game:
-  1. A player can freeze their pieces for up to 15 minutes
-  2. During the pause, their pieces cannot be captured and their cells won't be cleared
-  3. Their home zone is protected regardless of whether it contains pieces
-  4. Players can resume their game at any time during the pause period
-  5. If a player doesn't return within 15 minutes:
-     - Their main island (connected to king) is removed from the board
-     - Cells owned by other players on this island are reassigned based on proximity to kings
-     - Equidistant cells become neutral "no-man's land" (grey cells)
-     - Pieces not on the main island are returned to the home zone
-     - The home zone is expanded if needed to accommodate all returning pieces
-     - Any pieces that can't fit in the expanded home zone are lost
-  6. The pause system allows for natural breaks while preventing disruption to other players
+  Players can temporarily freeze their own footprint so they can step away without coming back to a wiped board:
+  1. While paused, your pieces **cannot be captured**, your cells are skipped by line clears, and your home zone is protected.
+  2. Other players keep playing — it's not a world pause, only your footprint becomes inert.
+  3. Pauses are **limited per session** (a handful of uses, a per-pause time cap and a total-time budget) so they can't be abused; the button shows how many uses and minutes you have left.
+  4. You can resume at any time, and the server auto-resumes you if a single pause runs past its cap.
+  5. **Auto-pause when idle (optional):** tick the box under the Pause button and, after ~5 minutes with no input, the game will spend one of your pauses for you and lift it the moment you return. It's off-by-choice because it consumes a pause from your limited budget.

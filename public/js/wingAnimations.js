@@ -28,6 +28,15 @@ const FALL_DURATION_MS = 1100;
 const FALL_DEPTH = -4.5;
 const WING_COLOUR = 0xffffff;
 
+// Max wall-clock a piece is allowed to stay airborne before the
+// watchdog forcibly settles it. The server fires `cells_clearing`
+// 700 ms ahead of `row_cleared`, so the legitimate hover window is
+// well under a second. Any piece still airborne after this has hit
+// a dropped or out-of-order event and would otherwise flap forever
+// (see player report: "queen on an island cell… won't stop flying
+// with wings").
+const MAX_AIRBORNE_MS = 6000;
+
 const airbornePieces = new Map();
 let chessGroupRef = null;
 let activeFlap = null;
@@ -144,6 +153,7 @@ function ensureFlapTicker() {
 			return;
 		}
 		const now = performance.now();
+		const stuckIds = [];
 		for (const [pieceId, entry] of airbornePieces) {
 			const mesh = entry.mesh;
 			if (!mesh) continue;
@@ -154,6 +164,21 @@ function ensureFlapTicker() {
 				const bob = Math.sin(now * 0.005) * 0.07;
 				mesh.position.y = entry.targetY + bob;
 			}
+			// Stuck-wings watchdog. The legitimate hover window is
+			// ~1 s between `cells_clearing` and `row_cleared`. If the
+			// settle event was dropped or sent out of order we'd
+			// otherwise flap forever. After MAX_AIRBORNE_MS we
+			// fake a "landed" settle so the piece returns to its
+			// base height and the wings come off.
+			if (entry.startedAt
+				&& (now - entry.startedAt) > MAX_AIRBORNE_MS
+				&& entry.phase !== 'falling') {
+				stuckIds.push(pieceId);
+			}
+		}
+		if (stuckIds.length > 0) {
+			console.warn('[Wings] Watchdog forcibly settling stuck pieces:', stuckIds);
+			settleAirbornePieces(stuckIds.map(id => ({ pieceId: id, outcome: 'landed' })));
 		}
 		activeFlap = requestAnimationFrame(tick);
 	};
@@ -207,6 +232,7 @@ export function liftAirbornePieces(pieceIds) {
 			baseY,
 			targetY,
 			phase: 'lifting',
+			startedAt: performance.now(),
 		});
 		tween(mesh, {
 			fromY: baseY,

@@ -461,12 +461,23 @@
 					the strip beside the run where players naturally look as they expand territory.
 				</p>
 				<ol>
-					<li><strong>Submit your brand details below.</strong> No image or payment yet — we just need the basics so we can quote you a slot.</li>
-					<li><strong>Pay in SOL.</strong> You'll get a Solana wallet address to send to. We don't bill cards or run auctions — higher bids get more impressions.</li>
-					<li><strong>Upload your artwork.</strong> Once payment lands, you'll be sent a one-time link to upload the image that appears on sponsored cells. Your brand name is shown alongside it.</li>
-					<li><strong>Bid ranking:</strong> Active advertisers rotate by cost-per-impression. A bigger bid means your creative appears on more qualifying rows.</li>
-					<li><strong>Track performance:</strong> Impressions and clicks are reported in real time from the live world.</li>
+					<li><strong>Submit your brand details below.</strong> Connect your Solana wallet first — that's how we know an ad is yours so you can manage it later.</li>
+					<li><strong>Pay in SOL.</strong> Send the bid amount to the address shown. The transaction signature confirms the payment.</li>
+					<li><strong>Wait for moderator approval (usually within 24 h).</strong> We hand-review every ad to keep the game family-friendly. You'll see the status on the post-payment page, and you can revisit it any time with your wallet.</li>
+					<li><strong>Live rotation.</strong> Approved ads rotate weighted by cost-per-impression, with anti-repetition so the same brand never shows back-to-back.</li>
+					<li><strong>If we reject your ad,</strong> you'll get a reason and a chance to re-upload from the "Manage my ads" page after signing in with your wallet.</li>
 				</ol>
+				<p style="margin-top: 16px; padding: 12px; border: 1px solid var(--accent, #ffcc00); border-radius: 8px; background: rgba(255,204,0,0.08); color: var(--text); line-height: 1.5;">
+					<strong style="color: var(--accent, #ffcc00);">Content policy:</strong>
+					Ads must be <strong>all-ages friendly</strong>. No nudity or sexual content, no graphic
+					violence or gore, no hate speech or harassment, no gambling-app promotions or
+					unsanctioned crypto-token promotions, and nothing that misleads about its destination.
+					We will reject anything that wouldn't be appropriate for an 8-year-old to see, and
+					refunds are not issued for content rejections — please get it right first time.
+				</p>
+				<p style="margin-top: 8px;">
+					<a href="/advertise-manage.html" style="color: var(--accent, #ffcc00);">Already have an ad? Manage it →</a>
+				</p>
 			</div>
 		</div>
 		
@@ -503,13 +514,24 @@
 			</div>
 			
 			<div class="form-group">
-				<label>Cell Artwork <span class="label-hint">(JPEG, PNG, GIF, WebP - Max 5MB. Held in escrow until payment confirms — only published ads ever touch disk.)</span></label>
+				<label>Cell Artwork <span class="label-hint">(JPEG, PNG, GIF, WebP - Max 5MB. Held in memory until approval — only approved ads ever touch disk.)</span></label>
 				<div class="file-upload" id="file-upload-area">
 					<div class="file-upload-icon">▣</div>
 					<div class="file-upload-text">Click or drag to upload the artwork for sponsored cells</div>
 					<input type="file" id="adImage" name="adImage" accept="image/jpeg,image/png,image/gif,image/webp" required>
 					<img id="preview-image" class="preview-image" alt="Preview">
 				</div>
+			</div>
+
+			<div class="form-group">
+				<label style="display: flex; gap: 10px; align-items: flex-start; cursor: pointer; line-height: 1.4;">
+					<input type="checkbox" id="content-policy-ack" required style="margin-top: 4px;">
+					<span style="color: var(--text); font-size: 14px;">
+						I confirm this advert is suitable for <strong>all ages</strong> (no nudity, violence,
+						hate speech, gambling promotions or misleading content) and that
+						<strong>refunds will not be issued for content rejections.</strong>
+					</span>
+				</label>
 			</div>
 			
 			<div class="form-row">

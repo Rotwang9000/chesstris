@@ -27,6 +27,26 @@ function registerTetrominoHandlers(socket, ctx) {
 				return;
 			}
 
+			// Eliminated players are out for good — no more building once
+			// the king has fallen (mirrors the chess-move gate).
+			if (player.eliminated) {
+				const msg = 'You have been eliminated — your king is gone.';
+				socket.emit('tetrominoFailed', { message: msg, reason: 'eliminated' });
+				if (callback) callback({ success: false, error: msg, reason: 'eliminated' });
+				return;
+			}
+
+			// Paused players are "away" and protected (see `pauseService`),
+			// so they may not build until they resume — mirrors the same
+			// gate on chess moves so pausing can't be used as an
+			// invulnerability shield while still playing.
+			if (player.paused) {
+				const msg = 'You are paused — press Resume to play.';
+				socket.emit('tetrominoFailed', { message: msg, reason: 'paused' });
+				if (callback) callback({ success: false, error: msg, reason: 'paused' });
+				return;
+			}
+
 			const cooldown = getCooldownRemainingMs(
 				player, 'lastTetrominoPlacementAt', PLAYER_SETTINGS.TETROMINO_PLACEMENT_COOLDOWN_MS
 			);
@@ -50,6 +70,22 @@ function registerTetrominoHandlers(socket, ctx) {
 			}
 
 			const world = World.getWorld();
+
+			// No building while your king is in check. The defender's
+			// only legal action during the grace window is a king-saving
+			// chess move; placing tetrominoes would let them stall the
+			// clock and ignore the threat. The client already pauses the
+			// fall on `pendingCheck`, but enforce it server-side so an
+			// old/modified client can't bypass it. (Chess-H3)
+			if (world && world.pendingCheck
+				&& String(world.pendingCheck.defenderId) === String(playerId)) {
+				socket.emit('tetrominoFailed', {
+					message: 'Your king is in check — resolve it before building.',
+					reason: 'in_check',
+				});
+				if (callback) callback({ success: false, error: 'in_check' });
+				return;
+			}
 
 			if (!gameManager.tetrominoManager.isValidTetrisPiece(pieceType)) {
 				socket.emit('tetrominoFailed', { message: `Invalid tetromino type: ${pieceType}` });

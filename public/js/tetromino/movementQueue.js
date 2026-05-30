@@ -344,9 +344,13 @@ function processPlaceTetromino() {
 						window.updateBoardVisuals();
 					}
 				}
+				// Sponsor popup is now click-driven only — see
+				// `chessInteraction.js#showCellInfo`. We deliberately
+				// do NOT call displaySponsorInfo here; users asked
+				// for the ad box to appear only when they click a
+				// sponsored cell.
 				if (placedTetrominoSponsor) {
-					console.log('Displaying sponsor ad for:', placedTetrominoSponsor.name);
-					displaySponsorInfo(placedTetrominoSponsor);
+					console.log('Tetromino had sponsor (click cell to view):', placedTetrominoSponsor.name);
 				}
 
 				cleanupCurrentTetromino(gameState);
@@ -519,11 +523,38 @@ export function queueTetrominoMovement(type, params = {}) {
 	return queueOperation(type, params);
 }
 
+// User-input markers ─────────────────────────────────────────────
+//
+// Per the user spec the auto-fall must:
+//   1. Stay paused until the player makes their first move; then
+//   2. Pause for 0.5 s after every manual move/rotate so they can
+//      shuffle the piece a long way without it falling away under
+//      them, but
+//   3. Run *concurrently* with the regular 1 s fall countdown —
+//      i.e. rapid moves don't keep stacking the pause, they only
+//      delay the next fall by 0.5 s from the LAST move.
+//
+// `markUserInteraction` stamps the currentTetromino's `fallStarted`
+// and `lastMoveTime` fields; the game loop reads both. Only the
+// USER-FACING exports below call it — the auto-fall (`moveTetrominoY`
+// from the game loop) deliberately doesn't, because that would make
+// the piece its own first input.
+
+function markUserInteraction() {
+	const gameState = getGameState();
+	const tetro = gameState && gameState.currentTetromino;
+	if (!tetro) return;
+	tetro.fallStarted = true;
+	tetro.lastMoveTime = Date.now();
+}
+
 export function moveTetrominoX(dir) {
+	markUserInteraction();
 	return queueOperation(MOVEMENT_TYPES.MOVE_X, { dir });
 }
 
 export function moveTetrominoZ(dir) {
+	markUserInteraction();
 	return queueOperation(MOVEMENT_TYPES.MOVE_Z, { dir });
 }
 
@@ -532,10 +563,18 @@ export function moveTetrominoY(height, isRelative = true) {
 }
 
 export function rotateTetromino(dir) {
+	markUserInteraction();
 	return queueOperation(MOVEMENT_TYPES.ROTATE, { dir });
 }
 
 export function hardDropTetromino() {
+	const gameState = getGameState();
+	if (gameState?.currentTetromino) {
+		// Hard drop unambiguously expresses intent — start the fall
+		// state machine but DON'T set lastMoveTime, because we don't
+		// want a pause after a one-shot hard drop.
+		gameState.currentTetromino.fallStarted = true;
+	}
 	return queueOperation(MOVEMENT_TYPES.HARD_DROP, {});
 }
 

@@ -82,25 +82,34 @@ export function initMaterials() {
 
 /**
  * Build a fresh `{ primary, secondary, accent }` material trio for the
- * given side (`'self'` or `'other'`). Always returns valid materials,
- * synthesising replacements if an entry has been corrupted.
+ * given side (`'self'` or `'other'`). Always returns NEW material
+ * instances (cloned from the shared `ENHANCED_MATERIALS` palette) so
+ * callers can safely mutate `.color` / `.emissive` / etc. without
+ * affecting any other piece's appearance. The previous implementation
+ * returned the shared singleton, which caused every chess piece on
+ * the board to inherit the most-recently-rendered piece's colour —
+ * the "all pieces flick to my colour for a while" bug the user kept
+ * reporting after every capture.
  */
 export function createSafeMaterials(materialKey) {
 	const THREE = getTHREE();
 	const defaultColor = DEFAULT_COLORS[materialKey] ?? 0xCCCCCC;
-	const materials = ENHANCED_MATERIALS[materialKey] || {
-		primary: new THREE.MeshStandardMaterial({ color: defaultColor, roughness: 0.7, metalness: 0.3 }),
-		secondary: new THREE.MeshStandardMaterial({ color: defaultColor, roughness: 0.7, metalness: 0.3 }),
-		accent: new THREE.MeshStandardMaterial({ color: defaultColor, roughness: 0.7, metalness: 0.3 }),
+	const shared = ENHANCED_MATERIALS[materialKey];
+	const seed = shared && typeof shared === 'object' ? shared : null;
+
+	const cloneOrCreate = (entry) => {
+		if (entry && typeof entry === 'object' && typeof entry.clone === 'function') {
+			return entry.clone();
+		}
+		const color = typeof entry === 'number' ? entry : defaultColor;
+		return new THREE.MeshStandardMaterial({
+			color, roughness: 0.7, metalness: 0.3,
+		});
 	};
 
-	for (const key in materials) {
-		if (typeof materials[key] !== 'object' || materials[key] === null) {
-			const color = typeof materials[key] === 'number' ? materials[key] : defaultColor;
-			materials[key] = new THREE.MeshStandardMaterial({
-				color, roughness: 0.7, metalness: 0.3,
-			});
-		}
-	}
-	return materials;
+	return {
+		primary: cloneOrCreate(seed && seed.primary),
+		secondary: cloneOrCreate(seed && seed.secondary),
+		accent: cloneOrCreate(seed && seed.accent),
+	};
 }

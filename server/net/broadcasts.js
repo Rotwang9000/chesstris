@@ -204,6 +204,10 @@ function createBroadcaster({ io, persistence }) {
 			// is tiny (a handful of orbs at most) and clients need it
 			// to draw glowing floating spheres at the right cells.
 			powerUps: Array.isArray(world.powerUps) ? world.powerUps : [],
+			// Outstanding Check (deferred king capture). Clients use this
+			// to render the warning banner, freeze the defender's
+			// tetromino auto-fall, and lock the attacker piece.
+			pendingCheck: world.pendingCheck || null,
 			gameId: world.id,
 		};
 	}
@@ -248,6 +252,7 @@ function createBroadcaster({ io, persistence }) {
 			disconnectedSince: world.disconnectedSince || {},
 			players: playersList,
 			powerUps: Array.isArray(world.powerUps) ? world.powerUps : [],
+			pendingCheck: world.pendingCheck || null,
 		});
 	}
 

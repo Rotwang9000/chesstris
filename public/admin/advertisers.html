@@ -400,6 +400,17 @@
 			</div>
 		</div>
 		
+		<!-- Pending Review Queue -->
+		<div class="card" id="pending-review-card">
+			<div class="card-header">
+				<span class="card-title">Awaiting moderator review</span>
+				<span id="pending-count" style="color: var(--warning); font-size: 14px;"></span>
+			</div>
+			<div id="pending-container">
+				<div class="loading"><div class="spinner"></div></div>
+			</div>
+		</div>
+
 		<!-- Advertisers Table -->
 		<div class="card">
 			<div class="card-header">
@@ -431,12 +442,19 @@
 	
 	<script>
 		let advertisers = [];
-		
+
+		// Admin token is supplied via URL query string when this page
+		// is loaded (the page handler in `server/app.js` validates it
+		// before serving). We thread the same token through every API
+		// call so the gated `/api/advertisers` endpoints accept us.
+		const ADMIN_TOKEN = new URLSearchParams(window.location.search).get('adminToken') || '';
+		const adminHeaders = ADMIN_TOKEN ? { 'x-admin-token': ADMIN_TOKEN } : {};
+
 		async function fetchAdvertisers() {
 			try {
-				const response = await fetch('/api/advertisers');
+				const response = await fetch('/api/advertisers', { headers: adminHeaders });
 				const data = await response.json();
-				
+
 				if (data.success && data.advertisers) {
 					advertisers = data.advertisers;
 					updateStats();
@@ -448,6 +466,71 @@
 				console.error('Error fetching advertisers:', error);
 				showEmptyState('Failed to load advertisers');
 			}
+
+			await fetchPendingQueue();
+		}
+
+		async function fetchPendingQueue() {
+			const container = document.getElementById('pending-container');
+			const countEl = document.getElementById('pending-count');
+			try {
+				const res = await fetch('/api/advertisers/admin/pending', { headers: adminHeaders });
+				const data = await res.json();
+				const list = (data && data.advertisers) || [];
+				countEl.textContent = list.length === 0 ? 'queue empty' : `${list.length} waiting`;
+				if (list.length === 0) {
+					container.innerHTML = '<div class="empty-state"><p>Nothing waiting — go play some Tetches.</p></div>';
+					return;
+				}
+				container.innerHTML = list.map(renderPendingCard).join('');
+			} catch (err) {
+				container.innerHTML = `<div class="empty-state"><p>Failed to load pending queue: ${err.message}</p></div>`;
+			}
+		}
+
+		function renderPendingCard(adv) {
+			const previewUrl = adv.previewUrl ? adv.previewUrl : '';
+			const previewTag = previewUrl
+				? `<img src="${escapeHtml(previewUrl)}" alt="pending ad" style="width:160px;height:160px;object-fit:contain;border:1px solid var(--border);border-radius:8px;background:#000;">`
+				: '<p class="text-muted">No image attached.</p>';
+			return `
+				<div style="display:flex;gap:16px;padding:16px;border-top:1px solid var(--border);">
+					${previewTag}
+					<div style="flex:1;">
+						<h3 style="color:var(--gold);">${escapeHtml(adv.name)}</h3>
+						<p style="color:var(--text-muted);font-size:13px;margin:6px 0;">${escapeHtml(adv.adText || '')}</p>
+						<p style="font-size:12px;"><strong>Link:</strong> <a href="${escapeHtml(adv.adLink || '#')}" target="_blank" rel="noopener" style="color:var(--gold);">${escapeHtml(adv.adLink || '')}</a></p>
+						<p style="font-size:12px;"><strong>Bid:</strong> ${adv.bidAmount} SOL · ${adv.cellCount} cells</p>
+						<p style="font-size:12px;"><strong>Wallet:</strong> <code>${escapeHtml(adv.walletAddress || '')}</code></p>
+						<p style="font-size:12px;"><strong>ID:</strong> <code>${adv.id}</code></p>
+						<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
+							<button class="btn btn-primary" onclick="reviewAd('${adv.id}','approve')">Approve</button>
+							<button class="btn btn-secondary" onclick="reviewAdWithReason('${adv.id}')">Reject…</button>
+						</div>
+					</div>
+				</div>
+			`;
+		}
+
+		async function reviewAd(id, action, reason) {
+			try {
+				const res = await fetch(`/api/advertisers/${id}/admin-review`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json', ...adminHeaders },
+					body: JSON.stringify({ action, reason: reason || '' }),
+				});
+				const data = await res.json();
+				if (!data.success) throw new Error(data.message || 'Review failed');
+				await fetchAdvertisers();
+			} catch (err) {
+				alert(`Review failed: ${err.message}`);
+			}
+		}
+
+		function reviewAdWithReason(id) {
+			const reason = window.prompt('Rejection reason (the advertiser will see this — be specific so they can fix it):', 'Content does not meet our all-ages guideline.');
+			if (reason === null) return;
+			reviewAd(id, 'reject', reason);
 		}
 		
 		function updateStats() {
@@ -608,16 +691,16 @@
 		async function toggleStatus(id) {
 			const ad = advertisers.find(a => a.id === id);
 			if (!ad) return;
-			
+
 			const newStatus = ad.bidStatus === 'paused' ? 'active' : 'paused';
-			
+
 			try {
 				const response = await fetch(`/api/advertisers/${id}`, {
 					method: 'PUT',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ bidStatus: newStatus })
+					headers: { 'Content-Type': 'application/json', ...adminHeaders },
+					body: JSON.stringify({ bidStatus: newStatus }),
 				});
-				
+
 				const data = await response.json();
 				if (data.success) {
 					fetchAdvertisers();
@@ -629,15 +712,16 @@
 				alert('Failed to update status');
 			}
 		}
-		
+
 		async function deleteAdvertiser(id) {
 			if (!confirm('Are you sure you want to delete this advertiser?')) return;
-			
+
 			try {
 				const response = await fetch(`/api/advertisers/${id}`, {
-					method: 'DELETE'
+					method: 'DELETE',
+					headers: adminHeaders,
 				});
-				
+
 				const data = await response.json();
 				if (data.success) {
 					fetchAdvertisers();

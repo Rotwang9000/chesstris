@@ -134,6 +134,24 @@ export function initializeNewTetromino(gameState, type) {
 		position: { x: initialPosition.x, z: initialPosition.z },
 		heightAboveBoard: initialPosition.heightAboveBoard,
 		sponsor: null,
+		// Fall state, stored ON the tetromino so it's naturally
+		// per-piece and survives any cross-module reference shuffling
+		// (no module-scope timers to get out of sync). Per the user
+		// spec:
+		//   "the piece hovered until a key was pressed, then it would
+		//    drop a bit every second or so… the drop should pause
+		//    half a second if they move it… these delays should
+		//    happen concurrently"
+		//
+		// - `fallStarted` is flipped to `true` by the first manual
+		//   move/rotate/hard-drop in `movementQueue.js`.
+		// - `lastMoveTime` is stamped on every manual move so the
+		//   0.5 s pause runs in parallel with the 1 s fall rhythm.
+		// - `lastFallTime` is set the first tick the game loop sees
+		//   `fallStarted`, and after every auto-fall.
+		fallStarted: false,
+		lastMoveTime: 0,
+		lastFallTime: 0,
 	};
 
 	fetchNextSponsor()

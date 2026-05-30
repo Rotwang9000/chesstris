@@ -42,6 +42,7 @@ const { createPauseService } = require('./world/pause');
 const { createBoatManager } = require('./world/boats');
 const advertisersRouter = require('../routes/advertisers');
 const { createKingCaptureService } = require('./king/capture');
+const { createCheckService } = require('./king/checkService');
 const { createKingDuelService } = require('./king/duels');
 const { createKingDetonationService } = require('./king/detonation');
 const { createKingLifeService } = require('./king/kingLives');
@@ -198,10 +199,25 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		activityLog,
 	});
 
+	const checkService = createCheckService({
+		io,
+		gameManager,
+		broadcaster,
+		kingCaptureService,
+		activityLog,
+	});
+
 	const kingDuelService = createKingDuelService({
 		io,
 		kingCaptureService,
 	});
+	// Late-bind the duel service into the capture service so the shared
+	// `resolveKingCapture` entry-point can hand off to a King's Duel when
+	// two kings fall within the simultaneous-capture window. (Avoids a
+	// constructor-time circular dependency between the two services.)
+	if (typeof kingCaptureService.setDuelService === 'function') {
+		kingCaptureService.setDuelService(kingDuelService);
+	}
 
 	const kingDetonationService = createKingDetonationService({
 		io,
@@ -217,6 +233,11 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		broadcaster,
 		persistence,
 		activityLog,
+		// When a king runs out of lives the final death plays the same
+		// lemming-style detonation as a voluntary/lone-king self-destruct,
+		// so the player's pieces and cells go out with drama instead of
+		// the king silently vanishing.
+		kingDetonationService,
 	});
 	// Expose the king-life service on the GameManager so the deep
 	// removePiece callers (BoardManager.settleAirbornePieces,
@@ -273,6 +294,7 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		aiActions,
 		kingCaptureService,
 		kingDetonationService,
+		checkService,
 		persistence,
 		spectatorRegistry,
 	});
@@ -320,6 +342,14 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 	aiRunner.ensureRoster();
 	integrityService.processWorldIntegrityMaintenance({ emitAnimation: false, broadcast: false });
 
+	// Resume any outstanding `pendingCheck` deadline from the snapshot
+	// so a server restart mid-check doesn't strand the defender (the
+	// timer is in-memory only). `rehydrate()` reads `world.pendingCheck`,
+	// reschedules a setTimeout for the remaining ms, and immediately
+	// expires it if the deadline already passed during downtime.
+	try { checkService.rehydrate(); }
+	catch (e) { console.warn('[Check] rehydrate failed:', e.message); }
+
 	// Backfill forwardDistance for pawns restored from snapshots taken
 	// before that field was tracked. Without this, veteran pawns sitting
 	// deep in enemy territory still report `forwardDistance: 0` and can
@@ -365,6 +395,7 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		kingCaptureService,
 		kingDuelService,
 		kingDetonationService,
+		checkService,
 		lineClearService,
 		powerUpManager,
 		aiRunner,
@@ -374,6 +405,7 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		pauseService,
 		boatManager,
 		missingKingSweep,
+		getBundleVersion: app._getBundleVersion || (() => ''),
 	});
 	io.on('connection', socket => {
 		metrics.setSocketCount(io.engine.clientsCount);

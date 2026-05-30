@@ -29,7 +29,7 @@ const PLAYER_ID_COOKIE = 'tetches_player_id';
 const API_TOKEN_COOKIE = 'tetches_api_token';
 
 function createConnectionHandler(services) {
-	const { io, lifecycleService, spectatorRegistry, pauseService } = services;
+	const { io, lifecycleService, spectatorRegistry, pauseService, getBundleVersion } = services;
 	if (!io) throw new Error('createConnectionHandler: io required');
 	if (!lifecycleService) throw new Error('createConnectionHandler: lifecycleService required');
 	if (!spectatorRegistry) throw new Error('createConnectionHandler: spectatorRegistry required');
@@ -48,6 +48,25 @@ function createConnectionHandler(services) {
 
 		socket.emit('player_id', playerId);
 		socket.emit('set_session', { playerId });
+
+		// Tell the client which build the server is on. Old clients
+		// compare this against the bundle version embedded in their
+		// page (`window.__BUNDLE_VERSION__`) and display a "please
+		// refresh" prompt if they're more than one redeploy behind.
+		// Also lets the server detect cheating front-ends that
+		// connect without ever loading the SPA: they won't reply
+		// with `client_version_ack` and we can flag them in the log.
+		try {
+			const serverBundleVersion = typeof getBundleVersion === 'function'
+				? String(getBundleVersion() || '')
+				: '';
+			socket.emit('server_version', {
+				bundleVersion: serverBundleVersion,
+				serverTs: Date.now(),
+			});
+		} catch (err) {
+			console.warn('[Connection] server_version emit failed:', err.message);
+		}
 
 		const handlerCtx = { ...services, playerId, socket };
 
@@ -208,10 +227,30 @@ function handleDisconnect(socket, playerId, services) {
 	Sessions.unbind(socket.id);
 	spectatorRegistry.stop(playerId);
 
-	if (World.getPlayer(playerId)) {
+	// Note the disconnect time on the record so the island-decay /
+	// ghost-sweep machinery can use it as one input among several
+	// when deciding fate. Crucially we do NOT delete the player or
+	// their pieces here — the player reported losing every piece
+	// after stepping away for a couple of minutes (grace expired
+	// while they were AFK), and that's strictly worse than just
+	// letting natural decay handle abandoned territory over a longer
+	// window. The ghost-player sweep still picks up records that
+	// have hit zero pieces via island decay; we just don't pre-empt it.
+	const record = World.getPlayer(playerId);
+	if (record) {
+		record.lastDisconnectAt = Date.now();
+		// `lastActiveAt` keeps moving with reconnects, so don't bump
+		// it backwards here — the dissolve-timing code uses it as a
+		// freshness signal.
+	}
+
+	if (record) {
 		Disconnects.arm(playerId, () => {
-			console.log(`Grace period expired for ${playerId}, removing from world`);
-			lifecycleService.removePlayerCompletely(playerId);
+			console.log(`Grace period expired for ${playerId} — leaving pieces in place (natural decay handles abandoned territory).`);
+			// Intentional no-op: don't `removePlayerCompletely` here.
+			// Explicit exit (`exit_game`) still removes pieces immediately;
+			// island decay / ghost sweep will GC abandoned humans once
+			// they're truly empty.
 		});
 	} else {
 		lifecycleService.removePlayerCompletely(playerId);

@@ -203,20 +203,15 @@ async function init() {
 		// Initialize NetworkStatusManager
 		NetworkStatusManager.init();
 		
-		// Add status listener
+		// Add status listener. The render loop keeps running while
+		// disconnected (the world is server-authoritative and resyncs on
+		// reconnect); NetworkStatusManager owns the visible status display
+		// and reconnect attempts, so there's nothing to locally pause.
 		NetworkStatusManager.addStatusListener((status) => {
 			if (status === NetworkStatusManager.NetworkStatus.DISCONNECTED) {
-				console.log('Network connection lost, game paused');
-				// If game is running, pause it
-				if (isGameStarted && gameCore.pauseGame) {
-					gameCore.pauseGame();
-				}
+				console.log('Network connection lost; awaiting reconnect');
 			} else if (status === NetworkStatusManager.NetworkStatus.CONNECTED) {
 				console.log('Network connection restored');
-				// If game was paused due to disconnect, resume it
-				if (isGameStarted && gameCore.resumeGame) {
-					gameCore.resumeGame();
-				}
 			}
 		});
 		
@@ -629,10 +624,14 @@ async function joinGameAfterConnection(gameId = null) {
 				updateUnifiedPlayerBar(gameState);
 			}, 1000);
 			
-			// Initialize advertising/sponsor systems after game starts
+			// Initialize the in-world sponsored-cell decoration loop.
+			// We deliberately do NOT call initFloatingBanner anymore —
+			// the user asked for ads to only show when clicked, so
+			// the always-visible banner is gone. The sponsor popup
+			// (#sponsor-ad) is now triggered by clicking a sponsored
+			// cell in `chessInteraction.js#showCellInfo`.
 			setTimeout(() => {
 				initSponsorSystem().catch(err => console.warn('Sponsor system init error:', err));
-				initFloatingBanner().catch(err => console.warn('Floating banner init error:', err));
 			}, 2000);
 		} else {
 			throw new Error('Failed to join game');

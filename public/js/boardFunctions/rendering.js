@@ -149,12 +149,31 @@ function isCellDisconnected(gameState, x, z, owner) {
 	return Number.isFinite(map[key]);
 }
 
+/**
+ * Checkerboard darkening. Bishops only travel on squares of one
+ * colour, so the player needs to be able to read the board parity
+ * at a glance — even when every cell is covered in tetromino
+ * terrain. We lightly darken cells where `(x + z) % 2 === 1` by
+ * scaling each RGB channel down. The factor 0.86 is enough to be
+ * visible but not so much that home / tetromino colours change
+ * recognisably.
+ */
+const CHECKER_DARKEN = 0.86;
+
+function darkenForChecker(color, x, z) {
+	if (((x + z) & 1) === 0) return color;
+	const r = Math.round(((color >> 16) & 0xff) * CHECKER_DARKEN);
+	const g = Math.round(((color >> 8) & 0xff) * CHECKER_DARKEN);
+	const b = Math.round((color & 0xff) * CHECKER_DARKEN);
+	return ((r & 0xff) << 16) | ((g & 0xff) << 8) | (b & 0xff);
+}
+
 function chooseAppearance(classification, gameState, x, z) {
 	const { isHomeZone, homePlayer, tetrominoPlayer, isExHome } = classification;
 	if (isExHome && tetrominoPlayer) {
 		return {
 			kind: 'exhome',
-			color: getPlayerColor(tetrominoPlayer, gameState, 'tetromino'),
+			color: darkenForChecker(getPlayerColor(tetrominoPlayer, gameState, 'tetromino'), x, z),
 			roughness: 0.5,
 			metalness: 0.05,
 			transparent: true,
@@ -166,7 +185,7 @@ function chooseAppearance(classification, gameState, x, z) {
 		const decaying = isCellDisconnected(gameState, x, z, homePlayer);
 		return {
 			kind: 'home',
-			color: getPlayerColor(homePlayer, gameState, 'home'),
+			color: darkenForChecker(getPlayerColor(homePlayer, gameState, 'home'), x, z),
 			roughness: 0.7,
 			metalness: 0.3,
 			transparent: decaying,
@@ -178,7 +197,7 @@ function chooseAppearance(classification, gameState, x, z) {
 		const decaying = isCellDisconnected(gameState, x, z, tetrominoPlayer);
 		return {
 			kind: 'tetromino',
-			color: getPlayerColor(tetrominoPlayer, gameState, 'tetromino'),
+			color: darkenForChecker(getPlayerColor(tetrominoPlayer, gameState, 'tetromino'), x, z),
 			roughness: 0.55,
 			metalness: 0.1,
 			transparent: decaying,

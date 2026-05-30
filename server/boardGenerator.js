@@ -62,6 +62,9 @@ function calculateHomePosition(playerIndex, gameState, homeZoneWidth, homeZoneHe
 				if (!isValidHomePosition(x, z, orientation, homeZoneWidth, homeZoneHeight, pawnPaths, 8)) {
 					continue;
 				}
+				if (overlapsExistingTerritory(gameState, x, z, orientation, homeZoneWidth, homeZoneHeight)) {
+					continue;
+				}
 				// Prefer (but don't require) positions that enable pawn clashes at 7.
 				if (hasPartialPawnClash(x, z, orientation, homeZoneWidth, homeZoneHeight, pawnPaths, 7)) {
 					return { x, z, orientation };
@@ -78,7 +81,8 @@ function calculateHomePosition(playerIndex, gameState, homeZoneWidth, homeZoneHe
 				const { x, z } = sampleAroundAnchor(anchor, radius, orientation);
 
 				if (hasAdequateSpace(x, z, orientation, homeZoneWidth, homeZoneHeight, existingHomeZones)
-					&& isValidHomePosition(x, z, orientation, homeZoneWidth, homeZoneHeight, pawnPaths, 8)) {
+					&& isValidHomePosition(x, z, orientation, homeZoneWidth, homeZoneHeight, pawnPaths, 8)
+					&& !overlapsExistingTerritory(gameState, x, z, orientation, homeZoneWidth, homeZoneHeight)) {
 					return { x, z, orientation };
 				}
 			}
@@ -86,6 +90,55 @@ function calculateHomePosition(playerIndex, gameState, homeZoneWidth, homeZoneHe
 	}
 
 	return calculateFallbackPosition(existingHomeZones, homeZoneWidth, homeZoneHeight);
+}
+
+/**
+ * Reject candidate home zones whose footprint (plus a small breathing
+ * buffer) overlaps with cells already owned by an OTHER, still-alive
+ * player. Player report: "captured AI Expert and they respawned in
+ * amongst the cells I had just got from them". The eliminated-zone
+ * filter in `collectExistingHomeZones` correctly forgets the dead
+ * player's home, but the cells they used to own are now ours — and
+ * the old check only compared zones to zones, never zones to cells.
+ *
+ * @param {Object} gameState - World snapshot (must include `board.cells`
+ *   and `players`).
+ * @param {number} x - Candidate home zone X.
+ * @param {number} z - Candidate home zone Z.
+ * @param {number} orientation - 0..3.
+ * @param {number} width - Home zone width (typically 8).
+ * @param {number} height - Home zone height (typically 2).
+ * @returns {boolean} true if the candidate would step on someone
+ *   else's terrain.
+ */
+function overlapsExistingTerritory(gameState, x, z, orientation, width, height) {
+	if (!gameState || !gameState.board || !gameState.board.cells) return false;
+	const cells = gameState.board.cells;
+	const players = (gameState && gameState.players) || {};
+	// 1 cell breathing buffer around the home rectangle. Keeps the new
+	// joiner from spawning literally elbow-to-elbow with another player.
+	const buffer = 1;
+	let minX, maxX, minZ, maxZ;
+	switch (orientation) {
+		case 0:
+		case 2: minX = x - buffer; maxX = x + width + buffer; minZ = z - buffer; maxZ = z + height + buffer; break;
+		case 1:
+		case 3: minX = x - buffer; maxX = x + width + buffer; minZ = z - buffer; maxZ = z + height + buffer; break;
+		default: minX = x; maxX = x + width; minZ = z; maxZ = z + height;
+	}
+	for (let cx = minX; cx <= maxX; cx++) {
+		for (let cz = minZ; cz <= maxZ; cz++) {
+			const items = cells[`${cx},${cz}`];
+			if (!Array.isArray(items) || items.length === 0) continue;
+			for (const item of items) {
+				if (!item || item.player == null) continue;
+				const p = players[item.player];
+				if (p && p.eliminated) continue;
+				return true;
+			}
+		}
+	}
+	return false;
 }
 
 function makeFirstPlayerHomePosition() {

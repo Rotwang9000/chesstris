@@ -701,7 +701,12 @@ export default class NetworkManager {
 	 * @param {Function} callback    Invoked with the server ack payload.
 	 */
 	redeemPromotion(capturedType, creditId, callback) {
-		if (!this.isConnected() || !this.socket) {
+		// The socket lives at `this.state.socket`, NOT `this.socket` —
+		// the latter is always undefined, so the old `!this.socket`
+		// guard fired even on a fully-connected client. Player report:
+		// "deploy failed: not connected" on every promotion attempt.
+		const socket = this.state.socket;
+		if (!this.isConnected() || !socket) {
 			if (typeof callback === 'function') {
 				callback({ success: false, error: 'Not connected' });
 			}
@@ -709,7 +714,7 @@ export default class NetworkManager {
 		}
 		const payload = { capturedType };
 		if (creditId) payload.creditId = creditId;
-		this.socket.emit('redeem_promotion', payload, (ack) => {
+		socket.emit('redeem_promotion', payload, (ack) => {
 			if (typeof callback === 'function') callback(ack);
 		});
 	}
@@ -725,13 +730,14 @@ export default class NetworkManager {
 	 * @param {Function} [callback]  Invoked with the server ack payload.
 	 */
 	deployPromotion(pawnId, capturedType, callback) {
-		if (!this.isConnected() || !this.socket) {
+		const socket = this.state.socket;
+		if (!this.isConnected() || !socket) {
 			if (typeof callback === 'function') {
 				callback({ success: false, error: 'Not connected' });
 			}
 			return;
 		}
-		this.socket.emit('deploy_promotion', { pawnId, capturedType }, (ack) => {
+		socket.emit('deploy_promotion', { pawnId, capturedType }, (ack) => {
 			if (typeof callback === 'function') callback(ack);
 		});
 	}

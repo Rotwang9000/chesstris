@@ -5,12 +5,13 @@
  */
 
 import {
-	getTHREE, getGameState,
+	getTHREE, getGameState, getCamera,
 	getContainerElement, getRenderer, getMouse, getControls,
 	setMouse
 } from './gameContext.js';
 import * as tetrominoModule from './tetromino.js';
 import { boardFunctions } from './boardFunctions.js';
+import { isCameraRelativeControls } from './controlSettings.js';
 import {
 	performRaycast, clearChessSelection, inspectCellAtMouse, tryPriorityChessMoveClick,
 } from './chessInteraction.js';
@@ -129,6 +130,58 @@ export function setupInputHandlers() {
 
 // ── Keyboard ────────────────────────────────────────────────────────────────
 
+// Desired on-screen direction for each movement key (NDC: +x right, +y up).
+const SCREEN_INTENT = {
+	ArrowRight: { x: 1, y: 0 },
+	ArrowLeft: { x: -1, y: 0 },
+	ArrowUp: { x: 0, y: 1 },
+	ArrowDown: { x: 0, y: -1 },
+};
+
+/**
+ * Map a movement key to the board step (±1 on X or Z) that best matches
+ * its on-screen direction for the CURRENT camera. Works for any orbit
+ * angle by projecting the board's X and Z axes into screen space and
+ * picking whichever axis-step points most closely the way the key does.
+ *
+ * @returns {{x:number, z:number}|null} board step, or null if unavailable
+ */
+function cameraRelativeStep(key) {
+	const intent = SCREEN_INTENT[key];
+	if (!intent) return null;
+	const THREE = getTHREE();
+	const camera = getCamera();
+	if (!THREE || !camera) return null;
+	try {
+		const origin = new THREE.Vector3(0, 0, 0).project(camera);
+		const xTip = new THREE.Vector3(1, 0, 0).project(camera);
+		const zTip = new THREE.Vector3(0, 0, 1).project(camera);
+		// Screen-space deltas for a +1 step along each board axis. NDC y
+		// is up-positive, matching SCREEN_INTENT.
+		const xScreen = { x: xTip.x - origin.x, y: xTip.y - origin.y };
+		const zScreen = { x: zTip.x - origin.x, y: zTip.y - origin.y };
+
+		const candidates = [
+			{ step: { x: 1, z: 0 }, s: xScreen },
+			{ step: { x: -1, z: 0 }, s: { x: -xScreen.x, y: -xScreen.y } },
+			{ step: { x: 0, z: 1 }, s: zScreen },
+			{ step: { x: 0, z: -1 }, s: { x: -zScreen.x, y: -zScreen.y } },
+		];
+		let best = null;
+		let bestDot = -Infinity;
+		for (const c of candidates) {
+			const dot = c.s.x * intent.x + c.s.y * intent.y;
+			if (dot > bestDot) { bestDot = dot; best = c.step; }
+		}
+		// A near-zero best dot means the axis is almost edge-on to the
+		// screen (degenerate top-down or grazing angle) — let the caller
+		// fall back to the orientation scheme rather than guess.
+		return bestDot > 1e-4 ? best : null;
+	} catch (_e) {
+		return null;
+	}
+}
+
 function handleKeyDown(event) {
 	const gameState = getGameState();
 
@@ -184,6 +237,18 @@ function handleKeyDown(event) {
 
 	const moveEntry = MOVE_MAP[event.key];
 	if (moveEntry) {
+		// Camera-relative controls (opt-in): move the piece in the
+		// direction the key points ON SCREEN, regardless of how far the
+		// player has orbited the board. Falls back to the fixed
+		// orientation scheme if the projection isn't available.
+		if (isCameraRelativeControls()) {
+			const step = cameraRelativeStep(event.key);
+			if (step) {
+				if (step.x !== 0) tetrominoModule.moveTetrominoX(step.x);
+				if (step.z !== 0) tetrominoModule.moveTetrominoZ(step.z);
+				return;
+			}
+		}
 		const dir = moveEntry[orientation] || moveEntry[0];
 		if (dir[0] !== 0) tetrominoModule.moveTetrominoX(dir[0]);
 		if (dir[1] !== 0) tetrominoModule.moveTetrominoZ(dir[1]);
