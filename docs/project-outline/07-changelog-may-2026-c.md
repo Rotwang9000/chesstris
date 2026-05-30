@@ -2,6 +2,180 @@
 
 > Part of the [Tetches project outline](README.md). May 2026: power-up orbs, connectivity, production audit.
 
+### Auth0 sign-in + cute-piece merge (30 May 2026)
+
+**Authentication moved to Auth0 — we no longer touch email or PII.**
+The brief was "I don't want to be handling PII myself, nor emails
+(send or receive)". So the self-hosted SendGrid magic-link flow was
+ripped out and replaced with Auth0's hosted login:
+
+* Removed `server/auth/emailService.js` (SendGrid) and the
+  `magicLink.js` token store + the `@sendgrid/mail` dependency. The
+  shareable world-key generator survives as `server/auth/gameKey.js`.
+* `server/auth/routes.js` now exposes only `GET /api/auth/config`
+  (public Auth0 domain/clientId/optional connection, env-overridable)
+  and `POST /api/auth/generate-game-key`. The email/verify endpoints
+  are gone (a test asserts they 404).
+* Client: Auth0 SPA SDK loaded via CDN (`window.auth0`, same pattern
+  as THREE/socket.io); new `public/js/auth/auth0Client.js` does the
+  redirect login, completes the callback, and derives an **opaque**
+  `tetches_player_key` from the Auth0 subject (never the email). The
+  login overlay in `createLoadingIndicator.js` now has a single
+  "Sign in / Sign up" button.
+* Auth0 dashboard configured against the existing **Shaktris** SPA
+  (`cde.uk.auth0.com`): callback/logout/web-origins set, passwordless
+  **email** connection enabled, database password connection disabled.
+* **Open item:** Auth0's New Universal Login isn't yet rendering the
+  passwordless-email screen for this tenant (it falls back to a
+  database-style prompt when `connection=email` is forced, and the
+  default hosted page currently surfaces "Continue with Google").
+  `AUTH0_CONNECTION` is left empty so users get the working hosted
+  login; finishing the email-code experience needs either a tenant
+  Authentication-Profile/Classic-UL-template tweak or an embedded
+  passwordless-OTP flow. Tracked for follow-up.
+
+**Cute pieces: simpler, more distinct, and merged into one node.**
+The stress test below pinned scene-graph node count as the bottleneck.
+Each cute Russian piece was a `THREE.Group` of ~12 sub-meshes; they're
+now baked into a SINGLE merged `THREE.Mesh` (material groups preserve
+the multi-colour look) via the new
+`public/js/chessPieceCreator/mergePiece.js` (pure `planMergeGroups`
+maths is unit-tested in `tests/core/mergePiece.test.js`). Designs were
+simplified and differentiated per type. The existing FPS governor in
+`gameLoop.js` still throttles heavy work below 24 FPS and recovers
+above 45.
+
+### Stress test #2 — gameplay under load + bottleneck pinned (30 May 2026)
+
+Followed up the instancing work by piling AI players into the live world and
+**verifying real gameplay still works under load**, then profiling where the
+frame time actually goes.
+
+**Gameplay holds under load.** Drove the real input path in-browser (synthetic
+`click` on the canvas → the same raycast handler players use):
+* At **26 players**: placed a tetromino (turn advanced tetris→chess, cells
+  875→893), selected a piece (valid-move generation correct), and **executed a
+  chess move** — knight (14,-76)→(16,-77), source cleared, turn cycled back to
+  tetris (server-authoritative, so the move was confirmed, not just optimistic).
+* At **37 players** (added 10 AI via `dev_add_ai`): tetromino placement still
+  advanced the turn (the "Skip chess move" affordance appeared). The simulation
+  (gravity drift, line clears, water deaths) kept progressing throughout.
+
+**The bottleneck is scene-object count, not the GPU.** Measured in the (likely
+software-rendered) IDE webview, so absolute FPS is pessimistic — the *scaling*
+is the point:
+
+| Players | Scene objects | Draw calls | FPS |
+|--------:|--------------:|-----------:|----:|
+| 26 | ~4,316 | 404 | 7.7 |
+| 37 | ~6,752 | 288 | 2.9 |
+| 27 (post-cleanup) | ~4,923 | 280 | 4.4 |
+
+FPS tracks **1/object-count**, while **draw calls stay low (~300)** — cell
+instancing already removed that axis. Attribution:
+* `scene.updateMatrixWorld(true)` = **14.75 ms/frame** for **6,752 objects**
+  (every one with `matrixAutoUpdate` on).
+* **Pausing the game-logic block** (nameplates / power-ups / halos / hover) did
+  **not** improve FPS → the cost is in **render + scene traversal + shadow
+  passes over the object graph**, not per-frame JS, tweens (`window.TWEEN`
+  absent), or draw submission.
+* **Chess pieces dominate the graph**: the cute model is ~12 meshes each, so
+  ~370 pieces ≈ **4,300 of ~4,900 nodes** (and 516 pieces ≈ 6,200 of 6,750).
+
+**Conclusion / next lever.** The analogue of the cell-instancing win, applied to
+pieces: **collapse each cute piece's ~12 sub-meshes into one node** (merge by
+material group — keeps the look, cuts piece nodes ~12×). Open question that
+decides feasibility of the cleanest approach: does `animateCuteElements` animate
+*sub-parts* of a piece (which merging would break) or just the piece's own
+transform (merging is safe)? Secondary factor: the persisted world accumulates
+**disconnected "ghost" players** whose full armies still render — worth a
+render/keep policy for long-idle players. Stress bots cleaned up
+(`dev_add_ai cleanup` re-enables the duplicate-trim).
+
+### Magic-link sign-in audited + hardened (30 May 2026)
+
+Checked the email magic-link flow after the `tetches.com` rename. **The code
+is domain-clean**: the link's base URL is derived per-request from
+`Host` + `X-Forwarded-Proto` (nginx forwards both; `trust proxy` is on outside
+dev), the sender defaults to `noreply@tetches.com`, branding/`localStorage`
+keys are all `tetches_*`, and `/auth/verify` redirects round-trip correctly
+(valid → `?auth=success&playerKey=…`, bogus → `?auth=failed&reason=expired`,
+missing → `…reason=invalid`). All verified end-to-end against the dev server.
+
+**Real reason sends were failing** wasn't the domain at all — SendGrid returns
+`401 { "Maximum credits exceeded" }`: the account is **out of credits**. The
+key itself is valid (`/v3/scopes` 200, has `mail.send`).
+
+**Two action items that need the SendGrid dashboard (cannot be fixed in code):**
+1. **Top up / upgrade SendGrid credits** — the account quota is exhausted, so
+   *no* mail goes out until that's resolved.
+2. **Verify a `tetches.com` sender** — the only verified sender on the account
+   is `contact@lyeklint.se`; `noreply@tetches.com` is **not** verified. Even
+   with credits, sending from it will 403 until either that single sender is
+   verified *or* (better) domain authentication / SPF+DKIM is set up for
+   `tetches.com`. Until then, set `SENDGRID_FROM_EMAIL` to a verified address.
+
+**Code hardening** (`server/auth/emailService.js`): the service used to only
+fall back to console-logging when the key was *absent* — any operational
+failure (out of credits, unverified sender, network) hard-broke sign-in. Now
+(a) the **real** SendGrid reason is logged via `describeSendGridError` instead
+of the SDK's truncated `[Array]`, and (b) in **non-production** (local/staging)
+any send failure falls back to logging the magic link to the server console
+(`method: 'console'`) so testing is never blocked by email deliverability;
+production still surfaces an honest error (and never writes the token to prod
+logs). `.env` confirmed gitignored + untracked — the key isn't leaked.
+
+### Instanced terrain cells + Controls-overlay toggle (30 May 2026)
+
+Picked up the stress test's #1 recommendation — "merge/instance static terrain
+cells" — plus a player report that the camera-controls toggle was nowhere to be
+found.
+
+**Instanced terrain cells** (`public/js/boardFunctions/cellInstancer.js`, wired
+into `renderBoard`). Every board cell used to be its own `THREE.Mesh`: at a
+~850-cell shared world that's ~850 draw calls *and* ~850 nodes
+`updateMatrixWorld` walks every frame (the bottleneck the 29 May test flagged).
+Cells share one box geometry and differ only by colour, so they collapse into
+**two `InstancedMesh` buckets** — opaque cells, and the semi-transparent ex-home
+terrain — carrying per-instance colour (`instanceColor`, checker-darkening baked
+in). Cells that need per-cell behaviour a shared material can't express stay as
+individual meshes: **decaying** (animated red emissive + fading opacity),
+**sponsored** (an ad decal is parented to the cell — gated on
+`gameState.sponsoredCellKeys`), and **retro** mode.
+
+* **Measured live** (cute mode, ~23 players): all ~850 cells → **2 scene nodes /
+  2 draw calls, 0 individual**. Same-framing A/B (camY 76): **1877 → 1559 draw
+  calls** (the remaining individual-cell calls in the OFF run are the ones
+  frustum culling already drops off-screen; a true overview saves ~850). The
+  ~850-node drop off the matrix traversal applies **every frame regardless of
+  framing** — i.e. it attacks the `updateMatrixWorld` cost directly, not just
+  draw calls.
+* **Raycasting preserved.** `InstancedMesh` hits carry an `instanceId`; each
+  bucket mirrors its `instanceId → {x,z}` map onto `mesh.userData.cellAt`, and
+  `chessInteraction` resolves cell clicks from that (depth-sorted so a nearer
+  instanced cell isn't lost to a farther individual one). Both buckets verified
+  to resolve clicks in-browser.
+* **Cull-safe.** `distanceCulling` skips the instanced meshes — their board-
+  origin centre would mislead a per-object distance test and hide every cell at
+  once; they're one draw call each regardless.
+* **Escape hatch.** `gameState.disableCellInstancing = true` falls straight back
+  to per-cell meshes (verified both directions live). Tests:
+  `tests/core/cellInstancer.test.js` (8 cases).
+
+**"Rotate controls with view" was unreachable.** The toggle shipped only in the
+player-bar footer, which on a short window scrolls below the fold (measured: it
+sat at y≈634 in a 535-px viewport). Players look under the top-bar **Controls**
+button, so the toggle now also lives at the top of that overlay
+(`public/js/cameraControlsHelp.js`) as a real interactive row, kept in lock-step
+with the footer toggle (each mirrors the other; the overlay re-syncs from the
+stored preference on open). Default still off.
+
+> **Dev note:** the client is served as a **single esbuild bundle**
+> (`public/dist/app.bundle.js`) whenever it exists — the server rewrites
+> `index.html` to it at request time. So source edits under `public/js/**` do
+> **not** reach the browser until `npm run build:client` re-bundles. (Caught the
+> hard way: the un-bundled module path is dev-only.)
+
 ### Graphics stress test + findings (29 May 2026)
 
 Drove a live browser stress test (port 3022) to answer "can the graphics keep
@@ -59,10 +233,11 @@ backgrounded tab throttles rAF; the THREE build is **r132**):
   so it never fights capture-fade / decay / ghost visibility. Toggle off with
   `gameState.distanceCullDisabled = true`.
 
-**Still recommended (bigger, await go-ahead):** (1) merge/instance static
-terrain cells → fewer objects to traverse *and* fewer draw calls (helps the
-overview, which culling deliberately leaves alone); (2) reduce the cute pieces'
-~15 sub-meshes or add a distant-piece LOD/impostor.
+**Still recommended (bigger, await go-ahead):** ~~(1) merge/instance static
+terrain cells~~ **— done 30 May 2026** (see entry above: ~850 cells → 2
+`InstancedMesh` buckets); (2) reduce the cute pieces' ~15 sub-meshes or add a
+distant-piece LOD/impostor — pieces are now the dominant object cost (~4.5k
+meshes / 23 players measured 30 May).
 
 ### Two-kings bug, eliminated gate, camera controls, piece sizes (29 May 2026)
 

@@ -296,10 +296,40 @@ export function performRaycast() {
 		pieceIntersections,
 		(obj) => obj.userData && (PIECE_TYPES.includes(obj.userData.type) || obj.userData.pieceType)
 	);
-	const cellHit = resolveParentHit(
-		boardIntersections,
-		(obj) => obj.userData && obj.userData.type === 'cell'
-	);
+	// Resolve the nearest CELL hit, handling BOTH individual cell meshes
+	// and the shared instanced-terrain mesh. Instanced hits carry an
+	// `instanceId` we map back to a board {x,z} via the instancer. Walk
+	// the depth-sorted intersections so a closer instanced cell isn't
+	// lost to a farther individual one (or vice versa).
+	let cellHit = null;
+	for (let i = 0; i < boardIntersections.length; i++) {
+		const it = boardIntersections[i];
+		const obj = it.object;
+		if (obj && obj.userData && obj.userData.type === 'instancedCells' && it.instanceId != null) {
+			// Each instanced bucket (opaque, ex-home) carries its own
+			// instanceId → {x,z} map on userData, so the hit resolves
+			// without needing to know which bucket it came from.
+			const cellAt = obj.userData.cellAt;
+			const pos = (cellAt && it.instanceId >= 0 && it.instanceId < cellAt.length)
+				? cellAt[it.instanceId] : null;
+			if (pos) {
+				cellHit = { userData: { type: 'cell', position: { x: pos.x, z: pos.z } } };
+				break;
+			}
+			continue;
+		}
+		let parentObj = obj;
+		while (parentObj.parent &&
+			parentObj.parent !== chessPiecesGroup &&
+			parentObj.parent !== boardGroup &&
+			parentObj.parent !== scene) {
+			parentObj = parentObj.parent;
+		}
+		if (parentObj.userData && parentObj.userData.type === 'cell') {
+			cellHit = parentObj;
+			break;
+		}
+	}
 
 	// If both board cell and piece hits exist but disagree, prefer the piece on the clicked cell.
 	// This fixes occasional "one square ahead/behind" picks from overlapping hitboxes.

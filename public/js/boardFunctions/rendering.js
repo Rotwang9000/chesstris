@@ -16,6 +16,7 @@ import { findBoardCentreMarker, translatePosition } from '../centreBoardMarker.j
 import { createChessPiece as createChessPieceFromCreator } from '../chessPieceCreator.js';
 import { extractChessPiecesFromCells } from './pieces.js';
 import { getPlayerColor } from './colours.js';
+import { createCellInstancer } from './cellInstancer.js';
 
 function ensureRenderCache(THREE) {
 	if (!ensureRenderCache._cache) {
@@ -315,6 +316,66 @@ export function renderBoard(gameState, boardGroup, _createFloatingIsland, THREE)
 		: 'normal';
 	const cloudsEnabled = renderProfile === 'normal';
 
+	// ── Instanced terrain ────────────────────────────────────────────
+	// Plain opaque cells collapse into a single InstancedMesh (one draw
+	// call) instead of one mesh each. Cells that need per-cell behaviour a
+	// shared material can't express — decaying, transparent/ex-home,
+	// retro, or sponsored (an ad decal is parented to the cell) — stay as
+	// individual meshes so clicks, ads and the decay VFX keep working.
+	// `gameState.disableCellInstancing` is an escape hatch: instant
+	// fallback to the per-cell mesh path if anything ever misbehaves.
+	const instancingOn = !(gameState && gameState.disableCellInstancing)
+		&& !(gameState && gameState.retroMode);
+	let opaqueInstancer = null;
+	let exhomeInstancer = null;
+	if (instancingOn) {
+		// Recreate if we've never built one, the board group was swapped,
+		// or our mesh was detached from it (e.g. a debug "Reset Board"
+		// clears every child) — otherwise we'd write into an orphan mesh
+		// that's no longer in the scene and the cells would vanish.
+		const liveMesh = gameState.__cellInstancer
+			&& typeof gameState.__cellInstancer.getMesh === 'function'
+			&& gameState.__cellInstancer.getMesh();
+		const needNew = !gameState.__cellInstancer
+			|| gameState.__cellInstancerOwner !== boardGroup
+			|| !liveMesh
+			|| liveMesh.parent !== boardGroup;
+		if (needNew) {
+			if (gameState.__cellInstancer && typeof gameState.__cellInstancer.dispose === 'function') {
+				gameState.__cellInstancer.dispose();
+			}
+			if (gameState.__cellInstancerExhome && typeof gameState.__cellInstancerExhome.dispose === 'function') {
+				gameState.__cellInstancerExhome.dispose();
+			}
+			// Two buckets: opaque plain cells, and the semi-transparent
+			// ex-home terrain (a fixed 0.72 opacity it shares board-wide).
+			// Decaying / sponsored / retro cells still fall through to
+			// individual meshes (handled below).
+			gameState.__cellInstancer = createCellInstancer(
+				THREE, boardGroup, renderCache.cellGeometry, { name: 'instancedCells' });
+			gameState.__cellInstancerExhome = createCellInstancer(
+				THREE, boardGroup, renderCache.cellGeometry,
+				{ name: 'instancedCellsExhome', transparent: true, opacity: 0.72, roughness: 0.5, metalness: 0.05 });
+			gameState.__cellInstancerOwner = boardGroup;
+		}
+		opaqueInstancer = gameState.__cellInstancer;
+		exhomeInstancer = gameState.__cellInstancerExhome;
+	} else {
+		// Profile flipped to a non-instanced mode (e.g. retro) — empty both
+		// buffers so no stale instanced cells linger under the individual
+		// meshes we're about to (re)create.
+		if (gameState.__cellInstancer) gameState.__cellInstancer.rebuild([]);
+		if (gameState.__cellInstancerExhome) gameState.__cellInstancerExhome.rebuild([]);
+	}
+	const sponsoredKeys = (gameState && Array.isArray(gameState.sponsoredCellKeys))
+		? new Set(gameState.sponsoredCellKeys) : null;
+	const opaqueCellList = [];
+	const exhomeCellList = [];
+	// Keys rendered as INDIVIDUAL meshes this pass. Any individual cell
+	// mesh whose key is absent here (gone, or now instanced) is pruned in
+	// the cleanup sweep below.
+	const individualKeys = Object.create(null);
+
 	if (gameState.board && gameState.board.cells) {
 		for (const key of Object.keys(gameState.board.cells)) {
 			const [x, z] = key.split(',').map(Number);
@@ -328,42 +389,70 @@ export function renderBoard(gameState, boardGroup, _createFloatingIsland, THREE)
 			const classification = classifyCell(cellData);
 			const appearance = chooseAppearance(classification, gameState, x, z);
 			const absPos = translatePosition({ x, z }, gameState, true);
-			const existingCell = existingCells[cellKey];
 
-			if (existingCell) {
-				existingCell.userData.data = cellData;
-				existingCell.userData.kind = appearance.kind;
-				existingCell.userData.processed = true;
-				existingCell.rotation.set(0, 0, 0);
-				existingCell.position.set(absPos.x, 0, absPos.z);
-				applyAppearance(existingCell, appearance, gameState, THREE);
-				cellsReused++;
+			// Route each cell to the right bucket. Sponsored cells always
+			// stay individual (an ad decal is parented to the mesh). Decaying
+			// cells stay individual (animated red emissive + fading opacity).
+			const notSponsored = !(sponsoredKeys && sponsoredKeys.has(cellKey));
+			const isExhome = appearance.kind === 'exhome';
+			const canInstanceOpaque = instancingOn && notSponsored && !isExhome
+				&& appearance.opacity === 1.0 && !appearance.transparent && !appearance.decaying;
+			const canInstanceExhome = instancingOn && notSponsored && isExhome
+				&& !appearance.decaying;
+
+			if (canInstanceOpaque) {
+				opaqueCellList.push({
+					pos: { x, z },
+					absX: absPos.x,
+					absZ: absPos.z,
+					color: appearance.color,
+				});
+			} else if (canInstanceExhome) {
+				exhomeCellList.push({
+					pos: { x, z },
+					absX: absPos.x,
+					absZ: absPos.z,
+					color: appearance.color,
+				});
 			} else {
-				try {
-					const material = getOrCreateMaterial(renderCache, appearance, gameState, THREE);
-					const newCell = new THREE.Mesh(renderCache.cellGeometry, material);
-					newCell.castShadow = !(gameState && gameState.retroMode);
-					newCell.receiveShadow = !(gameState && gameState.retroMode);
-					newCell.rotation.set(0, 0, 0);
-					newCell.position.set(absPos.x, 0, absPos.z);
-					newCell.userData = {
-						type: 'cell',
-						position: { x, z },
-						data: cellData,
-						kind: appearance.kind,
-						processed: true,
-						isStatic: true,
-					};
-					boardGroup.add(newCell);
-					cellsCreated++;
-				} catch (error) {
-					console.error(`Error creating cell at (${x}, ${z}):`, error);
+				individualKeys[cellKey] = true;
+				const existingCell = existingCells[cellKey];
+				if (existingCell) {
+					existingCell.userData.data = cellData;
+					existingCell.userData.kind = appearance.kind;
+					existingCell.userData.processed = true;
+					existingCell.rotation.set(0, 0, 0);
+					existingCell.position.set(absPos.x, 0, absPos.z);
+					applyAppearance(existingCell, appearance, gameState, THREE);
+					cellsReused++;
+				} else {
+					try {
+						const material = getOrCreateMaterial(renderCache, appearance, gameState, THREE);
+						const newCell = new THREE.Mesh(renderCache.cellGeometry, material);
+						newCell.castShadow = !(gameState && gameState.retroMode);
+						newCell.receiveShadow = !(gameState && gameState.retroMode);
+						newCell.rotation.set(0, 0, 0);
+						newCell.position.set(absPos.x, 0, absPos.z);
+						newCell.userData = {
+							type: 'cell',
+							position: { x, z },
+							data: cellData,
+							kind: appearance.kind,
+							processed: true,
+							isStatic: true,
+						};
+						boardGroup.add(newCell);
+						cellsCreated++;
+					} catch (error) {
+						console.error(`Error creating cell at (${x}, ${z}):`, error);
+					}
 				}
 			}
 
 			// Hover-cloud under each cell (normal profile only). We only
 			// hide it on decaying cells so a "fading away" cell visually
-			// loses its support — otherwise it looks frozen mid-air.
+			// loses its support — otherwise it looks frozen mid-air. Foam
+			// is independent of whether the cell itself is instanced.
 			if (cloudsEnabled && !appearance.decaying) {
 				let cloud = existingClouds[cellKey];
 				if (!cloud) {
@@ -382,6 +471,9 @@ export function renderBoard(gameState, boardGroup, _createFloatingIsland, THREE)
 		}
 	}
 
+	if (opaqueInstancer) opaqueInstancer.rebuild(opaqueCellList);
+	if (exhomeInstancer) exhomeInstancer.rebuild(exhomeCellList);
+
 	if (boardGroup && boardGroup.children) {
 		const cellsToRemove = [];
 		const cloudsToRemove = [];
@@ -389,7 +481,9 @@ export function renderBoard(gameState, boardGroup, _createFloatingIsland, THREE)
 			if (!child || !child.userData) continue;
 			if (child.userData.type === 'cell' && child.userData.position) {
 				const childKey = `${child.userData.position.x},${child.userData.position.z}`;
-				if (!processedCells[childKey]) cellsToRemove.push(child);
+				// Prune an individual cell mesh if its cell is gone OR it is
+				// now rendered by the instancer (key absent from individualKeys).
+				if (!individualKeys[childKey]) cellsToRemove.push(child);
 			}
 			if (child.userData.type === 'cloudPuff' && child.userData.parentCellKey) {
 				if (!processedCells[child.userData.parentCellKey] || !cloudsEnabled) {

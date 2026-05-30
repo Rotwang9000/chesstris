@@ -109,6 +109,13 @@ export function applyDistanceCulling(gameState) {
 			const obj = kids[i];
 			if (!obj) continue;
 
+			// The instanced-terrain mesh sits at the board origin but its
+			// instances span the whole board, so a per-object distance test
+			// is meaningless — testing its origin would wrongly hide EVERY
+			// cell at once. It's a single draw call regardless, so never
+			// cull it (its instances stay on screen; pieces still cull).
+			if (obj.userData && obj.userData.type === 'instancedCells') continue;
+
 			if (disabled) {
 				// Restore only what we hid; leave everything else alone.
 				if (_culled.has(obj)) { obj.visible = true; _culled.delete(obj); }

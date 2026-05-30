@@ -685,6 +685,9 @@ function wireCameraControlsToggle() {
 	toggle.checked = isCameraRelativeControls();
 	toggle.addEventListener('change', () => {
 		setCameraRelativeControls(toggle.checked);
+		// Mirror onto the Controls-overlay toggle so the two agree.
+		const overlay = document.getElementById('cam-rel-controls-overlay-toggle');
+		if (overlay) overlay.checked = toggle.checked;
 		showToastMessage(toggle.checked
 			? 'Controls now follow the camera view.'
 			: 'Controls back to fixed (home) orientation.');

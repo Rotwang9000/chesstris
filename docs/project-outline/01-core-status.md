@@ -94,9 +94,11 @@ several rough edges, broken assumptions and stale docs have been fixed.
 
 ### Architecture / code hygiene
 
-- **No more dynamic `require`s.** `magicLink`, `emailService`, and
-  `@sendgrid/mail` are now loaded at module load time (per project rule).
-  `@sendgrid/mail` and `dotenv` are first-class dependencies.
+- **No more dynamic `require`s.** All server deps are loaded at module
+  load time (per project rule). `dotenv` is a first-class dependency.
+  (Auth is now delegated to Auth0; the old `magicLink`/`emailService`
+  modules and `@sendgrid/mail` were removed — see the May 2026 C
+  changelog.)
 - **Dead deps purged.** `axios`, `bcryptjs`, `jsonwebtoken`, `lodash`,
   `mongoose`, `node-fetch`, `three` (frontend uses CDN), `@solana/web3.js`,
   `jsdom` and `chai`/`sinon` are gone — `npm install` dropped 1180+ packages

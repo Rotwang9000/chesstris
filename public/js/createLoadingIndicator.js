@@ -1,6 +1,7 @@
 import { handleTetrisPhaseClick, handleChessPhaseClick, resetGameState, startPlayingGame } from './enhanced-gameCore.js';
 import * as sceneModule from './scene';
 import gameState from './utils/gameState.js';
+import { loginWithEmail, handleAuthRedirect, isSignedIn } from './auth/auth0Client.js';
 
 /**
  * Create a loading indicator with Russian-themed styling
@@ -359,7 +360,6 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 
 	// Check for previous game key in localStorage
 	const previousGameKey = localStorage.getItem('tetches_game_key');
-	const playerEmail = localStorage.getItem('tetches_player_email');
 
 	// Create tutorial message container (full screen overlay)
 	const tutorialElement = document.createElement('div');
@@ -583,17 +583,15 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 				JOIN
 			</button>
 		</div>
-		<div class="tutorial-divider"><span>OR SIGN IN WITH EMAIL</span></div>
-		<div id="magic-link-section">
-			<div style="display: flex; gap: 8px;">
-				<input type="email" id="email-input" class="game-key-input" 
-					placeholder="your@email.com" 
-					style="flex: 1;">
-				<button id="magic-link-btn" class="tutorial-btn" style="width: auto; padding: 12px 20px;">
-					✉ SEND LINK
-				</button>
-			</div>
-			<p id="magic-link-status" style="margin: 8px 0 0 0; font-size: 12px; color: #888; display: none;"></p>
+		<div class="tutorial-divider"><span>OR SIGN IN TO SAVE PROGRESS</span></div>
+		<div id="auth-section">
+			<button id="auth-login-btn" class="tutorial-btn" style="width: 100%;">
+				✉ SIGN IN / SIGN UP
+			</button>
+			<p style="margin: 6px 0 0 0; font-size: 11px; color: #888; text-align: center;">
+				Saves your progress across devices. Sign-in is handled securely by Auth0 — we never see your password or store your email.
+			</p>
+			<p id="auth-status" style="margin: 8px 0 0 0; font-size: 12px; color: #888; display: none;"></p>
 		</div>
 	`;
 	
@@ -651,133 +649,64 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 		});
 	}
 
-	// Magic link email handler
-	const magicLinkBtn = tutorialElement.querySelector('#magic-link-btn');
-	const emailInput = tutorialElement.querySelector('#email-input');
-	const magicLinkStatus = tutorialElement.querySelector('#magic-link-status');
+	// Email sign-in via Auth0. Auth0 hosts the email entry, the one-time
+	// code/link delivery, and verification on its own pages, so the game
+	// never sees an email address. After sign-in Auth0 redirects back here.
+	const authLoginBtn = tutorialElement.querySelector('#auth-login-btn');
+	const authStatus = tutorialElement.querySelector('#auth-status');
 
-	if (magicLinkBtn && emailInput) {
-		const requestMagicLink = async () => {
-			const email = emailInput.value.trim();
-			
-			// Validate email
-			const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-			if (!email || !emailRegex.test(email)) {
-				emailInput.style.borderColor = '#ff4444';
-				if (magicLinkStatus) {
-					magicLinkStatus.textContent = 'Please enter a valid email address';
-					magicLinkStatus.style.color = '#ff6666';
-					magicLinkStatus.style.display = 'block';
-				}
-				emailInput.focus();
-				setTimeout(() => {
-					emailInput.style.borderColor = 'rgba(255, 204, 0, 0.5)';
-				}, 2000);
-				return;
-			}
-			
-			// Show loading state
-			magicLinkBtn.disabled = true;
-			magicLinkBtn.textContent = 'Sending...';
-			if (magicLinkStatus) {
-				magicLinkStatus.textContent = 'Sending magic link...';
-				magicLinkStatus.style.color = '#ffcc00';
-				magicLinkStatus.style.display = 'block';
-			}
-			
+	const setAuthStatus = (text, color) => {
+		if (!authStatus) return;
+		authStatus.textContent = text || '';
+		authStatus.style.color = color || '#888';
+		authStatus.style.display = text ? 'block' : 'none';
+	};
+
+	if (authLoginBtn) {
+		authLoginBtn.addEventListener('click', async () => {
+			const originalLabel = authLoginBtn.textContent;
+			authLoginBtn.disabled = true;
 			try {
-				const response = await fetch('/api/auth/magic-link', {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ 
-						email, 
-						gameKey: gameKeyInput?.value.trim() || null 
-					})
-				});
-				
-				const result = await response.json();
-				
-				if (result.success) {
-					// Store email for later
-					localStorage.setItem('tetches_player_email', email);
-					
-					if (magicLinkStatus) {
-						if (result.method === 'console') {
-							// Development mode - link was logged to console
-							magicLinkStatus.innerHTML = '✓ Magic link logged to server console!<br><small>(Check server terminal for link)</small>';
-						} else {
-							magicLinkStatus.textContent = '✓ Magic link sent! Check your email.';
-						}
-						magicLinkStatus.style.color = '#66ff66';
-					}
-					magicLinkBtn.textContent = '✓ Sent!';
-					
-					// Keep button disabled but show success
-					setTimeout(() => {
-						magicLinkBtn.disabled = false;
-						magicLinkBtn.textContent = '✉ RESEND';
-					}, 5000);
-				} else {
-					throw new Error(result.error || 'Failed to send magic link');
+				// Returning player with a live session? Skip straight in.
+				if (await isSignedIn()) {
+					authLoginBtn.textContent = 'Entering…';
+					startGame(gameKeyInput?.value.trim() || previousGameKey || null);
+					return;
 				}
+				authLoginBtn.textContent = 'Redirecting…';
+				setAuthStatus('Opening secure sign-in…', '#ffcc00');
+				await loginWithEmail(gameKeyInput?.value.trim() || null);
+				// loginWithRedirect navigates away; control won't return here.
 			} catch (error) {
-				console.error('Magic link request failed:', error);
-				if (magicLinkStatus) {
-					magicLinkStatus.textContent = error.message || 'Failed to send. Try again.';
-					magicLinkStatus.style.color = '#ff6666';
-				}
-				magicLinkBtn.disabled = false;
-				magicLinkBtn.textContent = '✉ SEND LINK';
+				console.error('[auth] sign-in failed to start:', error);
+				setAuthStatus(error.message || 'Could not start sign-in. Please try again.', '#ff6666');
+				authLoginBtn.disabled = false;
+				authLoginBtn.textContent = originalLabel;
 			}
-		};
-		
-		magicLinkBtn.addEventListener('click', requestMagicLink);
-		emailInput.addEventListener('keypress', (e) => {
-			if (e.key === 'Enter') requestMagicLink();
 		});
 	}
 
-	// Check for auth result from URL (magic link callback)
-	const urlParams = new URLSearchParams(window.location.search);
-	const authResult = urlParams.get('auth');
-	const playerKey = urlParams.get('playerKey');
-	const urlGameKey = urlParams.get('gameKey');
-	
-	if (authResult === 'success' && playerKey) {
-		console.log('Magic link authentication successful');
-		localStorage.setItem('tetches_player_key', playerKey);
-		if (urlGameKey) {
-			localStorage.setItem('tetches_game_key', urlGameKey);
+	// Complete an Auth0 redirect (if this page load is the return leg of
+	// one) and otherwise reflect any existing session in the button.
+	(async () => {
+		try {
+			const appState = await handleAuthRedirect();
+			if (appState) {
+				const resumedGameKey = appState.gameKey || null;
+				if (resumedGameKey) localStorage.setItem('tetches_game_key', resumedGameKey);
+				setAuthStatus('✓ Signed in! Entering…', '#66ff66');
+				setTimeout(() => startGame(resumedGameKey), 500);
+				return;
+			}
+			if ((await isSignedIn()) && authLoginBtn) {
+				authLoginBtn.textContent = '✓ SIGNED IN — ENTER';
+				setAuthStatus('You are signed in. Click to enter.', '#66ff66');
+			}
+		} catch (error) {
+			console.error('[auth] redirect handling failed:', error);
+			setAuthStatus('Sign-in could not be completed. Please try again.', '#ff6666');
 		}
-		// Clean URL
-		const cleanUrl = new URL(window.location.href);
-		cleanUrl.searchParams.delete('auth');
-		cleanUrl.searchParams.delete('playerKey');
-		cleanUrl.searchParams.delete('gameKey');
-		window.history.replaceState({}, '', cleanUrl.toString());
-		
-		// Auto-start the game
-		setTimeout(() => {
-			startGame(urlGameKey || null);
-		}, 500);
-	} else if (authResult === 'failed') {
-		const reason = urlParams.get('reason');
-		let message = 'Login failed.';
-		if (reason === 'expired') message = 'Magic link expired. Please request a new one.';
-		if (reason === 'invalid') message = 'Invalid magic link.';
-		
-		if (magicLinkStatus) {
-			magicLinkStatus.textContent = message;
-			magicLinkStatus.style.color = '#ff6666';
-			magicLinkStatus.style.display = 'block';
-		}
-		
-		// Clean URL
-		const cleanUrl = new URL(window.location.href);
-		cleanUrl.searchParams.delete('auth');
-		cleanUrl.searchParams.delete('reason');
-		window.history.replaceState({}, '', cleanUrl.toString());
-	}
+	})();
 }
 /**
  * Utility function to hide all loading elements

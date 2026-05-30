@@ -14,7 +14,15 @@
  * Both pieces are deliberately separate from `inputManager.js` because
  * that file gates most keys behind `turnPhase === 'tetris'`; camera
  * controls must work during the chess phase too.
+ *
+ * This overlay is ALSO the home of the "Rotate controls with view"
+ * toggle. It first shipped only in the player-bar footer, which on a
+ * short window scrolls below the fold — players reported "I'm not
+ * seeing the option". The "Controls" button opens this modal, so it's
+ * the natural, always-reachable place for a controls preference.
  */
+
+import { isCameraRelativeControls, setCameraRelativeControls } from './controlSettings.js';
 
 const ZOOM_STEP = 0.18;
 const PAN_STEP = 0.6;
@@ -296,6 +304,11 @@ function buildHelpOverlay() {
 		marginBottom: '12px',
 	});
 
+	// Interactive preference (not just a cheatsheet row). Lives here so
+	// it's always reachable from the "Controls" button, and stays in
+	// sync with the duplicate toggle in the player-bar footer.
+	const camRelToggle = buildCameraRelativeToggle();
+
 	const list = document.createElement('div');
 	Object.assign(list.style, { fontSize: '13px', lineHeight: '1.6' });
 	const items = [
@@ -354,6 +367,7 @@ function buildHelpOverlay() {
 	closeBtn.addEventListener('click', hideHelpOverlay);
 
 	card.appendChild(title);
+	card.appendChild(camRelToggle);
 	card.appendChild(list);
 	card.appendChild(note);
 	card.appendChild(closeBtn);
@@ -362,8 +376,66 @@ function buildHelpOverlay() {
 	return root;
 }
 
+/**
+ * Build the interactive "Rotate controls with view" toggle row.
+ *
+ * Reads/writes the shared preference via `controlSettings`, so it stays
+ * in lock-step with the player-bar footer toggle (`#camera-controls-toggle`).
+ * When either changes we mirror the checked state onto the other element
+ * if it's present, so the two never disagree on screen.
+ */
+function buildCameraRelativeToggle() {
+	const row = document.createElement('label');
+	row.htmlFor = 'cam-rel-controls-overlay-toggle';
+	Object.assign(row.style, {
+		display: 'flex', alignItems: 'flex-start', gap: '10px',
+		cursor: 'pointer', userSelect: 'none',
+		background: 'rgba(255, 204, 0, 0.08)',
+		border: '1px solid rgba(255, 204, 0, 0.4)',
+		borderRadius: '6px', padding: '10px 12px', marginBottom: '14px',
+	});
+
+	const input = document.createElement('input');
+	input.type = 'checkbox';
+	input.id = 'cam-rel-controls-overlay-toggle';
+	input.checked = isCameraRelativeControls();
+	Object.assign(input.style, { cursor: 'pointer', marginTop: '2px' });
+
+	const text = document.createElement('div');
+	const heading = document.createElement('div');
+	heading.textContent = 'Rotate controls with view';
+	Object.assign(heading.style, { color: '#ffcc00', fontWeight: 'bold', fontSize: '14px' });
+	const sub = document.createElement('div');
+	sub.textContent = "Arrow keys follow the camera — Left always nudges the piece left on screen, whichever way you've spun the board. Off by default.";
+	Object.assign(sub.style, { color: '#bbb', fontSize: '11px', marginTop: '2px', lineHeight: '1.4' });
+	text.appendChild(heading);
+	text.appendChild(sub);
+
+	input.addEventListener('change', () => {
+		setCameraRelativeControls(input.checked);
+		// Mirror onto the player-bar toggle so the two never disagree.
+		const sidebar = document.getElementById('camera-controls-toggle');
+		if (sidebar) sidebar.checked = input.checked;
+		try {
+			if (typeof window !== 'undefined' && typeof window.showToastMessage === 'function') {
+				window.showToastMessage(input.checked
+					? 'Controls now rotate with the camera view.'
+					: 'Controls fixed to the home orientation.');
+			}
+		} catch (_) { /* toast is best-effort */ }
+	});
+
+	row.appendChild(input);
+	row.appendChild(text);
+	return row;
+}
+
 export function showHelpOverlay() {
 	if (!helpOverlay) helpOverlay = buildHelpOverlay();
+	// Re-sync the toggle from the stored preference each open, in case it
+	// was changed via the player-bar footer toggle since we last built it.
+	const t = document.getElementById('cam-rel-controls-overlay-toggle');
+	if (t) t.checked = isCameraRelativeControls();
 	helpOverlay.style.display = 'flex';
 }
 
