@@ -48,13 +48,22 @@ mkdir -p "${DEPLOY_DIR}/logs"
 echo "--- Building client bundle ---"
 npm run build:client
 
-# Sync files (exclude dev-only artefacts)
+# Sync files. Excludes dev-only artefacts AND live runtime state that the
+# running server owns — the persisted world (`/data/`), the advertiser
+# registry (`/advertisers.json`) and uploaded ad images
+# (`/advertiser-pending-images/`). Because rsync runs with `--delete`,
+# NOT excluding these would clobber the live production world with the
+# (separate) dev world on every deploy. The leading slash anchors each to
+# the deploy root so nested dirs of the same name are unaffected.
 echo "--- Syncing files ---"
 rsync -r --delete --no-times --omit-dir-times --no-perms --no-group --no-owner --chmod=ugo=rwX \
 	--exclude='node_modules' \
 	--exclude='.git' \
 	--exclude='.env' \
 	--exclude='.env.local' \
+	--exclude='/data/' \
+	--exclude='/advertisers.json' \
+	--exclude='/advertiser-pending-images/' \
 	--exclude='*.test.js' \
 	--exclude='tests/' \
 	--exclude='ci/' \

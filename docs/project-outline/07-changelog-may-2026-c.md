@@ -55,22 +55,42 @@ production actually serve the optimised client bundle.
 * **Tests.** `tests/server/security.test.js` extended (CSP Auth0 hosts;
   `/metrics` loopback-vs-external-vs-token; `/node_modules` not exposed) and
   new `tests/server/socketRateLimit.test.js`. Full server suite green (465).
+* **Deploy safety fix (important).** `scripts/deploy.sh` rsyncs with
+  `--delete` but did **not** exclude live runtime state, so every deploy
+  would have overwritten the production world (`data/world.json`) with the
+  *separate* dev world — wiping player progress. Now `/data/`,
+  `/advertisers.json` and `/advertiser-pending-images/` are excluded
+  (anchored to the deploy root) so the running server keeps its state across
+  deploys.
 
-**Manual steps before / at launch** (not code — flagged so they're not lost):
+**Production cutover executed (2 Jun 2026).** Ran on the live host (`fin`):
+generated + added `ADMIN_TOKEN` and `WALLET_SESSION_SECRET` to
+`/var/www/tetches.live/.env` (the deploy now preserves it); backed up the
+live `world.json`; `bash scripts/deploy.sh production` built the bundle,
+synced (state preserved), `npm ci`'d and restarted PM2. Verified via nginx:
+`/api/health` 200, homepage serves `dist/app.bundle.js` + the new share
+meta, `/favicon.svg` + `/img/og-image.png` resolve, and `/metrics` is 404
+publicly / 200 for loopback + admin-token. (`NODE_ENV`/`PORT`/
+`ALLOWED_ORIGIN` were already version-controlled in `ecosystem.config.cjs`.)
 
-1. **DNS / domain** — point `tetches.com` (+ `www`) at the host; ensure the
-   TLS cert covers both.
-2. **Prod `.env`** — set `NODE_ENV=production`, `ALLOWED_ORIGIN=https://
-   tetches.com,https://www.tetches.com`, a strong `ADMIN_TOKEN`, and
-   `WALLET_SESSION_SECRET`.
-3. **Cutover** — run `bash scripts/deploy.sh production` (or
-   `scripts/deploy-tetches-cutover.sh`) so the bundle + these changes ship.
-4. **nginx (defence-in-depth)** — optionally add a `/metrics` allow/deny
-   block; the app already gates it, this just stops the request at the edge.
+**Manual steps — status:**
+
+1. ~~**DNS / domain**~~ — done (TLS via Certbot covers `tetches.com` + `www`).
+2. ~~**Prod `.env`**~~ — done (`ADMIN_TOKEN` + `WALLET_SESSION_SECRET` added;
+   `NODE_ENV`/`PORT`/`ALLOWED_ORIGIN` come from `ecosystem.config.cjs`).
+3. ~~**Cutover**~~ — done (`scripts/deploy.sh production`, verified live).
+4. **nginx (defence-in-depth, optional, needs root)** — add to the 443
+   `server {}` in `/etc/nginx/sites-enabled/tetches.com.conf`, before
+   `location / {`:
+   ```nginx
+   	location = /metrics { return 404; }
+   ```
+   then `sudo nginx -t && sudo systemctl reload nginx`. The app already 404s
+   public `/metrics`, so this only stops the request at the edge.
 5. **Auth0 (only when re-enabling sign-in)** — add the prod/staging callback
    + logout URLs to the Auth0 app, then flip `ENABLE_AUTH_SIGNIN` back on.
-6. **Verify link unfurl** — after DNS, run the URL through the Facebook
-   Sharing Debugger / Twitter Card Validator to prime their caches.
+6. **Verify link unfurl** — run the URL through the Facebook Sharing
+   Debugger / Twitter Card Validator to prime their unfurl caches.
 
 ### Normal-mode auto-adjust: freeze shadows under load (30 May 2026)
 
