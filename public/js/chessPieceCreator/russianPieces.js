@@ -26,6 +26,8 @@
 import { getTHREE } from '../gameContext.js';
 import { createSafeMaterials } from './materials.js';
 import { mergeMeshesByMaterial } from './mergePiece.js';
+import { pieceSizeFor } from './pieceSizes.js';
+import { setPieceMatrixStatic } from '../pieceMatrixState.js';
 
 function resolveMaterials(materialKey, customMaterials) {
 	return customMaterials || createSafeMaterials(materialKey);
@@ -104,32 +106,56 @@ export function createRussianRookPiece(materialKey, isLocalPlayer, customMateria
 	return finalise(THREE, group, materials);
 }
 
-// ── KNIGHT — forward-leaning asymmetric horse head (6 source meshes) ─────────
+// ── KNIGHT — an arched horse's head & neck (the classic chess knight) ────────
+// Built as a side profile facing +x: a forward-leaning neck, a head that
+// juts forward and tilts nose-down (the "poll" bend that says horse), a
+// muzzle + jaw, pointed ears, and a mane ridge flowing down the back (-x).
 export function createRussianKnightPiece(materialKey, isLocalPlayer, customMaterials = null) {
 	const THREE = getTHREE();
 	const group = new THREE.Group();
 	const materials = resolveMaterials(materialKey, customMaterials);
 	const seg = isLocalPlayer ? 16 : 10;
 	const coneSeg = isLocalPlayer ? 8 : 6;
-	const HEAD_TILT = -0.5; // lean the muzzle forward + down
 
+	// Footed base, consistent with the rest of the set.
 	part(THREE, group, new THREE.CylinderGeometry(0.20, 0.26, 0.10, seg), materials.primary, 0, 0.05, 0);
-	part(THREE, group, new THREE.CylinderGeometry(0.16, 0.20, 0.26, seg), materials.primary, 0, 0.24, 0);
 
-	// Head block — long front-to-back (x), narrower side-to-side (z),
-	// tilted forward. The asymmetry (offset on +x) is the knight's identity.
-	const head = part(THREE, group, new THREE.BoxGeometry(0.30, 0.20, 0.17), materials.primary, 0.08, 0.55, 0);
-	head.rotation.z = HEAD_TILT;
+	// Chest + neck — a slim near-vertical column with a slight forward lean.
+	const neck = part(THREE, group, new THREE.BoxGeometry(0.14, 0.44, 0.19), materials.primary, -0.02, 0.34, 0);
+	neck.rotation.z = -0.12;
 
-	// Secondary muzzle cap at the front of the snout.
-	const muzzle = part(THREE, group, new THREE.BoxGeometry(0.12, 0.10, 0.13), materials.secondary, 0.26, 0.50, 0);
-	muzzle.rotation.z = HEAD_TILT;
+	// Head — a flatter horizontal bar jutting FORWARD (+x) off the top of
+	// the neck, so the profile bends into a "7"/hook. The empty wedge below
+	// it (in front of the neck) is the throat that says "horse", not "lump".
+	const head = part(THREE, group, new THREE.BoxGeometry(0.32, 0.13, 0.15), materials.primary, 0.14, 0.61, 0);
+	head.rotation.z = -0.14;
 
-	// Two accent ears on the top-back of the head.
+	// Muzzle — nose block dipping down at the very front (secondary tone).
+	const muzzle = part(THREE, group, new THREE.BoxGeometry(0.12, 0.13, 0.13), materials.secondary, 0.31, 0.55, 0);
+	muzzle.rotation.z = -0.30;
+
+	// Jaw/cheek — a small wedge under the front of the head for a chin.
+	const jaw = part(THREE, group, new THREE.BoxGeometry(0.10, 0.08, 0.13), materials.primary, 0.22, 0.53, 0);
+	jaw.rotation.z = -0.22;
+
+	// Ears — two pointed cones at the poll, leaning back and splayed.
 	for (let side = -1; side <= 1; side += 2) {
-		const ear = part(THREE, group, new THREE.ConeGeometry(0.03, 0.09, coneSeg), materials.accent, -0.02, 0.70, side * 0.06);
-		ear.rotation.z = -0.15;
-		ear.rotation.x = side * 0.18;
+		const ear = part(THREE, group, new THREE.ConeGeometry(0.035, 0.14, coneSeg), materials.accent, -0.02, 0.74, side * 0.05);
+		ear.rotation.z = 0.2;
+		ear.rotation.x = side * 0.2;
+	}
+
+	// Mane — a ridge of plates flowing down the back of the neck (-x); a
+	// distinct secondary colour so it reads even where it hugs the neck,
+	// with the upper crest protruding furthest behind the poll.
+	const MANE_PLATES = 4;
+	for (let i = 0; i < MANE_PLATES; i++) {
+		const t = i / (MANE_PLATES - 1);
+		const plate = part(
+			THREE, group, new THREE.BoxGeometry(0.08, 0.16, 0.18), materials.secondary,
+			-0.13 - (1 - t) * 0.04, 0.62 - t * 0.36, 0,
+		);
+		plate.rotation.z = -0.12;
 	}
 
 	return finalise(THREE, group, materials);
@@ -208,28 +234,11 @@ export function createRussianKingPiece(materialKey, isLocalPlayer, customMateria
 }
 
 /**
- * Per-type uniform size, encoding chess rank as scale — the oldest,
- * most legible "tell them apart at a glance" cue there is, and the one
- * the cute set was missing (every piece shared the same ~0.5-unit
- * footprint, so a field of one player's pieces read as identical green
- * blobs). Pawns shrink, royalty grows; the base stays seated on the
- * cell because every builder grows upward from y=0. Footprints stay
- * well inside a cell (max radius ≈ 0.28 × 1.24 ≈ 0.35 < 0.5).
- */
-const PIECE_SIZE_BY_TYPE = Object.freeze({
-	1: 0.82, // pawn   — clearly the smallest
-	2: 0.96, // rook   — short and stout
-	3: 1.02, // knight
-	4: 1.08, // bishop — taller
-	5: 1.16, // queen
-	6: 1.24, // king   — towers over the rest
-});
-
-/**
  * Map a numeric piece type to the matching Russian builder, then apply
- * the per-type size cue. Defaults to pawn for unknown types. Returns a
- * single merged `THREE.Mesh` (not a group) — the renderer wraps it in an
- * outer pieceGroup, scales it, and clones it; a Mesh supports all of that.
+ * the per-type size cue (shared `pieceSizeFor`). Defaults to pawn for
+ * unknown types. Returns a single merged `THREE.Mesh` (not a group) —
+ * the renderer wraps it in an outer pieceGroup, scales it, and clones
+ * it; a Mesh supports all of that.
  */
 export function buildRussianPiece(pieceTypeNum, materialKey, isLocalPlayer, customMaterials = null) {
 	let piece;
@@ -242,7 +251,9 @@ export function buildRussianPiece(pieceTypeNum, materialKey, isLocalPlayer, cust
 		case 1:
 		default: piece = createRussianPawnPiece(materialKey, isLocalPlayer, customMaterials); break;
 	}
-	const size = PIECE_SIZE_BY_TYPE[pieceTypeNum] || PIECE_SIZE_BY_TYPE[1];
-	piece.scale.setScalar(size);
+	piece.scale.setScalar(pieceSizeFor(pieceTypeNum));
+	// The merged body mesh never moves relative to its outer piece group,
+	// so freeze its local matrix for life (static-pieces optimisation).
+	setPieceMatrixStatic(piece, true);
 	return piece;
 }

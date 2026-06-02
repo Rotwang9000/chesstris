@@ -1,30 +1,17 @@
 {
 	"short_name": "Tetches",
 	"name": "Tetches - Chess meets Tetris",
+	"description": "A free, real-time multiplayer game that fuses chess and Tetris on a dynamically expanding board.",
 	"icons": [
 		{
-			"src": "img/favicon-16x16.png",
-			"sizes": "16x16",
-			"type": "image/png"
-		},
-		{
-			"src": "img/favicon-32x32.png",
-			"sizes": "32x32",
-			"type": "image/png"
-		},
-		{
-			"src": "img/favicon-96x96.png",
-			"sizes": "96x96",
-			"type": "image/png"
-		},
-		{
-			"src": "img/android-icon-192x192.png",
-			"type": "image/png",
-			"sizes": "192x192"
+			"src": "favicon.svg",
+			"type": "image/svg+xml",
+			"sizes": "any",
+			"purpose": "any"
 		}
 	],
 	"start_url": ".",
 	"display": "standalone",
-	"theme_color": "#4CAF50",
+	"theme_color": "#ffcc00",
 	"background_color": "#121212"
-} 
+}

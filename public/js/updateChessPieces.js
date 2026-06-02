@@ -3,6 +3,7 @@ import chessPieceCreator, { createChessPiece as createDetailedChessPiece } from 
 import { getTHREE } from './gameContext.js';
 import { highlightSinglePiece, setChessPiecesGroup } from './pieceHighlightManager.js';
 import { translatePosition } from './centreBoardMarker.js';
+import { setPieceMatrixStatic } from './pieceMatrixState.js';
 
 
 // Add a timer to track when chess pieces were last updated
@@ -489,6 +490,9 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 							hitbox.position.set(0, 0.38, 0);
 							hitbox.castShadow = false;
 							hitbox.receiveShadow = false;
+							// The hitbox never moves relative to its piece, so
+							// freeze its local matrix (static-pieces optimisation).
+							setPieceMatrixStatic(hitbox, true);
 							pieceMesh.add(hitbox);
 						}
 					} catch (e) {
@@ -549,6 +553,20 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 							console.error('Error highlighting piece:', highlightErr);
 						}
 					}
+
+					// Static-pieces optimisation: a SETTLED piece doesn't
+					// change its transform between syncs, so stop recomputing
+					// its local matrix every frame. This runs only when the
+					// reconciler fires (rate-limited + hash-gated), and bakes
+					// the final transform set above. Pieces that are mid-
+					// animation must stay dynamic — the wing animation owns an
+					// airborne piece's per-frame Y, and the optimistic-move pin
+					// owns the moving mesh — so we keep those flagged dynamic;
+					// their animation owners re-freeze them when they settle.
+					const pieceAnimating =
+						!!(pieceMesh.userData && (pieceMesh.userData.airborne || pieceMesh.userData.inFlight))
+						|| !!(inFlight && inFlightId && String(pieceId) === inFlightId && inFlightStillValid);
+					setPieceMatrixStatic(pieceMesh, !pieceAnimating);
 				}
 			} catch (pieceErr) {
 				console.error('Error processing chess piece:', pieceErr);

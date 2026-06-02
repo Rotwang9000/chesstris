@@ -21,6 +21,17 @@ COPY package.json package-lock.json* ./
 # etc.) are not needed at runtime.
 RUN npm ci --omit=dev --prefer-offline --no-audit --no-fund
 
+# Build the production client bundle. esbuild is a dev dependency, so this
+# stage installs the full tree and bundles public/js → public/dist; only
+# the built artefact is carried into the runner. Without this, production
+# would serve ~60 raw ES modules instead of one minified file.
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package.json package-lock.json* ./
+RUN npm ci --prefer-offline --no-audit --no-fund
+COPY . .
+RUN npm run build:client
+
 FROM node:20-alpine AS runner
 ENV NODE_ENV=production
 WORKDIR /app
@@ -34,6 +45,10 @@ COPY --from=deps /app/node_modules ./node_modules
 # Copy the app proper. .dockerignore keeps tests, .git, and
 # editor noise out of the image.
 COPY --chown=tetches:tetches . .
+
+# public/dist is .dockerignored from the build context, so pull the freshly
+# built client bundle in from the builder stage.
+COPY --from=builder --chown=tetches:tetches /app/public/dist ./public/dist
 
 USER tetches
 

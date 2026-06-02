@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Tetches — Piece Preview</title>
+	<!-- Same THREE build as the game so geometry/materials behave identically. -->
+	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
+	<style>
+		html, body { margin: 0; height: 100%; background: #20242e; overflow: hidden; font-family: monospace; }
+		#legend {
+			position: fixed; top: 8px; left: 8px; z-index: 10;
+			color: #e8e8e8; font-size: 12px; line-height: 1.5;
+			background: rgba(0,0,0,0.55); padding: 8px 10px; border-radius: 6px;
+			pointer-events: none; white-space: pre;
+		}
+		#err { position: fixed; bottom: 8px; left: 8px; color: #ff6b6b; font-size: 12px; z-index: 10; }
+	</style>
+</head>
+<body>
+	<div id="legend">Columns L→R: Pawn  Rook  Knight  Bishop  Queen  King
+Rows back→front:
+  1) NORMAL   (player colour)
+  2) CUTE     (player colour — realistic in-game)
+  3) RETRO    (own palette)
+  4) CUTE     (default per-type colours)</div>
+	<div id="err"></div>
+	<script type="module">
+		import { setTHREE } from './js/gameContext.js';
+		import { createChessPiece, initMaterials } from './js/chessPieceCreator.js';
+
+		const THREE = window.THREE;
+		setTHREE(THREE);
+		try { initMaterials(); } catch (e) { /* materials lazily init anyway */ }
+
+		const scene = new THREE.Scene();
+		scene.background = new THREE.Color(0x20242e);
+
+		const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
+		camera.position.set(4.2, 5.0, 8.5);
+		camera.lookAt(0, 0.4, -1.5);
+
+		const renderer = new THREE.WebGLRenderer({ antialias: true });
+		renderer.setSize(innerWidth, innerHeight);
+		renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+		document.body.appendChild(renderer.domElement);
+
+		const controls = new THREE.OrbitControls(camera, renderer.domElement);
+		controls.target.set(0, 0.4, -1.5);
+		controls.update();
+
+		scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+		const key = new THREE.DirectionalLight(0xffffff, 0.9);
+		key.position.set(5, 10, 7);
+		scene.add(key);
+		const fill = new THREE.DirectionalLight(0x88aaff, 0.35);
+		fill.position.set(-6, 4, -4);
+		scene.add(fill);
+
+		// Ground grid so heights/footprints are readable.
+		const grid = new THREE.GridHelper(16, 16, 0x556070, 0x3a4250);
+		scene.add(grid);
+
+		const PLAYER_COLOUR = 0xDD0000; // realistic local-player colour
+		const TYPES = [1, 2, 3, 4, 5, 6];
+
+		// rowSpec: { profile, z, color } — color undefined => per-type defaults.
+		const rows = [
+			{ profile: 'normal', z: 3.0, color: PLAYER_COLOUR },
+			{ profile: 'cute',   z: 0.5, color: PLAYER_COLOUR },
+			{ profile: 'retro',  z: -2.0, color: undefined },
+			{ profile: 'cute',   z: -4.5, color: undefined },
+		];
+
+		// Diagnostics: count scene-graph mesh nodes per piece (merge should
+		// collapse cute/normal pieces to ~1 mesh) and material-group counts.
+		function meshNodeCount(obj) {
+			let n = 0;
+			obj.traverse(c => { if (c.isMesh) n++; });
+			return n;
+		}
+		function firstMeshGroups(obj) {
+			let groups = 0, isArrayMat = false;
+			obj.traverse(c => {
+				if (groups || !c.isMesh) return;
+				isArrayMat = Array.isArray(c.material);
+				groups = (c.geometry && c.geometry.groups) ? c.geometry.groups.length : 0;
+			});
+			return { groups, isArrayMat };
+		}
+
+		let built = 0;
+		const diag = {};
+		for (const row of rows) {
+			const gameState = {
+				renderProfile: row.profile,
+				retroMode: row.profile === 'retro',
+				lowQuality: row.profile === 'cute',
+				localPlayerId: 'me',
+				myPlayerId: 'me',
+			};
+			const key = `${row.profile}${row.color === undefined ? '-default' : ''}`;
+			diag[key] = diag[key] || { heights: {}, widths: {} };
+			for (const type of TYPES) {
+				const x = (type - 3.5) * 1.4;
+				try {
+					const piece = createChessPiece(gameState, 0, 0, type, 'me', {
+						isLocalPlayer: true,
+						color: row.color,
+					});
+					piece.position.set(x, 0, row.z);
+					scene.add(piece);
+					built++;
+					const box = new THREE.Box3().setFromObject(piece);
+					diag[key].heights[type] = +(box.max.y - box.min.y).toFixed(3);
+					diag[key].widths[type] = +(box.max.x - box.min.x).toFixed(3);
+					if (type === 6) Object.assign(diag[key], { meshNodes: meshNodeCount(piece), ...firstMeshGroups(piece) });
+				} catch (e) {
+					document.getElementById('err').textContent += `[${row.profile} ${type}] ${e.message}  `;
+					console.error(row.profile, type, e);
+				}
+			}
+		}
+		console.log('pieces built:', built, diag);
+		window.__previewBuilt = built;
+		window.__diag = diag;
+
+		// ── Offscreen ASCII silhouette ──────────────────────────────────
+		// Screenshots time out in the IDE webview, so this renders ONE piece
+		// flat-lit into a render target, reads the pixels back, and returns a
+		// coarse occupancy grid ('#' = piece, '.' = empty). Lets shape be
+		// verified over CDP without an image. view: 'side' (x→right, profile,
+		// muzzle faces RIGHT), 'front' (z→right), or 'iso'.
+		window.__silhouette = (typeNum = 3, profile = 'normal', view = 'side', cols = 44, rows = 30) => {
+			const gs = {
+				renderProfile: profile,
+				retroMode: profile === 'retro',
+				lowQuality: profile === 'cute',
+				localPlayerId: 'me', myPlayerId: 'me',
+			};
+			const piece = createChessPiece(gs, 0, 0, typeNum, 'me', { isLocalPlayer: true, color: 0xDD0000 });
+			const s = new THREE.Scene();
+			s.add(new THREE.AmbientLight(0xffffff, 1.6)); // flat-lit → solid silhouette
+			s.add(piece);
+
+			const box = new THREE.Box3().setFromObject(piece);
+			const c = box.getCenter(new THREE.Vector3());
+			const sz = box.getSize(new THREE.Vector3());
+			const half = (Math.max(sz.x, sz.y, sz.z) / 2) * 1.12;
+			const aspect = cols / rows;
+			const cam = new THREE.OrthographicCamera(-half * aspect, half * aspect, half, -half, 0.01, 100);
+			if (view === 'front') cam.position.set(c.x + 5, c.y, c.z);
+			else if (view === 'iso') cam.position.set(c.x + 4, c.y + 3, c.z + 4);
+			else cam.position.set(c.x, c.y, c.z + 5); // side
+			cam.up.set(0, 1, 0);
+			cam.lookAt(c);
+
+			const W = cols * 4, H = rows * 4;
+			const rt = new THREE.WebGLRenderTarget(W, H);
+			const prevTarget = renderer.getRenderTarget();
+			renderer.setRenderTarget(rt);
+			renderer.setClearColor(0x000000, 1);
+			renderer.clear();
+			renderer.render(s, cam);
+			const buf = new Uint8Array(W * H * 4);
+			renderer.readRenderTargetPixels(rt, 0, 0, W, H, buf);
+			renderer.setRenderTarget(prevTarget);
+			renderer.setClearColor(0x000000, 0);
+			rt.dispose();
+
+			// Downsample: a grid cell is filled if ANY pixel in its block is
+			// lit. readPixels is bottom-up, so emit rows top-first.
+			const lines = [];
+			for (let gy = rows - 1; gy >= 0; gy--) {
+				let line = '';
+				for (let gx = 0; gx < cols; gx++) {
+					let on = false;
+					for (let py = gy * 4; py < gy * 4 + 4 && !on; py++) {
+						for (let px = gx * 4; px < gx * 4 + 4; px++) {
+							const i = (py * W + px) * 4;
+							if (buf[i] + buf[i + 1] + buf[i + 2] > 60) { on = true; break; }
+						}
+					}
+					line += on ? '#' : '.';
+				}
+				lines.push(line);
+			}
+			return lines.join('\n');
+		};
+
+		addEventListener('resize', () => {
+			camera.aspect = innerWidth / innerHeight;
+			camera.updateProjectionMatrix();
+			renderer.setSize(innerWidth, innerHeight);
+		});
+
+		// Render a short burst then settle to on-demand rendering. A
+		// continuously-animating canvas can starve the screenshot grab; a
+		// static frame captures reliably. OrbitControls re-render on change.
+		let frames = 0;
+		(function loop() {
+			controls.update();
+			renderer.render(scene, camera);
+			if (frames++ < 90) requestAnimationFrame(loop);
+		})();
+		controls.addEventListener('change', () => renderer.render(scene, camera));
+		window.__renderOnce = () => renderer.render(scene, camera);
+	</script>
+</body>
+</html>

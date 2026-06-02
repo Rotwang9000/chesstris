@@ -175,6 +175,54 @@ function monitorPerformance(fps) {
 		GAME_LOGIC_INTERVAL = perfMode ? 1000 : 500;
 		console.log(`Performance mode ${perfMode ? 'enabled' : 'disabled'} (fps=${fps})`);
 	}
+
+	// Reconcile render-side perf state EVERY tick, not just on the
+	// transition. Switching render profile rebuilds the renderer and
+	// re-enables shadows with `autoUpdate` defaulting back to true, without
+	// flipping perfMode — so a transition-only hook would leave a player who
+	// entered normal mode while already under load with live (expensive)
+	// shadows. The call is cheap and idempotent.
+	applyPerformanceMode(perfMode);
+}
+
+/**
+ * Apply the render-side consequences of performance mode.
+ *
+ * The only profile that casts real-time shadows is NORMAL (cute/retro turn
+ * shadow casting off at setup), and the stress test pinned the per-frame
+ * shadow pass — re-rendering the 2048² shadow map over a crowded board every
+ * frame — as a significant normal-mode cost. So under load we FREEZE the
+ * shadow map (`autoUpdate = false`) instead of toggling `shadowMap.enabled`,
+ * which would force every material to recompile its shaders and cause a
+ * visible hitch. Frozen shadows just go slightly stale as pieces move; they
+ * stay present and correctly placed for the static majority. On recovery,
+ * re-enabling `autoUpdate` re-renders the map on the very next frame, so no
+ * explicit `needsUpdate` is required. The "normal auto-adjusts under load"
+ * lever — fully reversible, no popping, no recompile.
+ *
+ * @param {boolean} perfMode true when we are in performance mode
+ */
+let _shadowsFrozenForPerf = null; // last freeze state we logged (null = unset)
+
+function applyPerformanceMode(perfMode) {
+	try {
+		// The live renderer is mirrored on gameState and exposed via the
+		// context getter; prefer gameState and fall back to the getter.
+		const gs = getGameState();
+		const renderer = (gs && gs.renderer) || getRenderer();
+		const shadowMap = renderer && renderer.shadowMap;
+		// Only meaningful when shadows are actually on (normal mode).
+		if (!shadowMap || !shadowMap.enabled) return;
+		shadowMap.autoUpdate = !perfMode;
+		// Log only on an actual state change so the stress test has a clear
+		// signal without spamming the console every tick.
+		if (_shadowsFrozenForPerf !== perfMode) {
+			_shadowsFrozenForPerf = perfMode;
+			console.log(`Shadow map ${perfMode ? 'FROZEN under load' : 'live'} (perf governor).`);
+		}
+	} catch (e) {
+		console.error('applyPerformanceMode failed:', e);
+	}
 }
 
 // ── Tetromino auto-fall ─────────────────────────────────────────────────────

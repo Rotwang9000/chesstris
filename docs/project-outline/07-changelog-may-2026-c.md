@@ -2,6 +2,231 @@
 
 > Part of the [Tetches project outline](README.md). May 2026: power-up orbs, connectivity, production audit.
 
+### Launch-readiness pass: shareability, FTUE gate, security & deploy bundle (1 Jun 2026)
+
+**A sweep to get Tetches ready to publicise.** Covers four fronts — social
+shareability, first-time-user experience, security hardening, and making
+production actually serve the optimised client bundle.
+
+* **Shareability / SEO (`public/index.html`, `manifest.json`,
+  `favicon.svg`).** Added Open Graph + Twitter card meta, `canonical`,
+  `theme-color`, a real `<title>`/description, and a crisp SVG favicon
+  (gold rook-crenellation = chess-as-Tetris). The PWA manifest now points
+  at the SVG and uses the brand gold (`#ffcc00`) instead of the old
+  placeholder green/PNG refs. The 1200×630 `og:image` link-unfurl card
+  (`public/img/og-image.png`, with editable `og-image.svg` source) was
+  generated on-brand from the favicon mark + a Playfair-Display wordmark.
+* **FTUE: the welcome modal is now the single gate, decoupled from server
+  state.** The tutorial/start race came from keying onboarding off
+  `gameState.inProgress` / `gameStarted` — but a server `game_update` flips
+  those true the instant board data arrives, so a fast join could start the
+  game *behind* the modal or skip it. A new module-local `worldEntered`
+  flag (`enhanced-gameCore.js`) now gates both the modal and
+  `startPlayingGame`'s idempotency; `gameState.resumeSession`
+  (`main-enhanced.js`) auto-resumes only after a render-mode switch and
+  suppresses the modal then. The modal itself (`createLoadingIndicator.js`)
+  is trimmed to one clear **"Enter shared world"** CTA: the world-key input
+  and the cross-device "sign in to save progress" path are feature-flagged
+  off (`ENABLE_WORLD_KEY` / `ENABLE_AUTH_SIGNIN`) since they don't do
+  anything meaningful under a single shared world yet, and a touch-controls
+  line was added for mobile.
+* **Security hardening (`server/app.js`, `server/sockets/`).** `/metrics`
+  is no longer public in production — it's restricted to same-host
+  (loopback) scrapers or callers presenting `ADMIN_TOKEN`, else `404`.
+  `/node_modules` is mounted **dev-only** (prod serves the bundle, so the
+  dependency tree needn't be exposed). New `server/sockets/rateLimiter.js`
+  adds a wire-level per-socket flood guard via Socket.IO inbound middleware
+  (generous budget; over-budget packets dropped, sustained floods
+  disconnected) — complementing the existing per-action cooldowns.
+* **CSP primed for Auth0.** Added `cdn.auth0.com` (SDK), `*.auth0.com`
+  (tenant API `connect-src`) and an Auth0 `frame-src` (silent-renew iframe),
+  so re-enabling email sign-in later needs no CSP change.
+* **Production serves the bundle now (`scripts/deploy.sh`, `Dockerfile`,
+  `Jenkinsfile`).** `npm run build:client` is wired into all three: deploy.sh
+  builds before the rsync; the Dockerfile gained a `builder` stage that
+  bundles and copies `public/dist` into the runner (it's `.dockerignore`d
+  from the context); Jenkins builds early so a broken bundle fails before
+  the prod approval gate. (`public/dist/` stays gitignored — built at deploy,
+  never committed, so dev keeps live-reloading raw modules.)
+* **Ops (`.env.example`).** New documented template for every env var the
+  code actually reads — core (`NODE_ENV`/`PORT`), prod-required
+  (`ALLOWED_ORIGIN`, `ADMIN_TOKEN`, `WALLET_SESSION_SECRET`), optional Auth0
+  + Sentry + `LOG_LEVEL`.
+* **Tests.** `tests/server/security.test.js` extended (CSP Auth0 hosts;
+  `/metrics` loopback-vs-external-vs-token; `/node_modules` not exposed) and
+  new `tests/server/socketRateLimit.test.js`. Full server suite green (465).
+
+**Manual steps before / at launch** (not code — flagged so they're not lost):
+
+1. **DNS / domain** — point `tetches.com` (+ `www`) at the host; ensure the
+   TLS cert covers both.
+2. **Prod `.env`** — set `NODE_ENV=production`, `ALLOWED_ORIGIN=https://
+   tetches.com,https://www.tetches.com`, a strong `ADMIN_TOKEN`, and
+   `WALLET_SESSION_SECRET`.
+3. **Cutover** — run `bash scripts/deploy.sh production` (or
+   `scripts/deploy-tetches-cutover.sh`) so the bundle + these changes ship.
+4. **nginx (defence-in-depth)** — optionally add a `/metrics` allow/deny
+   block; the app already gates it, this just stops the request at the edge.
+5. **Auth0 (only when re-enabling sign-in)** — add the prod/staging callback
+   + logout URLs to the Auth0 app, then flip `ENABLE_AUTH_SIGNIN` back on.
+6. **Verify link unfurl** — after DNS, run the URL through the Facebook
+   Sharing Debugger / Twitter Card Validator to prime their caches.
+
+### Normal-mode auto-adjust: freeze shadows under load (30 May 2026)
+
+**Normal mode now sheds its most expensive frame cost when the FPS
+drops.** Only the normal profile casts real-time shadows (cute/retro set
+`castShadow = false` at setup), and the stress test pinned the per-frame
+shadow pass — re-rendering the 2048² shadow map over a crowded board
+*every frame* — as a major normal-mode cost. The FPS governor
+(`monitorPerformance`) already flips a hysteresis `performanceMode` flag
+at 24/45 FPS; it now also calls `applyPerformanceMode`, which sets
+`renderer.shadowMap.autoUpdate = false` on the way in and restores it
+(plus one `needsUpdate` refresh) on the way out.
+
+* **Why freeze, not disable.** Toggling `shadowMap.enabled` forces every
+  material to recompile its shaders → a visible hitch every time the
+  governor flips. Freezing the map keeps the shaders intact: shadows just
+  stop *updating* (go slightly stale as pieces move) but stay present and
+  correctly placed for the static majority. Fully reversible, no popping.
+* **Sits on top of the existing ladder.** Joins the per-frame budget
+  governor (skips "pretty" updates >33 ms), the interval throttles
+  (LOD/game-logic), and zoom-relative distance culling — which already
+  removes far pieces from the shadow caster set, so a *distance-based*
+  shadow LOD would have been redundant.
+
+**Verification status.** Logic + wiring reviewed and lint-clean; the dev
+server confirmed it serves the new `gameLoop.js`; `applyPerformanceMode`
+uses the same `getGameState()` / `getRenderer()` accessors the render
+loop already renders through (an in-page probe via `import()` runs in an
+*isolated module world*, so it misleadingly reports those as null — the
+real loop has them populated, which is why the board renders at all). The
+FPS-triggered flip could **not** be observed live this session because
+the webview kept running a browser-cached old `gameLoop.js`
+(`Network.clearBrowserCache` is denied and `setCacheDisabled` didn't
+stick). A `console.log` now fires on each freeze/unfreeze transition so
+the behaviour is confirmable in the next fresh-loaded stress test.
+
+### Static settled pieces: freeze the per-frame matrix compose (1 Jun 2026)
+
+**Landed the next perf lever.** After the cute+normal merges each piece is
+~2 scene nodes, but every node still recomputed its local matrix every
+frame (`matrixAutoUpdate` on) — part of the `scene.updateMatrixWorld`
+cost the stress test pinned (14.75 ms/frame over 6,752 objects). Pieces
+are static the vast majority of the time (they move only on a chess move
+or a row-clear), so a settled piece doesn't need its matrix rebuilt each
+frame. New helper `public/js/pieceMatrixState.js` (dependency-free, no
+`THREE` import → no import cycles) exposes `setPieceMatrixStatic(obj,
+isStatic)` (bake once via `updateMatrix()` then `matrixAutoUpdate=false`,
+or thaw) and `bakePieceMatrixIfStatic(obj)` (re-bake a frozen object after
+an external transform write).
+
+* **What it actually saves — the compose, not the multiply.** r132 has
+  **no per-object `matrixWorldAutoUpdate`** subtree-skip, and the scene
+  root keeps `matrixAutoUpdate` on, so `updateMatrixWorld` still *forces*
+  every node's world-matrix multiply each frame regardless. Freezing skips
+  the per-node `compose()` (build matrix from position/quaternion/scale).
+  The earlier "freeze static cells" experiment measured exactly this gain
+  (~18%), so pieces are expected to claw back a similar slice — partial,
+  but free and safe.
+* **Two always-static sub-nodes, frozen for life (zero risk).** The merged
+  body mesh (frozen in `buildRussianPiece` / `createCutePiece` after its
+  `scale.setScalar`) and the raycast hitbox (frozen in `updateChessPieces`
+  after `position.set`) *never* move relative to their group, so they're
+  frozen at creation and never thawed — and `Object3D.clone()` copies both
+  the baked matrix and the flag, so the cached/legacy paths inherit it.
+  This is the bulk of the win (2 of ~3 nodes per piece) with no animation
+  coupling at all.
+* **The outer group is frozen only while SETTLED.** The reconciler
+  (`updateChessPieces`) freezes a piece at the end of its positioning pass
+  *unless* it's mid-animation (`userData.airborne` / `userData.inFlight`,
+  or the `inFlightMove` optimistic-move pin), which stay dynamic. Because
+  the reconciler is rate-limited + hash-gated, this costs one extra
+  `compose()` per piece only when it actually fires, and saves it on every
+  other frame.
+* **Frozen-piece failure mode, handled at every transform writer.** A
+  write to a frozen object's transform won't render until it's re-baked, so
+  the four owners cooperate: `wingAnimations` thaws on lift and re-freezes
+  on a landed settle; `chessInteraction.updatePiecePosition` re-bakes after
+  the optimistic snap (and `animateChessPieceMove` thaws before its —
+  currently dead — tween); `pieceHighlightManager` re-bakes after every
+  hover/selection `scale.set`. Children (wings, halo, selection ring +
+  bobbing indicator) keep their own `matrixAutoUpdate`, so they animate
+  regardless of whether the parent is frozen.
+
+**Verification.** New `tests/core/pieceMatrixState.test.js` pins the
+freeze/thaw/bake contract (7 cases); full `tests/core` suite green (45
+tests). Logic reviewed against every per-frame and event-driven
+piece-transform writer in the codebase. Client serves raw ES modules
+(`<script type="module" src="js/main-enhanced.js">`), so the new module
+loads on reload with no build step. Still wants a live multiplayer
+stress-test pass to confirm no piece freezes through a move / row-clear /
+hover cycle and to measure the FPS delta.
+
+### Normal-mode knight redesigned into a real horse head (30 May 2026)
+
+**The knight no longer looks "silly".** The old normal-mode knight was a
+tilted box "head" + box muzzle + two tiny cone ears on a straight
+cylinder — in profile a lumpy triangle on a stick, not a horse.
+`createRussianKnightPiece` is now built as a proper side profile facing
+`+x`: a slim forward-leaning **neck**, a flatter **head bar** that juts
+forward off the top (bending the profile into a "7"/hook), a **muzzle**
+that dips at the front, a **jaw** wedge, two pointed **ears** at the
+poll, and a **mane** ridge (secondary colour) down the back with the
+crest protruding behind the poll. The empty **throat wedge** under the
+head is what makes it read as a horse rather than a blob. Still one
+material trio (primary/secondary/accent) so it bakes to a single merged
+node like the rest of the set; footprint stays in-cell (≈0.66 × 0.82).
+
+**Verified without screenshots.** Screenshots have been timing out in the
+IDE webview all session, so `public/piece-preview.html` gained
+`window.__silhouette(type, profile, view)` — it flat-lights one piece
+into an offscreen render target, reads the pixels back, and returns a
+coarse `#`/`.` occupancy grid over CDP. Side + front silhouettes
+confirmed the ears / forward muzzle / throat gap / mane crest all read
+(baseline triangle-blob → recognisable knight). Reusable for the
+remaining piece work (pawn-promotion visuals, etc.).
+
+### Cute mode actually merged + rank-scaled (30 May 2026)
+
+**Fixing the record + finishing the lever.** The earlier "cute-piece
+merge" below merged the *detailed Russian* set (`russianPieces.js`),
+which is the **normal/default** render profile — but the stress test had
+pinned *cute mode* (`specialModes.createCutePiece`, used for
+`renderProfile === 'cute'` / `lowQuality`) as the ~12-node-per-piece
+offender. Cute is meant to be the **low-spec / fast** profile, yet its
+pieces were heavier than the "high quality" mode. Now corrected:
+
+* **Cute pieces bake to one node.** `createCutePiece` builds its
+  primitives into a transient group and collapses them via
+  `mergeMeshesByMaterial` into a single `THREE.Mesh` (material groups
+  preserve the body/trim/dark/accent/face colours), wrapped in one outer
+  group for userData/highlights — same shape as `buildRussianPiece`.
+  Verified in-browser: a cute king went from ~12 mesh nodes to **1**.
+* **Differentiation by SIZE.** The cute set previously shared one
+  footprint, so a player's army read as identical blobs (only the small
+  topper differed). Every cute piece is now scaled by the shared
+  `pieceSizeFor()` (pawn 0.82 → king 1.24). Measured bounding boxes
+  confirm footprint **width is strictly monotonic** pawn→king and height
+  rises with rank (king ≈ 1.7× the pawn); distinct toppers (crown /
+  tiara / mitre / pony-ears / battlements / bobble) + faces remain.
+* **Simpler.** Dropped per-piece frills that fought the merge —
+  transparent cheek-blush, eye-shine, belly highlight, the third
+  forelock tuft — and folded the gem/ear-lining into the accent/trim
+  materials so the merge needs just five materials.
+* **Shared, testable size map.** Extracted `PIECE_SIZE_BY_TYPE` out of
+  `russianPieces.js` into the dependency-free
+  `public/js/chessPieceCreator/pieceSizes.js` (`pieceSizeFor()` helper),
+  imported by *both* piece families (no cross-coupling). Pinned by
+  `tests/core/pieceSizes.test.js` (strict rank monotonicity, cell-safe
+  footprint, frozen).
+* **Dev tool.** `public/piece-preview.html` renders all six types across
+  normal / cute / retro (player-colour + default-palette rows) and
+  exposes node-count + bounding-box diagnostics on `window.__diag` — the
+  reliable way to verify piece visuals without booting the full world.
+  (Screenshots were timing out in the IDE webview this session, so the
+  diagnostics, not an image, are the verification of record.)
+
 ### Auth0 sign-in + cute-piece merge (30 May 2026)
 
 **Authentication moved to Auth0 — we no longer touch email or PII.**
@@ -25,14 +250,28 @@ ripped out and replaced with Auth0's hosted login:
 * Auth0 dashboard configured against the existing **Shaktris** SPA
   (`cde.uk.auth0.com`): callback/logout/web-origins set, passwordless
   **email** connection enabled, database password connection disabled.
-* **Open item:** Auth0's New Universal Login isn't yet rendering the
-  passwordless-email screen for this tenant (it falls back to a
-  database-style prompt when `connection=email` is forced, and the
-  default hosted page currently surfaces "Continue with Google").
-  `AUTH0_CONNECTION` is left empty so users get the working hosted
-  login; finishing the email-code experience needs either a tenant
-  Authentication-Profile/Classic-UL-template tweak or an embedded
-  passwordless-OTP flow. Tracked for follow-up.
+* **Open item — hosted email-code screen (investigated 30 May).**
+  Confirmed *in-dashboard* that the Shaktris SPA has the database
+  password connection **off** and the passwordless **email** + Google
+  connections **on** (checked from the database connection's own
+  Applications tab, not promoted to domain level). Despite that, New
+  Universal Login still renders a database-style email+password prompt
+  at `/u/login` for `connection=email` (re-tested with `prompt=login`
+  and a cache-busting nonce). The embedded fallback is also blocked:
+  `POST /passwordless/start` works (HTTP 200 — Auth0 sends the code),
+  but the `…/passwordless/otp` token grant is "not allowed for the
+  client" and the dashboard **greys that grant out for SPAs**. Minting
+  a Management-API token to add the grant programmatically failed too —
+  the tenant rejects its own freshly-issued, correctly-signed token
+  (`kid` present in JWKS, valid `aud`/`iss`, unexpired) as
+  `invalid_bearer_format`. So `AUTH0_CONNECTION` stays empty and users
+  get the working hosted login (Google), which already satisfies the
+  brief: **we never touch an email, password or other PII.** Finishing
+  the dedicated email-code UX most likely needs a tenant-side change
+  (Authentication Profile → "Identifier First") or Auth0 support.
+  NOTE: an *"Auth0 Management API (Test Application)"* M2M client was
+  created in the tenant during this investigation; it is harmless but
+  can be deleted.
 
 **Cute pieces: simpler, more distinct, and merged into one node.**
 The stress test below pinned scene-graph node count as the bottleneck.

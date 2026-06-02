@@ -33,11 +33,14 @@ function buildCSPDirectives() {
 		defaultSrc: ["'self'"],
 		// Inline + the jsdelivr CDN. `'unsafe-inline'` is needed
 		// because index.html embeds bootstrap JS inline — splitting
-		// that out is a P2 cleanup.
+		// that out is a P2 cleanup. `cdn.auth0.com` serves the Auth0
+		// SPA SDK (sign-in is feature-flagged off in the client for
+		// now, but the policy is kept ready so re-enabling it Just Works).
 		scriptSrc: [
 			"'self'",
 			"'unsafe-inline'",
 			'https://cdn.jsdelivr.net',
+			'https://cdn.auth0.com',
 		],
 		styleSrc: [
 			"'self'",
@@ -46,16 +49,31 @@ function buildCSPDirectives() {
 		],
 		fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
 		imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
-		// Socket.IO upgrade target. The browser issues these as
-		// wss://tetches.com or ws://localhost:* — same-origin is
-		// the only requirement.
-		connectSrc: ["'self'", 'ws:', 'wss:'],
+		// Socket.IO upgrade target (wss://tetches.com / ws://localhost:*)
+		// plus the Auth0 tenant API for token/session calls.
+		connectSrc: ["'self'", 'ws:', 'wss:', 'https://*.auth0.com'],
+		// Auth0 uses a hidden iframe for silent token renewal.
+		frameSrc: ["'self'", 'https://*.auth0.com'],
 		// Block plugins; no <object> / <embed>.
 		objectSrc: ["'none'"],
 		frameAncestors: ["'self'"],
 		baseUri: ["'self'"],
 		formAction: ["'self'"],
 	};
+}
+
+/**
+ * True when a request originates from the same host (loopback). Used to
+ * keep `/metrics` reachable by a same-box Prometheus scraper while hiding
+ * it from the public internet. With `trust proxy` enabled, a direct
+ * localhost scrape has no `X-Forwarded-For`, so `req.ip` falls back to the
+ * loopback socket address; a request proxied in by nginx carries the real
+ * client IP instead.
+ */
+function isLoopbackRequest(req) {
+	const ip = String((req && (req.ip || (req.socket && req.socket.remoteAddress))) || '')
+		.replace('::ffff:', '');
+	return ip === '127.0.0.1' || ip === '::1' || ip === 'localhost';
 }
 
 function createApp({ projectRoot = process.cwd() } = {}) {
@@ -121,7 +139,13 @@ function createApp({ projectRoot = process.cwd() } = {}) {
 	app._indexBundleStatus = indexSwap.bundleStatus;
 	app._getBundleVersion = indexSwap.getBundleVersion;
 
-	app.use('/node_modules', express.static(path.join(projectRoot, 'node_modules')));
+	// `/node_modules` is only needed by the unbundled dev client (raw ES
+	// modules). Production serves the esbuild bundle (deps inlined, THREE
+	// & socket.io from CDN), so exposing the dependency tree there is
+	// needless attack surface.
+	if (isDevelopment) {
+		app.use('/node_modules', express.static(path.join(projectRoot, 'node_modules')));
+	}
 	app.use(express.static(path.join(projectRoot, 'public')));
 
 	if (!isDevelopment) {
@@ -157,10 +181,19 @@ function createApp({ projectRoot = process.cwd() } = {}) {
 	app.use('/api/wallet-auth', walletAuthRouter);
 	mountAuthRoutes(app);
 
-	// Prometheus scrape target. Public for now (Prometheus on the
-	// same host can scrape without auth); restrict at the nginx
-	// layer if you ever expose it externally.
-	app.get('/metrics', async (_req, res) => {
+	// Prometheus scrape target. In production it's restricted to same-host
+	// scrapers (loopback) or callers presenting the admin token, so the
+	// internal gauges aren't exposed on the public internet. Unknown
+	// callers get a 404 (hides its existence). Open in development.
+	app.get('/metrics', async (req, res) => {
+		if (!isDevelopment) {
+			const adminToken = process.env.ADMIN_TOKEN;
+			const provided = req.get('x-admin-token') || req.query.adminToken;
+			const tokenOk = !!adminToken && provided === adminToken;
+			if (!isLoopbackRequest(req) && !tokenOk) {
+				return res.status(404).end();
+			}
+		}
 		try {
 			res.set('Content-Type', metrics.register.contentType);
 			res.end(await metrics.renderMetrics());

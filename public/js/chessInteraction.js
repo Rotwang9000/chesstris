@@ -16,6 +16,7 @@ import { highlightSinglePiece, clearSinglePieceHighlight } from './pieceHighligh
 import { updateUnifiedPlayerBar } from './unifiedPlayerBar.js';
 import { setSelectedPiece as setInfoCardPiece } from './selectedPieceCard.js';
 import { translatePosition } from './centreBoardMarker.js';
+import { setPieceMatrixStatic, bakePieceMatrixIfStatic } from './pieceMatrixState.js';
 import * as NetworkManager from './utils/networkManager.js';
 import { updateGameStatusDisplay } from './createLoadingIndicator.js';
 import * as tetrominoModule from './tetromino.js';
@@ -901,6 +902,10 @@ export function animateChessPieceMove(piece, _fromX, _fromZ, toX, toZ, onComplet
 			if (onComplete) onComplete();
 		});
 
+	// Thaw the mesh so the per-frame tween writes render (the static-
+	// pieces optimisation may have frozen it). The reconciler / settle
+	// re-freezes once the move lands.
+	setPieceMatrixStatic(piece, false);
 	upTween.chain(downTween);
 	upTween.start();
 }
@@ -910,6 +915,10 @@ export function updatePiecePosition(piece, x, z) {
 	const gameState = getGameState();
 	const abs = translatePosition({ x, z }, gameState, true);
 	piece.position.set(abs.x, piece.position.y, abs.z);
+	// The piece may be frozen by the static-pieces optimisation; re-bake
+	// so this snap actually renders. The reconciler re-freezes on its
+	// next pass at the canonical cell.
+	bakePieceMatrixIfStatic(piece);
 	if (piece.userData) piece.userData.position = { x, z };
 }
 

@@ -398,6 +398,9 @@ async function joinGame(gameId = null) {
 					if (state.gameId && Date.now() - state.timestamp < 30000) {
 						console.log('Restoring game from mode switch:', state.gameId);
 						gameId = state.gameId;
+						// Resume straight back into play and suppress the welcome
+						// modal — the player has already entered this session.
+						gameState.resumeSession = true;
 						// Restore player name if saved
 						if (state.playerName) {
 							localStorage.setItem('playerName', state.playerName);
@@ -614,8 +617,12 @@ async function joinGameAfterConnection(gameId = null) {
 				instructionsElement.style.display = 'none';
 			}
 			
-			// Start the game
-			if (gameCore.startPlayingGame) {
+			// Only auto-start when RESUMING (e.g. a render-mode switch).
+			// For a fresh visit the welcome modal is the gate: it calls
+			// startPlayingGame() when the player clicks "Enter shared world".
+			// Starting here would race the modal — hiding the game behind it
+			// or skipping it entirely on a fast connection.
+			if (gameState.resumeSession && gameCore.startPlayingGame) {
 				gameCore.startPlayingGame();
 			}
 			

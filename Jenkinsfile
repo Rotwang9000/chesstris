@@ -53,6 +53,16 @@ pipeline {
 			}
 		}
 
+		stage('Build Client') {
+			steps {
+				// Bundle public/js → public/dist/app.bundle.js so the
+				// server serves one minified file in production. Run it
+				// here (not just in deploy.sh) so a broken bundle fails
+				// the pipeline BEFORE the production approval gate.
+				sh 'npm run build:client'
+			}
+		}
+
 		stage('Test — Server') {
 			steps {
 				sh '''

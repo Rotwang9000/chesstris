@@ -20,6 +20,7 @@
  */
 
 import { getTHREE } from './gameContext.js';
+import { setPieceMatrixStatic } from './pieceMatrixState.js';
 
 const HOVER_HEIGHT = 1.4;
 const HOVER_DURATION_MS = 700;
@@ -223,6 +224,10 @@ export function liftAirbornePieces(pieceIds) {
 		// hovers; `updateChessPieces.js` checks this flag before
 		// resetting positions.
 		mesh.userData.inFlight = true;
+		// The piece may have been frozen by the static-pieces
+		// optimisation; thaw it so the per-frame hover/flap Y writes
+		// below actually render (frozen-piece failure mode).
+		setPieceMatrixStatic(mesh, false);
 		attachWings(mesh);
 
 		const baseY = mesh.position.y || 0;
@@ -276,6 +281,11 @@ export function settleAirbornePieces(outcomes) {
 							mesh.userData.airborne = false;
 							mesh.userData.inFlight = false;
 						}
+						// Settled back on the board — re-freeze its matrix
+						// (static-pieces optimisation). The reconciler will
+						// also re-freeze on its next pass; doing it here means
+						// we don't pay a per-frame compose in the gap.
+						setPieceMatrixStatic(mesh, true);
 						airbornePieces.delete(id);
 					},
 				});

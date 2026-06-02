@@ -39,6 +39,15 @@ fi
 
 mkdir -p "${DEPLOY_DIR}/logs"
 
+# Build the production client bundle FIRST, in the source tree (which has
+# the full dependency set incl. esbuild). The server auto-detects
+# public/dist/app.bundle.js at boot and rewrites index.html to load that
+# single minified file instead of ~60 raw ES modules. The rsync below then
+# ships the freshly built bundle. Without this step production would serve
+# the unbundled dev modules.
+echo "--- Building client bundle ---"
+npm run build:client
+
 # Sync files (exclude dev-only artefacts)
 echo "--- Syncing files ---"
 rsync -r --delete --no-times --omit-dir-times --no-perms --no-group --no-owner --chmod=ugo=rwX \

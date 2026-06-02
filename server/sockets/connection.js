@@ -20,6 +20,7 @@ const { registerDuelHandlers } = require('./duels');
 const { registerStateHandlers } = require('./state');
 const { registerSpectateHandlers } = require('./spectate');
 const { registerLifecycleHandlers } = require('./lifecycle');
+const { attachSocketRateLimit } = require('./rateLimiter');
 // External AI registry. Imported via `module.exports.validateApiToken`
 // on the routes module rather than the router object so a circular
 // import doesn't end up empty at load time.
@@ -45,6 +46,9 @@ function createConnectionHandler(services) {
 			return;
 		}
 		Sessions.bind(socket, playerId);
+
+		// Wire-level flood protection (runs before any event handler).
+		attachSocketRateLimit(socket);
 
 		socket.emit('player_id', playerId);
 		socket.emit('set_session', { playerId });

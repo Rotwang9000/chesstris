@@ -6,6 +6,7 @@
  */
 
 import { getTHREE } from './gameContext.js';
+import { bakePieceMatrixIfStatic } from './pieceMatrixState.js';
 
 let chessPiecesGroup = null;
 const highlightAnimations = [];
@@ -63,6 +64,7 @@ export function removePlayerPiecesHighlight() {
 			!!piece.getObjectByName('selected-indicator');
 		if (!hasSelected && !(piece.userData?._isSelected)) {
 			piece.scale.set(1, 1, 1);
+			bakePieceMatrixIfStatic(piece);
 		}
 	});
 }
@@ -118,6 +120,9 @@ export function highlightSinglePiece(piece, options = {}) {
 		}
 
 		piece.scale.set(pieceScale, pieceScale, pieceScale);
+		// Re-bake in case the static-pieces optimisation froze this mesh,
+		// otherwise the hover/selection scale-up wouldn't render.
+		bakePieceMatrixIfStatic(piece);
 	} catch (_) { /* best effort */ }
 }
 
@@ -128,6 +133,7 @@ export function clearSinglePieceHighlight(piece) {
 	]);
 	if (piece.userData?._isSelected) delete piece.userData._isSelected;
 	piece.scale.set(1, 1, 1);
+	bakePieceMatrixIfStatic(piece);
 }
 
 function createRing(THREE, { innerRadius, outerRadius, colour, opacity, name }) {

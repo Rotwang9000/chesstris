@@ -361,6 +361,14 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 	// Check for previous game key in localStorage
 	const previousGameKey = localStorage.getItem('tetches_game_key');
 
+	// Launch feature flags. Tetches currently runs a SINGLE shared world,
+	// so the "world key" input and the cross-device "sign in to save
+	// progress" path don't yet do anything meaningful (and Auth0 email
+	// login is still WIP). Hide them for launch so the modal has one clear
+	// call to action; flip these back on when those features are wired.
+	const ENABLE_WORLD_KEY = false;
+	const ENABLE_AUTH_SIGNIN = false;
+
 	// Create tutorial message container (full screen overlay)
 	const tutorialElement = document.createElement('div');
 	tutorialElement.id = 'tutorial-message';
@@ -535,7 +543,8 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 					<span style="color: #ffcc00;">Z/X</span> rotate, 
 					<span style="color: #ffcc00;">Space</span> drop
 				</li>
-				<li><strong>Chess:</strong> Click piece → click green circle to move</li>
+				<li><strong>On touch devices:</strong> on-screen buttons &amp; swipes move/rotate/drop the piece</li>
+				<li><strong>Chess:</strong> Click (or tap) a piece → click the green circle to move</li>
 				<li><strong>Goal:</strong> Capture opponent kings! 👑</li>
 			</ul>
 		</div>
@@ -557,8 +566,9 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 	// Build the button area
 	let buttonHTML = '';
 	
-	// If player has a previous game key, show rejoin option
-	if (previousGameKey) {
+	// If player has a previous game key, show rejoin option (world keys are
+	// off for the single-shared-world launch).
+	if (ENABLE_WORLD_KEY && previousGameKey) {
 		buttonHTML += `
 			<button id="rejoin-game-btn" class="tutorial-btn primary">
 				⟲ REJOIN WITH SAVED WORLD KEY
@@ -567,33 +577,44 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 		`;
 	}
 	
+	const newGameIsPrimary = !(ENABLE_WORLD_KEY && previousGameKey);
 	buttonHTML += `
-		<button id="new-game-btn" class="tutorial-btn ${!previousGameKey ? 'primary' : ''}">
+		<button id="new-game-btn" class="tutorial-btn ${newGameIsPrimary ? 'primary' : ''}">
 			✦ ENTER SHARED WORLD
 		</button>
 		<div style="font-size: 12px; opacity: 0.8; text-align: center; margin-top: -2px;">
-			Resumes your position if your Player Code/session is known.
-		</div>
-		<div class="tutorial-divider"><span>OR ENTER SPECIFIC WORLD KEY</span></div>
-		<div style="display: flex; gap: 8px;">
-			<input type="text" id="game-key-input" class="game-key-input" 
-				placeholder="Enter world key..." 
-				style="flex: 1;">
-			<button id="join-key-btn" class="tutorial-btn" style="width: auto; padding: 12px 20px;">
-				JOIN
-			</button>
-		</div>
-		<div class="tutorial-divider"><span>OR SIGN IN TO SAVE PROGRESS</span></div>
-		<div id="auth-section">
-			<button id="auth-login-btn" class="tutorial-btn" style="width: 100%;">
-				✉ SIGN IN / SIGN UP
-			</button>
-			<p style="margin: 6px 0 0 0; font-size: 11px; color: #888; text-align: center;">
-				Saves your progress across devices. Sign-in is handled securely by Auth0 — we never see your password or store your email.
-			</p>
-			<p id="auth-status" style="margin: 8px 0 0 0; font-size: 12px; color: #888; display: none;"></p>
+			Jump into the live board now — your spot is remembered on this device.
 		</div>
 	`;
+
+	if (ENABLE_WORLD_KEY) {
+		buttonHTML += `
+			<div class="tutorial-divider"><span>OR ENTER SPECIFIC WORLD KEY</span></div>
+			<div style="display: flex; gap: 8px;">
+				<input type="text" id="game-key-input" class="game-key-input" 
+					placeholder="Enter world key..." 
+					style="flex: 1;">
+				<button id="join-key-btn" class="tutorial-btn" style="width: auto; padding: 12px 20px;">
+					JOIN
+				</button>
+			</div>
+		`;
+	}
+
+	if (ENABLE_AUTH_SIGNIN) {
+		buttonHTML += `
+			<div class="tutorial-divider"><span>OR SIGN IN TO SAVE PROGRESS</span></div>
+			<div id="auth-section">
+				<button id="auth-login-btn" class="tutorial-btn" style="width: 100%;">
+					✉ SIGN IN / SIGN UP
+				</button>
+				<p style="margin: 6px 0 0 0; font-size: 11px; color: #888; text-align: center;">
+					Saves your progress across devices. Sign-in is handled securely by Auth0 — we never see your password or store your email.
+				</p>
+				<p id="auth-status" style="margin: 8px 0 0 0; font-size: 12px; color: #888; display: none;"></p>
+			</div>
+		`;
+	}
 	
 	buttonArea.innerHTML = buttonHTML;
 
@@ -652,61 +673,66 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 	// Email sign-in via Auth0. Auth0 hosts the email entry, the one-time
 	// code/link delivery, and verification on its own pages, so the game
 	// never sees an email address. After sign-in Auth0 redirects back here.
-	const authLoginBtn = tutorialElement.querySelector('#auth-login-btn');
-	const authStatus = tutorialElement.querySelector('#auth-status');
+	// Gated off for launch (single shared world + email login WIP); the
+	// guard also keeps us from calling the CSP-restricted Auth0 SDK on
+	// every page load. Flip ENABLE_AUTH_SIGNIN to re-enable.
+	if (ENABLE_AUTH_SIGNIN) {
+		const authLoginBtn = tutorialElement.querySelector('#auth-login-btn');
+		const authStatus = tutorialElement.querySelector('#auth-status');
 
-	const setAuthStatus = (text, color) => {
-		if (!authStatus) return;
-		authStatus.textContent = text || '';
-		authStatus.style.color = color || '#888';
-		authStatus.style.display = text ? 'block' : 'none';
-	};
+		const setAuthStatus = (text, color) => {
+			if (!authStatus) return;
+			authStatus.textContent = text || '';
+			authStatus.style.color = color || '#888';
+			authStatus.style.display = text ? 'block' : 'none';
+		};
 
-	if (authLoginBtn) {
-		authLoginBtn.addEventListener('click', async () => {
-			const originalLabel = authLoginBtn.textContent;
-			authLoginBtn.disabled = true;
+		if (authLoginBtn) {
+			authLoginBtn.addEventListener('click', async () => {
+				const originalLabel = authLoginBtn.textContent;
+				authLoginBtn.disabled = true;
+				try {
+					// Returning player with a live session? Skip straight in.
+					if (await isSignedIn()) {
+						authLoginBtn.textContent = 'Entering…';
+						startGame(gameKeyInput?.value.trim() || previousGameKey || null);
+						return;
+					}
+					authLoginBtn.textContent = 'Redirecting…';
+					setAuthStatus('Opening secure sign-in…', '#ffcc00');
+					await loginWithEmail(gameKeyInput?.value.trim() || null);
+					// loginWithRedirect navigates away; control won't return here.
+				} catch (error) {
+					console.error('[auth] sign-in failed to start:', error);
+					setAuthStatus(error.message || 'Could not start sign-in. Please try again.', '#ff6666');
+					authLoginBtn.disabled = false;
+					authLoginBtn.textContent = originalLabel;
+				}
+			});
+		}
+
+		// Complete an Auth0 redirect (if this page load is the return leg of
+		// one) and otherwise reflect any existing session in the button.
+		(async () => {
 			try {
-				// Returning player with a live session? Skip straight in.
-				if (await isSignedIn()) {
-					authLoginBtn.textContent = 'Entering…';
-					startGame(gameKeyInput?.value.trim() || previousGameKey || null);
+				const appState = await handleAuthRedirect();
+				if (appState) {
+					const resumedGameKey = appState.gameKey || null;
+					if (resumedGameKey) localStorage.setItem('tetches_game_key', resumedGameKey);
+					setAuthStatus('✓ Signed in! Entering…', '#66ff66');
+					setTimeout(() => startGame(resumedGameKey), 500);
 					return;
 				}
-				authLoginBtn.textContent = 'Redirecting…';
-				setAuthStatus('Opening secure sign-in…', '#ffcc00');
-				await loginWithEmail(gameKeyInput?.value.trim() || null);
-				// loginWithRedirect navigates away; control won't return here.
+				if ((await isSignedIn()) && authLoginBtn) {
+					authLoginBtn.textContent = '✓ SIGNED IN — ENTER';
+					setAuthStatus('You are signed in. Click to enter.', '#66ff66');
+				}
 			} catch (error) {
-				console.error('[auth] sign-in failed to start:', error);
-				setAuthStatus(error.message || 'Could not start sign-in. Please try again.', '#ff6666');
-				authLoginBtn.disabled = false;
-				authLoginBtn.textContent = originalLabel;
+				console.error('[auth] redirect handling failed:', error);
+				setAuthStatus('Sign-in could not be completed. Please try again.', '#ff6666');
 			}
-		});
+		})();
 	}
-
-	// Complete an Auth0 redirect (if this page load is the return leg of
-	// one) and otherwise reflect any existing session in the button.
-	(async () => {
-		try {
-			const appState = await handleAuthRedirect();
-			if (appState) {
-				const resumedGameKey = appState.gameKey || null;
-				if (resumedGameKey) localStorage.setItem('tetches_game_key', resumedGameKey);
-				setAuthStatus('✓ Signed in! Entering…', '#66ff66');
-				setTimeout(() => startGame(resumedGameKey), 500);
-				return;
-			}
-			if ((await isSignedIn()) && authLoginBtn) {
-				authLoginBtn.textContent = '✓ SIGNED IN — ENTER';
-				setAuthStatus('You are signed in. Click to enter.', '#66ff66');
-			}
-		} catch (error) {
-			console.error('[auth] redirect handling failed:', error);
-			setAuthStatus('Sign-in could not be completed. Please try again.', '#ff6666');
-		}
-	})();
 }
 /**
  * Utility function to hide all loading elements

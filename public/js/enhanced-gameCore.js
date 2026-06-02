@@ -74,6 +74,15 @@ let uiButtons = {};
 
 let _axisHelpersCtrl = null;
 
+// True once the player has actually entered the world (clicked the welcome
+// modal's "Enter shared world", or a mode-switch resume). This is the gate
+// for the welcome modal and the idempotency guard for `startPlayingGame`.
+// It is deliberately NOT keyed off `gameState.inProgress`/`gameStarted`,
+// because a server `game_update` flips those true as soon as board data
+// arrives — which previously let a fast join skip the welcome modal (or
+// start the game underneath it).
+let worldEntered = false;
+
 // ── Phase switching (used by createLoadingIndicator & inputManager) ─────────
 
 export function handleTetrisPhaseClick() {
@@ -225,7 +234,10 @@ export function initGame(container, options = {}) {
 		if (uiButtons && uiButtons.startButton) uiButtons.startButton.style.display = 'none';
 
 		setTimeout(() => {
-			if (gameState.inProgress) return;
+			// The welcome modal is the gate for entering the world. Skip it
+			// only if we've already entered (resume auto-start) — never key
+			// this off server-driven `inProgress`/`gameStarted`.
+			if (worldEntered || gameState.resumeSession) return;
 			window.startTetchesGame = startPlayingGame;
 			setCameraToOverview();
 			showTutorialMessage(window.startTetchesGame);
@@ -559,7 +571,11 @@ function initializeGameUI() {
 }
 
 export function startPlayingGame(gameKey = null) {
-	if (gameState.inProgress && gameState.gameStarted) return;
+	// Idempotent on the player's intent to enter — not on server flags
+	// (`gameStarted` flips true the moment board data arrives, which would
+	// otherwise make the welcome modal's "Enter" button a no-op).
+	if (worldEntered) return;
+	worldEntered = true;
 	console.log('Entering world...', gameKey ? `with key: ${gameKey}` : 'default shared world');
 
 	if (gameKey) {

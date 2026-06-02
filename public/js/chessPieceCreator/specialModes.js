@@ -1,10 +1,19 @@
 /**
- * Retro CRT-style letter pieces and cute 8-bit voxel pieces.
+ * Retro CRT-style letter pieces and cute rounded "matryoshka" pieces.
  *
  * These are the two non-Russian renderings of chess pieces. They share
  * very little with the detailed Russian set, so they live in their own
  * file to keep the main module focused on the imperial geometry.
+ *
+ * Cute mode is the LOW-SPEC / fast profile, so each cute piece is baked
+ * into a single merged mesh (one outer group for userData/highlights)
+ * exactly like the Russian set, and is differentiated by rank-scaled
+ * SIZE + a distinct topper — see `createCutePiece`.
  */
+
+import { mergeMeshesByMaterial } from './mergePiece.js';
+import { pieceSizeFor } from './pieceSizes.js';
+import { setPieceMatrixStatic } from '../pieceMatrixState.js';
 
 // Cyrillic single-letter initials in the style of the Russian original
 // Tetris chess set. Direct translations chosen to avoid two pieces
@@ -110,247 +119,83 @@ export function createRetroLetterPiece(THREE, pieceTypeNum, pieceTypeName, playe
 }
 
 /**
- * Cute-mode chess piece: low-poly rounded blobs with a smiley face and a
- * little hat / crown / scarf that says which piece it is. Designed to
- * read clearly at distance and feel friendly, not blocky.
+ * Cute-mode chess piece: a friendly rounded "matryoshka" body with a
+ * face and a per-type topper.
  *
- * Geometry budget per piece is intentionally small (~ 8-12 meshes) so we
- * still hit the "low-spec / fast" performance goal of cute mode.
+ * Differentiation uses the two strongest read-at-a-glance cues, the same
+ * ones the normal Russian set relies on:
+ *   - SIZE   — rank-scaled via the shared `PIECE_SIZE_BY_TYPE` (pawn
+ *              smallest … king largest), the cue the cute set was
+ *              missing (every piece previously shared one footprint);
+ *   - TOPPER — crown / tiara / mitre / pony-ears / battlements / bobble.
+ * The face keeps the cute character without affecting recognition.
+ *
+ * Cute is the LOW-SPEC / fast profile, so the piece is built from a few
+ * primitives in a transient group and then BAKED into a single merged
+ * mesh (wrapped in one outer group for userData + highlights) — the same
+ * one-node-per-piece shape as `buildRussianPiece`. Previously each cute
+ * piece was ~12 live scene-graph nodes, i.e. heavier than the "high
+ * quality" mode it is meant to undercut.
+ *
+ * Exactly FIVE materials are used so the merge stays cheap: body (player
+ * colour), trim (lighter), dark (shade), accent (gold topper) and face
+ * (flat black). They are passed to the merge in a fixed order; unused
+ * entries (e.g. `dark` on non-knights) are dropped automatically.
  */
 export function createCutePiece(THREE, pieceTypeNum, pieceTypeName, player, x, z, isLocalPlayer, customColor) {
-	const group = new THREE.Group();
+	const builder = new THREE.Group();
 	const baseCol = customColor || CUTE_PIECE_COLOURS[pieceTypeNum] || 0xffffff;
-	const seg = isLocalPlayer ? 16 : 10;
+	// Local pieces get smoother primitives; opponents stay coarse to keep
+	// big crowds cheap. Lower than the old 16/10 — cute is the fast mode.
+	const seg = isLocalPlayer ? 14 : 9;
 
 	const bodyMat = new THREE.MeshLambertMaterial({ color: baseCol });
 	const trimMat = new THREE.MeshLambertMaterial({ color: lightenColour(baseCol, 0.4) });
 	const darkMat = new THREE.MeshLambertMaterial({ color: lightenColour(baseCol, -0.25) });
 	const accentMat = new THREE.MeshLambertMaterial({ color: 0xFFE07A });
-	const eyeMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
-	const eyeShineMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+	const faceMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
+	const materials = [bodyMat, trimMat, darkMat, accentMat, faceMat];
 
-	const add = (mesh) => { group.add(mesh); return mesh; };
+	const part = (geometry, material, px = 0, py = 0, pz = 0) => {
+		const mesh = new THREE.Mesh(geometry, material);
+		mesh.position.set(px, py, pz);
+		builder.add(mesh);
+		return mesh;
+	};
 
-	// Disc base — common to every piece, gives a stable footprint.
-	const base = new THREE.Mesh(
-		new THREE.CylinderGeometry(0.30, 0.34, 0.10, seg),
-		trimMat,
-	);
-	base.position.y = 0.05;
-	add(base);
+	// Disc base + rounded body — common to every piece.
+	part(new THREE.CylinderGeometry(0.30, 0.34, 0.10, seg), trimMat, 0, 0.05, 0);
+	part(new THREE.SphereGeometry(0.30, seg, Math.max(8, seg - 2)), bodyMat, 0, 0.38, 0)
+		.scale.setScalar(1.05);
 
-	// Squashed sphere body — wider and rounder than before for a cuter,
-	// "matryoshka" feel. Now sits a bit lower so the head/face is at a
-	// comfortable reading height.
-	const body = new THREE.Mesh(
-		new THREE.SphereGeometry(0.30, seg, Math.max(8, seg - 2)),
-		bodyMat,
-	);
-	body.scale.set(1.05, 1.05, 1.05);
-	body.position.y = 0.38;
-	add(body);
-
-	// Small "belly" highlight in the trim colour for a doll-like feel.
-	const belly = new THREE.Mesh(
-		new THREE.SphereGeometry(0.14, seg, 8),
-		trimMat,
-	);
-	belly.scale.set(1.2, 1.0, 0.4);
-	belly.position.set(0, 0.32, 0.20);
-	add(belly);
-
-	// Face — large oval eyes with a sparkle highlight.
-	const eyeY = 0.45;
+	// Face — two oval eyes + a smile.
 	for (let side = -1; side <= 1; side += 2) {
-		const eye = new THREE.Mesh(
-			new THREE.SphereGeometry(0.040, 10, 8),
-			eyeMat,
-		);
-		eye.scale.set(0.85, 1.0, 0.6);
-		eye.position.set(side * 0.10, eyeY, 0.27);
-		add(eye);
+		part(new THREE.SphereGeometry(0.040, 8, 6), faceMat, side * 0.10, 0.45, 0.27)
+			.scale.set(0.85, 1.0, 0.6);
+	}
+	part(new THREE.TorusGeometry(0.06, 0.013, 6, 12, Math.PI), faceMat, 0, 0.37, 0.275)
+		.rotation.z = Math.PI;
 
-		// Eye sparkle (only on local player — saves draw calls for crowds).
-		if (isLocalPlayer) {
-			const shine = new THREE.Mesh(
-				new THREE.SphereGeometry(0.014, 6, 6),
-				eyeShineMat,
-			);
-			shine.position.set(side * 0.10 + 0.012, eyeY + 0.012, 0.30);
-			add(shine);
-		}
+	// Tiny stubby arms so the body doesn't feel inert.
+	for (let side = -1; side <= 1; side += 2) {
+		part(new THREE.SphereGeometry(0.06, 6, 5), bodyMat, side * 0.30, 0.34, 0.04)
+			.scale.set(0.7, 0.9, 0.7);
 	}
 
-	// Half-torus arc for the smile. Default arc goes through +Y; rotate
-	// 180° around Z to flip into -Y for a grin.
-	const mouth = new THREE.Mesh(
-		new THREE.TorusGeometry(0.06, 0.013, 6, 14, Math.PI),
-		eyeMat,
+	addCuteTopper(THREE, part, pieceTypeNum, { bodyMat, trimMat, darkMat, accentMat }, seg);
+
+	const merged = mergeMeshesByMaterial(
+		THREE,
+		builder.children.filter(child => child.isMesh),
+		materials,
 	);
-	mouth.position.set(0, 0.37, 0.275);
-	mouth.rotation.z = Math.PI;
-	add(mouth);
+	merged.scale.setScalar(pieceSizeFor(pieceTypeNum));
+	// The merged body mesh never moves relative to its outer group, so
+	// freeze its local matrix for life (static-pieces optimisation).
+	setPieceMatrixStatic(merged, true);
 
-	// Cheek blush only for the local player — keeps opponent count low.
-	if (isLocalPlayer) {
-		const blushMat = new THREE.MeshBasicMaterial({
-			color: 0xFFB0B0, transparent: true, opacity: 0.75,
-		});
-		for (let side = -1; side <= 1; side += 2) {
-			const cheek = new THREE.Mesh(new THREE.CircleGeometry(0.045, 10), blushMat);
-			cheek.position.set(side * 0.16, 0.37, 0.275);
-			add(cheek);
-		}
-	}
-
-	// Tiny stubby arms peeking out of the sides — these were the
-	// missing ingredient that made the bodies feel inert. Kept very
-	// small so they don't dominate the silhouette.
-	if (pieceTypeNum !== 1 || isLocalPlayer) {
-		for (let side = -1; side <= 1; side += 2) {
-			const arm = new THREE.Mesh(
-				new THREE.SphereGeometry(0.06, 8, 6),
-				bodyMat,
-			);
-			arm.scale.set(0.7, 0.9, 0.7);
-			arm.position.set(side * 0.30, 0.34, 0.04);
-			add(arm);
-		}
-	}
-
-	// Per-piece topper — small accessory that signals the piece type.
-	switch (pieceTypeNum) {
-		case 6: { // King — five-point crown
-			const crown = new THREE.Mesh(
-				new THREE.CylinderGeometry(0.16, 0.20, 0.08, 5),
-				accentMat,
-			);
-			crown.position.y = 0.66;
-			add(crown);
-			for (let i = 0; i < 5; i++) {
-				const angle = (i / 5) * Math.PI * 2;
-				const spike = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.10, 4), accentMat);
-				spike.position.set(Math.cos(angle) * 0.16, 0.74, Math.sin(angle) * 0.16);
-				add(spike);
-			}
-			const cross = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.10, 0.04), accentMat);
-			cross.position.y = 0.85;
-			add(cross);
-			const cross2 = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.03, 0.04), accentMat);
-			cross2.position.y = 0.86;
-			add(cross2);
-			break;
-		}
-		case 5: { // Queen — tiara with a single jewel
-			const tiara = new THREE.Mesh(
-				new THREE.TorusGeometry(0.14, 0.025, 6, 16, Math.PI),
-				accentMat,
-			);
-			tiara.position.set(0, 0.66, 0);
-			tiara.rotation.x = -Math.PI / 2;
-			add(tiara);
-			const gem = new THREE.Mesh(
-				new THREE.OctahedronGeometry(0.05),
-				new THREE.MeshLambertMaterial({ color: 0xFF66AA }),
-			);
-			gem.position.set(0, 0.70, 0.10);
-			add(gem);
-			break;
-		}
-		case 4: { // Bishop — pointy hat with a slit
-			const mitre = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.30, seg), bodyMat);
-			mitre.position.y = 0.74;
-			add(mitre);
-			const slit = new THREE.Mesh(
-				new THREE.BoxGeometry(0.04, 0.16, 0.045),
-				trimMat,
-			);
-			slit.position.set(0, 0.74, 0.15);
-			add(slit);
-			break;
-		}
-		case 3: { // Knight — pony ears, snout and flowing forelock
-			// Snout: small rounded box poking out the front, with a
-			// nostril dot. Gives the cute knight an unmistakable horse
-			// face instead of "blob with ears".
-			const snout = new THREE.Mesh(
-				new THREE.SphereGeometry(0.10, seg, 8),
-				trimMat,
-			);
-			snout.scale.set(1.0, 0.7, 1.2);
-			snout.position.set(0, 0.40, 0.34);
-			add(snout);
-
-			// Pony ears with inner pink lining.
-			const earInnerMat = new THREE.MeshLambertMaterial({ color: 0xFFB0C0 });
-			for (let side = -1; side <= 1; side += 2) {
-				const ear = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.12, 8), bodyMat);
-				ear.position.set(side * 0.10, 0.66, 0.05);
-				ear.rotation.z = side * 0.25;
-				add(ear);
-				const earInner = new THREE.Mesh(
-					new THREE.ConeGeometry(0.025, 0.07, 6),
-					earInnerMat,
-				);
-				earInner.position.set(side * 0.10, 0.67, 0.07);
-				earInner.rotation.z = side * 0.25;
-				add(earInner);
-			}
-
-			// Forelock — three soft tufts hanging between the ears.
-			for (let i = -1; i <= 1; i++) {
-				const tuft = new THREE.Mesh(
-					new THREE.ConeGeometry(0.035, 0.13, 6),
-					darkMat,
-				);
-				tuft.position.set(i * 0.05, 0.62, 0.18);
-				tuft.rotation.x = -0.4;
-				tuft.rotation.z = i * 0.3;
-				add(tuft);
-			}
-
-			// Mane — a couple of short tufts curling backwards.
-			for (let i = -1; i <= 1; i += 2) {
-				const mane = new THREE.Mesh(
-					new THREE.ConeGeometry(0.04, 0.18, 6),
-					darkMat,
-				);
-				mane.position.set(i * 0.06, 0.58, -0.16);
-				mane.rotation.x = 0.6;
-				mane.rotation.z = i * 0.3;
-				add(mane);
-			}
-			break;
-		}
-		case 2: { // Rook — battlement / chef's-hat ring
-			const cap = new THREE.Mesh(
-				new THREE.CylinderGeometry(0.18, 0.18, 0.10, seg),
-				bodyMat,
-			);
-			cap.position.y = 0.66;
-			add(cap);
-			for (let i = 0; i < 4; i++) {
-				const angle = (i / 4) * Math.PI * 2 + Math.PI / 4;
-				const merlon = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.08, 0.06), bodyMat);
-				merlon.position.set(Math.cos(angle) * 0.13, 0.74, Math.sin(angle) * 0.13);
-				add(merlon);
-			}
-			break;
-		}
-		default: { // Pawn — tiny bobble cap
-			const stalk = new THREE.Mesh(
-				new THREE.CylinderGeometry(0.025, 0.025, 0.07, 6),
-				accentMat,
-			);
-			stalk.position.y = 0.66;
-			add(stalk);
-			const bobble = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), accentMat);
-			bobble.position.y = 0.74;
-			add(bobble);
-			break;
-		}
-	}
-
+	const group = new THREE.Group();
+	group.add(merged);
 	group.userData = {
 		type: 'chess',
 		pieceType: pieceTypeName,
@@ -363,6 +208,69 @@ export function createCutePiece(THREE, pieceTypeNum, pieceTypeName, player, x, z
 	};
 	group.visible = true;
 	return group;
+}
+
+/**
+ * Append the per-type topper meshes to a cute piece's transient builder
+ * group via the supplied `part(geometry, material, x, y, z)` helper.
+ * Only the four lit materials are used here (the face material is for
+ * eyes/mouth); every mesh must use one of them so the later merge can
+ * map it to a material group.
+ */
+function addCuteTopper(THREE, part, pieceTypeNum, mats, seg) {
+	const { bodyMat, trimMat, darkMat, accentMat } = mats;
+	switch (pieceTypeNum) {
+		case 6: { // King — five-point crown topped with a cross.
+			part(new THREE.CylinderGeometry(0.16, 0.20, 0.08, 5), accentMat, 0, 0.66, 0);
+			for (let i = 0; i < 5; i++) {
+				const angle = (i / 5) * Math.PI * 2;
+				part(new THREE.ConeGeometry(0.04, 0.10, 4), accentMat, Math.cos(angle) * 0.16, 0.74, Math.sin(angle) * 0.16);
+			}
+			part(new THREE.BoxGeometry(0.04, 0.10, 0.04), accentMat, 0, 0.85, 0);
+			part(new THREE.BoxGeometry(0.08, 0.03, 0.04), accentMat, 0, 0.86, 0);
+			break;
+		}
+		case 5: { // Queen — half-torus tiara with a single jewel.
+			part(new THREE.TorusGeometry(0.14, 0.025, 6, 16, Math.PI), accentMat, 0, 0.66, 0)
+				.rotation.x = -Math.PI / 2;
+			part(new THREE.OctahedronGeometry(0.05), accentMat, 0, 0.70, 0.10);
+			break;
+		}
+		case 4: { // Bishop — tall pointed mitre with a slit.
+			part(new THREE.ConeGeometry(0.16, 0.30, seg), bodyMat, 0, 0.74, 0);
+			part(new THREE.BoxGeometry(0.04, 0.16, 0.045), trimMat, 0, 0.74, 0.15);
+			break;
+		}
+		case 3: { // Knight — snout, pony ears and a backward mane.
+			part(new THREE.SphereGeometry(0.10, seg, 8), trimMat, 0, 0.40, 0.34)
+				.scale.set(1.0, 0.7, 1.2);
+			for (let side = -1; side <= 1; side += 2) {
+				part(new THREE.ConeGeometry(0.05, 0.12, 8), bodyMat, side * 0.10, 0.66, 0.05)
+					.rotation.z = side * 0.25;
+				part(new THREE.ConeGeometry(0.025, 0.07, 6), trimMat, side * 0.10, 0.67, 0.07)
+					.rotation.z = side * 0.25;
+			}
+			for (let i = -1; i <= 1; i += 2) {
+				const mane = part(new THREE.ConeGeometry(0.04, 0.18, 6), darkMat, i * 0.06, 0.58, -0.16);
+				mane.rotation.x = 0.6;
+				mane.rotation.z = i * 0.3;
+			}
+			break;
+		}
+		case 2: { // Rook — crenellated battlement ring.
+			part(new THREE.CylinderGeometry(0.18, 0.18, 0.10, seg), bodyMat, 0, 0.66, 0);
+			for (let i = 0; i < 4; i++) {
+				const angle = (i / 4) * Math.PI * 2 + Math.PI / 4;
+				part(new THREE.BoxGeometry(0.06, 0.08, 0.06), bodyMat, Math.cos(angle) * 0.13, 0.74, Math.sin(angle) * 0.13);
+			}
+			break;
+		}
+		default: { // Pawn — tiny bobble cap.
+			part(new THREE.CylinderGeometry(0.025, 0.025, 0.07, 6), accentMat, 0, 0.66, 0);
+			part(new THREE.SphereGeometry(0.06, 8, 6), accentMat, 0, 0.74, 0);
+			break;
+		}
+	}
 }
 
 function lightenColour(hex, amount) {
