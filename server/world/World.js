@@ -322,6 +322,81 @@ function removePlayer(playerId) {
 }
 
 /**
+ * Re-key a player's entire footprint from `oldId` to `newId`. Used when a
+ * guest claims an account on first login: their player record, home zone,
+ * chess pieces, owned cells and turn/disconnect bookkeeping all move onto
+ * the stable account key so they keep the SAME kingdom across devices.
+ *
+ * Refuses (returns false) when there's nothing under `oldId`, the ids
+ * match, or `newId` already has a record (never clobber a real account).
+ *
+ * @param {string} oldId
+ * @param {string} newId
+ * @returns {boolean} whether a re-key happened
+ */
+function reassignPlayerId(oldId, newId) {
+	if (!oldId || !newId || String(oldId) === String(newId)) return false;
+	if (!world.players[oldId]) return false;
+	if (world.players[newId]) return false;
+
+	const old = String(oldId);
+	const next = String(newId);
+
+	const record = world.players[oldId];
+	record.id = newId;
+	world.players[newId] = record;
+	delete world.players[oldId];
+
+	if (world.homeZones && world.homeZones[oldId]) {
+		const zone = world.homeZones[oldId];
+		if (zone && zone.player != null) zone.player = newId;
+		world.homeZones[newId] = zone;
+		delete world.homeZones[oldId];
+	}
+
+	if (world.currentTurns && world.currentTurns[oldId]) {
+		const turn = world.currentTurns[oldId];
+		if (turn && turn.playerId != null) turn.playerId = newId;
+		world.currentTurns[newId] = turn;
+		delete world.currentTurns[oldId];
+	}
+
+	if (Array.isArray(world.chessPieces)) {
+		for (const piece of world.chessPieces) {
+			if (piece && String(piece.player) === old) piece.player = newId;
+		}
+	}
+
+	if (world.board && world.board.cells) {
+		for (const key of Object.keys(world.board.cells)) {
+			const cell = world.board.cells[key];
+			if (!Array.isArray(cell)) continue;
+			for (const item of cell) {
+				if (item && String(item.player) === old) item.player = newId;
+			}
+		}
+	}
+
+	// Disconnect bookkeeping is keyed `pid:x,z`.
+	if (world.disconnectedSince) {
+		const remapped = {};
+		for (const [key, ts] of Object.entries(world.disconnectedSince)) {
+			const idx = key.indexOf(':');
+			const keyPid = idx >= 0 ? key.slice(0, idx) : key;
+			if (idx >= 0 && keyPid === old) {
+				remapped[`${next}:${key.slice(idx + 1)}`] = ts;
+			} else {
+				remapped[key] = ts;
+			}
+		}
+		world.disconnectedSince = remapped;
+	}
+
+	markDirty();
+	return true;
+}
+
+/**
  * Mark a player as eliminated. Their pieces and territory are NOT
  * immediately removed — that's the chess `executeKingCapture` flow's job.
  */
@@ -480,6 +555,7 @@ module.exports = {
 	getOrCreatePlayer,
 	upsertPlayer,
 	removePlayer,
+	reassignPlayerId,
 	eliminatePlayer,
 	listPlayers,
 	listHumanPlayers,

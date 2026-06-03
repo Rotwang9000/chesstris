@@ -38,7 +38,12 @@ function metrics() {
 	return _metrics;
 }
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
+// Defaults to the repo's data/ dir. Overridable via TETCHES_DATA_DIR so a
+// local/test instance can run against an isolated world without fighting
+// another server over the same world.json (production leaves it unset).
+const DATA_DIR = process.env.TETCHES_DATA_DIR
+	? path.resolve(process.env.TETCHES_DATA_DIR)
+	: path.join(__dirname, '..', 'data');
 const STATE_FILE = path.join(DATA_DIR, 'world.json');
 const BACKUP_FILE = STATE_FILE + '.bak';
 const ROLLING_BACKUP_DIR = path.join(DATA_DIR, 'backups');

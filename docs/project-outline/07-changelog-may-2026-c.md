@@ -2,6 +2,54 @@
 
 > Part of the [Tetches project outline](README.md). May 2026: power-up orbs, connectivity, production audit.
 
+### Accounts: self-contained username + passphrase login ("kingdom key") (3 Jun 2026)
+
+**Players can now save their kingdom and play it from any device — with no
+email, no PII and no third party.** This is the first real cross-device
+identity; previously a player was only their 30-day `tetches_player_id`
+device cookie (same browser = same kingdom; clear cookies / new device = a
+brand-new player). Auth0 passwordless **email** remains scaffolded
+(`auth0Client.js`, gated off) as a *later* upgrade for players who'd rather
+not remember a passphrase.
+
+How it works — the passphrase **never leaves the browser**:
+
+* **Client derives a key, not a credential (`public/js/auth/kingdomKey.js`).**
+  `deriveKingdomKey()` = `player_` + `SHA-256(username:passphrase:tetches)`
+  (32 hex / 128 bits) via `crypto.subtle`. That opaque key is stored in a
+  `tetches_auth_key` cookie (one year, `Secure` on HTTPS, kept out of URLs so
+  it isn't logged); login then reloads so the socket reconnects under the new
+  identity. We never store or transmit the username+passphrase.
+* **Server adopts the key as the canonical id
+  (`server/sockets/connection.js`).** `resolvePlayerIdForSocket()` now checks
+  `tetches_auth_key` *before* the anonymous device cookie: **resume** an
+  existing account, **migrate** the current guest kingdom onto it on first
+  login (so logging in *keeps* your progress), or **claim** a fresh account.
+  A strict `^player_[a-f0-9]{16,64}$` gate keeps account keys in their own
+  namespace — they can't collide with uuid device ids or `ai-…` bots, nor be
+  used to "claim" someone else's id. Security is passphrase-gated bearer —
+  the same model as the existing cookie, which is appropriate for a casual
+  game (and Auth0 email is the path to stronger auth later).
+* **Migration helper (`server/world/World.reassignPlayerId()`).** Re-keys a
+  player's whole footprint (record, home zone, chess pieces, owned cells,
+  turn + disconnect bookkeeping) from the guest id to the account key;
+  refuses to clobber an existing account.
+* **UI: one shared dialog, two entry points.** `public/js/auth/loginDialog.js`
+  (a themed modal mirroring `renameDialog.js`) is opened from the welcome
+  name prompt (`main-enhanced.js`) and from a new **Account** row in the
+  player bar (`unifiedPlayerBar.js`): "Log in / Save across devices" for
+  guests, "Signed in as … · Log out" when logged in.
+* **Local-test isolation (`server/persistence.js`).** `DATA_DIR` now honours
+  `TETCHES_DATA_DIR` (production leaves it unset) so a throwaway instance can
+  run against a copy of the world without fighting another server over
+  `world.json`.
+
+Covered by 21 unit tests (`tests/server/accountLogin.test.js` exercises the
+resume / migrate / claim branches of `resolvePlayerIdForSocket` plus the
+key-format gate; `tests/server/world.test.js` covers `reassignPlayerId`) and
+verified end-to-end against an isolated server: guest → login migrates the
+kingdom onto the account → reload resumes it → logout returns a fresh guest.
+
 ### Bug fixes: camera-relative side-step & gravity yanking active players (3 Jun 2026)
 
 Two player-reported glitches.

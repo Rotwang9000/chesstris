@@ -17,6 +17,8 @@ import {
 	getIdlePauseDelayMs,
 } from './autoPause.js';
 import { isCameraRelativeControls, setCameraRelativeControls } from './controlSettings.js';
+import { showLoginDialog } from './auth/loginDialog.js';
+import { isLoggedIn as isKingdomLoggedIn, getLoggedInName as getKingdomName, logout as kingdomLogout } from './auth/kingdomKey.js';
 
 // State tracking variables
 let isBarVisible = false;
@@ -316,7 +318,21 @@ export function createUnifiedPlayerBar(gameState) {
 	
 	const worldId = resolveWorldId();
 	const playerCode = resolvePlayerCode(gameState);
-	
+
+	// Account (username+passphrase) section. Logged-in players carry their
+	// kingdom across devices; guests can upgrade to keep their progress.
+	const loggedIn = isKingdomLoggedIn();
+	const accountName = loggedIn ? (getKingdomName() || 'your account') : null;
+	const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => (
+		{ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+	));
+	const accountHtml = loggedIn
+		? `<div style="margin-bottom: 6px; font-size: 13px; color: #fff;">Signed in as <strong style="color: #ffcc00;">${escapeHtml(accountName)}</strong></div>
+			<button id="sidebar-logout" style="background: #333; color: #ffcc00; border: 1px solid #ffcc00; border-radius: 3px; padding: 6px 10px; cursor: pointer; font-family: 'Playfair Display', serif;">Log out</button>
+			<div style="font-size: 11px; color: #bbb; margin-top: 6px;">Your kingdom is saved and follows you to any device.</div>`
+		: `<button id="sidebar-login" style="background: #333; color: #ffcc00; border: 1px solid #ffcc00; border-radius: 3px; padding: 6px 10px; cursor: pointer; font-family: 'Playfair Display', serif;">Log in / Save across devices</button>
+			<div style="font-size: 11px; color: #bbb; margin-top: 6px;">Add a username + passphrase to keep your kingdom on any device. No email needed.</div>`;
+
 	gameIdSection.innerHTML = `
 		<div style="font-weight: bold; margin-bottom: 5px; color: #ffcc00;">World ID</div>
 		<div style="display: flex; align-items: center; margin-bottom: 10px;">
@@ -342,6 +358,8 @@ export function createUnifiedPlayerBar(gameState) {
 			</button>
 		</div>
 		<div style="font-size: 11px; color: #bbb;">Use this code to restore your saved position in the world.</div>
+		<div style="font-weight: bold; margin: 14px 0 6px 0; color: #ffcc00;">Account</div>
+		${accountHtml}
 	`;
 	playerBar.appendChild(gameIdSection);
 	
@@ -435,6 +453,22 @@ export function createUnifiedPlayerBar(gameState) {
 	if (playerCodeCopyButton) {
 		playerCodeCopyButton.addEventListener('click', () => {
 			copyInputFieldValue('sidebar-player-code-display', playerCodeCopyButton, 'Copied!');
+		});
+	}
+	const loginButton = document.getElementById('sidebar-login');
+	if (loginButton) {
+		loginButton.addEventListener('click', () => {
+			let prefill = '';
+			try { prefill = localStorage.getItem('playerName') || ''; } catch (_e) { /* private mode */ }
+			showLoginDialog({ prefillUsername: prefill });
+		});
+	}
+	const logoutButton = document.getElementById('sidebar-logout');
+	if (logoutButton) {
+		logoutButton.addEventListener('click', () => {
+			logoutButton.disabled = true;
+			logoutButton.textContent = 'Logging out…';
+			kingdomLogout(); // clears the account cookie and reloads as a guest
 		});
 	}
 	

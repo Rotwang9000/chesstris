@@ -17,6 +17,7 @@ import * as tetrominoModule from './tetromino.js'; // Import tetromino module fo
 import { initFloatingBanner } from './floatingBanner.js'; // Import floating banner for ads
 import { initSponsorSystem } from '../utils/sponsors.js'; // Import sponsor system
 import { disposeBoats } from './boatsRenderer.js';
+import { showLoginDialog } from './auth/loginDialog.js';
 
 
 // Global state
@@ -349,6 +350,11 @@ function showPlayerNamePrompt() {
 						Start Playing
 					</button>
 				</form>
+				<div style="margin-top: 14px; font-size: 12px; color: #bbb; font-family: 'Times New Roman', serif;">
+					Just exploring? Start playing as a guest.<br>
+					<a href="#" id="player-login-link" style="color: #ffcc00; text-decoration: underline; cursor: pointer;">Log in or create an account</a>
+					to keep your kingdom on any device.
+				</div>
 			</div>
 		`;
 		
@@ -358,6 +364,18 @@ function showPlayerNamePrompt() {
 		setTimeout(() => {
 			document.getElementById('player-name').focus();
 		}, 100);
+
+		// Optional account login. Opens the shared login dialog; on success
+		// it stores the derived key and reloads straight into the account
+		// (the server resumes it, or migrates this guest's kingdom onto it).
+		const loginLink = document.getElementById('player-login-link');
+		if (loginLink) {
+			loginLink.addEventListener('click', (e) => {
+				e.preventDefault();
+				const typedName = (document.getElementById('player-name')?.value || '').trim();
+				showLoginDialog({ prefillUsername: typedName });
+			});
+		}
 		
 		// Add form submit handler
 		document.getElementById('player-form').addEventListener('submit', (e) => {

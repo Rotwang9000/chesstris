@@ -57,6 +57,47 @@ describe('World — single source of truth', () => {
 		expect(w.homeZones[pid]).toBeUndefined();
 	});
 
+	test('reassignPlayerId re-keys the full footprint (account migration)', () => {
+		const oldId = 'guest-1';
+		const newId = 'player_' + 'f'.repeat(32);
+		World.upsertPlayer(oldId, { name: 'Guesty', balance: 5 });
+		const w = World.getWorld();
+		w.board.cells['2,3'] = [{ type: 'tetromino', player: oldId }];
+		w.board.cells['9,9'] = [{ type: 'tetromino', player: 'other' }];
+		w.chessPieces.push({ id: 'k1', player: oldId, type: 'king' });
+		w.chessPieces.push({ id: 'k2', player: 'other', type: 'king' });
+		w.homeZones[oldId] = { x: 1, z: 1, width: 8, height: 2, player: oldId };
+		w.currentTurns[oldId] = { playerId: oldId, phase: 'tetromino' };
+		w.disconnectedSince = { [`${oldId}:2,3`]: 111, 'other:9,9': 222 };
+
+		expect(World.reassignPlayerId(oldId, newId)).toBe(true);
+		// Source identity gone, destination carries everything over.
+		expect(World.getPlayer(oldId)).toBeNull();
+		expect(World.getPlayer(newId)).toBeTruthy();
+		expect(World.getPlayer(newId).balance).toBe(5);
+		expect(World.getPlayer(newId).id).toBe(newId);
+		expect(w.board.cells['2,3'][0].player).toBe(newId);
+		expect(w.board.cells['9,9'][0].player).toBe('other'); // untouched
+		expect(w.chessPieces.find(p => p.id === 'k1').player).toBe(newId);
+		expect(w.chessPieces.find(p => p.id === 'k2').player).toBe('other');
+		expect(w.homeZones[newId]).toBeTruthy();
+		expect(w.homeZones[newId].player).toBe(newId);
+		expect(w.homeZones[oldId]).toBeUndefined();
+		expect(w.currentTurns[newId].playerId).toBe(newId);
+		expect(w.disconnectedSince[`${newId}:2,3`]).toBe(111);
+		expect(w.disconnectedSince['other:9,9']).toBe(222);
+	});
+
+	test('reassignPlayerId refuses to clobber an existing id and no-ops on bad input', () => {
+		World.upsertPlayer('a', { name: 'A' });
+		World.upsertPlayer('b', { name: 'B' });
+		expect(World.reassignPlayerId('a', 'b')).toBe(false); // destination exists
+		expect(World.getPlayer('a')).toBeTruthy();
+		expect(World.getPlayer('b').name).toBe('B');
+		expect(World.reassignPlayerId('missing', 'c')).toBe(false); // no source
+		expect(World.reassignPlayerId('a', 'a')).toBe(false); // identical ids
+	});
+
 	test('eliminatePlayer flags but does not delete', () => {
 		World.upsertPlayer('p1', { name: 'Alice' });
 		World.eliminatePlayer('p1');
