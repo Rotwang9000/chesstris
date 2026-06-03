@@ -12,6 +12,7 @@ import {
 import * as tetrominoModule from './tetromino.js';
 import { boardFunctions } from './boardFunctions.js';
 import { isCameraRelativeControls } from './controlSettings.js';
+import { translatePosition } from './centreBoardMarker.js';
 import {
 	performRaycast, clearChessSelection, inspectCellAtMouse, tryPriorityChessMoveClick,
 } from './chessInteraction.js';
@@ -152,10 +153,26 @@ function cameraRelativeStep(key) {
 	const THREE = getTHREE();
 	const camera = getCamera();
 	if (!THREE || !camera) return null;
+	const gameState = getGameState();
+	const tetromino = gameState && gameState.currentTetromino;
+	if (!tetromino || !tetromino.position) return null;
 	try {
-		const origin = new THREE.Vector3(0, 0, 0).project(camera);
-		const xTip = new THREE.Vector3(1, 0, 0).project(camera);
-		const zTip = new THREE.Vector3(0, 0, 1).project(camera);
+		// Sample the board axes' screen directions AT THE PIECE rather
+		// than at the world origin. The shared world places boards at
+		// large coordinates (a home zone can sit ~100 cells out), so
+		// projecting (0,0,0) lands far off-screen — frequently behind
+		// the camera, where the perspective divide flips signs — and the
+		// resulting X/Z deltas are garbage in an axis-dependent way. That
+		// was the "forward/back works but side-to-side doesn't" bug: one
+		// axis happened to survive the bogus projection while the other
+		// picked the wrong board step. The piece's own rendered position
+		// is always in view, so its projection is well-conditioned.
+		const abs = translatePosition(tetromino.position, gameState, true);
+		const baseY = Number.isFinite(tetromino.heightAboveBoard) ? tetromino.heightAboveBoard : 0;
+		const base = new THREE.Vector3(abs.x, baseY, abs.z);
+		const origin = base.clone().project(camera);
+		const xTip = base.clone().add(new THREE.Vector3(1, 0, 0)).project(camera);
+		const zTip = base.clone().add(new THREE.Vector3(0, 0, 1)).project(camera);
 		// Screen-space deltas for a +1 step along each board axis. NDC y
 		// is up-positive, matching SCREEN_INTENT.
 		const xScreen = { x: xTip.x - origin.x, y: xTip.y - origin.y };
@@ -174,9 +191,9 @@ function cameraRelativeStep(key) {
 			if (dot > bestDot) { bestDot = dot; best = c.step; }
 		}
 		// A near-zero best dot means the axis is almost edge-on to the
-		// screen (degenerate top-down or grazing angle) — let the caller
-		// fall back to the orientation scheme rather than guess.
-		return bestDot > 1e-4 ? best : null;
+		// screen (a grazing, near-horizon angle) — let the caller fall
+		// back to the orientation scheme rather than guess.
+		return bestDot > 1e-6 ? best : null;
 	} catch (_e) {
 		return null;
 	}

@@ -107,6 +107,42 @@ describe('world gravity', () => {
 		expect(world.homeZones.a.x).toBe(startA + 1);
 	});
 
+	test('gravity tick leaves a connected (online) player put', () => {
+		const world = seedWorld();
+		addPlayer(world, 'a', { x: 0, z: 0, width: 8, height: 2 }, [{ x: 0, z: 0 }]);
+		const farX = GRAVITY_TRIGGER_DISTANCE * 3;
+		addPlayer(world, 'b', { x: farX, z: 0, width: 8, height: 2 }, [{ x: farX, z: 0 }]);
+		world.players.b.connected = true; // b is online and actively playing
+
+		const boardManager = new BoardManager();
+		const persistence = { markDirty: () => {} };
+		const broadcaster = { broadcastGameUpdate: () => {} };
+		const gravity = createWorldGravityService({ boardManager, broadcaster, persistence });
+
+		const startB = world.homeZones.b.x;
+		gravity.tick();
+		// An online player must never have their board tugged sideways —
+		// that's the "I placed a piece and it jumped a space" bug.
+		expect(world.homeZones.b.x).toBe(startB);
+	});
+
+	test('gravity tick leaves a freshly-active player put', () => {
+		const world = seedWorld();
+		addPlayer(world, 'a', { x: 0, z: 0, width: 8, height: 2 }, [{ x: 0, z: 0 }]);
+		const farX = GRAVITY_TRIGGER_DISTANCE * 3;
+		addPlayer(world, 'b', { x: farX, z: 0, width: 8, height: 2 }, [{ x: farX, z: 0 }]);
+		world.players.b.lastTetrominoPlacementAt = Date.now(); // just placed a piece
+
+		const boardManager = new BoardManager();
+		const persistence = { markDirty: () => {} };
+		const broadcaster = { broadcastGameUpdate: () => {} };
+		const gravity = createWorldGravityService({ boardManager, broadcaster, persistence });
+
+		const startB = world.homeZones.b.x;
+		gravity.tick();
+		expect(world.homeZones.b.x).toBe(startB);
+	});
+
 	test('gravity tick is a no-op when only one player exists', () => {
 		const world = seedWorld();
 		addPlayer(world, 'a', { x: 200, z: 0, width: 8, height: 2 }, [{ x: 200, z: 0 }]);

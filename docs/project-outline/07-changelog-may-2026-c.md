@@ -2,6 +2,32 @@
 
 > Part of the [Tetches project outline](README.md). May 2026: power-up orbs, connectivity, production audit.
 
+### Bug fixes: camera-relative side-step & gravity yanking active players (3 Jun 2026)
+
+Two player-reported glitches.
+
+* **"Rotate controls with view" only worked forward/back, not side-to-side
+  (`public/js/inputManager.js`).** `cameraRelativeStep()` decided which board
+  axis a key maps to by projecting the X/Z axes **at the world origin
+  `(0,0,0)`**. But the shared world places boards far out (home zones sit ~100
+  cells from the origin), so `(0,0,0)` projects off-screen — often *behind* the
+  camera, where the perspective divide flips signs — yielding garbage,
+  axis-dependent screen deltas. One axis happened to survive, the other
+  picked the wrong step. Fix: sample the axes **at the piece's own rendered
+  position** (`translatePosition(position)` + height), which is always in
+  view and well-conditioned. Now both axes follow the view at any orbit angle.
+* **A just-placed piece "jumped one space" a moment later
+  (`server/world/gravity.js`).** Not a placement desync — the server places
+  exactly where the client renders (verified: shape tables, rotation indices
+  and the `posX=x+col / posZ=z+row` cell convention all match). The culprit is
+  *world gravity*: a once-a-minute drift that slides a whole territory one cell
+  toward the world centroid when a player is >60 cells out — including the
+  piece you just dropped — then broadcasts a full update. It was meant to
+  consolidate **abandoned** far-flung territory (old saves), but it tugged
+  online players too. Fix: gravity now skips any player who is `connected` or
+  has acted within a 5-minute grace window, so it only ever reshuffles genuinely
+  idle/abandoned boards. Covered by two new cases in `tests/server/gravity.test.js`.
+
 ### Launch-readiness pass: shareability, FTUE gate, security & deploy bundle (1 Jun 2026)
 
 **A sweep to get Tetches ready to publicise.** Covers four fronts — social
