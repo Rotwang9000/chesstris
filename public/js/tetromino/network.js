@@ -180,10 +180,10 @@ function handleTetrominoFailed(data, gameState) {
 		failureMessage = 'No path back to your king - bridge from connected territory first.';
 		effect = 'DISSOLVE_FALL';
 	} else if (reason === 'not_adjacent') {
-		failureMessage = 'Tetromino must touch your own territory.';
+		failureMessage = 'Missed connection — pieces must land touching your territory. Watch the outline: green sticks, red dissolves.';
 		effect = 'DISSOLVE_FALL';
 	} else if (typeof failureMessage === 'string' && failureMessage.toLowerCase().includes('connect')) {
-		failureMessage = 'Missed connection - tetromino dissolved into sand.';
+		failureMessage = 'Missed connection — pieces must land touching your territory. Watch the outline: green sticks, red dissolves.';
 		effect = 'DISSOLVE_FALL';
 	}
 

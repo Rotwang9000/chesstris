@@ -543,6 +543,11 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 					<span style="color: #ffcc00;">Z/X</span> rotate, 
 					<span style="color: #ffcc00;">Space</span> drop
 				</li>
+				<li><strong>Landing guide:</strong> the outline under your piece shows where it lands —
+					<span style="color: #66ff88;">green will stick</span>,
+					<span style="color: #ff6666;">red will dissolve</span>
+					(pieces must touch your territory)
+				</li>
 				<li><strong>On touch devices:</strong> on-screen buttons &amp; swipes move/rotate/drop the piece</li>
 				<li><strong>Chess:</strong> Click (or tap) a piece → click the green circle to move</li>
 				<li><strong>Goal:</strong> Capture opponent kings! 👑</li>

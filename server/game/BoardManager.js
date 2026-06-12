@@ -614,11 +614,11 @@ class BoardManager {
 
 			if (runs.length > 0) {
 				matches.push({ index: fixed, runs });
-				log(
-					`Found clearable ${axis}-line at ${axis}=${fixed}: ` +
-					runs.map(r => `${r.start}-${r.end}`).join(', ') +
-					` (threshold=${threshold})`
-				);
+				// Deliberately not logged: the cascade re-scans after every
+				// clear+gravity iteration, so this fired 2-3 times per
+				// actual clear and was the single largest source of log
+				// volume in production (~54k lines / 8 days). The
+				// "Cleared <axis>-line" log downstream records the event.
 			}
 		}
 

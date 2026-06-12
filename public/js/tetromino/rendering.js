@@ -12,8 +12,18 @@ import { getTHREE, getPlayerColors } from '../gameContext.js';
 import { boardFunctions } from '../boardFunctions.js';
 import { translatePosition } from '../centreBoardMarker.js';
 import { tetrominoPool } from './pool.js';
+import { validatePlacementLocally } from './validation.js';
 
 const PLAYER_COLORS = getPlayerColors();
+
+// Traffic-light ghost: the landing outline doubles as a legality signal.
+// New players' single biggest stumble was dropping a piece one square too
+// far, watching it silently dissolve, and not knowing why — the ghost now
+// answers "will this stick?" before they commit.
+const GHOST_VALID_COLOUR = 0x00dd66;   // green — drop here and it places
+const GHOST_INVALID_COLOUR = 0xff3344; // red — drop here and it dissolves
+const GHOST_VALID_OPACITY = 0.5;
+const GHOST_INVALID_OPACITY = 0.65;
 
 // Standard Tetris colour palette, indexed by piece type.
 const PIECE_COLOURS = Object.freeze({
@@ -197,6 +207,11 @@ export function renderTetromino(gameState) {
 /**
  * Draw an outline-only ghost piece at y=0 directly under the current
  * tetromino.  Skipped if the tetromino is already at board level.
+ *
+ * The ghost is colour-coded by placement legality at the current (x, z):
+ * green = the drop will place, red = it will dissolve (collision, not
+ * touching your territory, or no path back to your king). Validity is
+ * re-evaluated on every re-render, i.e. after each move/rotate.
  */
 function renderGhostPiece(gameState, tetromino) {
 	const currentHeight = tetromino.position.y || tetromino.heightAboveBoard || 0;
@@ -204,7 +219,17 @@ function renderGhostPiece(gameState, tetromino) {
 
 	const ghostPos = { x: tetromino.position.x, y: 0, z: tetromino.position.z };
 	const absPos = translatePosition(ghostPos, gameState, true);
-	const color = resolveColour(tetromino.type, gameState);
+
+	let wouldPlace = true;
+	try {
+		wouldPlace = validatePlacementLocally(tetromino, gameState);
+	} catch (err) {
+		// Validation is a UI hint only — on error keep the optimistic
+		// colour rather than scare the player; the server still decides.
+		console.warn('Ghost validity check failed:', err);
+	}
+	const color = wouldPlace ? GHOST_VALID_COLOUR : GHOST_INVALID_COLOUR;
+	const opacity = wouldPlace ? GHOST_VALID_OPACITY : GHOST_INVALID_OPACITY;
 
 	const THREE = getTHREE();
 	const ghostGroup = new THREE.Group();
@@ -217,7 +242,7 @@ function renderGhostPiece(gameState, tetromino) {
 			if (block.material) {
 				block.material.color.setHex(color);
 				block.material.transparent = true;
-				block.material.opacity = 0.5;
+				block.material.opacity = opacity;
 				block.material.wireframe = true;
 				block.material.wireframeLinewidth = 2;
 				if (block.material.emissive) {

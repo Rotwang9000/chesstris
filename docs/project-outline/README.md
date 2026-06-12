@@ -12,6 +12,7 @@ so editors and agents can read it safely without hitting size limits.
 - [05-changelog-may-2026-a.md](05-changelog-may-2026-a.md) — May 2026 fixes: seventh pass through invalid-moves report
 - [06-changelog-may-2026-b.md](06-changelog-may-2026-b.md) — May 2026: piece locator, wings rule, UX cleanups
 - [07-changelog-may-2026-c.md](07-changelog-may-2026-c.md) — May 2026: power-up orbs, connectivity, production audit
+- [08-changelog-june-2026.md](08-changelog-june-2026.md) — June 2026: first live-traffic learnings, onboarding fixes
 
 ## Related docs
 

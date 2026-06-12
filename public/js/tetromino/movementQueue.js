@@ -195,7 +195,7 @@ function processVerticalMove(height, isRelative) {
 			gameState.currentTetromino.heightAboveBoard = 0;
 			queueOperation(MOVEMENT_TYPES.EXPLODE, {
 				x: posX, z: posZ,
-				message: 'Missed connection - tetromino dissolved into sand.',
+				message: 'Missed connection — pieces must land touching your territory. Watch the outline: green sticks, red dissolves.',
 				effect: FAILURE_EFFECTS.DISSOLVE_FALL,
 			});
 			return;
@@ -265,7 +265,7 @@ function processHardDrop() {
 		console.log('Hard drop failed - tetromino not adjacent at landing position');
 		queueOperation(MOVEMENT_TYPES.EXPLODE, {
 			x: posX, z: posZ,
-			message: 'Missed connection - tetromino dissolved into sand.',
+			message: 'Missed connection — pieces must land touching your territory. Watch the outline: green sticks, red dissolves.',
 			effect: FAILURE_EFFECTS.DISSOLVE_FALL,
 		});
 		return;
@@ -285,7 +285,7 @@ function rejectionMessageForReason(response) {
 		switch (reason) {
 			case 'occupied': message = 'That space is already occupied.'; break;
 			case 'not_adjacent':
-				message = 'Missed connection - tetromino dissolved into sand.';
+				message = 'Missed connection — pieces must land touching your territory. Watch the outline: green sticks, red dissolves.';
 				rejectionEffect = FAILURE_EFFECTS.DISSOLVE_FALL;
 				break;
 			case 'no_path_to_king':

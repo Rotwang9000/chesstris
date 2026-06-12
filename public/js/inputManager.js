@@ -65,7 +65,14 @@ export function setupInputHandlers() {
 
 		if (inCanvas) {
 			const target = e.target;
-			const isUIElement = target.closest('button, input, select, a, .player-list-container, #loading, .tutorial-message');
+			// `[role="button"]` matters: HUD widgets like the next-piece
+			// panel are divs with role=button, and this capture-phase
+			// handler stopPropagation()s during the chess phase — which
+			// silently ate their clicks (notably "Click to start tetris
+			// turn", leaving players stranded in the chess phase).
+			const isUIElement = target.closest(
+				'button, [role="button"], input, select, a, .player-list-container, #loading, .tutorial-message'
+			);
 			if (isUIElement) return;
 
 			const m = getMouse();
@@ -224,7 +231,7 @@ function handleKeyDown(event) {
 	}
 
 	if (!gameState.currentTetromino) {
-		if (event.key === ' ' && gameState.turnPhase === 'chess') {
+		if (isSpaceKey(event) && gameState.turnPhase === 'chess') {
 			event.preventDefault();
 			if (_onTetrisPhaseClick) _onTetrisPhaseClick();
 			return;
@@ -284,12 +291,26 @@ function handleKeyDown(event) {
 			tetrominoModule.rotateTetromino(1);
 			try { playSound('tick'); } catch (_e) { /* sound is best-effort */ }
 			break;
-		case ' ':
-			event.preventDefault();
-			tetrominoModule.hardDropTetromino();
-			try { playSound('hardDrop'); } catch (_e) { /* sound is best-effort */ }
+		default:
+			if (isSpaceKey(event)) {
+				event.preventDefault();
+				tetrominoModule.hardDropTetromino();
+				try { playSound('hardDrop'); } catch (_e) { /* sound is best-effort */ }
+			}
 			break;
 	}
+}
+
+/**
+ * Spacebar detection that tolerates non-standard `key` values: real
+ * keyboards emit `' '`, but some automation tools / legacy browsers
+ * emit `'Space'` or `'Spacebar'`; `code` is the most reliable signal.
+ */
+function isSpaceKey(event) {
+	return event.key === ' '
+		|| event.key === 'Space'
+		|| event.key === 'Spacebar'
+		|| event.code === 'Space';
 }
 
 // ── Mouse ───────────────────────────────────────────────────────────────────
