@@ -25,6 +25,12 @@ let isBarVisible = false;
 let lastPlayerDataHash = '';
 let forcedPlayerUpdateCounter = 0;
 
+// Below this viewport width the bar starts collapsed (phones/small
+// tablets) instead of sliding open over the welcome modal.
+const WIDE_SCREEN_MIN_PX = 900;
+// How long the introductory auto-open stays before tucking away.
+const INTRO_PEEK_DURATION_MS = 5000;
+
 /**
  * Coerce the various colour formats the server emits — bare integers
  * (0xDD0000), prefixed strings ("0xff0000" / "#ff0000") and named
@@ -495,15 +501,18 @@ export function createUnifiedPlayerBar(gameState) {
 	updateUnifiedPlayerBar(gameState);
 	updateSessionDetails(gameState);
 	
-	// Show the bar initially
-	showPlayerBar();
-	
-	// Automatically hide after 5 seconds
-	setTimeout(() => {
-		if (isBarVisible) {
-			hidePlayerBar();
-		}
-	}, 5000);
+	// Flash the bar open briefly on load so players discover it — but only
+	// on wide screens. On phones the expanded bar collided with the welcome
+	// modal and touch controls, so there it stays tucked away behind its
+	// pull tab until asked for.
+	if (window.innerWidth >= WIDE_SCREEN_MIN_PX) {
+		showPlayerBar();
+		setTimeout(() => {
+			if (isBarVisible) {
+				hidePlayerBar();
+			}
+		}, INTRO_PEEK_DURATION_MS);
+	}
 	
 	console.log("Unified player bar created and attached to DOM");
 	return playerBar;

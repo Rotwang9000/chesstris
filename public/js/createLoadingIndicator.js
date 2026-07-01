@@ -2,6 +2,8 @@ import { handleTetrisPhaseClick, handleChessPhaseClick, resetGameState, startPla
 import * as sceneModule from './scene';
 import gameState from './utils/gameState.js';
 import { loginWithEmail, handleAuthRedirect, isSignedIn } from './auth/auth0Client.js';
+import { showLoginDialog } from './auth/loginDialog.js';
+import { isLoggedIn as isKingdomLoggedIn, getLoggedInName as getKingdomName } from './auth/kingdomKey.js';
 
 /**
  * Create a loading indicator with Russian-themed styling
@@ -312,19 +314,39 @@ export function updateGameStatusDisplay(gameState) {
 	statusContainer.innerHTML = statusHTML;
 }
 /**
- * Update the network status display
- * @param {string} status - The current network status: 'connecting', 'connected', or 'disconnected'
+ * Update the network status display.
+ *
+ * Single writer for the #network-status pill: callers (event listeners,
+ * the fallback poll) all come through here so the show/hide logic stays
+ * in one place. "Connected" is the expected steady state, so it only
+ * flashes briefly and then gets out of the way; every other state stays
+ * on screen until resolved.
+ *
+ * @param {string} status - 'connecting', 'connected', 'disconnected' or 'error'
  */
+
+const NETWORK_CONNECTED_FLASH_MS = 2500;
+let lastNetworkStatus = null;
+let networkStatusHideTimer = null;
 
 export function updateNetworkStatus(status) {
 	const networkStatusElement = document.getElementById('network-status');
 
 	if (!networkStatusElement) return;
+	// The 5s fallback poll re-reports the same state forever — bail early
+	// so "connected" doesn't re-flash every poll.
+	if (status === lastNetworkStatus) return;
+	lastNetworkStatus = status;
+
+	if (networkStatusHideTimer) {
+		clearTimeout(networkStatusHideTimer);
+		networkStatusHideTimer = null;
+	}
 
 	// Set text and color based on status with Russian theme
 	switch (status) {
 		case 'connected':
-			networkStatusElement.textContent = 'Network: Connected';
+			networkStatusElement.textContent = 'Connected ✓';
 			networkStatusElement.style.backgroundColor = 'rgba(0, 128, 0, 0.7)';
 			networkStatusElement.style.borderColor = '#ffcc00'; // Gold border
 			break;
@@ -334,7 +356,7 @@ export function updateNetworkStatus(status) {
 			networkStatusElement.style.borderColor = '#ffcc00'; // Gold border
 			break;
 		case 'connecting':
-			networkStatusElement.textContent = 'Network: Connecting...';
+			networkStatusElement.textContent = 'Connecting…';
 			networkStatusElement.style.backgroundColor = 'rgba(255, 165, 0, 0.7)';
 			networkStatusElement.style.borderColor = '#ffcc00'; // Gold border
 			break;
@@ -342,6 +364,14 @@ export function updateNetworkStatus(status) {
 			networkStatusElement.textContent = `Network: ${status}`;
 			networkStatusElement.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
 			networkStatusElement.style.borderColor = '#ffcc00'; // Gold border
+	}
+
+	networkStatusElement.style.display = 'block';
+	if (status === 'connected') {
+		networkStatusHideTimer = setTimeout(() => {
+			networkStatusElement.style.display = 'none';
+			networkStatusHideTimer = null;
+		}, NETWORK_CONNECTED_FLASH_MS);
 	}
 }
 /**
@@ -520,27 +550,29 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 		}
 	};
 
-	// Build the scrollable content
+	// Build the scrollable content. The 8-bit hero carries the title;
+	// everything long-form hides behind the "How to play" toggle so the
+	// first screen is one picture, one line, one button.
 	scrollContent.innerHTML = `
-		<h2 style="color: #ffcc00; margin: 0 0 8px 0; font-family: 'Times New Roman', serif; font-size: 28px;">
-			☦ Welcome to Tetches ☦
-		</h2>
-		<p style="margin: 0 0 20px 0; opacity: 0.8;">A massively multiplayer shared-world game combining Chess and Tetris</p>
-		
-		<div style="text-align: left; margin: 0 0 20px 0; padding: 16px; background: rgba(255, 204, 0, 0.05); border-radius: 8px;">
-			<h3 style="color: #ffcc00; margin: 0 0 12px 0; font-size: 16px;">How to Play:</h3>
+		<img src="/img/welcome-hero.png" alt="Tetches — chess pieces and falling tetromino blocks"
+			style="width: 100%; display: block; border-radius: 8px; image-rendering: pixelated; margin: 0 0 12px 0; border: 1px solid rgba(255, 204, 0, 0.35);">
+		<p style="margin: 0 0 14px 0; font-size: 15px; opacity: 0.9;">
+			Chess meets Tetris in one huge shared world.<br>
+			<span style="opacity: 0.75; font-size: 13px;">Drop blocks to grow your kingdom, then march your pieces out to capture kings.</span>
+		</p>
+
+		<button id="howto-toggle" aria-expanded="false"
+			style="background: none; border: 1px solid rgba(255, 204, 0, 0.5); color: #ffcc00; border-radius: 6px; padding: 8px 16px; font-size: 14px; cursor: pointer; font-family: inherit;">
+			❓ How to play
+		</button>
+
+		<div id="howto-content" style="display: none; text-align: left; margin: 14px 0 0 0; padding: 16px; background: rgba(255, 204, 0, 0.05); border-radius: 8px;">
 			<ul style="line-height: 1.6; margin: 0; padding-left: 20px;">
-				<li><strong>All Players Play Simultaneously</strong> - No waiting for turns!</li>
-				<li><strong>Your Cycle:</strong>
-					<ol style="margin: 4px 0; padding-left: 18px;">
-						<li>Place a Tetromino (falls from above)</li>
-						<li>Move one chess piece</li>
-						<li>Repeat!</li>
-					</ol>
-				</li>
-				<li><strong>Tetris Controls:</strong>
-					<span style="color: #ffcc00;">Arrow keys</span> move, 
-					<span style="color: #ffcc00;">Z/X</span> rotate, 
+				<li><strong>Everyone plays at once</strong> — no waiting for turns</li>
+				<li><strong>Your cycle:</strong> drop a tetromino, move one chess piece, repeat</li>
+				<li><strong>Tetris controls:</strong>
+					<span style="color: #ffcc00;">Arrow keys</span> move,
+					<span style="color: #ffcc00;">Z/X</span> rotate,
 					<span style="color: #ffcc00;">Space</span> drop
 				</li>
 				<li><strong>Landing guide:</strong> the outline under your piece shows where it lands —
@@ -549,21 +581,15 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 					(pieces must touch your territory)
 				</li>
 				<li><strong>On touch devices:</strong> on-screen buttons &amp; swipes move/rotate/drop the piece</li>
-				<li><strong>Chess:</strong> Click (or tap) a piece → click the green circle to move</li>
-				<li><strong>Goal:</strong> Capture opponent kings! 👑</li>
+				<li><strong>Chess:</strong> click (or tap) a piece → click the green circle to move</li>
+				<li><strong>Goal:</strong> capture opponent kings! 👑</li>
 			</ul>
-		</div>
-		
-		<div style="padding: 12px; background: rgba(255, 204, 0, 0.08); border-radius: 8px; border-left: 3px solid #ffcc00;">
-			<p style="margin: 0; font-style: italic; font-size: 14px; opacity: 0.9;">
-				Tip: Place tetrominos to expand your territory, then use your chess pieces to attack!
+			<p style="margin: 10px 0 0 0; font-style: italic; font-size: 13px; opacity: 0.85;">
+				Tip: blocks grow your territory; chess pieces do the fighting.
 			</p>
-		</div>
-		<div style="margin-top: 12px; padding: 12px; background: rgba(0, 0, 0, 0.25); border-radius: 8px; text-align: left;">
-			<div style="font-weight: bold; color: #ffcc00; margin-bottom: 6px;">Terminology</div>
-			<div style="font-size: 13px; line-height: 1.5;">
-				<div><strong>World:</strong> the shared global board everyone plays on.</div>
-				<div><strong>Player Code:</strong> your personal identity/progress inside that world.</div>
+			<div style="margin-top: 10px; font-size: 12px; opacity: 0.75; line-height: 1.5;">
+				<strong>World</strong> = the shared board everyone plays on ·
+				<strong>Player Code</strong> = your identity/progress inside it
 			</div>
 		</div>
 	`;
@@ -585,12 +611,31 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 	const newGameIsPrimary = !(ENABLE_WORLD_KEY && previousGameKey);
 	buttonHTML += `
 		<button id="new-game-btn" class="tutorial-btn ${newGameIsPrimary ? 'primary' : ''}">
-			✦ ENTER SHARED WORLD
+			✦ PLAY NOW
 		</button>
 		<div style="font-size: 12px; opacity: 0.8; text-align: center; margin-top: -2px;">
-			Jump into the live board now — your spot is remembered on this device.
+			Jump straight in — no sign-up needed, your spot is remembered on this device.
 		</div>
 	`;
+
+	// Account link: prominent but unmistakably optional (guests enter with
+	// the big button above; this only adds cross-device persistence).
+	let kingdomName = null;
+	try { kingdomName = isKingdomLoggedIn() ? getKingdomName() : null; } catch (_e) { /* cookie access */ }
+	if (kingdomName) {
+		buttonHTML += `
+			<div style="font-size: 12px; text-align: center; color: #88dd88;">
+				✓ Logged in as <strong>${kingdomName.replace(/[<>&]/g, '')}</strong> — your kingdom follows you across devices.
+			</div>
+		`;
+	} else {
+		buttonHTML += `
+			<div style="font-size: 12px; text-align: center; opacity: 0.85;">
+				Optional: <a href="#" id="welcome-login-link" style="color: #ffcc00; text-decoration: underline;">log in</a>
+				to keep your kingdom on any device.
+			</div>
+		`;
+	}
 
 	if (ENABLE_WORLD_KEY) {
 		buttonHTML += `
@@ -636,6 +681,29 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 	const rejoinBtn = tutorialElement.querySelector('#rejoin-game-btn');
 	const joinKeyBtn = tutorialElement.querySelector('#join-key-btn');
 	const gameKeyInput = tutorialElement.querySelector('#game-key-input');
+
+	// "How to play" starts collapsed; the toggle flips it open in place.
+	const howtoToggle = tutorialElement.querySelector('#howto-toggle');
+	const howtoContent = tutorialElement.querySelector('#howto-content');
+	if (howtoToggle && howtoContent) {
+		howtoToggle.addEventListener('click', () => {
+			const isOpen = howtoContent.style.display !== 'none';
+			howtoContent.style.display = isOpen ? 'none' : 'block';
+			howtoToggle.setAttribute('aria-expanded', String(!isOpen));
+			howtoToggle.textContent = isOpen ? '❓ How to play' : '▲ Hide the rules';
+		});
+	}
+
+	// Optional account login from the welcome screen.
+	const welcomeLoginLink = tutorialElement.querySelector('#welcome-login-link');
+	if (welcomeLoginLink) {
+		welcomeLoginLink.addEventListener('click', (event) => {
+			event.preventDefault();
+			let prefill = '';
+			try { prefill = localStorage.getItem('playerName') || ''; } catch (_e) { /* private mode */ }
+			showLoginDialog({ prefillUsername: prefill });
+		});
+	}
 
 	if (newGameBtn) {
 		newGameBtn.addEventListener('click', () => {

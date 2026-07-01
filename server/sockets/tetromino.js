@@ -5,6 +5,7 @@
 const World = require('../world/World');
 const { PLAYER_SETTINGS } = require('../game/Constants');
 const { getCooldownRemainingMs } = require('../utils/cooldowns');
+const funnel = require('../observability/funnel');
 
 function registerTetrominoHandlers(socket, ctx) {
 	const {
@@ -168,6 +169,11 @@ function registerTetrominoHandlers(socket, ctx) {
 					z: c.orb.z,
 				})),
 			};
+			// Funnel: first-ever successful placement for this player —
+			// the strongest "actually played the game" signal we track.
+			if (!player.lastTetrominoPlacementAt && !player.isComputer) {
+				funnel.recordFirstPlacement();
+			}
 			player.lastTetrominoPlacementAt = Date.now();
 			player.lastTetrominoPlacement = world.players?.[playerId]?.lastTetrominoPlacement
 				|| { x: tetromino.position.x, z: tetromino.position.z };

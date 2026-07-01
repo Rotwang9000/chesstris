@@ -165,7 +165,7 @@
 			text-shadow: 0 0 10px rgba(255, 204, 0, 0.5);
 		}
 		
-		/* Debug indicator */
+		/* Bottom-left utility strip (camera / controls / render mode) */
 		.debug-indicator {
 			position: fixed;
 			left: 10px;
@@ -173,6 +173,38 @@
 			z-index: 100;
 			color: rgba(255, 255, 255, 0.7);
 			font-size: 12px;
+			display: flex;
+			flex-wrap: wrap;
+			align-items: center;
+			gap: 6px;
+			max-width: min(62vw, 520px);
+		}
+		.debug-indicator button {
+			padding: 2px 7px;
+			background: #333;
+			color: #ffcc00;
+			border: 1px solid #ffcc00;
+			border-radius: 3px;
+			cursor: pointer;
+			font-family: 'Playfair Display', serif;
+		}
+		/* Small screens: keep only the essentials down there. The Player
+		   Code lives in the player bar and the touch pad needs the space. */
+		@media (max-width: 700px) {
+			.debug-indicator {
+				gap: 4px;
+				max-width: 55vw;
+			}
+			.debug-indicator button {
+				font-size: 11px;
+				padding: 2px 5px;
+			}
+			#session-warning {
+				display: none;
+			}
+			.advertise-link {
+				display: none;
+			}
 		}
 
 		/* Low-spec / cute mode: render at lower resolution and scale up crisply */
@@ -349,12 +381,12 @@
 	<!-- Game Title -->
 	<div class="game-title">TETCHES</div>
 	
-	<!-- Debug Indicator -->
+	<!-- Bottom-left utility strip -->
 	<div class="debug-indicator">
-		<button id="reset-camera-btn" style="margin-left: 10px; padding: 2px 6px; background: #333; color: #ffcc00; border: 1px solid #ffcc00; border-radius: 3px; cursor: pointer; font-family: 'Playfair Display', serif;">Reset Camera</button>
-		<button id="show-flight-controls-btn" title="Show camera & keyboard controls" style="margin-left: 6px; padding: 2px 8px; background: #333; color: #ffcc00; border: 1px solid #ffcc00; border-radius: 3px; cursor: pointer; font-family: 'Playfair Display', serif;">Controls</button>
-		<button id="toggle-render-mode-btn" style="margin-left: 10px; padding: 2px 6px; background: #333; color: #ffcc00; border: 1px solid #ffcc00; border-radius: 3px; cursor: pointer; font-family: 'Playfair Display', serif;">Mode: Normal</button>
-		<span id="session-warning" role="button" tabindex="0" title="Click to copy your Player Code (needed to resume your game later)" style="margin-left: 12px; font-size: 11px; color: #ffcc00; font-family: 'Playfair Display', serif; cursor: pointer; text-decoration: underline;">&#128190; Copy your Player Code to resume later</span>
+		<button id="reset-camera-btn">Reset Camera</button>
+		<button id="show-flight-controls-btn" title="Show camera & keyboard controls">Controls</button>
+		<button id="toggle-render-mode-btn">Mode: Normal</button>
+		<span id="session-warning" role="button" tabindex="0" title="Click to copy your Player Code (needed to resume your game later)" style="font-size: 11px; color: #ffcc00; font-family: 'Playfair Display', serif; cursor: pointer; text-decoration: underline;">&#128190; Copy your Player Code to resume later</span>
 	</div>
 
 	<!-- Loading Screen -->

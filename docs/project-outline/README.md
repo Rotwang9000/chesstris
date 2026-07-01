@@ -13,6 +13,7 @@ so editors and agents can read it safely without hitting size limits.
 - [06-changelog-may-2026-b.md](06-changelog-may-2026-b.md) — May 2026: piece locator, wings rule, UX cleanups
 - [07-changelog-may-2026-c.md](07-changelog-may-2026-c.md) — May 2026: power-up orbs, connectivity, production audit
 - [08-changelog-june-2026.md](08-changelog-june-2026.md) — June 2026: first live-traffic learnings, onboarding fixes
+- [09-changelog-july-2026.md](09-changelog-july-2026.md) — July 2026: visitor funnel, 8-bit welcome screen, save nudge, HUD tidy
 
 ## Related docs
 

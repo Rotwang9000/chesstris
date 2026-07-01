@@ -11,6 +11,7 @@ const World = require('../world/World');
 const Sessions = require('../world/Sessions');
 const Disconnects = require('../world/Disconnects');
 const { parseCookies } = require('../utils/cookies');
+const funnel = require('../observability/funnel');
 
 const { validatePlayerName } = require('../utils/validation');
 const { registerJoinHandlers } = require('./join');
@@ -293,6 +294,10 @@ function resolvePlayerIdForSocket(socket, services) {
 
 	const freshId = uuidv4();
 	console.log(`New player connected: ${freshId} (socket ${socket.id})`);
+	// Funnel: a fresh identity means a device we have never seen before.
+	// (Account sign-ins above don't count — that human was already counted
+	// when they first arrived as a guest.)
+	funnel.recordNewVisitor();
 	const initialName = (handshakeName && handshakeName.toLowerCase() !== 'guest')
 		? handshakeName
 		: `Player_${freshId.substring(0, 6)}`;

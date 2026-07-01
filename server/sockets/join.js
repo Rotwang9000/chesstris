@@ -6,6 +6,7 @@
 
 const World = require('../world/World');
 const { validatePlayerName } = require('../utils/validation');
+const funnel = require('../observability/funnel');
 
 function registerJoinHandlers(socket, ctx) {
 	const {
@@ -36,6 +37,10 @@ function registerJoinHandlers(socket, ctx) {
 
 			const worldId = World.getWorldId();
 
+			// Funnel: no home zone yet = this is their first entry into the
+			// world (registerPlayer creates one below). Reconnects skip this.
+			const isFirstWorldEntry = !World.getWorld()?.homeZones?.[playerId];
+
 			// Ensures the player has a home zone + chess pieces.  If they
 			// already have both, registerPlayer is a no-op and returns the
 			// existing record.
@@ -46,6 +51,7 @@ function registerJoinHandlers(socket, ctx) {
 				return;
 			}
 			persistence.markDirty();
+			if (isFirstWorldEntry && !player.isComputer) funnel.recordWorldJoin();
 
 			socket.join(worldId);
 

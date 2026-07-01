@@ -18,6 +18,7 @@ import { initFloatingBanner } from './floatingBanner.js'; // Import floating ban
 import { initSponsorSystem } from '../utils/sponsors.js'; // Import sponsor system
 import { disposeBoats } from './boatsRenderer.js';
 import { showLoginDialog } from './auth/loginDialog.js';
+import { initSaveReminder } from './auth/saveReminder.js';
 
 
 // Global state
@@ -178,6 +179,10 @@ async function init() {
 	applyRenderProfileToDom(renderProfile);
 	setupRenderModeToggle(renderProfile);
 	applyCrtOverlay(renderProfile === 'retro');
+
+	// Guests who played get a gentle "save your kingdom?" prompt when
+	// leaving (no-op for logged-in players; armed by the first placement).
+	initSaveReminder();
 	
 	try {
 		// Run diagnostics first to catch any issues

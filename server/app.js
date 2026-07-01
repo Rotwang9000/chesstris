@@ -18,6 +18,7 @@ const { router: walletAuthRouter } = require('../routes/walletAuth');
 const { mountAuthRoutes } = require('./auth/routes');
 const { parseAllowedOrigins, isOriginAllowed } = require('./security/origins');
 const metrics = require('./observability/metrics');
+const funnel = require('./observability/funnel');
 const sentry = require('./observability/sentry');
 const { createIndexHtmlBundleSwap } = require('./bundling/indexHtmlBundleSwap');
 
@@ -130,6 +131,17 @@ function createApp({ projectRoot = process.cwd() } = {}) {
 	});
 	app.use('/api', apiLimiter);
 
+	// Visitor-funnel: count game page loads (PII-free — the UA is only
+	// inspected to skip crawlers, never stored). Mounted before the
+	// bundle-swap middleware so every index serve passes through it.
+	app.use((req, res, next) => {
+		if (req.method === 'GET'
+			&& (req.path === '/' || req.path === '/index.html' || req.path === '/2d')) {
+			funnel.recordPageView(req.get('user-agent'));
+		}
+		next();
+	});
+
 	// Bundle-aware index.html serving (rewrites the entrypoint
 	// script tag to `dist/app.bundle.js` when one exists). Mounted
 	// BEFORE express.static so it claims `/` and `/index.html`
@@ -200,6 +212,21 @@ function createApp({ projectRoot = process.cwd() } = {}) {
 		} catch (err) {
 			res.status(500).end(err.message);
 		}
+	});
+
+	// Visitor-funnel snapshot (page loads → new visitors → world joins →
+	// first placements). Same gating as /metrics: loopback or admin token.
+	app.get('/api/admin/funnel', (req, res) => {
+		if (!isDevelopment) {
+			const adminToken = process.env.ADMIN_TOKEN;
+			const provided = req.get('x-admin-token') || req.query.adminToken;
+			const tokenOk = !!adminToken && provided === adminToken;
+			if (!isLoopbackRequest(req) && !tokenOk) {
+				return res.status(404).end();
+			}
+		}
+		const days = Math.min(60, Math.max(1, parseInt(req.query.days, 10) || 14));
+		res.json({ success: true, funnel: funnel.getSnapshot(days) });
 	});
 
 	// `/2d` and `/` both go through `indexSwap.middleware` so they
