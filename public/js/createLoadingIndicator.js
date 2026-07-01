@@ -440,6 +440,7 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 	Object.assign(scrollContent.style, {
 		flex: '1',
 		overflowY: 'auto',
+		overflowX: 'hidden',
 		padding: '24px',
 		textAlign: 'center'
 	});
@@ -555,7 +556,7 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 	// first screen is one picture, one line, one button.
 	scrollContent.innerHTML = `
 		<img src="/img/welcome-hero.png" alt="Tetches — chess pieces and falling tetromino blocks"
-			style="width: 100%; display: block; border-radius: 8px; image-rendering: pixelated; margin: 0 0 12px 0; border: 1px solid rgba(255, 204, 0, 0.35);">
+			style="width: 100%; box-sizing: border-box; display: block; border-radius: 8px; image-rendering: pixelated; margin: 0 0 12px 0; border: 1px solid rgba(255, 204, 0, 0.35);">
 		<p style="margin: 0 0 14px 0; font-size: 15px; opacity: 0.9;">
 			Chess meets Tetris in one huge shared world.<br>
 			<span style="opacity: 0.75; font-size: 13px;">Drop blocks to grow your kingdom, then march your pieces out to capture kings.</span>
