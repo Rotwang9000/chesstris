@@ -13,6 +13,7 @@
  */
 
 import { hasPathToKing } from './pathViz.js';
+import { isRingItemUsable, isCellInsideOwnArena } from '../battle/battleRules.js';
 
 const ORTHO = [
 	[0, -1],
@@ -97,7 +98,8 @@ export function isTetrominoAdjacentToExistingCells(gameState, shape, posX, posZ)
 				if (!cell) continue;
 				const items = getCellItems(cell);
 				const owned = items.some(item =>
-					item && playerStr && String(item.player) === playerStr
+					item && ((playerStr && String(item.player) === playerStr)
+						|| isRingItemUsable(gameState, item))
 				);
 				if (owned) return true;
 			}
@@ -123,15 +125,28 @@ export function validatePlacementLocally(tetrominoData, gameState) {
 	const playerId = gameState.currentPlayer;
 	const isFirstPlacement = !gameState._hasPlacedTetromino;
 
+	// Battle arenas: every cell of the shape must stay inside the play
+	// circle (the ring is the wall).
+	for (let z = 0; z < shape.length; z++) {
+		for (let x = 0; x < shape[z].length; x++) {
+			if (shape[z][x] !== 1) continue;
+			if (!isCellInsideOwnArena(gameState, posX + x, posZ + z)) {
+				console.log('Local validation: outside battle arena');
+				return false;
+			}
+		}
+	}
+
 	if (checkTetrominoCollision(gameState, shape, posX, posZ)) {
 		console.log('Local validation: Collision detected');
 		return false;
 	}
 
 	const isOwnedNonHome = (item) =>
-		item
-		&& String(item.player) === String(playerId)
-		&& String(item.type) !== 'home';
+		(item
+			&& String(item.player) === String(playerId)
+			&& String(item.type) !== 'home')
+		|| isRingItemUsable(gameState, item);
 
 	const isOwnedHome = (item) =>
 		item

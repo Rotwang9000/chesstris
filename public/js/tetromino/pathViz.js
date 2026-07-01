@@ -13,6 +13,7 @@
 
 import { getTHREE } from '../gameContext.js';
 import { boardFunctions } from '../boardFunctions.js';
+import { isRingItemUsable } from '../battle/battleRules.js';
 
 const PATH_VIZ_THROTTLE_MS = 250;
 
@@ -47,8 +48,9 @@ export function hasPathToKing(gameState, startX, startZ, playerId) {
 	const cellIsOwnedTerritory = (cell) => {
 		if (!cell) return false;
 		const isOwnedItem = (item) => item
-			&& String(item.player) === playerStr
-			&& (item.type === 'home' || item.type === 'tetromino' || item.type === 'chess');
+			&& ((String(item.player) === playerStr
+				&& (item.type === 'home' || item.type === 'tetromino' || item.type === 'chess'))
+				|| isRingItemUsable(gameState, item));
 		if (Array.isArray(cell)) return cell.some(isOwnedItem);
 		if (typeof cell === 'object' && Array.isArray(cell.contents)) return cell.contents.some(isOwnedItem);
 		return isOwnedItem(cell);

@@ -21,6 +21,7 @@ const { registerDuelHandlers } = require('./duels');
 const { registerStateHandlers } = require('./state');
 const { registerSpectateHandlers } = require('./spectate');
 const { registerLifecycleHandlers } = require('./lifecycle');
+const { registerBattleHandlers } = require('./battle');
 const { attachSocketRateLimit } = require('./rateLimiter');
 // External AI registry. Imported via `module.exports.validateApiToken`
 // on the routes module rather than the router object so a circular
@@ -87,7 +88,18 @@ function createConnectionHandler(services) {
 			console.warn('[Connection] server_version emit failed:', err.message);
 		}
 
-		const handlerCtx = { ...services, playerId, socket };
+		// Gameplay handlers act as the player's battle SEAT while they're
+		// in an active battle; their real-world kingdom is untouched.
+		const resolveActingPlayerId = () => {
+			try {
+				return services.battleManager
+					? services.battleManager.effectivePlayerId(playerId)
+					: playerId;
+			} catch (_e) {
+				return playerId;
+			}
+		};
+		const handlerCtx = { ...services, playerId, socket, resolveActingPlayerId };
 
 		registerJoinHandlers(socket, handlerCtx);
 		registerTetrominoHandlers(socket, handlerCtx);
@@ -96,6 +108,7 @@ function createConnectionHandler(services) {
 		registerStateHandlers(socket, handlerCtx);
 		registerSpectateHandlers(socket, handlerCtx);
 		registerLifecycleHandlers(socket, handlerCtx);
+		registerBattleHandlers(socket, handlerCtx);
 
 		// One-shot fetch so a freshly-connected client can paint the
 		// fleet immediately instead of waiting for the next

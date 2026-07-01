@@ -79,6 +79,9 @@ function createGhostPlayerSweepService({
 
 		for (const [pid, player] of Object.entries(world.players)) {
 			if (!player) continue;
+			// Battle seats live and die with their battle — the
+			// BattleManager sweep owns their cleanup.
+			if (player.battleId) continue;
 			const pidStr = String(pid);
 			const pieceCount = counts.get(pidStr) || 0;
 			const hasPieces = pieceCount > 0;

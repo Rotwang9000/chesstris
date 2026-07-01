@@ -53,12 +53,16 @@ const { createLineClearService } = require('./game/LineClearService');
 const { createPowerUpManager } = require('./game/PowerUpManager');
 const { createAiActions } = require('./ai/actions');
 const { createAiRunner } = require('./ai/runner');
+const { createBattleManager } = require('./battle/BattleManager');
 const { createConnectionHandler } = require('./sockets/connection');
 
 const { createApp } = require('./app');
 
 const HOME_ZONE_DEGRADATION_CHECK_MS = 30000;
 const WORLD_INTEGRITY_CHECK_MS = 10000;
+// Cells at least this far from the origin belong to the battle-arena
+// grid (BATTLE.ARENA_BASE), not the organic world.
+const BATTLE_REGION_MIN_DISTANCE = 1500;
 const LONE_KING_SWEEP_MS = 15000;
 const GHOST_PLAYER_SWEEP_MS = 20000;
 const POWER_UP_TICK_MS = 45000;
@@ -154,6 +158,10 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 				const x = Number(key.slice(0, idx));
 				const z = Number(key.slice(idx + 1));
 				if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
+				// Battle arenas sit thousands of cells out — they must
+				// not drag the boats (or the framing) off the organic
+				// world.
+				if (Math.hypot(x, z) >= BATTLE_REGION_MIN_DISTANCE) continue;
 				if (x < minX) minX = x;
 				if (x > maxX) maxX = x;
 				if (z < minZ) minZ = z;
@@ -180,7 +188,9 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 				if (idx === -1) continue;
 				const x = Number(key.slice(0, idx));
 				const z = Number(key.slice(idx + 1));
-				if (Number.isFinite(x) && Number.isFinite(z)) out.push({ x, z });
+				if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
+				if (Math.hypot(x, z) >= BATTLE_REGION_MIN_DISTANCE) continue;
+				out.push({ x, z });
 			}
 			return out;
 		},
@@ -319,6 +329,15 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		activityLog,
 	});
 
+	const battleManager = createBattleManager({
+		gameManager,
+		aiRunner,
+		broadcaster,
+		persistence,
+		lifecycleService,
+		io,
+	});
+
 	// ── World restore ──────────────────────────────────────────────────────
 	const snapshot = persistence.loadWorld();
 	if (snapshot) {
@@ -382,6 +401,12 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		console.warn('[Startup] Missing-king rescue failed:', err.message);
 	}
 
+	// Re-arm AI seats and socket aliases for battles restored from the
+	// snapshot (must run after ensureRoster so roster trims can't touch
+	// battle bots — they filter on `battleId`).
+	try { battleManager.init(); }
+	catch (err) { console.warn('[Startup] Battle restore failed:', err.message); }
+
 	// Viking longships disabled — advertising is on sponsored cells again.
 	// if (boatManager) boatManager.start();
 
@@ -405,6 +430,7 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		pauseService,
 		boatManager,
 		missingKingSweep,
+		battleManager,
 		getBundleVersion: app._getBundleVersion || (() => ''),
 	});
 	io.on('connection', socket => {
@@ -440,6 +466,10 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 			catch (err) { logger.warn({ err: err.message }, 'missing-king sweep tick failed'); }
 		}, GHOST_PLAYER_SWEEP_MS * 3),
 		setInterval(() => powerUpManager.tick(), POWER_UP_TICK_MS),
+		setInterval(() => {
+			try { battleManager.tick(); }
+			catch (err) { logger.warn({ err: err.message }, 'battle sweep tick failed'); }
+		}, battleManager.SWEEP_INTERVAL_MS),
 		setInterval(() => {
 			try { metrics.refreshWorldGauges(World.getWorld()); }
 			catch (err) { logger.warn({ err: err.message }, 'metrics tick failed'); }

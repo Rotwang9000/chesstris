@@ -89,3 +89,109 @@ distance apart (8 cells), play zone bounded by a shared-ownership ring
 (diameter 32) that anyone may build on; its curvature naturally blocks
 long straight-line travel. Opponents: computer or friends via invite
 link/code. Needs multi-world support server-side — design doc first.
+
+## 1 July — Battle mode v1 (private 2–4 player arenas)
+
+Design in `docs/battle-mode-design.md` (assessed multi-world refactor vs
+remote regions; shipped the latter — arenas are circles of cells parked
+at `(2000, 2000)`+ inside the one shared world, so broadcast,
+persistence, chess rules, line clears and the AI all keep working
+unchanged).
+
+### Server
+
+- `server/battle/geometry.js` (new) — pure geometry: arena slots on a
+  64-cell pitch from `(2000, 2000)` (8 columns, 64 slots), ring as a
+  2-cell-thick annulus (radial bands 15–16 of a diameter-32 circle;
+  2-thick keeps it orthogonally connected for the N/S/E/W BFS rules),
+  play area = bands ≤14, keep-out ≤18, and seat home zones (N/S/W/E,
+  8×2 facing the centre; 2-seat battles have pawn rows exactly 8 apart,
+  3–4 seats sit 1 cell further out so zones can't collide).
+- `server/battle/rules.js` (new) — `ringItemUsableBy` (ring counts as
+  friendly ground only for seats of that battle) and
+  `validateArenaBounds` (seats must build inside their arena —
+  `outside_arena`; everyone else is kept out of live arenas —
+  `arena_reserved`).
+- `server/battle/BattleManager.js` (new) — lifecycle: create (host takes
+  seat 0, 6-char shareable code via `generateGameKey`), join by code,
+  start (host-only; empty seats filled with MEDIUM bots; builds ring +
+  seat zones + pieces), leave (lobby: free the seat / host cancels;
+  active: forfeit → seat eliminated), 5 s sweep (elimination → finished
+  + winner toast, lobby timeout 15 min, active cap 2 h, finished linger
+  60 s → full cleanup: seats removed, ring stripped, slot freed), orphan
+  GC, and boot-time restore (re-arms bot tickers + socket aliases from
+  the snapshot).
+- **Seat identity**: each participant plays a dedicated seat record
+  (`battle-<code>-s<n>`, carries `battleId`/`controlledBy`) so the
+  human's main kingdom is untouched mid-battle. The socket stays bound
+  to the real id; handlers resolve `ctx.resolveActingPlayerId()` at
+  event time (`sockets/tetromino.js`, `sockets/chess.js`), and
+  `Sessions.js` gained seat→human aliases so seat-scoped emits
+  (`new_tetromino`, duels…) reach the controlling browser.
+- `server/sockets/battle.js` (new) — `battle_create/join/start/leave/
+  state`, all acting on the socket's real id.
+- **Ring cell semantics** (`game/cells.js`): `battleRing` items are
+  ownerless, never clearable, never line-clear targets, block line
+  clears (near the circle's poles 8+ ring cells are collinear — without
+  blocker status the first cascade would delete the wall), anchor
+  nothing for gravity, and survive `transferOwnership`/`stripClearable`.
+- **Line-clear scan rewrite** (`game/BoardManager.js#_findClearableLines`):
+  was O(bounding-box) per axis — a remote arena makes the box ~2000²
+  so every cascade probed millions of empty keys. Now buckets occupied
+  cells by scan axis and walks sorted runs (O(N log N) in occupied
+  cells); `_clearLine` iterates the computed runs. Same results on the
+  existing suite.
+- **Sweep exemptions** for `player.battleId`: world gravity (both the
+  centroid and per-player drift), home-zone degradation, ghost-player
+  sweep, board-generator anchor collection, `GameUtilities`
+  `livingZoneCount`, AI respawn/self-detonation/roster-trim
+  (`ai/runner.js`) — battle seats live and die only by battle rules.
+  `bootstrap.js`'s `getWorldCentre`/`getOccupiedCells` (boat steering)
+  also ignore the battle region (distance ≥1500 from origin).
+- Persistence: `world.battles` registry + seat fields survive snapshots
+  (`world/World.js`, `persistence.js`).
+
+### Client
+
+- `public/js/battle/battleMode.js` (new) — ⚔ Battle dialog (create with
+  seat count, join by code, lobby with seat list + copy-invite-link,
+  start/leave/forfeit), socket listeners, and seat adoption: on
+  `battle_started` the module saves the real id and swaps
+  `localPlayerId`/`myPlayerId`/`currentPlayer` to the seat id, flies the
+  camera to the seat's king (retrying while the arena board data lands),
+  and reverses all of it on `battle_finished`/`battle_cancelled`.
+  Handles `?battle=CODE` invite links (auto-join + dialog) and re-adopts
+  the seat after a mid-battle reconnect via `battle_state`.
+- `public/js/battle/battleRules.js` (new) — client mirror of the arena
+  rules for instant local feedback.
+- Wire-ins: `main-enhanced.js` (init after join), `index.html`
+  (⚔ Battle button in the bottom-left strip), welcome modal gains
+  "⚔ BATTLE A FRIEND" under PLAY NOW (enters the world, then opens the
+  dialog).
+- `tetromino/validation.js` + `tetromino/pathViz.js` — local ghost
+  validation and the king-path BFS now accept the own-battle ring as
+  friendly ground and reject placements outside the arena, matching the
+  server.
+- `setupCamera.js#setCameraToOverview` — frames only the region the
+  player is in (their arena when battling, the organic world otherwise)
+  so a distant arena can't zoom the overview into orbit.
+
+### Verified
+
+- `tests/server/battleMode.test.js` (new, 16 tests): band tiling has no
+  dead cells, ring is one orthogonally-connected loop, 2-seat pawn rows
+  exactly 8 apart, 4-seat zones disjoint + inside the play area, rule
+  hooks, and the full manager lifecycle (create/join/start/bots/forfeit/
+  winner/cleanup/lobby-timeout). Full suite: **589 tests, 54 suites**.
+- Live E2E on an isolated server (3 sockets): create → join → lobby
+  update → host-only start → placement as the SEAT id inside the arena →
+  `outside_arena` + civilian `arena_reserved` rejections → forfeit →
+  `battle_finished` with the right winner. Bot battle: bot placed its
+  first tetromino inside the arena within seconds. Restart mid-battle:
+  registry + seats persisted, battle restored, bot resumed building
+  (24 cells after restart), 196 ring cells intact; cleanup after a
+  finish removed all of them.
+
+**Not in v1** (candidates for the next pass): auto-start when the last
+seat fills, battle-scoped duel/power-up tuning, spectator flyover of
+live arenas, per-battle scoreboard in the player bar.

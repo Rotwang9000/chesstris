@@ -113,6 +113,10 @@ function createAiRunner({
 		const computerPlayer = World.getPlayer(computerId);
 		if (!world || !computerPlayer || !computerPlayer.isComputer) return;
 		if (computerPlayer.pendingRespawn) return;
+		// Battle bot seats never respawn or self-detonate — they play
+		// until captured, and the battle sweep owns their lifecycle.
+		const isBattleSeat = !!computerPlayer.battleId;
+		if (isBattleSeat && computerPlayer.eliminated) return;
 
 		// Highest-priority response: if this AI is the defender in a
 		// pending Check, try to escape NOW. Tetromino placement and
@@ -167,7 +171,7 @@ function createAiRunner({
 		const onlyKingLeft = aiPieces.length === 1
 			&& String(aiPieces[0].type).toUpperCase() === 'KING';
 
-		if (onlyKingLeft) {
+		if (onlyKingLeft && !isBattleSeat) {
 			handleAiKingOnlyDetonation(computerId, aiPieces[0]);
 			return;
 		}
@@ -175,7 +179,8 @@ function createAiRunner({
 		const kingPiece = aiPieces.find(
 			p => String(p.type).toUpperCase() === 'KING'
 		);
-		if (aiPieces.length <= AI_MAROONED_PIECE_MAX && !aiOwnsTerrain(world, computerId) && kingPiece) {
+		if (!isBattleSeat && aiPieces.length <= AI_MAROONED_PIECE_MAX
+			&& !aiOwnsTerrain(world, computerId) && kingPiece) {
 			console.log(
 				`[AI] ${computerId} marooned (${aiPieces.length} pieces, no cells) — respawning.`
 			);
@@ -207,7 +212,7 @@ function createAiRunner({
 		}
 
 		computerPlayer.aiStuckTicks = (computerPlayer.aiStuckTicks || 0) + 1;
-		if (computerPlayer.aiStuckTicks >= AI_STUCK_NO_OP_THRESHOLD && kingPiece) {
+		if (!isBattleSeat && computerPlayer.aiStuckTicks >= AI_STUCK_NO_OP_THRESHOLD && kingPiece) {
 			// Only RECYCLE (self-detonate + respawn) an AI that's
 			// genuinely out of options. An AI that still has a healthy
 			// roster AND owns terrain shouldn't blow itself up just
@@ -351,7 +356,9 @@ function createAiRunner({
 		if (trimSuspended) return 0;
 		const world = World.getWorld();
 		if (!world) return 0;
-		const allAi = World.listComputerPlayers();
+		// Battle bot seats are deliberate per-arena duplicates — the
+		// roster trim must never collapse them.
+		const allAi = World.listComputerPlayers().filter(ai => !ai.battleId);
 		if (allAi.length === 0) return 0;
 
 		// Bucket by difficulty
@@ -407,7 +414,9 @@ function createAiRunner({
 		// Trim first so the top-up logic below sees a clean count.
 		trimDuplicateAis();
 
-		const existingAi = World.listComputerPlayers();
+		// Battle bot seats belong to their arena, not the world roster —
+		// the BattleManager re-arms their tickers after a restart.
+		const existingAi = World.listComputerPlayers().filter(ai => !ai.battleId);
 		for (const ai of existingAi) {
 			if (!ai.strategy) ai.strategy = generateComputerStrategy(ai.difficulty || 'medium');
 			// Stale `pendingRespawn` from before a restart would keep the

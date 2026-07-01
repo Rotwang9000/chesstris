@@ -8,6 +8,7 @@
 const { TETROMINO_SHAPES, TETROMINO_TYPES } = require('./Constants');
 const { log } = require('./GameUtilities');
 const cells = require('./cells');
+const battleRules = require('../battle/rules');
 
 /**
  * Fisher-Yates shuffle in place. Pure utility, but tests can mock
@@ -98,32 +99,38 @@ class TetrominoManager {
 			return { valid: false, reason: 'unsupported_height', message: 'Tetromino cannot be placed at this height' };
 		}
 		
-		// Check for collision with existing cells
+		// Battle-arena bounds: seated players must stay inside their
+		// arena; everyone else must stay clear of live arenas.
+		const shapeCells = [];
 		for (let i = 0; i < depth; i++) {
 			for (let j = 0; j < width; j++) {
-				if (shape[i][j]) {
-					const posX = x + j;
-					const posZ = z + i;
-					
-					// Check if the cell contains any non-home objects (occupied)
-					const cellContents = this.boardManager.getCell(game.board, posX, posZ);
-					
-					if (cellContents && cellContents.length > 0) {
-						const blocking = cellContents.some(item => {
-							if (!item) return true;
-							return !(item.type === cells.HOME_TYPE
-								|| item.type === cells.SPECIAL_TYPE
-								|| item.type === cells.CENTRE_TYPE);
-						});
+				if (shape[i][j]) shapeCells.push({ x: x + j, z: z + i });
+			}
+		}
+		const arenaCheck = battleRules.validateArenaBounds(game, playerId, shapeCells);
+		if (!arenaCheck.valid) {
+			return arenaCheck;
+		}
 
-						if (blocking) {
-							return {
-								valid: false,
-								reason: 'occupied',
-								message: `Position (${posX}, ${posZ}) is already occupied`
-							};
-						}
-					}
+		// Check for collision with existing cells
+		for (const { x: posX, z: posZ } of shapeCells) {
+			// Check if the cell contains any non-home objects (occupied)
+			const cellContents = this.boardManager.getCell(game.board, posX, posZ);
+
+			if (cellContents && cellContents.length > 0) {
+				const blocking = cellContents.some(item => {
+					if (!item) return true;
+					return !(item.type === cells.HOME_TYPE
+						|| item.type === cells.SPECIAL_TYPE
+						|| item.type === cells.CENTRE_TYPE);
+				});
+
+				if (blocking) {
+					return {
+						valid: false,
+						reason: 'occupied',
+						message: `Position (${posX}, ${posZ}) is already occupied`
+					};
 				}
 			}
 		}
@@ -142,7 +149,10 @@ class TetrominoManager {
 			}
 		}
 		const itemIsLiveOwnedContent = (item) => {
-			if (!item || String(item.player) !== pid) return false;
+			if (!item) return false;
+			// Battle-ring cells are shared ground for seats of that battle.
+			if (battleRules.ringItemUsableBy(game, item, playerId)) return true;
+			if (String(item.player) !== pid) return false;
 			if (item.type !== 'chess') return true;            // home / tetromino markers
 			if (item.pieceId == null) return true;             // legacy marker — accept
 			return livePieceIds.has(String(item.pieceId));      // live chess marker
@@ -150,35 +160,28 @@ class TetrominoManager {
 
 		let sawAdjacentPlayerContent = false;
 
-		for (let i = 0; i < depth; i++) {
-			for (let j = 0; j < width; j++) {
-				if (!shape[i][j]) continue;
+		for (const { x: posX, z: posZ } of shapeCells) {
+			const adjacentPositions = [
+				{ x: posX - 1, z: posZ },
+				{ x: posX + 1, z: posZ },
+				{ x: posX, z: posZ - 1 },
+				{ x: posX, z: posZ + 1 },
+			];
 
-				const posX = x + j;
-				const posZ = z + i;
+			for (const pos of adjacentPositions) {
+				const adjacentCell = this.boardManager.getCell(game.board, pos.x, pos.z);
+				if (!adjacentCell || adjacentCell.length === 0) continue;
 
-				const adjacentPositions = [
-					{ x: posX - 1, z: posZ },
-					{ x: posX + 1, z: posZ },
-					{ x: posX, z: posZ - 1 },
-					{ x: posX, z: posZ + 1 },
-				];
+				const hasPlayerContent = adjacentCell.some(itemIsLiveOwnedContent);
+				if (!hasPlayerContent) continue;
+				sawAdjacentPlayerContent = true;
 
-				for (const pos of adjacentPositions) {
-					const adjacentCell = this.boardManager.getCell(game.board, pos.x, pos.z);
-					if (!adjacentCell || adjacentCell.length === 0) continue;
+				if (isFirstPlacement) {
+					return { valid: true };
+				}
 
-					const hasPlayerContent = adjacentCell.some(itemIsLiveOwnedContent);
-					if (!hasPlayerContent) continue;
-					sawAdjacentPlayerContent = true;
-
-					if (isFirstPlacement) {
-						return { valid: true };
-					}
-
-					if (this.islandManager.hasPathToKing(game, pos.x, pos.z, pid)) {
-						return { valid: true };
-					}
+				if (this.islandManager.hasPathToKing(game, pos.x, pos.z, pid)) {
+					return { valid: true };
 				}
 			}
 		}

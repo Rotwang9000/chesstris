@@ -103,6 +103,10 @@ function createHomeZoneDegradationService({ gameManager, broadcaster, persistenc
 				// `server/world/pause.js`.
 				if (playerData && playerData.paused === true) continue;
 
+				// Battle seats are short-lived and managed by the
+				// BattleManager — their zones never idle-degrade.
+				if (playerData && playerData.battleId) continue;
+
 				const latestActionAt = getLatestPlayerActionAt(playerData);
 
 				if (latestActionAt > 0) {

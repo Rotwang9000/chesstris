@@ -588,6 +588,39 @@ AI logic:
 
 ---
 
+## 11a. Battle Mode (private 2–4 player arenas)
+
+Battles are private matches played in a circular arena away from the
+shared world. Your main kingdom is untouched while you fight — you play a
+dedicated battle *seat* with a fresh 8×2 home zone and full chess set.
+
+- **Create / join**: the ⚔ Battle button (or the welcome screen) opens the
+  dialog. The host picks 2–4 seats and gets a 6-character code plus an
+  invite link (`tetches.com/?battle=CODE`). Joining is by code. Only the
+  host can start; empty seats are filled with computer opponents
+  (Medium difficulty).
+- **Geometry**: the arena is bounded by a neutral **ring** (diameter 32, two
+  cells thick). Home zones face the centre: in a 1v1 the pawn rows are
+  exactly **8 cells apart**; with 3–4 players, seats sit at 90° to each
+  other, one cell further out.
+- **The ring** may be used by *any seated player* as friendly ground —
+  tetrominoes can anchor against it and the path-to-king may run through
+  it — but ring cells can never be cleared, moved by gravity, or owned.
+  Being a circle, it blocks long straight rook/bishop/queen runs across
+  the arena.
+- **Placement bounds**: seated players must place every cell of a
+  tetromino inside their arena (the ring is the wall). Players outside
+  the battle cannot build in or near anyone's arena.
+- **Everything else is normal Tetches**: line clears, captures, check,
+  king capture and elimination all work as in the shared world.
+- **Winning**: last seat with a king standing wins (a battle also ends if
+  it hits the 2-hour cap). Leaving an active battle forfeits your seat.
+  After the result, everyone returns to their main kingdom and the arena
+  is dismantled.
+- **Lobbies** expire after 15 minutes if not started.
+
+---
+
 ## 12. Scoring
 
 | Event | Points |

@@ -19,6 +19,7 @@ import { initSponsorSystem } from '../utils/sponsors.js'; // Import sponsor syst
 import { disposeBoats } from './boatsRenderer.js';
 import { showLoginDialog } from './auth/loginDialog.js';
 import { initSaveReminder } from './auth/saveReminder.js';
+import { initBattleMode } from './battle/battleMode.js';
 
 
 // Global state
@@ -653,6 +654,11 @@ async function joinGameAfterConnection(gameId = null) {
 			setTimeout(() => {
 				updateUnifiedPlayerBar(gameState);
 			}, 1000);
+
+			// Battle mode: socket listeners, ?battle=CODE invite links,
+			// mid-battle reconnect seat re-adoption.
+			try { initBattleMode(gameState); }
+			catch (err) { console.warn('Battle mode init failed:', err); }
 			
 			// Initialize the in-world sponsored-cell decoration loop.
 			// We deliberately do NOT call initFloatingBanner anymore —

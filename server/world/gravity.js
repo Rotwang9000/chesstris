@@ -61,6 +61,9 @@ function buildWorldCentroid(world) {
 	for (const playerId of Object.keys(zones)) {
 		const player = players[playerId];
 		if (!player || player.eliminated) continue;
+		// Battle seats live in remote arenas by design — including them
+		// would drag the organic world's centroid towards the arena grid.
+		if (player.battleId) continue;
 		const centre = homeZoneCentre(zones[playerId]);
 		if (!centre) continue;
 		totalX += centre.x;
@@ -185,6 +188,8 @@ function createWorldGravityService({ boardManager, broadcaster, persistence } = 
 		for (const [playerId, zone] of zoneEntries) {
 			const player = world.players?.[playerId];
 			if (!player || player.eliminated) continue;
+			// Battle seats are pinned to their arena — never drift them.
+			if (player.battleId) continue;
 			// Leave online / freshly-active players exactly where they
 			// are. Only abandoned territory gets consolidated.
 			if (player.connected) continue;

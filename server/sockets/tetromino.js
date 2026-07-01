@@ -9,7 +9,7 @@ const funnel = require('../observability/funnel');
 
 function registerTetrominoHandlers(socket, ctx) {
 	const {
-		playerId,
+		playerId: boundPlayerId,
 		io,
 		gameManager,
 		broadcaster,
@@ -19,8 +19,13 @@ function registerTetrominoHandlers(socket, ctx) {
 		powerUpManager,
 		activityLog,
 	} = ctx;
+	// While in an active battle the socket acts as its SEAT id.
+	const actingPlayerId = typeof ctx.resolveActingPlayerId === 'function'
+		? ctx.resolveActingPlayerId
+		: () => boundPlayerId;
 
 	socket.on('tetromino_placed', (data, callback) => {
+		const playerId = actingPlayerId();
 		try {
 			const player = World.getPlayer(playerId);
 			if (!player) {
@@ -257,6 +262,7 @@ function registerTetrominoHandlers(socket, ctx) {
 	// `(data, callback)` (browser / bot style). The browser doesn't
 	// currently use this event, but the external bot examples do.
 	socket.on('request_tetromino', (...args) => {
+		const playerId = actingPlayerId();
 		const callback = typeof args[args.length - 1] === 'function'
 			? args[args.length - 1]
 			: null;

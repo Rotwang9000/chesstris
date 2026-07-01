@@ -16,6 +16,13 @@
 const bySocket = new Map();
 /** @type {Map<string, string>} playerId -> active socketId */
 const activeSocketByPlayer = new Map();
+/**
+ * @type {Map<string, string>} aliasId -> real playerId
+ * Battle seats: gameplay events for the seat id must reach the socket of
+ * the human controlling it. Aliases survive reconnects because they map
+ * id → id (the live socket is looked up through the real id each time).
+ */
+const aliasToPlayer = new Map();
 
 /**
  * @typedef {Object} SocketSession
@@ -64,21 +71,36 @@ function bySocketId(socketId) {
 	return bySocket.get(socketId) || null;
 }
 
+/** Resolve an alias (e.g. battle seat id) to its real player id. */
+function resolveAlias(playerId) {
+	return aliasToPlayer.get(playerId) || playerId;
+}
+
+/** Route events for `aliasId` to the socket of `realPlayerId`. */
+function setAlias(aliasId, realPlayerId) {
+	if (!aliasId || !realPlayerId || aliasId === realPlayerId) return;
+	aliasToPlayer.set(String(aliasId), String(realPlayerId));
+}
+
+function clearAlias(aliasId) {
+	aliasToPlayer.delete(String(aliasId));
+}
+
 function socketForPlayer(playerId) {
-	const sid = activeSocketByPlayer.get(playerId);
+	const sid = activeSocketByPlayer.get(resolveAlias(playerId));
 	if (!sid) return null;
 	const session = bySocket.get(sid);
 	return session ? session.socket : null;
 }
 
 function sessionForPlayer(playerId) {
-	const sid = activeSocketByPlayer.get(playerId);
+	const sid = activeSocketByPlayer.get(resolveAlias(playerId));
 	if (!sid) return null;
 	return bySocket.get(sid) || null;
 }
 
 function isOnline(playerId) {
-	return activeSocketByPlayer.has(playerId);
+	return activeSocketByPlayer.has(resolveAlias(playerId));
 }
 
 function setSpectator(socketId, spectatingPlayerId = null) {
@@ -108,6 +130,7 @@ function listOnlinePlayerIds() {
 function clearAll() {
 	bySocket.clear();
 	activeSocketByPlayer.clear();
+	aliasToPlayer.clear();
 }
 
 module.exports = {
@@ -117,6 +140,9 @@ module.exports = {
 	socketForPlayer,
 	sessionForPlayer,
 	isOnline,
+	setAlias,
+	clearAlias,
+	resolveAlias,
 	setSpectator,
 	clearSpectator,
 	listSessions,

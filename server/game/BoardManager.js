@@ -557,24 +557,45 @@ class BoardManager {
 	 * Find all indices along `axis` that have at least
 	 * `REQUIRED_CELLS_FOR_ROW_CLEARING` consecutive filled non-home cells.
 	 *
+	 * Implementation note: this walks **occupied cells only** (bucketed
+	 * per line, sorted along the scan axis) rather than the board's
+	 * bounding box. With battle arenas parked thousands of cells from
+	 * the organic cluster, a bounding-box walk would probe millions of
+	 * empty keys per placement; the sparse walk stays proportional to
+	 * the number of real cells. Any gap in the occupancy sequence is by
+	 * definition empty space, which breaks the consecutive run exactly
+	 * as the old dense scan did.
+	 *
 	 * @param {Object} game
 	 * @param {'x'|'z'} axis  The fixed axis (i.e. 'z' = z-rows, scan along x)
-	 * @returns {number[]} indices ready to be cleared
+	 * @returns {Array<{index: number, runs: Array<{start:number,end:number}>}>}
 	 * @private
 	 */
 	_findClearableLines(game, axis) {
 		const threshold = GAME_RULES.REQUIRED_CELLS_FOR_ROW_CLEARING;
 		const matches = [];
 
-		const fixedStart = axis === 'z' ? game.board.minZ : game.board.minX;
-		const fixedEnd   = axis === 'z' ? game.board.maxZ : game.board.maxX;
-		const scanStart  = axis === 'z' ? game.board.minX : game.board.minZ;
-		const scanEnd    = axis === 'z' ? game.board.maxX : game.board.maxZ;
+		// Bucket occupied scan-coordinates by their fixed coordinate.
+		const lines = new Map();
+		for (const key of Object.keys(game.board.cells)) {
+			const comma = key.indexOf(',');
+			const x = Number(key.slice(0, comma));
+			const z = Number(key.slice(comma + 1));
+			if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
+			const fixed = axis === 'z' ? z : x;
+			const scan = axis === 'z' ? x : z;
+			let bucket = lines.get(fixed);
+			if (!bucket) { bucket = []; lines.set(fixed, bucket); }
+			bucket.push(scan);
+		}
 
-		for (let fixed = fixedStart; fixed <= fixedEnd; fixed++) {
+		for (const [fixed, bucket] of lines) {
+			bucket.sort((a, b) => a - b);
+
 			const runs = [];
 			let consecutive = 0;
 			let runStart = null;
+			let prevScan = null;
 
 			const closeRun = (lastScan) => {
 				if (consecutive >= threshold && runStart !== null) {
@@ -584,20 +605,28 @@ class BoardManager {
 				runStart = null;
 			};
 
-			for (let scan = scanStart; scan <= scanEnd; scan++) {
+			for (const scan of bucket) {
+				// A jump in the occupancy sequence means the cells in
+				// between are empty — the run breaks there.
+				if (prevScan !== null && scan !== prevScan + 1) {
+					closeRun(prevScan);
+				}
+				prevScan = scan;
+
 				const [x, z] = axis === 'z' ? [scan, fixed] : [fixed, scan];
 
-				// Per the bible, home cells, degraded-home remnants, and
-				// any cell owned by a paused player are treated as empty
-				// space for clear purposes: they break the run AND bound
-				// the cells that get cleared. This is why we now track
-				// run RANGES (not just indices) — without it the engine
-				// would clear cells on the far side of a home marker
+				// Per the bible, home cells, degraded-home remnants, battle
+				// ring cells, and any cell owned by a paused player are
+				// treated as empty space for clear purposes: they break the
+				// run AND bound the cells that get cleared. This is why we
+				// track run RANGES (not just indices) — without it the
+				// engine would clear cells on the far side of a home marker
 				// when the run on the near side hit the threshold, and
 				// players reported losing pieces "across the gap".
 				if (this.cellHasHomeMarker(game.board, x, z)
 					|| this._cellIsDegradedHomeOnly(game.board, x, z)
 					|| this._cellIsOwnedByPausedPlayer(game, x, z)
+					|| cells.hasBattleRing(this.getCell(game.board, x, z))
 					|| cells.hasAwaitingPromotion(this.getCell(game.board, x, z))) {
 					closeRun(scan - 1);
 					continue;
@@ -610,7 +639,7 @@ class BoardManager {
 					closeRun(scan - 1);
 				}
 			}
-			closeRun(scanEnd);
+			closeRun(prevScan);
 
 			if (runs.length > 0) {
 				matches.push({ index: fixed, runs });
@@ -622,6 +651,9 @@ class BoardManager {
 			}
 		}
 
+		// Keep the old dense-scan ordering (ascending line index) so
+		// downstream consumers and tests see identical output.
+		matches.sort((a, b) => a.index - b.index);
 		return matches;
 	}
 
@@ -652,6 +684,7 @@ class BoardManager {
 			if (!item) return false;
 			if (item.type !== 'tetromino') return false;
 			if (item.fromHomeZone === true) return false;
+			if (cells.isBattleRingItem(item)) return false;
 			return true;
 		});
 	}
@@ -703,35 +736,38 @@ class BoardManager {
 	 * @private
 	 */
 	_clearLine(game, axis, index, airbornePieces, runs = null) {
-		const start = axis === 'z' ? game.board.minX : game.board.minZ;
-		const end   = axis === 'z' ? game.board.maxX : game.board.maxZ;
+		// Iterate the qualifying run ranges directly when we have them
+		// (the normal path via `findClearableLines`); fall back to the
+		// board bounding box for legacy callers that pass no runs. The
+		// bounding box can span thousands of cells once battle arenas
+		// exist, so the run-bounded walk keeps this proportional to the
+		// actual clear.
+		const spans = (Array.isArray(runs) && runs.length > 0)
+			? runs
+			: [{
+				start: axis === 'z' ? game.board.minX : game.board.minZ,
+				end:   axis === 'z' ? game.board.maxX : game.board.maxZ,
+			}];
 
 		let modified = 0;
-		const inAnyRun = (scan) => {
-			if (!runs) return true;
-			for (const r of runs) if (scan >= r.start && scan <= r.end) return true;
-			return false;
-		};
 
-		for (let scan = start; scan <= end; scan++) {
-			// Bound the clear to the qualifying run(s). A home /
-			// degraded-home / paused cell that broke the run during
-			// the scan therefore also bounds the destruction here —
-			// cells on the far side of the gap are left alone.
-			if (!inAnyRun(scan)) continue;
-
+		// The span bounds the clear to the qualifying run(s). A home /
+		// degraded-home / paused / ring cell that broke the run during
+		// the scan therefore also bounds the destruction here — cells
+		// on the far side of the gap are left alone.
+		const clearAt = (scan) => {
 			const [x, z] = axis === 'z' ? [scan, index] : [index, scan];
 			const key = `${x},${z}`;
 			const cellContents = game.board.cells[key];
-			if (!Array.isArray(cellContents) || cellContents.length === 0) continue;
+			if (!Array.isArray(cellContents) || cellContents.length === 0) return;
 
 			// Home cells are still gaps — the home overlay protects
 			// everything sat on it, including any king sitting there.
-			if (cells.hasHome(cellContents)) continue;
-			if (!cells.isLineClearTarget(cellContents)) continue;
+			if (cells.hasHome(cellContents)) return;
+			if (!cells.isLineClearTarget(cellContents)) return;
 
 			const { preserved, lifted } = cells.stripForLineClear(cellContents);
-			if (preserved.length === cellContents.length && !lifted) continue;
+			if (preserved.length === cellContents.length && !lifted) return;
 
 			modified++;
 
@@ -755,6 +791,12 @@ class BoardManager {
 				game.board.cells[key] = preserved;
 			} else {
 				delete game.board.cells[key];
+			}
+		};
+
+		for (const span of spans) {
+			for (let scan = span.start; scan <= span.end; scan++) {
+				clearAt(scan);
 			}
 		}
 

@@ -125,7 +125,7 @@ function resolveRedeemSpawnCell(world, playerId, credit) {
 
 function registerChessHandlers(socket, ctx) {
 	const {
-		playerId,
+		playerId: boundPlayerId,
 		io,
 		gameManager,
 		broadcaster,
@@ -136,8 +136,13 @@ function registerChessHandlers(socket, ctx) {
 		spectatorRegistry,
 		activityLog,
 	} = ctx;
+	// While in an active battle the socket acts as its SEAT id.
+	const actingPlayerId = typeof ctx.resolveActingPlayerId === 'function'
+		? ctx.resolveActingPlayerId
+		: () => boundPlayerId;
 
 	socket.on('chess_move', (data, callback) => {
+		const playerId = actingPlayerId();
 		try {
 			const player = World.getPlayer(playerId);
 			if (!player) {
@@ -726,6 +731,7 @@ function registerChessHandlers(socket, ctx) {
 	// `player.promotionCredits` at the pawn's current cell. Players
 	// later spend credits via `redeem_promotion`.
 	socket.on('promote_pawn', (data, callback) => {
+		const playerId = actingPlayerId();
 		try {
 			const world = World.getWorld();
 			const { pieceId } = data || {};
@@ -761,6 +767,7 @@ function registerChessHandlers(socket, ctx) {
 	// owned cell to the player's king (the user's "if the cell got
 	// cleared, fall back to nearest-to-king" rule).
 	socket.on('redeem_promotion', (data, callback) => {
+		const playerId = actingPlayerId();
 		try {
 			const world = World.getWorld();
 			const player = World.getPlayer(playerId);
@@ -905,6 +912,7 @@ function registerChessHandlers(socket, ctx) {
 	// in-place. The frozen pawn must still be on the board; deploying
 	// keeps the same cell (which is locked as home-like while frozen).
 	socket.on('deploy_promotion', (data, callback) => {
+		const playerId = actingPlayerId();
 		try {
 			const world = World.getWorld();
 			const player = World.getPlayer(playerId);
@@ -1064,6 +1072,7 @@ function registerChessHandlers(socket, ctx) {
 	});
 
 	socket.on('skip_chess_move', (data, callback) => {
+		const playerId = actingPlayerId();
 		try {
 			const player = World.getPlayer(playerId);
 			if (!player) {
@@ -1129,6 +1138,7 @@ function registerChessHandlers(socket, ctx) {
 	});
 
 	socket.on('detonate_pawn', (data, callback) => {
+		const playerId = actingPlayerId();
 		try {
 			const world = World.getWorld();
 			const { pieceId } = data || {};

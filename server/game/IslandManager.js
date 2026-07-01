@@ -6,6 +6,7 @@
 const { log } = require('./GameUtilities');
 const cells = require('./cells');
 const pieces = require('./pieces');
+const battleRules = require('../battle/rules');
 
 // ── Disconnected-island grace policy (bible §15.2) ──────────────────────────
 //
@@ -106,7 +107,10 @@ class IslandManager {
 				}
 			}
 			const itemIsLiveOwned = (item) => {
-				if (!item || String(item.player) !== pid) return false;
+				if (!item) return false;
+				// Battle-ring cells are shared ground for seats of that battle.
+				if (battleRules.ringItemUsableBy(game, item, playerId)) return true;
+				if (String(item.player) !== pid) return false;
 				if (item.type !== 'chess') return true;
 				if (item.pieceId == null) return true;
 				return livePieceIds.has(String(item.pieceId));
@@ -224,6 +228,16 @@ class IslandManager {
 			if (!cellContents || !Array.isArray(cellContents)) return false;
 			return cellContents.some(item => item && String(item.player) === String(playerId));
 		};
+
+		// Battle-ring cells are traversable bridge ground for seats of
+		// that battle: the BFS walks THROUGH them (so terrain linked via
+		// the ring stays connected to the king) but never claims them as
+		// part of the island — they're neutral and must not decay.
+		const isRingBridge = (x, z) => {
+			const cellContents = game.board.cells[`${x},${z}`];
+			if (!Array.isArray(cellContents)) return false;
+			return cellContents.some(item => battleRules.ringItemUsableBy(game, item, playerId));
+		};
 		
 		const hasKingAt = (x, z) => {
 			if (!Array.isArray(game.chessPieces)) return false;
@@ -255,6 +269,11 @@ class IslandManager {
 					cells.push({ x: cell.x, z: cell.z });
 					queue.push(cell);
 					
+					if (hasKingAt(cell.x, cell.z)) hasKing = true;
+				} else if (isRingBridge(cell.x, cell.z)) {
+					visited.add(vk);
+					queue.push(cell);
+					// A king standing on the ring still anchors the island.
 					if (hasKingAt(cell.x, cell.z)) hasKing = true;
 				}
 			}

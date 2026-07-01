@@ -1,6 +1,7 @@
 import { getTHREE } from './gameContext.js';
 import { findBoardCentreMarker, translatePosition } from './centreBoardMarker.js';
 import { boardFunctions } from './boardFunctions.js';
+import { isBattleRegionCell, getActiveBattle } from './battle/battleRules.js';
 
 /**
  * Pull the camera back to a high-level overview of the entire board.
@@ -8,27 +9,46 @@ import { boardFunctions } from './boardFunctions.js';
  * Computes the bounding box of all populated cells and frames it so
  * the whole island is visible. Falls back to a sensible default extent
  * when the board is empty.
+ *
+ * Battle arenas live thousands of cells from the origin; framing them
+ * together with the organic world would zoom the camera into orbit. So
+ * the fit uses only the region the local player is actually in: their
+ * arena while battling, the organic world otherwise.
  */
 export function setCameraToOverview(camera, controls, gameState) {
 	if (!camera || !controls) return;
 
 	const board = gameState?.board;
 	let centerX = 0, centerZ = 0, maxExtent = 50;
+	const battle = getActiveBattle(gameState);
+	const ARENA_FRAME_RADIUS = 40;
+	const includeCell = (x, z) => {
+		if (battle && battle.centre) {
+			return Math.abs(x - battle.centre.x) <= ARENA_FRAME_RADIUS
+				&& Math.abs(z - battle.centre.z) <= ARENA_FRAME_RADIUS;
+		}
+		return !isBattleRegionCell(x, z);
+	};
 
 	if (board && board.cells) {
 		const cellKeys = Object.keys(board.cells);
 		if (cellKeys.length > 0) {
 			let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+			let counted = 0;
 			for (const key of cellKeys) {
 				const [x, z] = key.split(',').map(Number);
+				if (!includeCell(x, z)) continue;
 				if (x < minX) minX = x;
 				if (x > maxX) maxX = x;
 				if (z < minZ) minZ = z;
 				if (z > maxZ) maxZ = z;
+				counted++;
 			}
-			centerX = (minX + maxX) / 2;
-			centerZ = (minZ + maxZ) / 2;
-			maxExtent = Math.max(maxX - minX, maxZ - minZ, 50);
+			if (counted > 0) {
+				centerX = (minX + maxX) / 2;
+				centerZ = (minZ + maxZ) / 2;
+				maxExtent = Math.max(maxX - minX, maxZ - minZ, 50);
+			}
 		}
 	}
 

@@ -153,6 +153,11 @@ function freshWorld(id = GLOBAL_WORLD_ID) {
 		// them on the next save, but a server-restart that drops them is
 		// harmless (they regenerate within a minute).
 		powerUps: [],
+
+		// Battle-arena registry keyed by battleId. Each entry describes
+		// a 2-4 seat private arena parked far from the organic cluster.
+		// See `server/battle/BattleManager.js`.
+		battles: {},
 	};
 }
 
@@ -516,6 +521,7 @@ function restoreWorldFromSnapshot(snapshot) {
 		activityLog: Array.isArray(snapshot.activityLog) ? snapshot.activityLog : [],
 		_activityLogNextId: Number.isFinite(snapshot._activityLogNextId) ? snapshot._activityLogNextId : 1,
 		powerUps: Array.isArray(snapshot.powerUps) ? snapshot.powerUps : [],
+		battles: (snapshot.battles && typeof snapshot.battles === 'object') ? snapshot.battles : {},
 	};
 	// If we mutated the snapshot to fix legacy red colours, mark
 	// the world dirty so the next persistence cycle flushes the

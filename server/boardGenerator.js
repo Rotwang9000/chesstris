@@ -170,6 +170,10 @@ function collectExistingHomeZones(gameState) {
 		if (!gameState.homeZones[playerId]) continue;
 		const player = players[playerId];
 		if (player && player.eliminated) continue;
+		// Battle-arena seats sit thousands of cells away by design;
+		// counting them would drag new joiners' anchor centroid (and
+		// the "player index") towards the arena grid.
+		if (player && player.battleId) continue;
 		zones.push(gameState.homeZones[playerId]);
 	}
 	return zones;

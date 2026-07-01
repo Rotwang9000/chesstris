@@ -107,6 +107,21 @@ function hasChess(items) {
 }
 
 /**
+ * Battle-ring detection. Ring cells are the neutral circular wall around
+ * a battle arena: `{ type: 'tetromino', battleRing: <battleId>, player: null }`.
+ * They are shared ground — anyone may traverse or anchor on them (the
+ * battle module decides who), but they never clear, never move with
+ * gravity, and never change owner.
+ */
+function isBattleRingItem(item) {
+	return !!(item && item.battleRing);
+}
+
+function hasBattleRing(items) {
+	return asArray(items).some(isBattleRingItem);
+}
+
+/**
  * Does this cell hold a chess marker for a pawn currently frozen
  * awaiting promotion? Such cells are treated like home cells: they
  * block line-clear runs, protect their supporting terrain from being
@@ -192,6 +207,7 @@ function isClearable(items) {
 	return asArray(items).some(item => {
 		if (!item) return false;
 		if (item.fromHomeZone === true) return false;
+		if (isBattleRingItem(item)) return false;
 		return item.type !== HOME_TYPE
 			&& item.type !== SPECIAL_TYPE
 			&& item.type !== CENTRE_TYPE;
@@ -217,6 +233,7 @@ function isClearable(items) {
 function isLineClearTarget(items) {
 	if (hasHome(items)) return false;
 	if (hasAwaitingPromotion(items)) return false;
+	if (hasBattleRing(items)) return false;
 	if (onlyDegradedOrMarkers(items)) return false;
 	return asArray(items).some(item => {
 		if (!item) return false;
@@ -246,7 +263,7 @@ function stripForLineClear(items) {
 			preserved.push(item);
 			continue;
 		}
-		if (item.fromHomeZone === true) {
+		if (item.fromHomeZone === true || isBattleRingItem(item)) {
 			preserved.push(item);
 			continue;
 		}
@@ -272,6 +289,11 @@ function stripForLineClear(items) {
  * @returns {{ movable: boolean, owner: string|null }}
  */
 function gravityAnchor(items) {
+	// Ring cells are welded to the arena floor — they (and anything
+	// standing on them) never travel with clearing gravity.
+	if (hasBattleRing(items)) {
+		return { movable: false, owner: null };
+	}
 	const chessOwner = getChessOwner(items);
 	if (chessOwner) {
 		return { movable: true, owner: chessOwner };
@@ -302,6 +324,7 @@ function transferOwnership(items, newOwner, newColor) {
 		if (!item) continue;
 		if (item.type === HOME_TYPE) continue;
 		if (item.type === CENTRE_TYPE) continue;
+		if (isBattleRingItem(item)) continue; // ring is forever neutral
 		if (String(item.player) === String(newOwner)) continue;
 		item.player = newOwner;
 		if (newColor !== undefined) item.color = newColor;
@@ -319,6 +342,7 @@ function stripClearable(items) {
 	return asArray(items).filter(item => {
 		if (!item) return false;
 		if (item.fromHomeZone === true) return true;
+		if (isBattleRingItem(item)) return true;
 		return item.type === HOME_TYPE
 			|| item.type === CHESS_TYPE
 			|| item.type === CENTRE_TYPE
@@ -339,6 +363,8 @@ module.exports = {
 	hasBoardCentre,
 	hasDegradedHomeRemnant,
 	onlyDegradedOrMarkers,
+	isBattleRingItem,
+	hasBattleRing,
 	isClearable,
 	isLineClearTarget,
 

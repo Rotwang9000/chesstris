@@ -4,6 +4,7 @@ import gameState from './utils/gameState.js';
 import { loginWithEmail, handleAuthRedirect, isSignedIn } from './auth/auth0Client.js';
 import { showLoginDialog } from './auth/loginDialog.js';
 import { isLoggedIn as isKingdomLoggedIn, getLoggedInName as getKingdomName } from './auth/kingdomKey.js';
+import { showBattleDialog } from './battle/battleMode.js';
 
 /**
  * Create a loading indicator with Russian-themed styling
@@ -617,6 +618,12 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 		<div style="font-size: 12px; opacity: 0.8; text-align: center; margin-top: -2px;">
 			Jump straight in — no sign-up needed, your spot is remembered on this device.
 		</div>
+		<button id="welcome-battle-btn" class="tutorial-btn" style="font-size: 14px; padding: 10px 16px;">
+			⚔ BATTLE A FRIEND
+		</button>
+		<div style="font-size: 11px; opacity: 0.7; text-align: center; margin-top: -4px;">
+			Private 2-4 player arena — share a code, or fight the bots.
+		</div>
 	`;
 
 	// Account link: prominent but unmistakably optional (guests enter with
@@ -711,6 +718,21 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 			newGameBtn.disabled = true;
 			newGameBtn.textContent = 'Entering...';
 			startGame(null); // Default shared world (session may restore position)
+		});
+	}
+
+	// Battle a friend: enter the world first (battles live inside it),
+	// then open the battle dialog once the connection is up.
+	const welcomeBattleBtn = tutorialElement.querySelector('#welcome-battle-btn');
+	if (welcomeBattleBtn) {
+		welcomeBattleBtn.addEventListener('click', () => {
+			welcomeBattleBtn.disabled = true;
+			welcomeBattleBtn.textContent = 'Entering...';
+			startGame(null);
+			setTimeout(() => {
+				try { showBattleDialog(); }
+				catch (err) { console.warn('Battle dialog failed to open:', err); }
+			}, 2500);
 		});
 	}
 

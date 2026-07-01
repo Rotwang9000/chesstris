@@ -152,6 +152,10 @@ function buildSnapshot() {
 			minMoveInterval: p.minMoveInterval || 0,
 			consecutiveMoves: p.consecutiveMoves || 0,
 			lastMoveTime: p.lastMoveTime || 0,
+			// Battle-seat linkage (see server/battle/BattleManager.js).
+			// Dropping these on restart would orphan live arena seats.
+			battleId: p.battleId || null,
+			controlledBy: p.controlledBy || null,
 		};
 	}
 
@@ -193,6 +197,7 @@ function buildSnapshot() {
 			_activityLogNextId: Number.isFinite(world._activityLogNextId) ? world._activityLogNextId : 1,
 			players: persistablePlayers,
 			powerUps: Array.isArray(world.powerUps) ? world.powerUps.slice() : [],
+			battles: (world.battles && typeof world.battles === 'object') ? world.battles : {},
 		},
 	};
 }
