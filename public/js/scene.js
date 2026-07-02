@@ -685,14 +685,36 @@ function addWaterPlane(scene, THREE) {
  * Per-frame animation — called from the gameLoop so the water doesn't
  * sit dead still. No-op when there's no water plane (cute / retro).
  *
+ * The sea plane is finite (1200 units) so it also FOLLOWS the camera
+ * target in whole-unit steps: battle arenas live thousands of cells
+ * from the origin and would otherwise float over black void.
+ *
  * @param {THREE.Scene} scene
+ * @param {{x: number, z: number}} [followTarget] Usually `controls.target`.
  */
-export function updateWaterPlane(scene) {
+export function updateWaterPlane(scene, followTarget = null) {
 	if (!scene) return;
 	const water = scene.getObjectByName('tetches-water');
 	if (!water || !water.geometry) return;
 	const base = water.userData.baseHeights;
 	if (!base) return;
+
+	const glow = scene.getObjectByName('tetches-water-glow');
+
+	if (followTarget && Number.isFinite(followTarget.x) && Number.isFinite(followTarget.z)) {
+		// Snap to whole units so the (local-space) ripple pattern doesn't
+		// visibly swim while the camera pans.
+		const fx = Math.round(followTarget.x);
+		const fz = Math.round(followTarget.z);
+		if (water.position.x !== fx || water.position.z !== fz) {
+			water.position.x = fx;
+			water.position.z = fz;
+			if (glow) {
+				glow.position.x = fx;
+				glow.position.z = fz;
+			}
+		}
+	}
 
 	const t = (performance.now() - (water.userData.startedAt || 0)) / 1000;
 	const positions = water.geometry.attributes.position;
@@ -705,7 +727,6 @@ export function updateWaterPlane(scene) {
 	}
 	positions.needsUpdate = true;
 
-	const glow = scene.getObjectByName('tetches-water-glow');
 	if (glow) glow.rotation.y = t * 0.03;
 
 	// Cheap to do here so we don't need a separate frame hook just

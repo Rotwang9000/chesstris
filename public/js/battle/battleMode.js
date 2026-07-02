@@ -125,12 +125,12 @@ function el(tag, styles = {}, text = '') {
 	return node;
 }
 
-function themedButton(label, { primary = false } = {}) {
+function themedButton(label, { primary = false, danger = false } = {}) {
 	const btn = el('button', {
 		padding: '8px 16px',
 		backgroundColor: primary ? '#ffcc00' : '#333',
-		color: primary ? '#000' : '#ffcc00',
-		border: '1px solid #ffcc00',
+		color: primary ? '#000' : (danger ? '#ff8866' : '#ffcc00'),
+		border: `1px solid ${danger ? '#aa4433' : '#ffcc00'}`,
 		borderRadius: '4px',
 		cursor: 'pointer',
 		fontFamily: 'inherit',
@@ -325,13 +325,39 @@ function renderLobby(card, battle) {
 	}
 	card.appendChild(seatList);
 
-	const row = el('div', { display: 'flex', gap: '8px', justifyContent: 'flex-end' });
-	const leaveBtn = themedButton(isHost ? 'Cancel battle' : 'Leave');
+	if (!isHost) {
+		const note = el('div', { fontSize: '12px', color: '#ccc', marginBottom: '10px' },
+			'Waiting for the host to start…');
+		card.appendChild(note);
+	} else if (battle.seats.length < battle.seatCount) {
+		const note = el('div', { fontSize: '12px', color: '#ccc', marginBottom: '10px' },
+			'Share the invite link, or start now — empty seats become bots.');
+		card.appendChild(note);
+	}
+
+	// Destructive action on the left, safe actions on the right. "Close"
+	// just hides the dialog and KEEPS the lobby (reopen it with the
+	// ⚔ Battle button); "Cancel battle" / "Leave" gives up the seat.
+	const row = el('div', { display: 'flex', gap: '8px', justifyContent: 'space-between', alignItems: 'center' });
+	const leaveBtn = themedButton(isHost ? '✕ Cancel battle' : '✕ Leave', { danger: true });
+	leaveBtn.title = isHost
+		? 'Delete this lobby (the code stops working)'
+		: 'Give up your seat in this lobby';
 	leaveBtn.addEventListener('click', async () => {
 		await leaveBattle();
 		closeBattleDialog();
+		showToastMessage(isHost ? 'Battle cancelled' : 'Left the battle lobby', { duration: 3500 });
 	});
 	row.appendChild(leaveBtn);
+
+	const rightSide = el('div', { display: 'flex', gap: '8px' });
+	const closeBtn = themedButton('Close');
+	closeBtn.title = 'Hide this dialog — the lobby stays open (⚔ Battle button reopens it)';
+	closeBtn.addEventListener('click', () => {
+		closeBattleDialog();
+		showToastMessage('Lobby still open — the ⚔ Battle button brings it back', { duration: 4000 });
+	});
+	rightSide.appendChild(closeBtn);
 
 	if (isHost) {
 		const startBtn = themedButton('Start battle', { primary: true });
@@ -345,12 +371,9 @@ function renderLobby(card, battle) {
 				closeBattleDialog();
 			}
 		});
-		row.appendChild(startBtn);
-	} else {
-		const note = el('span', { fontSize: '12px', color: '#ccc', alignSelf: 'center' },
-			'Waiting for the host to start…');
-		row.insertBefore(note, leaveBtn);
+		rightSide.appendChild(startBtn);
 	}
+	row.appendChild(rightSide);
 	card.appendChild(row);
 }
 

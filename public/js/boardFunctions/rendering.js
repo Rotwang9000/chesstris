@@ -116,6 +116,23 @@ function createCloudPuff(THREE, renderCache, x, z) {
 	return group;
 }
 
+/**
+ * A cell whose only content is the centre-marker bookkeeping item has
+ * no physical terrain — rendering it would draw a phantom floating
+ * tile (visible in open sea around (0,0)).
+ */
+function isMarkerOnlyCell(cellData) {
+	if (Array.isArray(cellData)) {
+		return cellData.length > 0 && cellData.every(item =>
+			item && (item.type === 'specialMarker' || item.type === 'boardCentre'));
+	}
+	if (cellData && typeof cellData === 'object') {
+		const keys = Object.keys(cellData);
+		return keys.length === 1 && keys[0] === 'specialMarker';
+	}
+	return false;
+}
+
 function classifyCell(cellData) {
 	let isHomeZone = false;
 	let homePlayer = null;
@@ -385,6 +402,7 @@ export function renderBoard(gameState, boardGroup, _createFloatingIsland, THREE)
 			processedCells[cellKey] = true;
 			const cellData = gameState.board.cells[key];
 			if (cellData === null || cellData === undefined) continue;
+			if (isMarkerOnlyCell(cellData)) continue;
 
 			const classification = classifyCell(cellData);
 			const appearance = chooseAppearance(classification, gameState, x, z);

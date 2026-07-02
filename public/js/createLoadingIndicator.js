@@ -527,8 +527,23 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 		document.head.appendChild(style);
 	}
 
-	// Function to close tutorial and start game
+	// Persist the (optional) name typed into the welcome modal so the
+	// world join announces the player correctly. Blank = keep whatever
+	// was stored; the server auto-names brand-new guests.
+	const saveTypedPlayerName = () => {
+		try {
+			const input = tutorialElement.querySelector('#welcome-player-name');
+			const typed = (input?.value || '').trim().slice(0, 20);
+			if (typed) localStorage.setItem('playerName', typed);
+		} catch (_e) { /* private mode */ }
+	};
+
+	// Function to close tutorial and start game.
+	// Returns the start function's promise so callers (e.g. the battle
+	// button) can sequence follow-up UI on the world join completing.
 	const startGame = (gameKey = null) => {
+		saveTypedPlayerName();
+
 		// Store the game key if provided
 		if (gameKey) {
 			localStorage.setItem('tetches_game_key', gameKey);
@@ -542,14 +557,14 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 		// Start the game with the key if provided
 		if (typeof startGameFunction === 'function') {
 			console.log('Entering world using passed function', gameKey ? `with key: ${gameKey}` : 'default shared world');
-			startGameFunction(gameKey);
+			return Promise.resolve(startGameFunction(gameKey));
 		} else if (typeof window.startTetchesGame === 'function') {
 			console.log('Entering world using global function');
-			window.startTetchesGame(gameKey);
-		} else {
-			console.error('No game start function available!');
-			alert('Error: Could not start the game. Please refresh and try again.');
+			return Promise.resolve(window.startTetchesGame(gameKey));
 		}
+		console.error('No game start function available!');
+		alert('Error: Could not start the game. Please refresh and try again.');
+		return Promise.resolve(false);
 	};
 
 	// Build the scrollable content. The 8-bit hero carries the title;
@@ -610,19 +625,40 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 		`;
 	}
 	
-	const newGameIsPrimary = !(ENABLE_WORLD_KEY && previousGameKey);
+	// Optional name — one field on the one modal, instead of the old
+	// separate name dialog that used to pop up over everything.
+	let storedName = '';
+	try { storedName = localStorage.getItem('playerName') || ''; } catch (_e) { /* private mode */ }
+	const escapedName = storedName.replace(/[<>&"]/g, '');
+
+	// Invite links (/?battle=CODE) surface on the battle button so the
+	// invitee knows exactly what to click.
+	let inviteBattleCode = null;
+	try {
+		const inviteParam = new URLSearchParams(window.location.search).get('battle');
+		if (inviteParam && /^[A-Za-z0-9]{4,8}$/.test(inviteParam)) {
+			inviteBattleCode = inviteParam.toUpperCase();
+		}
+	} catch (_e) { /* no URL params */ }
+
+	const newGameIsPrimary = !(ENABLE_WORLD_KEY && previousGameKey) && !inviteBattleCode;
 	buttonHTML += `
+		<input type="text" id="welcome-player-name" class="game-key-input"
+			placeholder="Your name (optional)" maxlength="20" value="${escapedName}"
+			autocomplete="nickname" style="text-align: center;">
 		<button id="new-game-btn" class="tutorial-btn ${newGameIsPrimary ? 'primary' : ''}">
 			✦ PLAY NOW
 		</button>
 		<div style="font-size: 12px; opacity: 0.8; text-align: center; margin-top: -2px;">
 			Jump straight in — no sign-up needed, your spot is remembered on this device.
 		</div>
-		<button id="welcome-battle-btn" class="tutorial-btn" style="font-size: 14px; padding: 10px 16px;">
-			⚔ BATTLE A FRIEND
+		<button id="welcome-battle-btn" class="tutorial-btn ${inviteBattleCode ? 'primary' : ''}" style="font-size: 14px; padding: 10px 16px;">
+			${inviteBattleCode ? `⚔ JOIN BATTLE ${inviteBattleCode}` : '⚔ BATTLE A FRIEND'}
 		</button>
 		<div style="font-size: 11px; opacity: 0.7; text-align: center; margin-top: -4px;">
-			Private 2-4 player arena — share a code, or fight the bots.
+			${inviteBattleCode
+		? 'You have been invited to a private battle — click to take your seat.'
+		: 'Private 2-4 player arena — share a code, or fight the bots.'}
 		</div>
 	`;
 
@@ -721,18 +757,31 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 		});
 	}
 
+	// Enter in the name field = PLAY NOW.
+	const welcomeNameInput = tutorialElement.querySelector('#welcome-player-name');
+	if (welcomeNameInput && newGameBtn) {
+		welcomeNameInput.addEventListener('keydown', (event) => {
+			if (event.key === 'Enter') {
+				event.preventDefault();
+				newGameBtn.click();
+			}
+		});
+	}
+
 	// Battle a friend: enter the world first (battles live inside it),
-	// then open the battle dialog once the connection is up.
+	// then open the battle dialog once the join has actually completed.
+	// With an invite code in the URL, initBattleMode handles the join +
+	// dialog itself right after world entry, so don't double-open it.
 	const welcomeBattleBtn = tutorialElement.querySelector('#welcome-battle-btn');
 	if (welcomeBattleBtn) {
 		welcomeBattleBtn.addEventListener('click', () => {
 			welcomeBattleBtn.disabled = true;
 			welcomeBattleBtn.textContent = 'Entering...';
-			startGame(null);
-			setTimeout(() => {
+			startGame(null).then((entered) => {
+				if (entered === false || inviteBattleCode) return;
 				try { showBattleDialog(); }
 				catch (err) { console.warn('Battle dialog failed to open:', err); }
-			}, 2500);
+			}).catch((err) => console.warn('Battle entry failed:', err));
 		});
 	}
 
@@ -831,28 +880,41 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 	}
 }
 /**
- * Utility function to hide all loading elements
+ * Utility function to hide all loading elements.
+ *
+ * Called on every board update, so it must be quiet and cheap when
+ * there's nothing left to hide (the common case after the first
+ * render) — it used to log "Forcibly hiding…" in a loop forever.
  */
 export function hideAllLoadingElements() {
-	console.log("Forcibly hiding all loading elements");
+	let hidAnything = false;
 
 	// Hide loading screen
 	const loadingElement = document.getElementById('loading');
-	if (loadingElement) {
+	if (loadingElement && loadingElement.style.display !== 'none') {
 		loadingElement.style.display = 'none';
+		hidAnything = true;
 	}
 
 	// Remove loading indicator
 	const loadingIndicator = document.getElementById('loading-indicator');
 	if (loadingIndicator && loadingIndicator.parentNode) {
 		loadingIndicator.parentNode.removeChild(loadingIndicator);
+		hidAnything = true;
 	}
 
 	// Hide any other loading elements
 	const elements = document.querySelectorAll('[id*="loading"]');
 	elements.forEach(el => {
-		el.style.display = 'none';
+		if (el.style.display !== 'none') {
+			el.style.display = 'none';
+			hidAnything = true;
+		}
 	});
+
+	if (hidAnything) {
+		console.log('Hiding loading elements');
+	}
 }
 /**
  * Update game ID display

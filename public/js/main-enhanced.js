@@ -17,7 +17,6 @@ import * as tetrominoModule from './tetromino.js'; // Import tetromino module fo
 import { initFloatingBanner } from './floatingBanner.js'; // Import floating banner for ads
 import { initSponsorSystem } from '../utils/sponsors.js'; // Import sponsor system
 import { disposeBoats } from './boatsRenderer.js';
-import { showLoginDialog } from './auth/loginDialog.js';
 import { initSaveReminder } from './auth/saveReminder.js';
 import { initBattleMode } from './battle/battleMode.js';
 
@@ -225,18 +224,12 @@ async function init() {
 		// Create network status display
 		createNetworkStatusDisplay();
 		
-		// Show player login if needed
-		if (!playerName) {
-			// Always hide loading screen before showing login
-			document.getElementById('loading').style.display = 'none';
-			showPlayerNamePrompt();
-			return;
-		}
-		
 		// Hide loading screen only after game is initialized
 		// DO NOT hide it here to avoid flash of content
 		
-		// Initialize the game first
+		// Initialize the game first. There is deliberately NO separate
+		// name dialog any more: the welcome modal carries an optional
+		// name field, and the world join waits for its PLAY button.
 		console.log('Starting enhanced game initialization...');
 		const gameContainer = document.getElementById('game-container');
 		gameContainer.style.display = 'block';
@@ -279,8 +272,19 @@ async function init() {
 		createUnifiedPlayerBar(initialState);
 		wireSessionWarningLink();
 		
-		// Join or create a game - this will handle the loading screen
-		joinGame();
+		// World entry is gated by the welcome modal: the actual
+		// `join_game` (which spawns/announces the kingdom) waits until
+		// the player clicks PLAY. Until then we only hold a background
+		// socket so the world renders as a spectator backdrop. A
+		// mode-switch resume skips the gate — that player already
+		// entered this session.
+		gameCore.setWorldJoinGate(ensureWorldJoined);
+		if (hasRecentModeSwitchState()) {
+			ensureWorldJoined();
+		} else {
+			connectForWorldPreview();
+			hideLoadingScreen();
+		}
 		
 		console.log('Enhanced game initialized successfully');
 	} catch (error) {
@@ -306,101 +310,68 @@ async function init() {
 }
 
 /**
- * Show player name prompt with Russian theme
+ * True when a render-mode switch just reloaded the page — that player
+ * already entered the world this session, so skip the welcome gate.
  */
-function showPlayerNamePrompt() {
-	// Hide loading screen
-	document.getElementById('loading').style.display = 'none';
-	
-	// Create or get login container
-	let loginContainer = document.getElementById('login-container');
-	if (!loginContainer) {
-		loginContainer = document.createElement('div');
-		loginContainer.id = 'login-container';
-		
-		// Style the login container with Russian theme
-		Object.assign(loginContainer.style, {
-			position: 'fixed',
-			top: '0',
-			left: '0',
-			width: '100%',
-			height: '100%',
-			backgroundColor: 'rgba(0, 0, 0, 0.9)',
-			display: 'flex',
-			justifyContent: 'center',
-			alignItems: 'center',
-			zIndex: '1001'
-		});
-		
-		// Add login form with Russian theme
-		loginContainer.innerHTML = `
-			<div style="background-color: #111; padding: 30px; border-radius: 10px; width: 300px; max-width: 90%; text-align: center; box-shadow: 0 0 20px rgba(255, 204, 0, 0.3); border: 2px solid #ffcc00;">
-				<h2 style="color: #ffcc00; margin-top: 0; font-family: 'Times New Roman', serif;">Welcome to Tetches</h2>
-				<div style="font-size: 36px; color: #ffcc00; margin: 10px 0;">☦</div>
-				<p style="color: white; margin-bottom: 20px; font-family: 'Times New Roman', serif;">Enter your player name to start playing</p>
-				
-				<form id="player-form" style="display: flex; flex-direction: column; gap: 15px;">
-					<input 
-						type="text" 
-						id="player-name" 
-						placeholder="Your name" 
-						style="padding: 10px; border-radius: 5px; border: 1px solid #ffcc00; background-color: #222; color: white; font-size: 16px; font-family: 'Times New Roman', serif;"
-						maxlength="20"
-						required
-					>
-					
-					<button 
-						type="submit" 
-						style="padding: 10px; background-color: #333; color: #ffcc00; border: 1px solid #ffcc00; border-radius: 5px; cursor: pointer; font-size: 16px; font-weight: bold; font-family: 'Times New Roman', serif;"
-					>
-						Start Playing
-					</button>
-				</form>
-				<div style="margin-top: 14px; font-size: 12px; color: #bbb; font-family: 'Times New Roman', serif;">
-					Just exploring? Start playing as a guest.<br>
-					<a href="#" id="player-login-link" style="color: #ffcc00; text-decoration: underline; cursor: pointer;">Log in or create an account</a>
-					to keep your kingdom on any device.
-				</div>
-			</div>
-		`;
-		
-		document.body.appendChild(loginContainer);
-		
-		// Focus the input field
-		setTimeout(() => {
-			document.getElementById('player-name').focus();
-		}, 100);
+function hasRecentModeSwitchState() {
+	try {
+		const saved = sessionStorage.getItem('tetches_mode_switch_state');
+		if (!saved) return false;
+		const state = JSON.parse(saved);
+		return !!(state.gameId && Date.now() - state.timestamp < 30000);
+	} catch (_e) {
+		return false;
+	}
+}
 
-		// Optional account login. Opens the shared login dialog; on success
-		// it stores the derived key and reloads straight into the account
-		// (the server resumes it, or migrates this guest's kingdom onto it).
-		const loginLink = document.getElementById('player-login-link');
-		if (loginLink) {
-			loginLink.addEventListener('click', (e) => {
-				e.preventDefault();
-				const typedName = (document.getElementById('player-name')?.value || '').trim();
-				showLoginDialog({ prefillUsername: typedName });
-			});
-		}
-		
-		// Add form submit handler
-		document.getElementById('player-form').addEventListener('submit', (e) => {
-			e.preventDefault();
-			
-			const nameInput = document.getElementById('player-name');
-			const name = nameInput.value.trim();
-			
-			if (name) {
-				playerName = name;
-				localStorage.setItem('playerName', name);
-				
-				// Remove login container
-				document.body.removeChild(loginContainer);
-				
-				// Restart initialization
-				init();
+let worldJoinPromise = null;
+
+/**
+ * Join the shared world exactly once (single-flight). Registered with
+ * gameCore as the "world join gate": `startPlayingGame` awaits it, so
+ * the server-side `join_game` only happens when the player actually
+ * enters — not silently at page load.
+ *
+ * @returns {Promise<boolean>} True once joined.
+ */
+function ensureWorldJoined() {
+	if (!worldJoinPromise) {
+		// Re-read the name in case the welcome modal just saved it.
+		playerName = localStorage.getItem('playerName') || playerName || '';
+		worldJoinPromise = joinGame().then((joined) => {
+			if (joined === false) {
+				// Allow another attempt on the next click.
+				worldJoinPromise = null;
+				return false;
 			}
+			return true;
+		}).catch((error) => {
+			console.error('World join failed:', error);
+			worldJoinPromise = null;
+			return false;
 		});
+	}
+	return worldJoinPromise;
+}
+
+/**
+ * Background socket connection (no `join_game`). The server streams
+ * `game_update` broadcasts to every connected socket, so the world
+ * renders behind the welcome modal as a live backdrop, and the battle
+ * dialog can create/join lobbies before the player enters the world.
+ */
+async function connectForWorldPreview() {
+	try {
+		const connected = await NetworkManager.initialize(playerName || 'Guest');
+		if (!connected) return;
+		// Ask for one full snapshot so a quiet world still paints the
+		// backdrop instead of waiting for the next broadcast.
+		const socket = NetworkManager.getSocket ? NetworkManager.getSocket() : null;
+		if (socket && typeof socket.emit === 'function') {
+			socket.emit('get_game_state', {});
+		}
+	} catch (error) {
+		console.warn('World preview connection failed (will connect on entry):', error);
 	}
 }
 
@@ -669,12 +640,14 @@ async function joinGameAfterConnection(gameId = null) {
 			setTimeout(() => {
 				initSponsorSystem().catch(err => console.warn('Sponsor system init error:', err));
 			}, 2000);
+			return true;
 		} else {
 			throw new Error('Failed to join game');
 		}
 	} catch (error) {
 		console.error('Error entering world after connection:', error);
 		showError(`Failed to enter world: ${error.message || 'Unknown error'}`);
+		return false;
 	}
 }
 

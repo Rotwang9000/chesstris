@@ -462,7 +462,11 @@ function animate(time) {
 				} else if (gameState.renderProfile !== 'retro') {
 					if (typeof sceneModule.animateAmbientParticles === 'function') sceneModule.animateAmbientParticles(scene, delta);
 					if (typeof sceneModule.animateSkyDecorations === 'function') sceneModule.animateSkyDecorations(scene);
-					if (typeof sceneModule.updateWaterPlane === 'function') sceneModule.updateWaterPlane(scene);
+					// The sea follows the camera target so remote battle
+					// arenas (thousands of cells out) still sit on water.
+					if (typeof sceneModule.updateWaterPlane === 'function') {
+						sceneModule.updateWaterPlane(scene, getControls()?.target);
+					}
 				}
 			}
 
@@ -566,7 +570,9 @@ function animate(time) {
 				lastLODUpdate = time;
 				if (typeof animateClouds === 'function') animateClouds(scene);
 				if (typeof sceneModule.animateFloatingIslands === 'function') sceneModule.animateFloatingIslands(scene);
-				if (typeof sceneModule.updateWaterPlane === 'function') sceneModule.updateWaterPlane(scene);
+				if (typeof sceneModule.updateWaterPlane === 'function') {
+					sceneModule.updateWaterPlane(scene, getControls()?.target);
+				}
 			}
 			if (time - lastGameLogicUpdate > GAME_LOGIC_INTERVAL) {
 				lastGameLogicUpdate = time;

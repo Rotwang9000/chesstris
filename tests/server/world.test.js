@@ -118,6 +118,33 @@ describe('World — single source of truth', () => {
 		World.markDirty();
 		expect(World.isDirty()).toBe(true);
 	});
+
+	// The centre marker is the client's render-space anchor: every mesh
+	// sits at `boardCoord + centreMarker`, so it must exist and must
+	// never move — a bounds-derived fallback jumped ~1000 cells when a
+	// battle arena spawned, teleporting the world for every player.
+	test('fresh world pins the board centre marker at (0,0)', () => {
+		const w = World.getWorld();
+		expect(w.board.centreMarker).toEqual({ x: 0, z: 0 });
+	});
+
+	test('restoreWorldFromSnapshot backfills a missing centre marker', () => {
+		World.restoreWorldFromSnapshot({
+			id: 'global_game',
+			board: { cells: { '5,5': [{ type: 'tetromino', player: 'p1' }] }, minX: 5, maxX: 5, minZ: 5, maxZ: 5 },
+			players: { p1: { id: 'p1', name: 'Alice' } },
+		});
+		expect(World.getWorld().board.centreMarker).toEqual({ x: 0, z: 0 });
+	});
+
+	test('restoreWorldFromSnapshot keeps an existing centre marker', () => {
+		World.restoreWorldFromSnapshot({
+			id: 'global_game',
+			board: { cells: {}, minX: 0, maxX: 0, minZ: 0, maxZ: 0, centreMarker: { x: 0, z: 0 } },
+			players: {},
+		});
+		expect(World.getWorld().board.centreMarker).toEqual({ x: 0, z: 0 });
+	});
 });
 
 describe('Sessions — ephemeral socket bindings', () => {

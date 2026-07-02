@@ -2,6 +2,60 @@
 
 > Part of the [Tetches project outline](README.md). May 2026: power-up orbs, connectivity, production audit.
 
+### Battle-mode UX fixes: pinned render origin, deferred world join, lobby clarity (2 Jul 2026)
+
+**Fixes the player-reported "empty landscape" after starting a battle, plus
+the confusing first-load flow.** Root cause of the vanishing world: the
+client's render origin (the board **centre marker**) was *derived from board
+bounds* whenever the server didn't send one — and the server never did. A
+battle arena spawning ~2,240 cells away inflated the bounds, the derived
+midpoint leapt to ~(1120, 1036), and every mesh silently re-anchored a
+thousand cells out from under the camera. The URL still said `global_game`;
+the world was simply rendering somewhere else.
+
+* **Server now owns the centre marker (`server/world/World.js`).**
+  `freshWorld()` pins `board.centreMarker = {x: 0, z: 0}` and
+  `restoreWorldFromSnapshot()` backfills it into older saves, so every
+  `game_update` / `get_game_state` payload carries a stable origin.
+* **Client never guesses from bounds again
+  (`public/js/centreBoardMarker.js`).** All fallbacks are the fixed (0,0);
+  the bounds-midpoint path is gone. `preserveCentreMarker` no longer plants
+  a marker item in `cells` (that phantom tile used to float in open sea at
+  the origin), and marker-only cells are skipped at render time
+  (`boardFunctions/rendering.js`). If the marker ever *does* legitimately
+  move, `updateBoardState` (`enhanced-gameCore.js`) re-frames the camera
+  instead of stranding it.
+* **Water follows the camera (`scene.js`, `gameLoop.js`).** The sea plane
+  re-centres under the camera target each frame, so remote battle arenas
+  sit on water rather than hanging over the void.
+* **First-load flow: no more name dialog over everything
+  (`main-enhanced.js`, `createLoadingIndicator.js`,
+  `utils/NetworkManagerClass.js`).** The separate blocking name prompt is
+  gone — the welcome modal now carries an optional name field (Enter
+  submits). The socket connects at boot for a **spectator backdrop only**;
+  the actual `join_game` (which spawns your kingdom) is gated behind the
+  PLAY / BATTLE buttons via `setWorldJoinGate`, and the dev-mode auto-join
+  is disabled to match production. Invite links (`?battle=CODE`) label the
+  battle button "JOIN BATTLE code" so invitees know exactly what to click.
+* **Battle lobby: Close ≠ Cancel (`battle/battleMode.js`).** The lobby
+  dialog now has a plain **Close** (dialog dismissed, battle keeps waiting,
+  toast confirms it) separate from the destructive red **✕ Cancel battle**
+  / **✕ Leave**, with a hint line explaining the code-share wait. This was
+  the trap that ate the first battle: "Cancel" looked like the obvious way
+  to put the dialog away.
+* **Console hygiene.** `hideAllLoadingElements` logs only when it actually
+  hides something (was spamming every second), and the centre-marker log
+  fires only on a real move (was every broadcast).
+
+Covered by new unit tests (`tests/ui/centreBoardMarker.test.js` locks in
+the (0,0)-never-bounds fallback; `tests/server/world.test.js` covers the
+pin + backfill) and a new live E2E harness
+(`scripts/e2e-battle-flow.js`) that replays the exact reported repro over
+real sockets — preview → join → create → cancel → re-create → second
+player joins → start → forfeit — asserting the marker stays (0,0) while
+bounds span the arena: 34/34 green against a local server. Full suite: 54
+suites / 592 tests passing.
+
 ### Accounts: self-contained username + passphrase login ("kingdom key") (3 Jun 2026)
 
 **Players can now save their kingdom and play it from any device — with no

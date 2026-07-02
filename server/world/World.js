@@ -95,12 +95,19 @@ function freshWorld(id = GLOBAL_WORLD_ID) {
 
 		// Sparse 3D board.  Cells are indexed by `${x},${z}` and contain
 		// arrays of layered content items (`home`, `tetromino`, `chess`).
+		// `centreMarker` is the client's render-space reference point and
+		// MUST stay fixed for the world's whole life: clients place every
+		// mesh at `boardCoord + centreMarker`, so moving it teleports the
+		// entire rendered world. (Before this was pinned, clients fell
+		// back to the bounds midpoint — and a battle arena at (2000,2000)
+		// yanked that midpoint ~1000 cells sideways for every player.)
 		board: {
 			cells: {},
 			minX: 0,
 			maxX: 0,
 			minZ: 0,
 			maxZ: 0,
+			centreMarker: { x: 0, z: 0 },
 		},
 
 		// Top-level chess pieces (mirrors the chess content on the board so
@@ -499,6 +506,14 @@ function restoreWorldFromSnapshot(snapshot) {
 			console.log(`[World] Restore deduped ${droppedDuplicates} duplicate chess piece(s).`);
 		}
 		restoredPieces = deduped;
+	}
+
+	// Older snapshots predate the pinned centre marker — backfill it so
+	// clients never fall back to the (unstable) bounds-midpoint guess.
+	if (!snapshot.board.centreMarker
+		|| !Number.isFinite(snapshot.board.centreMarker.x)
+		|| !Number.isFinite(snapshot.board.centreMarker.z)) {
+		snapshot.board.centreMarker = { x: 0, z: 0 };
 	}
 
 	world = {

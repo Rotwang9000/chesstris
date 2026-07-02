@@ -83,6 +83,15 @@ let _axisHelpersCtrl = null;
 // start the game underneath it).
 let worldEntered = false;
 
+// Async gate the app shell registers so the server-side `join_game`
+// only happens when the player actually enters (welcome modal PLAY
+// button) rather than silently at page load. Resolves true on success.
+let worldJoinGate = null;
+
+export function setWorldJoinGate(gateFn) {
+	worldJoinGate = typeof gateFn === 'function' ? gateFn : null;
+}
+
 // ── Phase switching (used by createLoadingIndicator & inputManager) ─────────
 
 export function handleTetrisPhaseClick() {
@@ -432,6 +441,9 @@ function updateBoardState(boardData) {
 		if (!boardData || typeof boardData !== 'object') return;
 		if (!boardData.cells || typeof boardData.cells !== 'object') return;
 
+		const previousMarker = gameState.board?.centreMarker
+			? { ...gameState.board.centreMarker }
+			: null;
 		const centreMarker = preserveCentreMarker(gameState, boardData);
 		gameState.board = boardData;
 
@@ -442,22 +454,18 @@ function updateBoardState(boardData) {
 
 		if (centreMarker) {
 			gameState.board.centreMarker = centreMarker;
-			if (gameState.board.cells) {
-				const key = `${centreMarker.x},${centreMarker.z}`;
-				const existing = gameState.board.cells[key];
-				const cellArray = Array.isArray(existing) ? existing.slice() : [];
-				if (!cellArray.some(item => item && (
-					item.type === 'boardCentre'
-						|| (item.type === 'specialMarker' && item.isCentreMarker)
-				))) {
-					cellArray.push({
-						type: 'boardCentre',
-						isCentreMarker: true,
-						centreX: centreMarker.x,
-						centreZ: centreMarker.z,
-					});
-				}
-				gameState.board.cells[key] = cellArray;
+			// The marker only ever moves when the server re-anchors it
+			// (e.g. the one-off migration to the pinned (0,0) marker).
+			// Every mesh re-renders at new offsets, so re-frame the
+			// camera or the player is left staring at empty sea.
+			if (previousMarker
+				&& (previousMarker.x !== centreMarker.x || previousMarker.z !== centreMarker.z)
+				&& gameState.localPlayerId && gameState._cameraFlownToPlayer) {
+				setTimeout(() => {
+					try {
+						resetCameraForGameplay(getRenderer(), getCamera(), getControls(), gameState, getScene(), true, false);
+					} catch (_e) { /* camera not ready */ }
+				}, 250);
 			}
 		}
 
@@ -570,17 +578,36 @@ function initializeGameUI() {
 	} catch (_) { /* non-fatal */ }
 }
 
-export function startPlayingGame(gameKey = null) {
+export async function startPlayingGame(gameKey = null) {
 	// Idempotent on the player's intent to enter — not on server flags
 	// (`gameStarted` flips true the moment board data arrives, which would
 	// otherwise make the welcome modal's "Enter" button a no-op).
-	if (worldEntered) return;
+	if (worldEntered) return true;
 	worldEntered = true;
 	console.log('Entering world...', gameKey ? `with key: ${gameKey}` : 'default shared world');
 
 	if (gameKey) {
 		localStorage.setItem('tetches_game_key', gameKey);
 		gameState.gameKey = gameKey;
+	}
+
+	// The server-side `join_game` is deferred until this moment (see
+	// setWorldJoinGate) so page load never silently spawns a kingdom.
+	if (worldJoinGate) {
+		let joined = false;
+		try { joined = await worldJoinGate() !== false; }
+		catch (err) {
+			console.error('World join gate failed:', err);
+			joined = false;
+		}
+		if (!joined) {
+			worldEntered = false;
+			showToastMessage('Could not enter the world — check your connection and try again.', 6000);
+			// Put the welcome modal back so the player can retry.
+			try { showTutorialMessage(window.startTetchesGame || startPlayingGame); }
+			catch (_e) { /* modal already visible */ }
+			return false;
+		}
 	}
 
 	try {
@@ -619,9 +646,11 @@ export function startPlayingGame(gameKey = null) {
 				renderCurrentTetromino();
 			}
 		});
+		return true;
 	} catch (error) {
 		console.error('Error starting game:', error);
 		showErrorMessage(`Error starting game: ${error.message}`);
+		return false;
 	}
 }
 

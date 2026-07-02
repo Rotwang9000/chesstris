@@ -88,21 +88,13 @@ export default class NetworkManager {
 					catch (_e) { savedName = null; }
 					const autoInitName = (savedName && savedName.trim())
 						|| ('DevPlayer_' + Math.floor(Math.random() * 1000));
+					// Connect only — do NOT auto-join the world. Joining is
+					// gated behind the welcome modal's PLAY button (same as
+					// production); auto-joining here used to spawn a kingdom
+					// before the player had clicked anything.
 					this.initialize(autoInitName)
 						.then(() => {
-							console.log('NetworkManager: Auto-initialized in development mode');
-							// Only join if we're not already joining and not already in a game
-							if (!this.state.isJoiningGame && !this.state.hasJoinedGame) {
-								return this.joinGame();
-							} else {
-								console.log('NetworkManager: Already joining or in a game, skipping auto-join');
-								return Promise.resolve(null);
-							}
-						})
-						.then(gameData => {
-							if (gameData) {
-								console.log('NetworkManager: Auto-joined game in development mode:', gameData);
-							}
+							console.log('NetworkManager: Auto-connected in development mode (world join deferred)');
 						})
 						.catch(error => {
 							console.warn('NetworkManager: Auto-initialization failed:', error);
