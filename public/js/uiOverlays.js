@@ -7,6 +7,7 @@
 
 import * as NetworkManager from './utils/networkManager.js';
 import { getGameState } from './gameContext.js';
+import { isEventInCurrentView } from './battle/battleRules.js';
 import { showToastMessage } from './showToastMessage.js';
 
 // ── Frozen-pawn promotion: deploy a captured piece in place of the pawn ────
@@ -545,7 +546,8 @@ export function showKingDuelResult(payload) {
 
 	activeDuel = null;
 
-	if (!isParticipant && typeof showToastMessage === 'function') {
+	if (!isParticipant && typeof showToastMessage === 'function'
+		&& isEventInCurrentView(gameState, [victorId, loserId])) {
 		const victorName = payload.victorName || victorId;
 		showToastMessage(`King's Duel resolved \u2014 ${victorName} wins!`, 3000);
 	}

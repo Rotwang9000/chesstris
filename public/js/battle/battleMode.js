@@ -103,7 +103,12 @@ function adoptSeat(battle) {
 	if (!savedRealPlayerId) {
 		savedRealPlayerId = gameStateRef.localPlayerId || getPlayerId() || null;
 	}
-	gameStateRef.activeBattle = { id: battle.id, code: battle.code, centre: battle.centre };
+	gameStateRef.activeBattle = {
+		id: battle.id,
+		code: battle.code,
+		centre: battle.centre,
+		playRadius: battle.playRadius,
+	};
 	gameStateRef.localPlayerId = seat.seatId;
 	gameStateRef.myPlayerId = seat.seatId;
 	gameStateRef.currentPlayer = seat.seatId;

@@ -4,8 +4,15 @@
  * match what the server will decide.
  */
 
-/** Furthest cell distance from the arena centre a seat may build on. */
+/** Play radius of a 2-seat arena (3-4 seat arenas are larger; the
+ * server sends the actual radius on the battle object). */
 export const BATTLE_PLAY_RADIUS = 14;
+
+/** Effective play radius of the local player's battle. */
+export function battlePlayRadius(battle) {
+	const r = Number(battle?.playRadius);
+	return Number.isFinite(r) && r > 0 ? r : BATTLE_PLAY_RADIUS;
+}
 
 /**
  * Cells further than this from the origin belong to the battle-arena
@@ -45,7 +52,7 @@ export function isCellInsideOwnArena(gameState, x, z) {
 	if (!battle || !battle.centre) return true;
 	const dx = x - battle.centre.x;
 	const dz = z - battle.centre.z;
-	return Math.round(Math.sqrt(dx * dx + dz * dz)) <= BATTLE_PLAY_RADIUS;
+	return Math.round(Math.sqrt(dx * dx + dz * dz)) <= battlePlayRadius(battle);
 }
 
 /** Does this coordinate belong to the remote battle-arena region? */
@@ -54,11 +61,16 @@ export function isBattleRegionCell(x, z) {
 }
 
 /**
- * Everything a seated player may see: play area (≤14), ring wall
- * (15-16) plus a couple of cells of breathing room. Matches the server
- * arena geometry (`server/battle/geometry.js` RING_OUTER_RADIUS = 16).
+ * Cells of breathing room past the ring wall a seated player may see.
+ * The ring spans [playRadius+1, playRadius+2] (see
+ * `server/battle/geometry.js`), so the view reaches playRadius + 6.
  */
-export const BATTLE_ARENA_VIEW_RADIUS = 20;
+export const BATTLE_VIEW_MARGIN = 6;
+
+/** Everything a seated player may see for their battle. */
+export function battleViewRadius(battle) {
+	return battlePlayRadius(battle) + BATTLE_VIEW_MARGIN;
+}
 
 /**
  * View isolation — "the edge of the game is the edge of the world".
@@ -74,7 +86,40 @@ export function isCellVisibleInCurrentView(gameState, x, z) {
 	if (battle && battle.centre) {
 		const dx = x - battle.centre.x;
 		const dz = z - battle.centre.z;
-		return Math.sqrt(dx * dx + dz * dz) <= BATTLE_ARENA_VIEW_RADIUS;
+		return Math.sqrt(dx * dx + dz * dz) <= battleViewRadius(battle);
 	}
 	return !isBattleRegionCell(x, z);
+}
+
+/** Battle-seat player ids follow `battle-<code>-s<n>` (server seatIdFor). */
+const SEAT_ID_PREFIX = 'battle-';
+
+/**
+ * Does an event involving this player belong in the local player's
+ * current view? Seated in a battle: only that battle's seats (and the
+ * local identity) are news. In the world view: battle seats belong to
+ * remote arenas and their events are noise.
+ */
+export function isPlayerInCurrentView(gameState, playerId) {
+	if (playerId == null) return true;
+	const id = String(playerId);
+	const battle = getActiveBattle(gameState);
+	if (battle) {
+		if (id === String(gameState?.localPlayerId || '')) return true;
+		const myBattlePrefix = `${SEAT_ID_PREFIX}${String(battle.code || '').toLowerCase()}-`;
+		return id.startsWith(myBattlePrefix);
+	}
+	return !id.startsWith(SEAT_ID_PREFIX);
+}
+
+/**
+ * View filter for multi-participant events (duels, captures, activity
+ * log entries). Events with no participant info always pass; otherwise
+ * at least one participant must belong to the current view.
+ */
+export function isEventInCurrentView(gameState, participantIds) {
+	const ids = (Array.isArray(participantIds) ? participantIds : [participantIds])
+		.filter(v => v != null);
+	if (ids.length === 0) return true;
+	return ids.some(id => isPlayerInCurrentView(gameState, id));
 }

@@ -636,10 +636,15 @@ function addWaterPlane(scene, THREE) {
 	positions.needsUpdate = true;
 	geometry.computeVertexNormals();
 
-	const material = new THREE.MeshStandardMaterial({
+	// Diffuse-only sea. The old MeshStandardMaterial painted a huge
+	// white specular lobe (the sun's reflection, Fresnel-boosted at
+	// grazing angles) that read as a blinding glare blob next to
+	// battle arenas — a scene bisect showed even roughness 1.0 keeps
+	// the bloom, so no PBR settings can save it. Lambert has no
+	// specular term at all; the ripple animation still carries the
+	// "this is water" read.
+	const material = new THREE.MeshLambertMaterial({
 		color: 0x2d8fd4,
-		roughness: 0.35,
-		metalness: 0.25,
 		transparent: true,
 		opacity: 0.94,
 		side: THREE.FrontSide,

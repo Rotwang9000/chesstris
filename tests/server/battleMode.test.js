@@ -18,6 +18,8 @@ const {
 	BATTLE,
 	arenaCentreForSlot,
 	radialBand,
+	playRadiusForSeats,
+	ringOuterRadius,
 	isInsidePlayArea,
 	ringCells,
 	seatHomeZones,
@@ -38,31 +40,40 @@ describe('battle geometry', () => {
 		expect(() => arenaCentreForSlot(BATTLE.MAX_ARENAS)).toThrow();
 	});
 
-	test('radial bands tile the plane with no dead cells', () => {
+	test.each([
+		['2-seat', BATTLE.PLAY_RADIUS],
+		['3-4 seat', BATTLE.PLAY_RADIUS_LARGE],
+	])('radial bands tile the plane with no dead cells (%s arena)', (_label, playRadius) => {
 		const centre = { x: 0, z: 0 };
-		for (let z = -20; z <= 20; z++) {
-			for (let x = -20; x <= 20; x++) {
+		const outer = ringOuterRadius(playRadius);
+		const span = outer + 4;
+		for (let z = -span; z <= span; z++) {
+			for (let x = -span; x <= span; x++) {
 				const band = radialBand(centre, x, z);
-				const inPlay = isInsidePlayArea(centre, x, z);
-				const inRing = band >= BATTLE.RING_INNER_RADIUS && band <= BATTLE.RING_OUTER_RADIUS;
-				const outside = band > BATTLE.RING_OUTER_RADIUS;
+				const inPlay = isInsidePlayArea(centre, x, z, playRadius);
+				const inRing = band >= playRadius + 1 && band <= outer;
+				const outside = band > outer;
 				// Exactly one classification applies to every cell.
 				expect(Number(inPlay) + Number(inRing) + Number(outside)).toBe(1);
 			}
 		}
 	});
 
-	test('ringCells form an orthogonally connected closed loop', () => {
+	test.each([
+		['2-seat', BATTLE.PLAY_RADIUS],
+		['3-4 seat', BATTLE.PLAY_RADIUS_LARGE],
+	])('ringCells form an orthogonally connected closed loop (%s arena)', (_label, playRadius) => {
 		const centre = { x: 100, z: 200 };
-		const cells = ringCells(centre);
+		const cells = ringCells(centre, playRadius);
 		expect(cells.length).toBeGreaterThan(0);
 
 		const keys = new Set(cells.map(c => `${c.x},${c.z}`));
 		// Band check: every ring cell is in [inner, outer].
+		const outer = ringOuterRadius(playRadius);
 		for (const { x, z } of cells) {
 			const band = radialBand(centre, x, z);
-			expect(band).toBeGreaterThanOrEqual(BATTLE.RING_INNER_RADIUS);
-			expect(band).toBeLessThanOrEqual(BATTLE.RING_OUTER_RADIUS);
+			expect(band).toBeGreaterThanOrEqual(playRadius + 1);
+			expect(band).toBeLessThanOrEqual(outer);
 		}
 
 		// Orthogonal BFS from one ring cell must reach every ring cell.
@@ -93,10 +104,10 @@ describe('battle geometry', () => {
 		expect(southPawnRow - northPawnRow).toBe(BATTLE.FRONT_ROW_GAP);
 	});
 
-	test('4-seat zones are disjoint and inside the play area', () => {
+	test.each([3, 4])('%i-seat zones are disjoint and inside the LARGE play area', (seatCount) => {
 		const centre = { x: 50, z: 50 };
-		const zones = seatHomeZones(centre, 4);
-		expect(zones).toHaveLength(4);
+		const zones = seatHomeZones(centre, seatCount);
+		expect(zones).toHaveLength(seatCount);
 
 		const seen = new Set();
 		for (const zone of zones) {
@@ -104,7 +115,29 @@ describe('battle geometry', () => {
 				const key = `${x},${z}`;
 				expect(seen.has(key)).toBe(false);
 				seen.add(key);
-				expect(isInsidePlayArea(centre, x, z)).toBe(true);
+				expect(isInsidePlayArea(centre, x, z, BATTLE.PLAY_RADIUS_LARGE)).toBe(true);
+			}
+		}
+	});
+
+	test.each([3, 4])('%i-seat fan keeps every pair of zones ≥4 cells apart', (seatCount) => {
+		// The July 2026 report: with zones at ±5 a CPU pawn could hop
+		// straight into a neighbour's spawn on its first move. The fan
+		// layout must keep EVERY pair of zones at least 4 empty cells
+		// apart (Euclidean ≥ 5 between closest cells: beyond a pawn's
+		// diagonal capture AND a knight's opening leap).
+		const centre = { x: 0, z: 0 };
+		const zones = seatHomeZones(centre, seatCount);
+		for (let a = 0; a < zones.length; a++) {
+			for (let b = a + 1; b < zones.length; b++) {
+				let minDist = Infinity;
+				for (const ca of zoneCells(zones[a])) {
+					for (const cb of zoneCells(zones[b])) {
+						const d = Math.hypot(ca.x - cb.x, ca.z - cb.z);
+						if (d < minDist) minDist = d;
+					}
+				}
+				expect(minDist).toBeGreaterThanOrEqual(5);
 			}
 		}
 	});
@@ -148,10 +181,25 @@ describe('battle rules', () => {
 		expect(inside.valid).toBe(true);
 
 		const outside = battleRules.validateArenaBounds(
-			game, 'seatA', [{ x: 3, z: 4 }, { x: BATTLE.RING_INNER_RADIUS, z: 0 }]
+			game, 'seatA', [{ x: 3, z: 4 }, { x: BATTLE.PLAY_RADIUS + 1, z: 0 }]
 		);
 		expect(outside.valid).toBe(false);
 		expect(outside.reason).toBe('outside_arena');
+	});
+
+	test('a larger battle validates against its own playRadius', () => {
+		const game = gameWithBattle();
+		game.battles.B1.playRadius = BATTLE.PLAY_RADIUS_LARGE;
+		// 15-16 from centre is now inside the play area…
+		const nowInside = battleRules.validateArenaBounds(
+			game, 'seatA', [{ x: BATTLE.PLAY_RADIUS + 1, z: 0 }]
+		);
+		expect(nowInside.valid).toBe(true);
+		// …but the (larger) ring is still the wall.
+		const stillOut = battleRules.validateArenaBounds(
+			game, 'seatA', [{ x: BATTLE.PLAY_RADIUS_LARGE + 1, z: 0 }]
+		);
+		expect(stillOut.valid).toBe(false);
 	});
 
 	test('civilians are kept out of live arenas but free elsewhere', () => {

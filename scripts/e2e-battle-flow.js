@@ -260,6 +260,9 @@ async function main() {
 	const bSeats = bStart.battle?.seats || [];
 	assert(bSeats.length === 2 && bSeats.every(s => !s.isAi),
 		'battle-only battle seats both human', JSON.stringify(bSeats));
+	assert(bStart.battle?.playRadius === 14,
+		'2-seat battle keeps the classic play radius (14)',
+		`playRadius=${bStart.battle?.playRadius}`);
 
 	// The REAL player ids must have no kingdom; the SEAT ids must have
 	// home zones + kings inside the arena.
@@ -350,6 +353,11 @@ async function main() {
 	assert(cStart.success === true, 'multi-tab battle starts', cStart.error);
 	assert(cStart.battle.seats.filter(s => s.isAi).length === 1,
 		'one seat went to a bot', JSON.stringify(cStart.battle.seats));
+	// Fan-formation arenas: 3-4 seats play on the larger board and the
+	// client is told the radius so its bounds/view mirrors agree.
+	assert(cStart.battle.playRadius === 16,
+		'3-seat battle reports the LARGE play radius (16)',
+		`playRadius=${cStart.battle.playRadius}`);
 	const [t1s, t2s] = await Promise.all([tab1Started, tab2Started]);
 	assert(t1s?.battle?.code === cCode, 'host tab 1 received battle_started');
 	assert(t2s?.battle?.code === cCode, 'host tab 2 received battle_started');

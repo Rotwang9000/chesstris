@@ -39,8 +39,14 @@ function buildLateralOffsets(maxAbs) {
  * king cannot be located.
  */
 export function determineInitialTetrominoPosition(gameState, shapeOverride = null) {
-	const currentPlayer = gameState.currentPlayer;
-	const kingPiece = boardFunctions.getPlayersKing(gameState, currentPlayer, false);
+	// Anchor to the LOCAL player's king. `currentPlayer` is the
+	// whose-turn field and can point at any player in the shared
+	// world / a battle bot — anchoring to it made the local piece
+	// spawn above someone else's zone.
+	const anchorPlayer = gameState.localPlayerId
+		|| gameState.myPlayerId
+		|| gameState.currentPlayer;
+	const kingPiece = boardFunctions.getPlayersKing(gameState, anchorPlayer, false);
 	if (!kingPiece) return null;
 
 	const kingPosition = { x: kingPiece.position.x, z: kingPiece.position.z };

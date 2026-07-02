@@ -139,10 +139,13 @@ function classifyCell(cellData) {
 	let homePlayer = null;
 	let tetrominoPlayer = null;
 	let isExHome = false;
+	let ringColor = null;
 
 	if (Array.isArray(cellData)) {
 		const homeZone = cellData.find(item => item && item.type === 'home');
 		if (homeZone) { isHomeZone = true; homePlayer = homeZone.player; }
+		const ring = cellData.find(item => item && item.battleRing);
+		if (ring) ringColor = ring.color || '#8a8a99';
 		const tet = cellData.find(item => item && item.type === 'tetromino');
 		if (tet) {
 			tetrominoPlayer = tet.player;
@@ -157,7 +160,7 @@ function classifyCell(cellData) {
 			tetrominoPlayer = cellData.player;
 		}
 	}
-	return { isHomeZone, homePlayer, tetrominoPlayer, isExHome };
+	return { isHomeZone, homePlayer, tetrominoPlayer, isExHome, ringColor };
 }
 
 function isCellDisconnected(gameState, x, z, owner) {
@@ -188,7 +191,22 @@ function darkenForChecker(color, x, z) {
 }
 
 function chooseAppearance(classification, gameState, x, z) {
-	const { isHomeZone, homePlayer, tetrominoPlayer, isExHome } = classification;
+	const { isHomeZone, homePlayer, tetrominoPlayer, isExHome, ringColor } = classification;
+	// Battle-ring wall segments: ownerless neutral terrain in the
+	// server-declared grey, so the arena wall reads as a wall rather
+	// than as ordinary floor.
+	if (ringColor && !isHomeZone && !tetrominoPlayer) {
+		const parsed = parseInt(String(ringColor).replace('#', ''), 16);
+		return {
+			kind: 'ring',
+			color: darkenForChecker(Number.isFinite(parsed) ? parsed : 0x8a8a99, x, z),
+			roughness: 0.8,
+			metalness: 0.15,
+			transparent: false,
+			opacity: 1.0,
+			decaying: false,
+		};
+	}
 	if (isExHome && tetrominoPlayer) {
 		return {
 			kind: 'exhome',

@@ -27,7 +27,13 @@
 const World = require('../world/World');
 const Sessions = require('../world/Sessions');
 const { generateGameKey } = require('../auth/gameKey');
-const { BATTLE, arenaCentreForSlot, ringCells, seatHomeZones } = require('./geometry');
+const {
+	BATTLE,
+	arenaCentreForSlot,
+	ringCells,
+	seatHomeZones,
+	playRadiusForSeats,
+} = require('./geometry');
 const {
 	COMPUTER_DIFFICULTY,
 	MIN_COMPUTER_MOVE_INTERVAL_MS,
@@ -123,6 +129,9 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 			code: battle.code,
 			status: battle.status,
 			centre: battle.centre,
+			// Clients mirror the arena-bounds and view-isolation rules,
+			// so they need the actual radius (3-4 seat arenas are larger).
+			playRadius: battle.playRadius || playRadiusForSeats(battle.seatCount || 2),
 			seatCount: battle.seatCount,
 			hostId: battle.hostId,
 			createdAt: battle.createdAt,
@@ -367,6 +376,7 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 
 		battle.slot = slot;
 		battle.centre = arenaCentreForSlot(slot);
+		battle.playRadius = playRadiusForSeats(battle.seats.length);
 		buildArena(battle);
 		battle.status = 'active';
 		battle.startedAt = Date.now();
@@ -390,7 +400,7 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 
 		// Neutral ring wall. Overwrite whatever might linger from a
 		// badly-cleaned previous battle on this slot.
-		for (const { x, z } of ringCells(battle.centre)) {
+		for (const { x, z } of ringCells(battle.centre, battle.playRadius)) {
 			world.board.cells[`${x},${z}`] = [{
 				type: 'tetromino',
 				player: null,

@@ -135,6 +135,12 @@ function createBroadcaster({ io, persistence }) {
 				id,
 				name: record?.name || `Player_${String(id).substring(0, 6)}`,
 				isComputer: !!record?.isComputer,
+				// Battle seats carry a fixed high-contrast colour; the
+				// client paints the seat's cells with it so each army's
+				// territory is tellable at a glance (world players keep
+				// the client-side hash palette — colour arrives null).
+				color: record?.color || null,
+				battleId: record?.battleId || null,
 				// Client uses this to hide eliminated players from the
 				// sidebar — the user reported beaten kings cluttering
 				// the menu and pushing new joiners away from active

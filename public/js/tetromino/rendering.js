@@ -40,14 +40,18 @@ const FALLBACK_COLOUR = 0xcccccc;
 const UNKNOWN_COLOUR = 0x888888;
 
 /**
- * Pick a colour for a tetromino block: prefer the boardFunctions
- * helper (which can produce per-player tints), otherwise fall back to
- * the standard piece-type palette.
+ * Pick a colour for a tetromino block. The falling piece belongs to
+ * the LOCAL player, so it is painted with the player's own territory
+ * colour (warm wood in the world, blended seat colour in a battle) —
+ * exactly what the blocks will look like once placed. Previously the
+ * SHAPE LETTER ('L', 'O', …) was fed into the player-colour hash,
+ * which painted every falling piece an arbitrary cyan/green.
  */
 function resolveColour(playerType, gameState) {
-	if (boardFunctions && typeof boardFunctions.getPlayerColor === 'function') {
+	const localId = gameState?.localPlayerId || gameState?.myPlayerId || null;
+	if (localId && boardFunctions && typeof boardFunctions.getPlayerColor === 'function') {
 		try {
-			const c = boardFunctions.getPlayerColor(playerType, gameState || {}, true);
+			const c = boardFunctions.getPlayerColor(localId, gameState, 'tetromino');
 			if (c && c !== FALLBACK_COLOUR) return c;
 		} catch (err) {
 			console.warn('Error using centralised colour function, falling back:', err);
@@ -187,6 +191,7 @@ export function renderTetromino(gameState) {
 			}
 		}
 
+		shapeGroup.userData.renderedColour = color;
 		gameState.tetrominoGroup.add(shapeGroup);
 		gameState.currentTetrominoShapeGroup = shapeGroup;
 
@@ -202,6 +207,25 @@ export function renderTetromino(gameState) {
 		console.error('Error rendering tetromino:', error);
 		return false;
 	}
+}
+
+/**
+ * Repaint the current falling piece if the player's resolved colour
+ * has changed since it was rendered. Player records (and battle seat
+ * colours) often arrive AFTER the piece is first drawn — without this
+ * the piece keeps the provisional colour until the player moves it.
+ */
+export function refreshTetrominoColourIfStale(gameState) {
+	const group = gameState?.currentTetrominoShapeGroup;
+	const tetromino = gameState?.currentTetromino;
+	if (!group || !tetromino) return false;
+	const colour = resolveColour(tetromino.type, gameState);
+	if (group.userData.renderedColour === colour) return false;
+	for (const block of group.children) {
+		applyBlockMaterial(block, colour, { isGhost: false, isRetro: !!gameState?.retroMode });
+	}
+	group.userData.renderedColour = colour;
+	return true;
 }
 
 /**

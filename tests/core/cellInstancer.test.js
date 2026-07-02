@@ -28,6 +28,15 @@ function makeThreeMock() {
 		constructor(opts) { Object.assign(this, opts); this.disposed = false; }
 		dispose() { this.disposed = true; }
 	}
+	class InstancedBufferAttribute {
+		constructor(array, itemSize) {
+			this.array = array;
+			this.itemSize = itemSize;
+			this.needsUpdate = false;
+			this.usage = null;
+		}
+		setUsage(u) { this.usage = u; return this; }
+	}
 	class InstancedMesh {
 		constructor(geometry, material, capacity) {
 			this.geometry = geometry;
@@ -51,7 +60,7 @@ function makeThreeMock() {
 		dispose() { this.disposed = true; }
 	}
 	return {
-		Matrix4, Color, MeshStandardMaterial, InstancedMesh,
+		Matrix4, Color, MeshStandardMaterial, InstancedMesh, InstancedBufferAttribute,
 		DynamicDrawUsage: 'dynamic',
 	};
 }
@@ -99,6 +108,25 @@ describe('cellInstancer', () => {
 		expect(mesh.frustumCulled).toBe(false);
 		// Shared geometry is reused, not cloned.
 		expect(mesh.geometry).toBe(geometry);
+	});
+
+	it('allocates instanceColor EAGERLY, before any cell is written', () => {
+		// Regression: three r132 compiles the shader on the mesh's first
+		// render and never re-checks a late-appearing instanceColor. If
+		// the buffer only existed after the first setColorAt, a mesh
+		// first rendered empty (spectator boot / battle-only entry)
+		// stayed colour-blind forever — every cell drew the white base
+		// material ("the cells seem to have lost all colour").
+		const inst = createCellInstancer(THREE, boardGroup, geometry);
+		inst.rebuild([]);   // first render pass: empty board
+		const mesh = inst.getMesh();
+		expect(mesh.instanceColor).toBeTruthy();
+		expect(mesh.instanceColor.itemSize).toBe(3);
+		expect(mesh.instanceColor.array.length).toBeGreaterThanOrEqual(mesh.capacity * 3);
+
+		// And colours written later land in that same buffer.
+		inst.rebuild(makeCells(2));
+		expect(inst.getMesh().instanceColor.needsUpdate).toBe(true);
 	});
 
 	it('writes one instance per cell and reports the right count', () => {

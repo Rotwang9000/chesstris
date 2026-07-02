@@ -13,8 +13,9 @@
  *   • 2–4 **seats** — ordinary home zones placed at fixed positions facing
  *     the arena centre. Two-seat battles face each other with pawn rows
  *     exactly `BATTLE.FRONT_ROW_GAP` (8) cells apart; three/four-seat
- *     battles sit at 90° with pawn rows pushed 1 cell further out so the
- *     zones cannot collide at the corners.
+ *     battles fan out at 90° with every zone pushed to
+ *     `BATTLE.FAN_FRONT_OFFSET`, keeping adjacent spawns ≥5 cells apart
+ *     (and the arena itself grows to `PLAY_RADIUS_LARGE`).
  *
  * Arenas are allocated on a fixed grid starting at `BATTLE.ARENA_BASE`,
  * far enough from the organic world that they can never interact, but
@@ -24,16 +25,25 @@
 'use strict';
 
 const BATTLE = Object.freeze({
-	/** Outer ring radius in cells (diameter 32 as designed). */
-	RING_OUTER_RADIUS: 16,
-	/** Inner ring radius — the annulus spans [inner, outer]. */
-	RING_INNER_RADIUS: 15,
-	/** Furthest cell distance from centre a seated player may build on. */
+	/** Play radius of a 2-seat arena (the classic face-off). */
 	PLAY_RADIUS: 14,
-	/** Non-battle players must keep this far from an arena centre. */
-	KEEP_OUT_RADIUS: 18,
+	/** Play radius of a 3-4 seat arena — more armies need more floor. */
+	PLAY_RADIUS_LARGE: 16,
+	/** Ring thickness in cells (annulus spans [play+1, play+RING_THICKNESS]). */
+	RING_THICKNESS: 2,
+	/** Cells past the ring that non-battle players must also keep out of. */
+	KEEP_OUT_MARGIN: 2,
 	/** Distance between opposing pawn rows for a 2-seat battle. */
 	FRONT_ROW_GAP: 8,
+	/**
+	 * Pawn-row distance from centre for 3-4 seats (fan formation).
+	 * At 8, the closest cells of any two adjacent zones are √32 ≈ 5.7
+	 * apart (the 8-wide zones sit off-centre on the integer grid, so
+	 * the tightest diagonal pair governs) — no piece can reach a
+	 * neighbour's spawn in one opening move, and the fan converges
+	 * with a wide-open middle.
+	 */
+	FAN_FRONT_OFFSET: 8,
 	/** Arena grid anchor — far beyond the organic cluster (~±200 cells). */
 	ARENA_BASE: Object.freeze({ x: 2000, z: 2000 }),
 	/** Centre-to-centre spacing of arena slots on the grid. */
@@ -45,6 +55,16 @@ const BATTLE = Object.freeze({
 	MIN_SEATS: 2,
 	MAX_SEATS: 4,
 });
+
+/** Play radius for a battle of `seatCount` seats. */
+function playRadiusForSeats(seatCount) {
+	return seatCount >= 3 ? BATTLE.PLAY_RADIUS_LARGE : BATTLE.PLAY_RADIUS;
+}
+
+/** Outermost ring band for a given play radius. */
+function ringOuterRadius(playRadius = BATTLE.PLAY_RADIUS) {
+	return playRadius + 1 + (BATTLE.RING_THICKNESS - 1);
+}
 
 /** Home zone footprint (mirrors HOME_ZONE_WIDTH/HEIGHT in Constants.js). */
 const ZONE_LONG_SIDE = 8;
@@ -84,16 +104,16 @@ function radialBand(centre, x, z) {
  * Is (x, z) inside the buildable play area of an arena (strictly inside
  * the ring)?
  */
-function isInsidePlayArea(centre, x, z) {
-	return radialBand(centre, x, z) <= BATTLE.PLAY_RADIUS;
+function isInsidePlayArea(centre, x, z, playRadius = BATTLE.PLAY_RADIUS) {
+	return radialBand(centre, x, z) <= playRadius;
 }
 
 /**
  * Is (x, z) inside the keep-out zone that non-battle players must not
  * build in (ring + a safety margin)?
  */
-function isInsideKeepOut(centre, x, z) {
-	return radialBand(centre, x, z) <= BATTLE.KEEP_OUT_RADIUS;
+function isInsideKeepOut(centre, x, z, playRadius = BATTLE.PLAY_RADIUS) {
+	return radialBand(centre, x, z) <= ringOuterRadius(playRadius) + BATTLE.KEEP_OUT_MARGIN;
 }
 
 /**
@@ -103,12 +123,13 @@ function isInsideKeepOut(centre, x, z) {
  * BFS path rules that only walk N/S/E/W).
  *
  * @param {{x:number, z:number}} centre
+ * @param {number} [playRadius] Play radius the ring encloses.
  * @returns {Array<{x:number, z:number}>}
  */
-function ringCells(centre) {
+function ringCells(centre, playRadius = BATTLE.PLAY_RADIUS) {
 	const out = [];
-	const rOuter = BATTLE.RING_OUTER_RADIUS;
-	const rInner = BATTLE.RING_INNER_RADIUS;
+	const rInner = playRadius + 1;
+	const rOuter = ringOuterRadius(playRadius);
 	for (let dz = -rOuter; dz <= rOuter; dz++) {
 		for (let dx = -rOuter; dx <= rOuter; dx++) {
 			const band = radialBand({ x: 0, z: 0 }, dx, dz);
@@ -140,12 +161,15 @@ function seatHomeZones(centre, seatCount) {
 		throw new Error(`seatHomeZones: seatCount must be ${BATTLE.MIN_SEATS}-${BATTLE.MAX_SEATS}, got ${seatCount}`);
 	}
 
-	// Pawn-row distance from centre. 2 seats: exactly FRONT_ROW_GAP apart
-	// (±4). 3–4 seats: one cell further out (±5) so adjacent zones at 90°
-	// can't both claim the corner cells.
+	// Pawn-row distance from centre. 2 seats: a pure face-off with pawn
+	// rows exactly FRONT_ROW_GAP apart (±4). 3–4 seats: a FAN — every
+	// zone pushed out to FAN_FRONT_OFFSET (±8) so the closest cells of
+	// two adjacent zones are ≥5 apart (a pawn's opening diagonal
+	// reaches 1, a knight ~2 — nobody can touch a neighbour's spawn on
+	// move one, which the old ±5 layout allowed).
 	const frontOffset = seatCount === 2
 		? BATTLE.FRONT_ROW_GAP / 2
-		: BATTLE.FRONT_ROW_GAP / 2 + 1;
+		: BATTLE.FAN_FRONT_OFFSET;
 	const half = ZONE_LONG_SIDE / 2;
 
 	// Seat order: north, south, west, east. North/south first so a
@@ -203,6 +227,8 @@ module.exports = {
 	arenaCentreForSlot,
 	cellDistance,
 	radialBand,
+	playRadiusForSeats,
+	ringOuterRadius,
 	isInsidePlayArea,
 	isInsideKeepOut,
 	ringCells,

@@ -398,8 +398,13 @@ function setupEventSystem() {
 
 			if (e.detail.currentTetromino) updateCurrentTetromino(e.detail.currentTetromino);
 
+			// Spawn the player's piece only once we KNOW who the player
+			// is. Falling back to `currentPlayer` (the whose-turn field)
+			// spawned "our" tetromino above some other player's zone —
+			// in battles it materialised over a bot's home zone in the
+			// hash palette. A later update spawns it correctly instead.
 			if (gameState.inProgress && gameState.turnPhase === 'tetris' && !gameState.currentTetromino) {
-				const playerId = gameState.currentPlayer || gameState.localPlayerId;
+				const playerId = gameState.localPlayerId;
 				const king = playerId ? boardFunctions.getPlayersKing(gameState, playerId, false) : null;
 				if (king) {
 					const spawned = tetrominoModule.initializeNextTetromino(gameState);
@@ -409,6 +414,11 @@ function setupEventSystem() {
 						renderCurrentTetromino();
 					}
 				}
+			} else if (e.detail.players && gameState.currentTetromino) {
+				// Player records (seat colours) can land AFTER the piece
+				// was first rendered — repaint it if the resolved colour
+				// has changed since.
+				tetrominoModule.refreshTetrominoColourIfStale(gameState);
 			}
 
 			updateGameStatusDisplay(gameState);

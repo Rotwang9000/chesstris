@@ -35,9 +35,9 @@ function makeTmpProject(opts = {}) {
 	return root;
 }
 
-function makeApp(root) {
+function makeApp(root, opts = {}) {
 	const app = express();
-	const { middleware } = createIndexHtmlBundleSwap({ projectRoot: root });
+	const { middleware } = createIndexHtmlBundleSwap({ projectRoot: root, preferBundle: true, ...opts });
 	app.use(middleware);
 	app.use((_req, res) => res.status(404).send('not found'));
 	return app;
@@ -80,13 +80,38 @@ describe('indexHtmlBundleSwap', () => {
 
 	test('reports bundle status string', () => {
 		const root = makeTmpProject({ withBundle: false });
-		const { bundleStatus } = createIndexHtmlBundleSwap({ projectRoot: root });
+		const { bundleStatus } = createIndexHtmlBundleSwap({ projectRoot: root, preferBundle: true });
 		expect(bundleStatus()).toMatch(/unbundled/);
 		fs.rmSync(root, { recursive: true, force: true });
 
 		const root2 = makeTmpProject({ withBundle: true });
-		const { bundleStatus: status2 } = createIndexHtmlBundleSwap({ projectRoot: root2 });
+		const { bundleStatus: status2 } = createIndexHtmlBundleSwap({ projectRoot: root2, preferBundle: true });
 		expect(status2()).toMatch(/bundled \(mtime \d+\)/);
 		fs.rmSync(root2, { recursive: true, force: true });
+	});
+
+	test('dev mode (preferBundle=false) serves source modules even when a bundle exists', async () => {
+		const root = makeTmpProject({ withBundle: true });
+		const app = makeApp(root, { preferBundle: false });
+		const res = await request(app).get('/').expect(200);
+		expect(res.text).toContain(ENTRY_TAG);
+		expect(res.text).not.toContain('dist/app.bundle.js');
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	test('defaults to bundle serving under NODE_ENV=production', async () => {
+		const prevEnv = process.env.NODE_ENV;
+		process.env.NODE_ENV = 'production';
+		try {
+			const root = makeTmpProject({ withBundle: true });
+			const app = express();
+			const { middleware } = createIndexHtmlBundleSwap({ projectRoot: root });
+			app.use(middleware);
+			const res = await request(app).get('/').expect(200);
+			expect(res.text).toContain('dist/app.bundle.js');
+			fs.rmSync(root, { recursive: true, force: true });
+		} finally {
+			process.env.NODE_ENV = prevEnv;
+		}
 	});
 });

@@ -27,6 +27,7 @@
 
 import { getTHREE, getPowerUpGroup, setPowerUpGroup, getScene, getGameState } from './gameContext.js';
 import { translatePosition } from './centreBoardMarker.js';
+import { isCellVisibleInCurrentView } from './battle/battleRules.js';
 
 const ORB_RADIUS = 0.45;
 // Lowered so the orb hovers visibly close to its host cell — the user
@@ -265,10 +266,16 @@ export function syncPowerUps(orbs) {
 	const THREE = getTHREE();
 	if (!THREE) return;
 
+	const gameState = getGameState();
 	const seen = new Set();
 	if (Array.isArray(orbs)) {
 		for (const orb of orbs) {
 			if (!orb || !orb.id) continue;
+			// View isolation: an orb targeted at a battle seat sits in
+			// that remote arena — render it only for players whose
+			// current view contains its cell.
+			if (gameState && Number.isFinite(orb.x) && Number.isFinite(orb.z)
+				&& !isCellVisibleInCurrentView(gameState, orb.x, orb.z)) continue;
 			seen.add(orb.id);
 			let entry = orbVisuals.get(orb.id);
 			if (!entry) {

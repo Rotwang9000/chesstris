@@ -1322,6 +1322,7 @@ export function updateUnifiedPlayerBar(gameState) {
 	// system... they are all apearing in the left menu". Keeping them
 	// would also bias the spawn algorithm towards dead-king coords.
 	if (gameState.players && Object.keys(gameState.players).length > 0) {
+		const activeBattleId = gameState.activeBattle?.id || null;
 		const visibleIds = Object.keys(gameState.players).filter(pid => {
 			const player = gameState.players[pid];
 			if (!player) return false;
@@ -1329,6 +1330,14 @@ export function updateUnifiedPlayerBar(gameState) {
 			// they're eliminated — we'd rather show a wrong row than
 			// hide the user from their own UI.
 			if (pid === localPlayerId) return true;
+			// View isolation, roster edition: seated in a battle the bar
+			// lists that battle's armies only; in the world view, battle
+			// seats (remote arenas) don't belong in the roster.
+			if (activeBattleId) {
+				if (String(player.battleId || '') !== String(activeBattleId)) return false;
+			} else if (player.battleId) {
+				return false;
+			}
 			return !player.eliminated;
 		});
 		console.log('Players in game state:', Object.keys(gameState.players).length,

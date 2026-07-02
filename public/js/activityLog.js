@@ -13,6 +13,7 @@
  */
 
 import { showToastMessage } from './showToastMessage.js';
+import { isEventInCurrentView } from './battle/battleRules.js';
 
 const MAX_EVENTS = 200;
 const eventBuffer = [];
@@ -67,7 +68,22 @@ function isLocalPlayerEvent(ev) {
 	return false;
 }
 
+/** Every player id an event mentions, for the view-isolation filter. */
+function eventParticipantIds(ev) {
+	const p = ev?.payload || {};
+	return [
+		p.playerId, p.fromPlayerId, p.toPlayerId,
+		p.captorId, p.defeatedId, p.targetPlayerId,
+		p.attackerId, p.defenderId,
+		p.capturedBy?.playerId,
+	].filter(v => v != null);
+}
+
 function passesFilter(ev) {
+	// View isolation: world events stay out of battles and battle
+	// events (other arenas' bots included) stay out of the world log.
+	const gs = typeof window !== 'undefined' ? window.gameState : null;
+	if (gs && !isEventInCurrentView(gs, eventParticipantIds(ev))) return false;
 	if (!filterMineOnly) return true;
 	return isLocalPlayerEvent(ev);
 }

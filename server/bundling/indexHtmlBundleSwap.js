@@ -38,12 +38,27 @@ function buildBundleScriptTag(version) {
 }
 
 /**
- * @param {{ projectRoot: string }} opts
+ * Whether this process should serve the bundle when one exists on
+ * disk. Deployed environments (PM2 sets NODE_ENV=production/staging)
+ * want the bundle; dev servers want the raw ES modules so edits are
+ * picked up live — a leftover `dist/app.bundle.js` in a dev tree
+ * must NOT silently shadow the source. `TETCHES_SERVE_BUNDLE=1`
+ * forces bundle serving for local bundle verification.
+ */
+function defaultPreferBundle() {
+	if (process.env.TETCHES_SERVE_BUNDLE === '1') return true;
+	const env = String(process.env.NODE_ENV || '').toLowerCase();
+	return env === 'production' || env === 'staging';
+}
+
+/**
+ * @param {{ projectRoot: string, preferBundle?: boolean }} opts
  * @returns {{ middleware: import('express').RequestHandler, bundleStatus: () => string }}
  */
-function createIndexHtmlBundleSwap({ projectRoot } = {}) {
+function createIndexHtmlBundleSwap({ projectRoot, preferBundle } = {}) {
 	if (!projectRoot) throw new Error('createIndexHtmlBundleSwap: projectRoot required');
 
+	const bundlePreferred = typeof preferBundle === 'boolean' ? preferBundle : defaultPreferBundle();
 	const indexPath = path.join(projectRoot, 'public', 'index.html');
 	const bundlePath = path.join(projectRoot, 'public', 'dist', 'app.bundle.js');
 
@@ -72,7 +87,7 @@ function createIndexHtmlBundleSwap({ projectRoot } = {}) {
 			throw new Error(`Failed to read index.html: ${err.message}`, { cause: err });
 		}
 		refreshBundleStatus();
-		if (bundleExists && html.includes(ENTRY_TAG)) {
+		if (bundlePreferred && bundleExists && html.includes(ENTRY_TAG)) {
 			html = html.replace(ENTRY_TAG, buildBundleScriptTag(bundleVersion));
 		}
 		cachedHtml = html;
@@ -102,8 +117,12 @@ function createIndexHtmlBundleSwap({ projectRoot } = {}) {
 		next();
 	};
 
-	const bundleStatus = () =>
-		bundleExists ? `bundled (mtime ${bundleVersion})` : 'unbundled (no app.bundle.js)';
+	const bundleStatus = () => {
+		if (!bundleExists) return 'unbundled (no app.bundle.js)';
+		return bundlePreferred
+			? `bundled (mtime ${bundleVersion})`
+			: `unbundled (bundle present but dev mode serves source modules)`;
+	};
 
 	/**
 	 * Expose the live bundle version so the server can advertise it

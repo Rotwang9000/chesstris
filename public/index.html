@@ -339,10 +339,13 @@
 		   controls strip so it doesn't disappear behind the
 		   next-piece HUD (top-right) or the activity log panel
 		   (right side). Low-key styling so it doesn't compete
-		   with gameplay UI. */
+		   with gameplay UI. bottom must clear the two-row
+		   debug-indicator strip (buttons + session warning,
+		   ~56px tall anchored at bottom:10) — 44px overlapped
+		   the Reset Camera button. */
 		.advertise-link {
 			position: fixed;
-			bottom: 44px;
+			bottom: 74px;
 			left: 10px;
 			z-index: 1100;
 			color: #888;

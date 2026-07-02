@@ -20,6 +20,33 @@ const LOCAL_PALETTE = Object.freeze({
 const RETRO_LOCAL = Object.freeze({ home: 0x004400, default: 0x00ff41 });
 const RETRO_REMOTE = Object.freeze({ home: 0x332200, default: 0xff8800 });
 
+/**
+ * Battle seats carry a fixed army colour from the server (white, black,
+ * blue, orange pieces). Cells tinted with the raw colour would be
+ * unreadable as terrain (white cells look unowned, black cells look
+ * dead), so territory is blended toward this neutral board tone.
+ */
+const CELL_NEUTRAL = 0xBFB49A;
+const SEAT_CELL_BLEND = 0.55; // fraction of the seat colour kept
+
+function blendColours(a, b, keepA) {
+	const mix = (chA, chB) => Math.round(chA * keepA + chB * (1 - keepA));
+	return (mix((a >> 16) & 0xff, (b >> 16) & 0xff) << 16)
+		| (mix((a >> 8) & 0xff, (b >> 8) & 0xff) << 8)
+		| mix(a & 0xff, b & 0xff);
+}
+
+/**
+ * Fixed army colour for a battle seat, as a number — or null when the
+ * player is not a battle seat (world players use the hash palette).
+ */
+function seatColourFor(playerId, gameState) {
+	const record = gameState?.players?.[playerId];
+	if (!record || !record.battleId || typeof record.color !== 'string') return null;
+	const hex = parseInt(record.color.replace('#', ''), 16);
+	return Number.isFinite(hex) ? hex : null;
+}
+
 function isLocal(playerId, gameState) {
 	if (!gameState) return false;
 	const id = String(playerId);
@@ -68,6 +95,16 @@ export function getPlayerColor(playerId, gameState = null, type = 'chess') {
 	if (gameState && gameState.retroMode) {
 		const palette = local ? RETRO_LOCAL : RETRO_REMOTE;
 		return type === 'home' ? palette.home : palette.default;
+	}
+
+	// Battle seats: paint territory in the seat's army colour (softened
+	// toward the board neutral so white/black armies stay readable).
+	// Chess pieces keep the raw colour via their own render path.
+	const seatColour = seatColourFor(playerIdStr, gameState);
+	if (seatColour !== null) {
+		return type === 'chess'
+			? seatColour
+			: blendColours(seatColour, CELL_NEUTRAL, SEAT_CELL_BLEND);
 	}
 
 	if (local) return LOCAL_PALETTE[type] ?? LOCAL_PALETTE.chess;

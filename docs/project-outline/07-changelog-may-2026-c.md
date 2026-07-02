@@ -2,6 +2,71 @@
 
 > Part of the [Tetches project outline](README.md). May 2026: power-up orbs, connectivity, production audit.
 
+### Battle polish sweep: fan arenas, colour fixes, view isolation (2 Jul 2026)
+
+**Fixes the player-reported instant pawn capture in 3–4 seat battles, the
+all-white cells, and a raft of cross-battle leakage found in a follow-up
+sweep.**
+
+* **Fan formation + bigger arenas (`server/battle/geometry.js`,
+  `BattleManager.js`, `rules.js`).** 3–4 seat arenas now use
+  `PLAY_RADIUS_LARGE` (12, up from 9) and push side zones out with
+  `FAN_FRONT_OFFSET = 8`, guaranteeing ≥5 cells clear between adjacent
+  armies (adjacent zones used to be 2 cells apart — a CPU pawn could
+  capture on move one). `battle.playRadius` is now dynamic per seat count,
+  stored on the battle, sent to clients in `publicState`, and used by
+  `validateArenaBounds` instead of a global constant.
+* **White cells fixed (`public/js/boardFunctions/cellInstancer.js`).**
+  Three r132's `setProgram` has no guard on `instancingColor`: if an
+  `InstancedMesh` ever rendered before `setColorAt` allocated the colour
+  buffer, the shader compiled *without* `USE_INSTANCING_COLOR` and stayed
+  locked that way — every cell rendered the material base colour (white).
+  The instancer now allocates `instanceColor` eagerly at mesh build time.
+* **Seat colours flow to the client (`server/net/broadcasts.js`,
+  `networkEvents.js`, `colours.js`).** Player payloads now carry `color` +
+  `battleId`; `normalisePlayersArrayToMap` spreads all server fields
+  instead of cherry-picking; `getPlayerColor` uses the server-assigned
+  seat colour (blended toward neutral for cells, raw for pieces), so the
+  four armies are visually distinct instead of all hash-green.
+* **Falling piece anchors and colours correctly (`tetromino/spawn.js`,
+  `tetromino/rendering.js`).** Spawn position anchors on
+  `localPlayerId`'s king (was `currentPlayer` — a bot's turn put your
+  piece in the bot's zone), and the mesh colour resolves through the
+  local player's palette with a staleness check
+  (`refreshTetrominoColourIfStale`) for when player data lands after the
+  first render.
+* **View isolation sweep (`battle/battleRules.js` + consumers).** New
+  `isPlayerInCurrentView` / `isEventInCurrentView` helpers filter: king
+  duel announcements + results (`networkEvents.js`, `uiOverlays.js`),
+  activity log entries (`activityLog.js`), the player sidebar
+  (`unifiedPlayerBar.js`), power-up orbs (`powerUpRenderer.js`) and king
+  nameplates (`nameplateRenderer.js`). Players in a battle no longer see
+  world/other-battle chatter, and world players no longer see battle
+  internals.
+* **Toast coordinates are arena-relative (`networkEvents.js`).**
+  "Your pawn at (2002, 1995) was captured!" now reads "(2, -5)" —
+  `formatCellForToast` subtracts the active battle's centre.
+* **Water glare gone (`scene.js`).** The sea used `MeshStandardMaterial`
+  (roughness 0.35 / metalness 0.25) whose specular sun reflection washed
+  out whole arenas from some camera angles as a huge white blob. Water is
+  now `MeshLambertMaterial` — no specular term, same colour and ripples.
+* **Dev servers never serve a stale bundle
+  (`server/bundling/indexHtmlBundleSwap.js`).** The index swap used to
+  activate whenever `public/dist/app.bundle.js` existed — a leftover prod
+  build silently shadowed live source edits in dev (cost a debugging
+  session: client fixes "didn't work" because the browser ran week-old
+  code). Bundle serving is now opt-in: NODE_ENV production/staging or
+  `TETCHES_SERVE_BUNDLE=1`.
+* **UI overlap.** "Advertise Here" moved up (`bottom: 74px`) so it clears
+  the two-row debug indicator (`index.html`).
+
+New tests: `tests/ui/tetrominoSpawn.test.js` (local-king anchoring),
+`tests/ui/playerColours.test.js` (seat colour resolution),
+bundle-swap dev/prod gating in `tests/server/indexHtmlBundleSwap.test.js`.
+Headless probe (`scripts/ui-probe.mjs`, kept) verified colours, fan
+layout, glare and toast text visually. Full suite: 61 suites / 662 tests
+green.
+
 ### Battle-mode UX fixes: pinned render origin, deferred world join, lobby clarity (2 Jul 2026)
 
 **Fixes the player-reported "empty landscape" after starting a battle, plus

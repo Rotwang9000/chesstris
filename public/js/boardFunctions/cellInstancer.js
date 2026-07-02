@@ -84,6 +84,19 @@ export function createCellInstancer(THREE, boardGroup, cellGeometry, options = {
 		m.userData = { type: 'instancedCells', isStatic: true, cellAt };
 		m.castShadow = true;
 		m.receiveShadow = true;
+		// Allocate the per-instance colour buffer EAGERLY, before the
+		// mesh is ever rendered. three r132's setProgram re-checks a
+		// late-appearing instanceMatrix but NOT a late-appearing
+		// instanceColor — so if the first render happens while the
+		// board is empty (spectator boot, battle-only entry), the
+		// shader is compiled without USE_INSTANCING_COLOR and never
+		// recompiles: every cell then renders the white base material.
+		// ("The cells seem to have lost all colour" — July 2026.)
+		m.instanceColor = new THREE.InstancedBufferAttribute(
+			new Float32Array(cap * 3).fill(1), 3);
+		if (m.instanceColor.setUsage) {
+			m.instanceColor.setUsage(THREE.DynamicDrawUsage);
+		}
 		// The mesh sits at the board origin; each instance carries its own
 		// translation. Its single bounding volume would span the whole
 		// board, so per-instance frustum culling is impossible — but it's

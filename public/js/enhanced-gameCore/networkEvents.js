@@ -44,6 +44,7 @@ import {
 import { cancelSkipChessTimer, cancelSkipDropTimer } from '../skipChessButton.js';
 import { updateNextPieceHint } from '../tetromino/nextPiece.js';
 import { getChessPiecesGroup, getCamera } from '../gameContext.js';
+import { isEventInCurrentView } from '../battle/battleRules.js';
 import { updateChessPieces } from '../updateChessPieces.js';
 import { disposeBoats } from '../boatsRenderer.js';
 import {
@@ -78,6 +79,19 @@ const ISLAND_DECAY_LIMITS = Object.freeze({
 	// user noticed.
 	dedupeMs: 1500,
 });
+
+/**
+ * Human-readable board coordinate for toasts. Battle arenas live at
+ * absolute cells like (2002, 1995) — meaningless to a player, so
+ * inside a battle we report positions relative to the arena centre.
+ */
+function formatCellForToast(x, z) {
+	const centre = gameState.activeBattle?.centre;
+	if (centre && Number.isFinite(centre.x) && Number.isFinite(centre.z)) {
+		return `(${x - centre.x}, ${z - centre.z})`;
+	}
+	return `(${x}, ${z})`;
+}
 
 // `"x,z"` → last-playback-ms map used to suppress overlapping replays.
 const recentIslandDecayPlaybacks = new Map();
@@ -137,16 +151,16 @@ function normalisePlayersArrayToMap(playersArray) {
 	if (!Array.isArray(playersArray)) return map;
 	for (const p of playersArray) {
 		if (!p || !p.id) continue;
+		// Carry every broadcast field through (the server's players list
+		// is already payload-safe) and only coerce the ones consumers
+		// rely on being well-typed. Cherry-picking here silently dropped
+		// `paused`, `capturedBreakdown`, `promotionCreditCount` and the
+		// battle-seat `color`/`battleId` the board painter needs.
 		map[p.id] = {
-			id: p.id,
+			...p,
 			name: p.name || p.id,
 			isComputer: !!p.isComputer,
-			// Forwarded so the sidebar can hide beaten players and
-			// the spacing helpers can ignore them.
 			eliminated: !!p.eliminated,
-			// Captured-piece basket summary (public count + per-type
-			// totals). The full basket only goes to the owning
-			// player via a separate `captured_basket` event.
 			capturedCount: Number(p.capturedCount) || 0,
 			capturedSummary: p.capturedSummary && typeof p.capturedSummary === 'object'
 				? { ...p.capturedSummary }
@@ -298,7 +312,7 @@ function handleChessMoveBroadcast(payload) {
 			|| payload.movedTo
 			|| (Number.isFinite(payload.x) ? { x: payload.x, z: payload.z } : null);
 		const atSuffix = pos && Number.isFinite(pos.x) && Number.isFinite(pos.z)
-			? ` at (${pos.x}, ${pos.z})`
+			? ` at ${formatCellForToast(pos.x, pos.z)}`
 			: '';
 		if (localLost) {
 			showToastMessage(
@@ -781,7 +795,10 @@ function handleKingDuelStart(payload) {
 
 function handleKingDuelAnnounced(payload) {
 	try {
-		const { player1Name, player2Name } = payload || {};
+		const { player1, player2, player1Name, player2Name } = payload || {};
+		// A duel in someone else's battle (or in the world while we're
+		// battling) is not our news — view isolation covers toasts too.
+		if (!isEventInCurrentView(gameState, [player1, player2])) return;
 		showToastMessage(
 			`King's Duel! ${player1Name} vs ${player2Name} — both captured each other's king!`,
 			5000,
@@ -1133,7 +1150,7 @@ export function setupNetworkEvents(hooks = {}) {
 		if (!isLocal) return;
 		try {
 			showToastMessage(
-				`${payload.pieceType || 'Piece'} deployed at (${payload.x}, ${payload.z})`,
+				`${payload.pieceType || 'Piece'} deployed at ${formatCellForToast(payload.x, payload.z)}`,
 				3500,
 			);
 		} catch (toastErr) {
@@ -1151,7 +1168,7 @@ export function setupNetworkEvents(hooks = {}) {
 			try {
 				const where = payload.fallback
 					? `near your king (original cell gone)`
-					: `at (${payload.x}, ${payload.z})`;
+					: `at ${formatCellForToast(payload.x, payload.z)}`;
 				showToastMessage(`${payload.pieceType || 'piece'} deployed ${where}`, 3500);
 			} catch (toastErr) {
 				console.warn('[promotion_credit_redeemed] toast failed:', toastErr);

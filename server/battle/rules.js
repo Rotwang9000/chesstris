@@ -62,7 +62,7 @@ function validateArenaBounds(game, playerId, shapeCells) {
 
 	if (battle && battle.centre) {
 		for (const cell of shapeCells) {
-			if (!isInsidePlayArea(battle.centre, cell.x, cell.z)) {
+			if (!isInsidePlayArea(battle.centre, cell.x, cell.z, battle.playRadius)) {
 				return {
 					valid: false,
 					reason: 'outside_arena',
@@ -78,7 +78,7 @@ function validateArenaBounds(game, playerId, shapeCells) {
 		for (const other of Object.values(battles)) {
 			if (!other || other.status === 'finished' || !other.centre) continue;
 			for (const cell of shapeCells) {
-				if (isInsideKeepOut(other.centre, cell.x, cell.z)) {
+				if (isInsideKeepOut(other.centre, cell.x, cell.z, other.playRadius)) {
 					return {
 						valid: false,
 						reason: 'arena_reserved',
