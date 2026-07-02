@@ -445,6 +445,21 @@ export default class NetworkManager {
 	}
 
 	/**
+	 * Bind the world id learned from a spectator state fetch (no
+	 * `join_game` performed). Battle-only players never join the global
+	 * world — their seat is their identity — but gameplay submissions
+	 * (`tetromino_placed`, `chess_move`, …) are guarded client-side by
+	 * `state.gameId`, so the id must still be known. Deliberately does
+	 * NOT set `hasJoinedGame`: a later PLAY click still performs the
+	 * real `join_game`.
+	 * @param {string} gameId
+	 */
+	adoptSpectatorGameId(gameId) {
+		if (!gameId || this.state.gameId) return;
+		this.state.gameId = String(gameId);
+	}
+
+	/**
 	 * Name sent with `join_game` — never the literal placeholder `'Guest'`
 	 * when the user has already stored a real name.
 	 * @private

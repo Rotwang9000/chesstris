@@ -195,3 +195,91 @@ unchanged).
 **Not in v1** (candidates for the next pass): auto-start when the last
 seat fills, battle-scoped duel/power-up tuning, spectator flyover of
 live arenas, per-battle scoreboard in the player bar.
+
+## 2 July — Battle mode v2: battles are their own world, arrival is a flyover
+
+Owner repro on the v1 build: host clicks **Start battle** and nothing
+happens (host stays in the global game, joiner sits on "Waiting…").
+Root cause was found in the socket plumbing, and fixing it forced the
+bigger design question: battles shouldn't be visible bolt-ons to the
+global world at all.
+
+### The bug — battle events never reached the client modules
+
+`socketEventBridge.js` forwards raw socket events to the NetworkManager
+event bus through an explicit whitelist (`SIMPLE_FORWARD_EVENTS`) — and
+none of the `battle_*` events were on it. Every lobby update, start and
+finish emitted by the server died in the bridge. Worse, `battleMode.js`
+subscribed via `NetworkManager.onMessage()`, which only fires for
+events wrapped in generic `message` envelopes — these never are.
+Fixed both ends: `battle_lobby_update` / `battle_started` /
+`battle_finished` / `battle_cancelled` / `server_toast` are now
+forwarded, and the client subscribes with `NetworkManager.on()`.
+A regression test asserts the subscription is on the plain event bus.
+
+### The redesign — "the edge of the game is the edge of the world"
+
+Agreed flow with the owner: arriving at tetches.com no longer joins the
+global game. You connect as a spectator over an aerial overview of the
+live world, and the welcome modal offers two doors:
+
+- **✦ PLAY NOW** → joins the global world, pieces spawn, and the camera
+  makes a sweeping drone flight from the overview down to your king
+  (`setupCamera.js#flyToPosition` now scales duration and arc height
+  with distance: up to 6.5 s and +70 units for cross-world hops).
+- **⚔ BATTLE A FRIEND** → never touches the global world. Straight to
+  the battle dialog → lobby → arena. When the battle ends you're
+  returned to the overview + welcome modal, not dumped into the world.
+
+What that took:
+
+- `main-enhanced.js#connectForWorldPreview` — connects the socket and
+  pulls `get_game_state` for rendering *without* `join_game`; the
+  spectator adopts the `gameId` via the new
+  `NetworkManager.adoptSpectatorGameId()` so later battle placements
+  pass the client-side guards. `initBattleMode` and the tetromino
+  socket listeners moved to boot-time `init()` (they only ran after a
+  world join, so battle-only players had no piece spawner — the reason
+  the joiner never got a tetromino).
+- `enhanced-gameCore.js` — new `startBattleSession()` (starts the game
+  loop and UI for a seat with no kingdom), `isWorldEntered()` /
+  `showWelcomeOverview()` (post-battle return), and the first-frame
+  overview reframe once board data lands (`_overviewFramed`).
+- **View isolation** (`battle/battleRules.js#isCellVisibleInCurrentView`,
+  applied in `boardFunctions/rendering.js` and `updateChessPieces.js`):
+  in a battle you render arena cells only — the world does not exist;
+  outside a battle the remote battle region (distance ≥1500) is hidden
+  from the global view. The chess-piece render hash carries a view tag
+  so entering/leaving a battle forces a rebuild.
+- `battleMode.js` — `enterBattleFlow()` (welcome-modal entry point,
+  connects on demand, claims invite-code seats before opening the
+  dialog), `returnToWelcomeIfHomeless()` (battle-only players go back
+  to the overview; world players fly home), and a lobby clarity pass:
+  numbered steps, live seat list with You/Host badges, bot-fill counts
+  on the start button, invite link + code with copy buttons.
+- Invite links (`?battle=CODE`) now stash the code and light up the
+  welcome modal's battle button instead of auto-joining from under the
+  visitor.
+
+### Server: battle-only players must survive the ghost sweep
+
+A battle-only player owns zero world cells, so `ghostPlayerSweep`
+would flag them eliminated mid-battle (identity loss on reconnect).
+`BattleManager` now stamps real player records with `activeBattleId`
+on create/join, clears it on leave/finish/cleanup (including a
+stale-stamp sweep in `tick` and boot restore), and the ghost sweep +
+`reapImmediately` skip stamped players. Covered by new unit tests.
+
+### Verified
+
+- **623 tests, 57 suites** (12 new: bridge forwarding, dialog/lobby
+  DOM, seat adoption without world join, post-battle welcome return,
+  ghost-sweep exemption).
+- `scripts/e2e-battle-flow.js` extended to replay the exact repro on a
+  live server — two battle-only sockets (no `join_game`): create →
+  join → start → **both** clients receive `battle_started` → seat
+  placements land inside the arena → kings present → forfeit →
+  `battle_finished` with the right winner. 48/48 checks green.
+- Embedded-browser session had no WebGL (bundle boots clean, flow
+  driven by the jsdom suites instead); to re-verify visually on
+  production after deploy.

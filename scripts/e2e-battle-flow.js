@@ -226,6 +226,77 @@ async function main() {
 	host.socket.disconnect();
 	guest.socket.disconnect();
 
+	// ═══ Scenario B: BATTLE-ONLY flow (no join_game at all) ═══════════
+	// The welcome modal's BATTLE button skips world entry entirely:
+	// connect → battle_create/battle_join → battle_start. Neither player
+	// may ever grow a kingdom in the shared world.
+	console.log('\nScenario B: battle-only players (never join the world)');
+
+	const bHost = await connectClient('E2E BattleOnly Host');
+	const bGuest = await connectClient('E2E BattleOnly Guest');
+	pass(`battle-only host ${bHost.playerId} / guest ${bGuest.playerId} connected`);
+
+	const bCreate = await emitAck(bHost, 'battle_create', { seatCount: 2 });
+	assert(bCreate.success === true, 'battle-only host creates a battle WITHOUT join_game',
+		bCreate.error);
+	const bCode = bCreate.battle?.code;
+
+	const bJoin = await emitAck(bGuest, 'battle_join', { code: bCode });
+	assert(bJoin.success === true, 'battle-only guest joins by code WITHOUT join_game',
+		bJoin.error);
+
+	const bHostStarted = waitForEvent(bHost, 'battle_started');
+	const bGuestStarted = waitForEvent(bGuest, 'battle_started');
+	const bStart = await emitAck(bHost, 'battle_start', {});
+	assert(bStart.success === true, 'battle-only battle starts', bStart.error);
+
+	const [bHostEvt, bGuestEvt] = await Promise.all([bHostStarted, bGuestStarted]);
+	assert(bHostEvt?.battle?.code === bCode && bGuestEvt?.battle?.code === bCode,
+		'both battle-only players received battle_started');
+	const bCentre = bStart.battle?.centre;
+	assert(bCentre && Number.isFinite(bCentre.x), 'battle-only arena has a centre',
+		JSON.stringify(bCentre));
+	const bSeats = bStart.battle?.seats || [];
+	assert(bSeats.length === 2 && bSeats.every(s => !s.isAi),
+		'battle-only battle seats both human', JSON.stringify(bSeats));
+
+	// The REAL player ids must have no kingdom; the SEAT ids must have
+	// home zones + kings inside the arena.
+	const bState = await emitAck(bHost, 'get_game_state', {});
+	assert(bState.success === true, 'battle-only get_game_state succeeds', bState.error);
+	const bZones = bState.state?.homeZones || {};
+	assert(!bZones[bHost.playerId] && !bZones[bGuest.playerId],
+		'battle-only players never grew world kingdoms',
+		`zones for real ids: ${JSON.stringify(Object.keys(bZones).filter(k => k === bHost.playerId || k === bGuest.playerId))}`);
+	const seatZoneOk = bSeats.every(s => {
+		const zone = bZones[s.seatId];
+		return zone && Math.abs(zone.x - bCentre.x) <= 20 && Math.abs(zone.z - bCentre.z) <= 20;
+	});
+	assert(seatZoneOk, 'both seats have home zones inside the arena',
+		JSON.stringify(bSeats.map(s => bZones[s.seatId])));
+	const bPieces = bState.state?.chessPieces || [];
+	const seatKings = bSeats.filter(s => bPieces.some(
+		p => String(p.player) === s.seatId && String(p.type).toUpperCase() === 'KING'
+	));
+	assert(seatKings.length === 2, 'both seats have kings on the board',
+		`kings for ${seatKings.length}/2 seats`);
+
+	// Gameplay acts as the seat (session alias): place-ready state only.
+	// Full placement mechanics are covered by unit tests; here we just
+	// prove the battle finishes cleanly for battle-only players too.
+	const bGuestFinished = waitForEvent(bGuest, 'battle_finished', 15000);
+	const bLeave = await emitAck(bHost, 'battle_leave', {});
+	assert(bLeave.forfeited === true, 'battle-only host forfeits', JSON.stringify(bLeave));
+	const bFinPayload = await bGuestFinished;
+	assert(bFinPayload?.battle?.status === 'finished',
+		'battle-only battle finished after forfeit',
+		`status=${bFinPayload?.battle?.status}`);
+
+	// Their real records never joined the world, so there is nothing to
+	// exit — disconnecting must be enough to leave no kingdom behind.
+	bHost.socket.disconnect();
+	bGuest.socket.disconnect();
+
 	console.log(`\n${stepCounter - failures.length}/${stepCounter} checks passed`);
 	if (failures.length) {
 		console.error(`\n${failures.length} FAILURE(S):`);

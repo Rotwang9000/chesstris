@@ -52,3 +52,29 @@ export function isCellInsideOwnArena(gameState, x, z) {
 export function isBattleRegionCell(x, z) {
 	return Math.sqrt(x * x + z * z) >= BATTLE_REGION_MIN_DISTANCE;
 }
+
+/**
+ * Everything a seated player may see: play area (≤14), ring wall
+ * (15-16) plus a couple of cells of breathing room. Matches the server
+ * arena geometry (`server/battle/geometry.js` RING_OUTER_RADIUS = 16).
+ */
+export const BATTLE_ARENA_VIEW_RADIUS = 20;
+
+/**
+ * View isolation — "the edge of the game is the edge of the world".
+ *
+ * While seated in a battle, ONLY the own arena exists visually: the
+ * global world (and other arenas) must not render. Outside a battle
+ * the reverse holds: the organic world renders, battle arenas do not.
+ *
+ * @returns {boolean} True when the cell belongs in the current view.
+ */
+export function isCellVisibleInCurrentView(gameState, x, z) {
+	const battle = getActiveBattle(gameState);
+	if (battle && battle.centre) {
+		const dx = x - battle.centre.x;
+		const dz = z - battle.centre.z;
+		return Math.sqrt(dx * dx + dz * dz) <= BATTLE_ARENA_VIEW_RADIUS;
+	}
+	return !isBattleRegionCell(x, z);
+}

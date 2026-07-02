@@ -92,6 +92,11 @@ export function setWorldJoinGate(gateFn) {
 	worldJoinGate = typeof gateFn === 'function' ? gateFn : null;
 }
 
+/** Has the player entered the shared world (kingdom created/joined)? */
+export function isWorldEntered() {
+	return worldEntered;
+}
+
 // ── Phase switching (used by createLoadingIndicator & inputManager) ─────────
 
 export function handleTetrisPhaseClick() {
@@ -377,7 +382,13 @@ function setupEventSystem() {
 				}
 			}
 
-			if (!gameState._cameraFlownToPlayer && gameState.localPlayerId && gameState.chessPieces?.length > 0) {
+			// Auto-fly to the player's king once their pieces exist —
+			// but never before they've actually entered (spectators on
+			// the welcome overview keep the wide view; a returning
+			// cookie identity must not yank the camera to their old
+			// kingdom before they press PLAY).
+			if ((worldEntered || gameState.activeBattle)
+				&& !gameState._cameraFlownToPlayer && gameState.localPlayerId && gameState.chessPieces?.length > 0) {
 				const king = boardFunctions.getPlayersKing(gameState, gameState.localPlayerId, false);
 				if (king) {
 					gameState._cameraFlownToPlayer = true;
@@ -471,6 +482,19 @@ function updateBoardState(boardData) {
 
 		gameState.gameStarted = true;
 		updateBoardVisuals();
+
+		// First board snapshot while the welcome modal is still up:
+		// re-frame the overview around the now-known world so the
+		// backdrop shows the actual board, not empty sea (the initial
+		// overview at page load ran before any cells existed).
+		if (!worldEntered && !gameState.activeBattle && !gameState._overviewFramed) {
+			let hasCells = false;
+			for (const _k in gameState.board.cells) { hasCells = true; break; }
+			if (hasCells) {
+				gameState._overviewFramed = true;
+				setCameraToOverview();
+			}
+		}
 
 		const li = document.getElementById('loading-indicator');
 		if (li) li.style.display = 'none';
@@ -654,6 +678,59 @@ export async function startPlayingGame(gameKey = null) {
 	}
 }
 
+/**
+ * Battle-only entry: spin up the gameplay systems for a player whose
+ * ONLY identity is a battle seat — no `join_game`, no kingdom in the
+ * shared world. Called by battleMode when a battle starts (adoptSeat
+ * has already swapped `gameState.localPlayerId` to the seat id).
+ *
+ * Deliberately does NOT set `worldEntered`: when the battle ends the
+ * welcome overview returns, and PLAY still performs the real world
+ * join. The first tetromino spawns via the `gameupdate` listener as
+ * soon as the arena broadcast delivers the seat's king (with the game
+ * loop watchdog as backstop).
+ */
+export function startBattleSession() {
+	if (worldEntered) return true;
+	try {
+		console.log('Starting battle-only session (no world join)');
+		gameState.error = null;
+		gameState.inProgress = true;
+		gameState.gameStarted = true;
+		if (gameState.localPlayerId) gameState.currentPlayer = gameState.localPlayerId;
+		hideError();
+		hideAllLoadingElements();
+
+		// An invite auto-join can start a battle while the welcome
+		// modal is still up — clear it out of the way.
+		const modal = document.getElementById('tutorial-message');
+		if (modal && modal.parentNode) modal.parentNode.removeChild(modal);
+
+		gameState.turnPhase = 'tetris';
+		resetTetrisLastFallTime();
+		updateGameStatusDisplay(gameState);
+		return true;
+	} catch (error) {
+		console.error('Error starting battle session:', error);
+		return false;
+	}
+}
+
+/**
+ * Return a battle-only player to the arrival experience: overview
+ * camera + welcome modal (PLAY / BATTLE choices). No-op once the
+ * player has actually entered the shared world.
+ */
+export function showWelcomeOverview() {
+	if (worldEntered) return;
+	gameState.inProgress = false;
+	gameState._cameraFlownToPlayer = false;
+	try { setCameraToOverview(); }
+	catch (err) { console.warn('Overview camera reset failed:', err); }
+	window.startTetchesGame = window.startTetchesGame || startPlayingGame;
+	showTutorialMessage(window.startTetchesGame);
+}
+
 function requestGameState() {
 	if (typeof dispatchEvent === 'function') {
 		dispatchEvent(new CustomEvent('requestgamestate'));
@@ -778,6 +855,11 @@ export function exposeHighlightFunctionsGlobally() {
 	window.gameCore.resetCamera = resetCamera;
 	window.gameCore.flyToPlayerKing = flyToPlayerKing;
 	window.gameCore.flyToCell = flyToCell;
+	// Battle-mode bridge (battleMode.js reaches these via window.gameCore
+	// to avoid a circular import with this module).
+	window.gameCore.isWorldEntered = isWorldEntered;
+	window.gameCore.startBattleSession = startBattleSession;
+	window.gameCore.showWelcomeOverview = showWelcomeOverview;
 	window.gameState = gameState;
 
 	const resetBtn = document.getElementById('reset-camera-btn');

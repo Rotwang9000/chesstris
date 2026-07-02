@@ -71,6 +71,10 @@ const CAMERA_DEFAULTS = {
 	MAX_DISTANCE: 80,
 	DAMPING_FACTOR: 0.12,
 	FLY_DURATION_MS: 1800,
+	/** Longest sweep (distance-scaled) — cross-world drone flights. */
+	FLY_DURATION_MAX_MS: 4500,
+	/** Cap on how high the flight arc climbs above the endpoints. */
+	FLY_ARC_MAX_HEIGHT: 120,
 	KING_VIEW_DISTANCE: 16,
 	FALLBACK_POSITION: { x: 10, y: 25, z: 10 },
 	FALLBACK_TARGET: { x: 0, y: 0, z: 0 }
@@ -305,14 +309,19 @@ export function flyToPosition(camera, controls, targetPosition, targetLookAt, re
 	};
 	activeFlyControlsRestore = restoreControls;
 
-	const duration = CAMERA_DEFAULTS.FLY_DURATION_MS;
-	const startTime = performance.now();
-
-	// Arc height based on distance
+	// Sweep duration and arc height both scale with distance so short
+	// hops stay snappy while long hauls (welcome overview → kingdom,
+	// world → battle arena, ~2,800 units) become a proper drone flight
+	// that climbs high over the sea instead of a 1.8s blur.
 	const dx = targetPosition.x - startPosition.x;
 	const dz = targetPosition.z - startPosition.z;
 	const horizontalDist = Math.sqrt(dx * dx + dz * dz);
-	const arcHeight = Math.min(horizontalDist * 0.4, 20);
+	const duration = Math.min(
+		CAMERA_DEFAULTS.FLY_DURATION_MS + horizontalDist * 8,
+		CAMERA_DEFAULTS.FLY_DURATION_MAX_MS
+	);
+	const startTime = performance.now();
+	const arcHeight = Math.min(horizontalDist * 0.4, CAMERA_DEFAULTS.FLY_ARC_MAX_HEIGHT);
 
 	const midY = Math.max(startPosition.y, targetPosition.y) + arcHeight;
 

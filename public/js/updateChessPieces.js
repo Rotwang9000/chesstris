@@ -4,6 +4,7 @@ import { getTHREE } from './gameContext.js';
 import { highlightSinglePiece, setChessPiecesGroup } from './pieceHighlightManager.js';
 import { translatePosition } from './centreBoardMarker.js';
 import { setPieceMatrixStatic } from './pieceMatrixState.js';
+import { isCellVisibleInCurrentView } from './battle/battleRules.js';
 
 
 // Add a timer to track when chess pieces were last updated
@@ -40,9 +41,12 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 	}
 	
 	// Generate a hash of the current chess pieces + render profile so
-	// switching themes triggers a rebuild even when positions haven't changed.
+	// switching themes triggers a rebuild even when positions haven't
+	// changed. The view tag makes entering/leaving a battle arena a
+	// "change" too — the visible piece set flips wholesale.
 	const profileTag = gameState.renderProfile || (gameState.retroMode ? 'retro' : 'normal');
-	let currentHash = `profile:${profileTag}|`;
+	const viewTag = gameState.activeBattle?.id || 'world';
+	let currentHash = `profile:${profileTag}|view:${viewTag}|`;
 	if (gameState.chessPieces && Array.isArray(gameState.chessPieces)) {
 		currentHash += gameState.chessPieces.map(piece => {
 			if (!piece) return '';
@@ -182,6 +186,18 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 			if (isFirstRun || gameState.debugMode) {
 				console.log(`Extracted ${chessPieces.length} chess pieces from board cells using centralized function`);
 			}
+		}
+
+		// View isolation: while seated in a battle only arena pieces
+		// render; outside a battle the remote arena region's pieces are
+		// hidden. The full list stays intact on gameState — this only
+		// scopes what gets meshes (unprocessed meshes are pruned below).
+		if (Array.isArray(chessPieces) && chessPieces.length > 0) {
+			chessPieces = chessPieces.filter(piece => {
+				const pos = piece?.position;
+				if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.z)) return false;
+				return isCellVisibleInCurrentView(gameState, pos.x, pos.z);
+			});
 		}
 
 		// Quick safety check - if we have no chess pieces, stop processing

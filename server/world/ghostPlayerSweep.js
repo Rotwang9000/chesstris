@@ -80,8 +80,12 @@ function createGhostPlayerSweepService({
 		for (const [pid, player] of Object.entries(world.players)) {
 			if (!player) continue;
 			// Battle seats live and die with their battle — the
-			// BattleManager sweep owns their cleanup.
-			if (player.battleId) continue;
+			// BattleManager sweep owns their cleanup. Real players who
+			// currently hold a battle seat (`activeBattleId`) are also
+			// exempt: a battle-only player owns no world pieces under
+			// their real id, and flagging them eliminated would cost
+			// them their identity (and seat) on reconnect.
+			if (player.battleId || player.activeBattleId) continue;
 			const pidStr = String(pid);
 			const pieceCount = counts.get(pidStr) || 0;
 			const hasPieces = pieceCount > 0;
@@ -188,6 +192,10 @@ function createGhostPlayerSweepService({
 		for (const pid of candidatePlayerIds) {
 			const player = world.players[pid];
 			if (!player) continue;
+			// Same exemptions as tick(): battle seats belong to the
+			// BattleManager sweep; real players holding a seat in a
+			// restored battle must keep their identity.
+			if (player.battleId || player.activeBattleId) continue;
 			const pieceCount = counts.get(String(pid)) || 0;
 			if (pieceCount > 0) continue;
 			if (player.pendingRespawn && player.isComputer) continue;

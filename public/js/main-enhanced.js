@@ -285,6 +285,13 @@ async function init() {
 			connectForWorldPreview();
 			hideLoadingScreen();
 		}
+
+		// Battle mode wires up at page load — NOT after world join —
+		// because the welcome modal's BATTLE button goes straight to
+		// the lobby without ever joining the shared world.
+		wireTetrominoSocketListeners();
+		try { initBattleMode(gameState); }
+		catch (err) { console.warn('Battle mode init failed:', err); }
 		
 		console.log('Enhanced game initialized successfully');
 	} catch (error) {
@@ -355,6 +362,21 @@ function ensureWorldJoined() {
 }
 
 /**
+ * Tetromino-specific socket listeners (row clears, rejected
+ * placements). Needed by BOTH entry paths — world join and battle-only
+ * — so wiring happens once at page init. Safe before the socket
+ * connects: it registers against the NetworkManager event bus.
+ */
+let tetrominoListenersWired = false;
+function wireTetrominoSocketListeners() {
+	if (tetrominoListenersWired) return;
+	tetrominoListenersWired = true;
+	if (typeof tetrominoModule !== 'undefined' && tetrominoModule.initializeTetrominoSocketListeners) {
+		tetrominoModule.initializeTetrominoSocketListeners();
+	}
+}
+
+/**
  * Background socket connection (no `join_game`). The server streams
  * `game_update` broadcasts to every connected socket, so the world
  * renders behind the welcome modal as a live backdrop, and the battle
@@ -365,10 +387,17 @@ async function connectForWorldPreview() {
 		const connected = await NetworkManager.initialize(playerName || 'Guest');
 		if (!connected) return;
 		// Ask for one full snapshot so a quiet world still paints the
-		// backdrop instead of waiting for the next broadcast.
+		// backdrop instead of waiting for the next broadcast. The
+		// response also tells us the world id — battle-only players
+		// never call `join_game`, but gameplay submissions still need
+		// `NetworkManager.state.gameId` to pass the client-side guard.
 		const socket = NetworkManager.getSocket ? NetworkManager.getSocket() : null;
 		if (socket && typeof socket.emit === 'function') {
-			socket.emit('get_game_state', {});
+			socket.emit('get_game_state', {}, (response) => {
+				if (response && response.gameId && NetworkManager.adoptSpectatorGameId) {
+					NetworkManager.adoptSpectatorGameId(response.gameId);
+				}
+			});
 		}
 	} catch (error) {
 		console.warn('World preview connection failed (will connect on entry):', error);
@@ -556,10 +585,9 @@ async function joinGameAfterConnection(gameId = null) {
 		// Set up network events
 		gameCore.setupNetworkEvents();
 		
-		// Set up tetromino-specific socket event listeners
-		if (typeof tetrominoModule !== 'undefined' && tetrominoModule.initializeTetrominoSocketListeners) {
-			tetrominoModule.initializeTetrominoSocketListeners();
-		}
+		// Set up tetromino-specific socket event listeners (no-op if
+		// page init already wired them).
+		wireTetrominoSocketListeners();
 		
 		// Join game
 		console.log('Joining game:', gameId || 'any available game');
@@ -626,8 +654,9 @@ async function joinGameAfterConnection(gameId = null) {
 				updateUnifiedPlayerBar(gameState);
 			}, 1000);
 
-			// Battle mode: socket listeners, ?battle=CODE invite links,
-			// mid-battle reconnect seat re-adoption.
+			// Battle mode listeners live at page init now (see init());
+			// this re-run is a harmless no-op that just refreshes the
+			// gameState reference.
 			try { initBattleMode(gameState); }
 			catch (err) { console.warn('Battle mode init failed:', err); }
 			

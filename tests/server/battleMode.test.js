@@ -321,4 +321,60 @@ describe('BattleManager', () => {
 		manager.tick({ now: Date.now() + 16 * 60 * 1000 });
 		expect(manager.getBattle(created.battle.id)).toBeNull();
 	});
+
+	// ── activeBattleId stamping (ghost-sweep protection) ────────────────
+	// Battle-only players own no world pieces under their real id; the
+	// stamp is what stops the ghost sweep flagging them eliminated and
+	// costing them their identity (and seat) on reconnect.
+
+	test('create/join stamp real players; leave/cancel clear the stamps', () => {
+		const code = createAndJoin();
+		expect(World.getPlayer('host1').activeBattleId).toBe(code);
+		expect(World.getPlayer('guest1').activeBattleId).toBe(code);
+
+		// Guest frees their seat → their stamp clears, host's remains.
+		manager.leaveBattle({ playerId: 'guest1' });
+		expect(World.getPlayer('guest1').activeBattleId).toBeUndefined();
+		expect(World.getPlayer('host1').activeBattleId).toBe(code);
+
+		// Host cancels → everyone clear.
+		manager.leaveBattle({ playerId: 'host1' });
+		expect(World.getPlayer('host1').activeBattleId).toBeUndefined();
+	});
+
+	test('joining clears a stale eliminated flag on the real record', () => {
+		// The ghost sweep may have flagged a long-idle spectator before
+		// they clicked BATTLE — they're clearly alive, so the flag lifts.
+		World.getPlayer('host1').eliminated = true;
+		World.getPlayer('host1').eliminatedAt = 123;
+		const created = manager.createBattle({ hostId: 'host1', hostName: 'Hosty', seatCount: 2 });
+		expect(created.success).toBe(true);
+		expect(World.getPlayer('host1').eliminated).toBe(false);
+		expect(World.getPlayer('host1').eliminatedAt).toBeUndefined();
+	});
+
+	test('finish and cleanup clear the stamps', () => {
+		const code = createAndJoin();
+		manager.startBattle({ battleId: code, playerId: 'host1' });
+		expect(World.getPlayer('host1').activeBattleId).toBe(code);
+
+		manager.leaveBattle({ playerId: 'guest1' });   // forfeit
+		manager.tick();                                 // sweep settles the win
+		expect(manager.getBattle(code).status).toBe('finished');
+		expect(World.getPlayer('host1').activeBattleId).toBeUndefined();
+		expect(World.getPlayer('guest1').activeBattleId).toBeUndefined();
+	});
+
+	test('lobby timeout clears the stamps', () => {
+		const created = manager.createBattle({ hostId: 'host1', seatCount: 2 });
+		expect(World.getPlayer('host1').activeBattleId).toBe(created.battle.id);
+		manager.tick({ now: Date.now() + 16 * 60 * 1000 });
+		expect(World.getPlayer('host1').activeBattleId).toBeUndefined();
+	});
+
+	test('sweep drops stale stamps whose battle no longer exists', () => {
+		World.getPlayer('host1').activeBattleId = 'GONE99';
+		manager.tick();
+		expect(World.getPlayer('host1').activeBattleId).toBeUndefined();
+	});
 });

@@ -4,7 +4,8 @@ import gameState from './utils/gameState.js';
 import { loginWithEmail, handleAuthRedirect, isSignedIn } from './auth/auth0Client.js';
 import { showLoginDialog } from './auth/loginDialog.js';
 import { isLoggedIn as isKingdomLoggedIn, getLoggedInName as getKingdomName } from './auth/kingdomKey.js';
-import { showBattleDialog } from './battle/battleMode.js';
+import { enterBattleFlow } from './battle/battleMode.js';
+import { getSocket } from './utils/networkManager.js';
 
 /**
  * Create a loading indicator with Russian-themed styling
@@ -538,6 +539,19 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 		} catch (_e) { /* private mode */ }
 	};
 
+	// The spectator socket connected before the player typed their
+	// name, so the server-side record may still carry the auto-guest
+	// name. Battle seats are named from that record, so push the
+	// rename now (world joins send the name in `join_game` anyway).
+	const pushNameToServer = () => {
+		try {
+			const socket = getSocket();
+			let stored = null;
+			try { stored = localStorage.getItem('playerName'); } catch (_e) { /* private mode */ }
+			if (socket && stored) socket.emit('change_name', { playerName: stored });
+		} catch (_e) { /* not connected yet — join_game carries the name */ }
+	};
+
 	// Function to close tutorial and start game.
 	// Returns the start function's promise so callers (e.g. the battle
 	// button) can sequence follow-up UI on the world join completing.
@@ -768,20 +782,24 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 		});
 	}
 
-	// Battle a friend: enter the world first (battles live inside it),
-	// then open the battle dialog once the join has actually completed.
-	// With an invite code in the URL, initBattleMode handles the join +
-	// dialog itself right after world entry, so don't double-open it.
+	// Battle a friend: goes straight to the battle lobby WITHOUT
+	// joining the shared world — battle-only players never grow a
+	// kingdom, they fight in a private arena and come back here after.
+	// With an invite code in the URL the seat is claimed immediately.
 	const welcomeBattleBtn = tutorialElement.querySelector('#welcome-battle-btn');
 	if (welcomeBattleBtn) {
 		welcomeBattleBtn.addEventListener('click', () => {
 			welcomeBattleBtn.disabled = true;
-			welcomeBattleBtn.textContent = 'Entering...';
-			startGame(null).then((entered) => {
-				if (entered === false || inviteBattleCode) return;
-				try { showBattleDialog(); }
-				catch (err) { console.warn('Battle dialog failed to open:', err); }
-			}).catch((err) => console.warn('Battle entry failed:', err));
+			welcomeBattleBtn.textContent = inviteBattleCode ? 'Taking your seat…' : 'Opening battle lobby…';
+			saveTypedPlayerName();
+			pushNameToServer();
+			// Hide the modal — the battle dialog takes over on top of
+			// the spectator overview (no world entry happens).
+			if (tutorialElement.parentNode) {
+				tutorialElement.parentNode.removeChild(tutorialElement);
+			}
+			enterBattleFlow(inviteBattleCode)
+				.catch((err) => console.warn('Battle entry failed:', err));
 		});
 	}
 

@@ -17,6 +17,7 @@ import { createChessPiece as createChessPieceFromCreator } from '../chessPieceCr
 import { extractChessPiecesFromCells } from './pieces.js';
 import { getPlayerColor } from './colours.js';
 import { createCellInstancer } from './cellInstancer.js';
+import { isCellVisibleInCurrentView } from '../battle/battleRules.js';
 
 function ensureRenderCache(THREE) {
 	if (!ensureRenderCache._cache) {
@@ -399,10 +400,15 @@ export function renderBoard(gameState, boardGroup, _createFloatingIsland, THREE)
 			if (Number.isNaN(x) || Number.isNaN(z)) continue;
 
 			const cellKey = `${x},${z}`;
-			processedCells[cellKey] = true;
 			const cellData = gameState.board.cells[key];
 			if (cellData === null || cellData === undefined) continue;
 			if (isMarkerOnlyCell(cellData)) continue;
+			// View isolation: in a battle only the own arena renders
+			// (the edge of the arena is the edge of the world); outside
+			// a battle the remote arena region never renders. Cells left
+			// out of `processedCells` are swept away below.
+			if (!isCellVisibleInCurrentView(gameState, x, z)) continue;
+			processedCells[cellKey] = true;
 
 			const classification = classifyCell(cellData);
 			const appearance = chooseAppearance(classification, gameState, x, z);

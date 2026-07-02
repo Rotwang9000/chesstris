@@ -127,6 +127,10 @@ export function getGameId() {
 	return networkManagerInstance.getGameId();
 }
 
+export function adoptSpectatorGameId(gameId) {
+	return networkManagerInstance.adoptSpectatorGameId(gameId);
+}
+
 export function requestPlayerList() {
 	return networkManagerInstance.getGameState({
 		includePlayers: true,

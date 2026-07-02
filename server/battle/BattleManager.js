@@ -144,6 +144,38 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 		}
 	}
 
+	/**
+	 * Stamp / clear `activeBattleId` on a REAL player's record.
+	 *
+	 * Battle-only players (who never joined the shared world) own no
+	 * chess pieces under their real id, so the ghost-player sweep would
+	 * flag them "eliminated" after a minute — and an eliminated cookie
+	 * id is reissued on reconnect, silently costing them their seat.
+	 * The stamp lets the sweep recognise and skip them. Clearing
+	 * `eliminated` here covers players the sweep flagged BEFORE they
+	 * entered the lobby (they're clearly alive — they're clicking).
+	 */
+	function stampRealPlayer(playerId, battleId) {
+		const record = World.getPlayer(playerId);
+		if (!record) return;
+		if (battleId) {
+			record.activeBattleId = String(battleId);
+			if (record.eliminated) {
+				record.eliminated = false;
+				delete record.eliminatedAt;
+			}
+		} else {
+			delete record.activeBattleId;
+		}
+		World.markDirty();
+	}
+
+	function clearAllSeatStamps(battle) {
+		for (const seat of battle.seats) {
+			if (!seat.isAi && seat.controlledBy) stampRealPlayer(seat.controlledBy, null);
+		}
+	}
+
 	// ── Lifecycle ────────────────────────────────────────────────────────
 
 	/**
@@ -189,6 +221,7 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 			}],
 		};
 		battles()[code] = battle;
+		stampRealPlayer(hostId, battle.id);
 		World.markDirty();
 		persistence.markDirty();
 
@@ -223,6 +256,7 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 			name: playerName || `Player ${index + 1}`,
 		};
 		battle.seats.push(seat);
+		stampRealPlayer(playerId, battle.id);
 		World.markDirty();
 		persistence.markDirty();
 
@@ -343,11 +377,13 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 		if (battle.status === 'lobby') {
 			if (String(battle.hostId) === String(playerId)) {
 				emitToSeatHumans(battle, 'battle_cancelled', { battleId: battle.id });
+				clearAllSeatStamps(battle);
 				delete battles()[battle.id];
 				console.log(`[Battle] ${battle.code} cancelled by host`);
 			} else {
 				battle.seats = battle.seats.filter(s => s !== seat);
 				battle.seats.forEach((s, i) => { s.index = i; s.seatId = seatIdFor(battle.code, i); });
+				stampRealPlayer(playerId, null);
 				emitToSeatHumans(battle, 'battle_lobby_update', { battle: publicState(battle) });
 				console.log(`[Battle] ${playerId} left lobby ${battle.code}`);
 			}
@@ -394,6 +430,7 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 
 		const payload = { battle: publicState(battle), reason };
 		emitToSeatHumans(battle, 'battle_finished', payload);
+		clearAllSeatStamps(battle);
 
 		// Winner toast for the whole world — battles are a spectacle.
 		const winnerSeat = battle.seats.find(s => s.seatId === battle.winnerSeatId);
@@ -414,6 +451,7 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 	/** Remove every trace of a battle from the world. */
 	function cleanupBattle(battle) {
 		const world = World.getWorld();
+		clearAllSeatStamps(battle);
 
 		for (const seat of battle.seats) {
 			Sessions.clearAlias(seat.seatId);
@@ -450,6 +488,7 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 			if (battle.status === 'lobby') {
 				if (now - battle.createdAt > LOBBY_TIMEOUT_MS) {
 					emitToSeatHumans(battle, 'battle_cancelled', { battleId: battle.id, reason: 'timeout' });
+					clearAllSeatStamps(battle);
 					delete battles()[battle.id];
 					World.markDirty();
 					persistence.markDirty();
@@ -478,7 +517,14 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 		// manual registry edits) would otherwise linger forever because
 		// every other sweep skips `battleId` players.
 		for (const player of World.listPlayers()) {
-			if (!player || !player.battleId) continue;
+			if (!player) continue;
+			// Stale real-player stamps (battle gone) must not keep their
+			// owner permanently exempt from the ghost sweep.
+			if (player.activeBattleId && !getBattle(player.activeBattleId)) {
+				delete player.activeBattleId;
+				World.markDirty();
+			}
+			if (!player.battleId) continue;
 			if (getBattle(player.battleId)) continue;
 			console.warn(`[Battle] GC: orphaned seat ${player.id} (battle ${player.battleId} gone)`);
 			Sessions.clearAlias(player.id);

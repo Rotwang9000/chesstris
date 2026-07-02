@@ -8,7 +8,7 @@
  * The player's real kingdom carries on untouched back home.
  */
 
-import { getSocket, getPlayerId, onMessage } from '../utils/networkManager.js';
+import { getSocket, getPlayerId, on as onNetworkEvent, ensureConnected } from '../utils/networkManager.js';
 import { showToastMessage } from '../showToastMessage.js';
 
 const DIALOG_ID = 'tetches-battle-dialog';
@@ -18,6 +18,7 @@ const CAMERA_FLY_MAX_TRIES = 6;
 
 let gameStateRef = null;
 let savedRealPlayerId = null;
+let battleModeWired = false;
 
 function mySeat(battle) {
 	const realId = String(getPlayerId() || savedRealPlayerId || '');
@@ -25,6 +26,24 @@ function mySeat(battle) {
 	return (battle.seats || []).find(
 		s => !s.isAi && String(s.controlledBy) === realId
 	) || null;
+}
+
+/** Has this player entered the shared world (kingdom exists)? */
+function hasEnteredWorld() {
+	try { return window.gameCore?.isWorldEntered?.() === true; }
+	catch (_e) { return false; }
+}
+
+/**
+ * Battle-only players (never clicked PLAY) have no kingdom to return
+ * to after a battle — bring the welcome overview back instead so they
+ * can pick PLAY or another BATTLE.
+ */
+function returnToWelcomeIfHomeless() {
+	if (hasEnteredWorld()) return;
+	if (document.getElementById('tutorial-message')) return;
+	try { window.gameCore?.showWelcomeOverview?.(); }
+	catch (err) { console.warn('Could not return to welcome screen:', err); }
 }
 
 /**
@@ -56,6 +75,10 @@ function adoptSeat(battle) {
 	// seat's fresh home zone.
 	gameStateRef._hasPlacedTetromino = false;
 	gameStateRef.turnPhase = 'tetris';
+	// Battle-only players never ran the world-entry start-up — spin the
+	// gameplay systems up now (no world join; the seat IS the identity).
+	try { window.gameCore?.startBattleSession?.(); }
+	catch (err) { console.warn('startBattleSession failed:', err); }
 	showToastMessage('⚔ Battle started — fight!', { variant: 'success', duration: 5000 });
 	flyToSeat(seat.seatId);
 }
@@ -69,7 +92,9 @@ function releaseSeat({ silent = false } = {}) {
 		gameStateRef.myPlayerId = savedRealPlayerId;
 		gameStateRef.currentPlayer = savedRealPlayerId;
 		gameStateRef.turnPhase = 'tetris';
-		if (!silent) flyToSeat(savedRealPlayerId);
+		// Only fly "home" if there is a home — battle-only players have
+		// no kingdom, so the camera would chase a king that isn't there.
+		if (!silent && hasEnteredWorld()) flyToSeat(savedRealPlayerId);
 		savedRealPlayerId = null;
 	}
 }
@@ -180,7 +205,13 @@ export async function showBattleDialog(options = {}) {
 		boxShadow: '0 0 30px rgba(255, 204, 0, 0.3)',
 	});
 	overlay.appendChild(card);
-	overlay.addEventListener('click', (e) => { if (e.target === overlay) closeBattleDialog(); });
+	overlay.addEventListener('click', (e) => {
+		if (e.target !== overlay) return;
+		closeBattleDialog();
+		// Battle-only players who back out of the dialog would be
+		// stranded on the spectator view — bring the welcome screen back.
+		returnToWelcomeIfHomeless();
+	});
 	document.body.appendChild(overlay);
 
 	const state = await fetchBattleState();
@@ -218,13 +249,33 @@ function renderDialogContent(card, battle, options = {}) {
 	renderCreateJoin(card, options);
 }
 
+function sectionLabel(text) {
+	return el('div', {
+		fontSize: '11px', letterSpacing: '2px', color: '#ffcc00',
+		opacity: '0.85', margin: '0 0 8px 0', fontWeight: 'bold',
+	}, text);
+}
+
+function orDivider() {
+	const wrap = el('div', {
+		display: 'flex', alignItems: 'center', gap: '10px',
+		margin: '16px 0', color: '#886', fontSize: '11px',
+	});
+	const line = () => el('div', { flex: '1', borderBottom: '1px solid rgba(255,204,0,0.25)' });
+	wrap.appendChild(line());
+	wrap.appendChild(el('span', {}, 'OR'));
+	wrap.appendChild(line());
+	return wrap;
+}
+
 function renderCreateJoin(card, options = {}) {
 	const help = el('p', { margin: '0 0 16px 0', fontSize: '12px', color: '#ccc', lineHeight: '1.5' },
-		'Private arena, 2-4 players. Share the code with friends — empty seats are filled by bots. Your main kingdom is safe while you fight.');
+		'A private arena for 2-4 players, far away from the shared world. Bots fill any seat a friend doesn\u2019t take.');
 	card.appendChild(help);
 
-	// Create section.
-	const createRow = el('div', { display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '18px' });
+	// ── Host a battle ────────────────────────────────────────────
+	card.appendChild(sectionLabel('START A NEW BATTLE'));
+	const createRow = el('div', { display: 'flex', gap: '8px', alignItems: 'center' });
 	const seatSelect = el('select', {
 		padding: '8px', fontSize: '14px', backgroundColor: '#111', color: '#ffcc00',
 		border: '1px solid #ffcc00', borderRadius: '4px', fontFamily: 'inherit',
@@ -236,6 +287,7 @@ function renderCreateJoin(card, options = {}) {
 		seatSelect.appendChild(opt);
 	}
 	const createBtn = themedButton('Create battle', { primary: true });
+	createBtn.style.flex = '1';
 	createBtn.addEventListener('click', async () => {
 		createBtn.disabled = true;
 		const result = await createBattle(Number(seatSelect.value));
@@ -249,22 +301,30 @@ function renderCreateJoin(card, options = {}) {
 	createRow.appendChild(seatSelect);
 	createRow.appendChild(createBtn);
 	card.appendChild(createRow);
+	card.appendChild(el('div', { fontSize: '11px', color: '#998', marginTop: '6px' },
+		'You\u2019ll get a code to share \u2014 or start straight away against bots.'));
 
-	// Join section.
+	card.appendChild(orDivider());
+
+	// ── Join with a code ─────────────────────────────────────────
+	card.appendChild(sectionLabel('JOIN A FRIEND\u2019S BATTLE'));
 	const joinRow = el('div', { display: 'flex', gap: '8px', alignItems: 'center' });
 	const codeInput = el('input', {
 		flex: '1', padding: '8px', fontSize: '16px', backgroundColor: '#111',
 		color: '#ffcc00', border: '1px solid #ffcc00', borderRadius: '4px',
 		fontFamily: 'inherit', textTransform: 'uppercase', boxSizing: 'border-box',
-		minWidth: '0',
+		minWidth: '0', letterSpacing: '3px',
 	});
-	codeInput.placeholder = 'CODE';
+	codeInput.placeholder = 'ENTER CODE';
 	codeInput.maxLength = 6;
 	codeInput.value = options.prefillCode || '';
 	const joinBtn = themedButton('Join');
 	const doJoin = async () => {
 		const code = codeInput.value.trim().toUpperCase();
-		if (!code) return;
+		if (!code) {
+			codeInput.focus();
+			return;
+		}
 		joinBtn.disabled = true;
 		const result = await joinBattle(code);
 		joinBtn.disabled = false;
@@ -281,25 +341,37 @@ function renderCreateJoin(card, options = {}) {
 	card.appendChild(joinRow);
 
 	const closeRow = el('div', { display: 'flex', justifyContent: 'flex-end', marginTop: '18px' });
-	const closeBtn = themedButton('Close');
-	closeBtn.addEventListener('click', closeBattleDialog);
+	const closeBtn = themedButton(hasEnteredWorld() ? 'Close' : '← Back');
+	closeBtn.addEventListener('click', () => {
+		closeBattleDialog();
+		returnToWelcomeIfHomeless();
+	});
 	closeRow.appendChild(closeBtn);
 	card.appendChild(closeRow);
+
+	if (options.prefillCode) codeInput.focus();
 }
 
 function renderLobby(card, battle) {
 	const realId = String(getPlayerId() || '');
 	const isHost = String(battle.hostId) === realId;
+	const humanSeats = battle.seats.length;
+	const emptySeats = battle.seatCount - humanSeats;
+
+	card.appendChild(sectionLabel(isHost
+		? 'YOUR BATTLE LOBBY — SHARE THIS CODE'
+		: 'BATTLE LOBBY'));
 
 	const codeLine = el('div', {
-		fontSize: '26px', letterSpacing: '6px', textAlign: 'center',
-		padding: '10px', backgroundColor: '#111', borderRadius: '6px',
-		border: '1px dashed #ffcc00', marginBottom: '10px', userSelect: 'all',
+		fontSize: '30px', letterSpacing: '8px', textAlign: 'center',
+		padding: '12px', backgroundColor: '#111', borderRadius: '6px',
+		border: '1px dashed #ffcc00', marginBottom: '8px', userSelect: 'all',
+		fontWeight: 'bold',
 	}, battle.code);
 	card.appendChild(codeLine);
 
 	const copyRow = el('div', { display: 'flex', gap: '8px', justifyContent: 'center', marginBottom: '14px' });
-	const copyBtn = themedButton('Copy invite link');
+	const copyBtn = themedButton('📋 Copy invite link');
 	copyBtn.addEventListener('click', () => {
 		const link = inviteLinkFor(battle.code);
 		try {
@@ -312,28 +384,31 @@ function renderLobby(card, battle) {
 	copyRow.appendChild(copyBtn);
 	card.appendChild(copyRow);
 
-	const seatList = el('div', { marginBottom: '14px', fontSize: '14px' });
+	// Seat roster — refreshed live by `battle_lobby_update` broadcasts.
+	const seatList = el('div', { marginBottom: '12px', fontSize: '14px' });
 	for (let i = 0; i < battle.seatCount; i++) {
 		const seat = battle.seats[i];
 		const line = el('div', { padding: '4px 0', color: seat ? '#ffcc00' : '#777' });
 		if (seat) {
-			line.textContent = `${i + 1}. ${seat.name}${String(seat.controlledBy) === String(battle.hostId) ? ' (host)' : ''}`;
+			const you = String(seat.controlledBy) === realId ? ' — you' : '';
+			const host = String(seat.controlledBy) === String(battle.hostId) ? ' (host)' : '';
+			line.textContent = `✓ ${seat.name}${host}${you}`;
 		} else {
-			line.textContent = `${i + 1}. — open seat (bot if empty at start)`;
+			line.textContent = `○ Open seat — a bot takes it if nobody joins`;
 		}
 		seatList.appendChild(line);
 	}
 	card.appendChild(seatList);
 
+	const note = el('div', { fontSize: '12px', color: '#ccc', marginBottom: '12px', lineHeight: '1.5' });
 	if (!isHost) {
-		const note = el('div', { fontSize: '12px', color: '#ccc', marginBottom: '10px' },
-			'Waiting for the host to start…');
-		card.appendChild(note);
-	} else if (battle.seats.length < battle.seatCount) {
-		const note = el('div', { fontSize: '12px', color: '#ccc', marginBottom: '10px' },
-			'Share the invite link, or start now — empty seats become bots.');
-		card.appendChild(note);
+		note.textContent = 'You\u2019re seated. Waiting for the host to press start\u2026';
+	} else if (emptySeats > 0) {
+		note.textContent = `Waiting for friends? Share the code above. Or start now \u2014 ${emptySeats} empty seat${emptySeats === 1 ? '' : 's'} will be filled by bots.`;
+	} else {
+		note.textContent = 'All seats taken \u2014 ready when you are!';
 	}
+	card.appendChild(note);
 
 	// Destructive action on the left, safe actions on the right. "Close"
 	// just hides the dialog and KEEPS the lobby (reopen it with the
@@ -347,6 +422,7 @@ function renderLobby(card, battle) {
 		await leaveBattle();
 		closeBattleDialog();
 		showToastMessage(isHost ? 'Battle cancelled' : 'Left the battle lobby', { duration: 3500 });
+		returnToWelcomeIfHomeless();
 	});
 	row.appendChild(leaveBtn);
 
@@ -360,12 +436,19 @@ function renderLobby(card, battle) {
 	rightSide.appendChild(closeBtn);
 
 	if (isHost) {
-		const startBtn = themedButton('Start battle', { primary: true });
+		const startBtn = themedButton(
+			emptySeats > 0 ? `▶ Start (${emptySeats} bot${emptySeats === 1 ? '' : 's'})` : '▶ Start battle',
+			{ primary: true });
+		startBtn.title = emptySeats > 0
+			? `Begin now — bots take the ${emptySeats} open seat${emptySeats === 1 ? '' : 's'}`
+			: 'Begin the battle';
 		startBtn.addEventListener('click', async () => {
 			startBtn.disabled = true;
+			startBtn.textContent = 'Starting…';
 			const result = await startBattle();
 			if (!result.success) {
 				startBtn.disabled = false;
+				startBtn.textContent = '▶ Start battle';
 				showToastMessage(result.error || 'Could not start battle', { variant: 'alert' });
 			} else {
 				closeBattleDialog();
@@ -403,16 +486,26 @@ export function initBattleMode(gameState) {
 		hudBtn.addEventListener('click', () => showBattleDialog());
 	}
 
-	onMessage('battle_lobby_update', (data) => {
+	// Register the socket-event listeners exactly once (initBattleMode
+	// can legitimately run again, e.g. after a world re-join).
+	//
+	// NOTE these are plain forwarded socket events (`on`), NOT
+	// `message:` subtypes — subscribing via `onMessage` left every
+	// battle event unheard, which is why "Start battle" used to do
+	// nothing for either player.
+	if (battleModeWired) return;
+	battleModeWired = true;
+
+	onNetworkEvent('battle_lobby_update', (data) => {
 		if (data?.battle) refreshOpenLobby(data.battle);
 	});
 
-	onMessage('battle_started', (data) => {
+	onNetworkEvent('battle_started', (data) => {
 		closeBattleDialog();
 		if (data?.battle) adoptSeat(data.battle);
 	});
 
-	onMessage('battle_finished', (data) => {
+	onNetworkEvent('battle_finished', (data) => {
 		const battle = data?.battle;
 		const seat = battle ? mySeat(battle) : null;
 		const won = !!(seat && battle.winnerSeatId === seat.seatId);
@@ -420,34 +513,60 @@ export function initBattleMode(gameState) {
 			won ? '👑 Victory! You won the battle!' : '⚔ Battle over — you were defeated.',
 			{ variant: won ? 'success' : 'alert', duration: 8000 }
 		);
-		// The server clears the arena shortly after; head home now.
+		// The server clears the arena shortly after; head home now —
+		// or, for battle-only players, back to the welcome overview.
 		releaseSeat();
+		setTimeout(returnToWelcomeIfHomeless, 2500);
 	});
 
-	onMessage('battle_cancelled', (data) => {
+	onNetworkEvent('battle_cancelled', (data) => {
 		closeBattleDialog();
 		releaseSeat({ silent: true });
 		showToastMessage(
 			data?.reason === 'timeout' ? 'Battle lobby expired' : 'Battle cancelled',
 			{ duration: 4000 }
 		);
+		returnToWelcomeIfHomeless();
 	});
 
-	// Reconnect mid-battle: re-adopt the seat.
-	fetchBattleState().then((state) => {
-		if (state?.battle && state.battle.status === 'active') {
-			adoptSeat(state.battle);
-		} else if (state?.battle && state.battle.status === 'lobby') {
-			showBattleDialog();
+	// World-wide announcements (battle winners etc.).
+	onNetworkEvent('server_toast', (data) => {
+		if (data?.message) {
+			showToastMessage(data.message, {
+				variant: data.tone === 'success' ? 'success' : 'info',
+				duration: 6000,
+			});
 		}
-	}).catch(() => { /* best-effort */ });
+	});
 
-	// Invite link: /?battle=CODE opens the join dialog pre-filled.
+	// Reconnect mid-battle: re-adopt the seat. Waits for the socket
+	// (page init calls us before the preview connection settles).
+	const reAdoptWhenConnected = (attempt = 0) => {
+		if (!getSocket()) {
+			if (attempt < 10) setTimeout(() => reAdoptWhenConnected(attempt + 1), 1000);
+			return;
+		}
+		fetchBattleState().then((state) => {
+			if (state?.battle && state.battle.status === 'active') {
+				adoptSeat(state.battle);
+			} else if (state?.battle && state.battle.status === 'lobby') {
+				showBattleDialog();
+			}
+		}).catch(() => { /* best-effort */ });
+	};
+	reAdoptWhenConnected();
+
+	// Invite links (/?battle=CODE): when the welcome modal is up, its
+	// "JOIN BATTLE" button owns the flow — don't auto-join underneath
+	// it. This path only fires for modal-less loads (e.g. a mode-switch
+	// resume with the code still in the URL).
 	try {
 		const params = new URLSearchParams(window.location.search);
 		const code = params.get('battle');
 		if (code && /^[A-Za-z0-9]{4,8}$/.test(code)) {
 			setTimeout(() => {
+				if (document.getElementById('tutorial-message')) return;
+				if (gameStateRef?.activeBattle) return;
 				joinBattle(code).then((result) => {
 					if (result.success) {
 						showBattleDialog();
@@ -456,7 +575,33 @@ export function initBattleMode(gameState) {
 						showToastMessage(result.error || 'Could not join battle', { variant: 'alert' });
 					}
 				});
-			}, 1500);
+			}, 2000);
 		}
 	} catch (_e) { /* no URL params */ }
+}
+
+/**
+ * Welcome-modal BATTLE button entry: open the dialog without joining
+ * the shared world. With an invite code the seat is claimed first so
+ * the lobby renders straight away.
+ * @param {string|null} inviteCode Optional code from a /?battle= link.
+ */
+export async function enterBattleFlow(inviteCode = null) {
+	// The page-load preview normally connected already; make sure of it
+	// (battle commands need a live socket, there is no join_game here).
+	try { await ensureConnected(); }
+	catch (err) { console.warn('Battle flow: connection attempt failed:', err); }
+
+	if (inviteCode) {
+		const result = await joinBattle(inviteCode);
+		if (result.success) {
+			await showBattleDialog();
+			return true;
+		}
+		showToastMessage(result.error || 'Could not join that battle', { variant: 'alert' });
+		await showBattleDialog({ prefillCode: String(inviteCode).toUpperCase() });
+		return false;
+	}
+	await showBattleDialog();
+	return true;
 }
