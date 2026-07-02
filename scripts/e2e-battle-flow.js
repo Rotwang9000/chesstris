@@ -12,12 +12,13 @@
  *      still pinned at (0,0) even though arena cells inflated the bounds
  *
  * Usage: node scripts/e2e-battle-flow.js [serverUrl]
- *   default serverUrl: http://localhost:3668
+ *   serverUrl falls back to $E2E_URL, then http://localhost:3668
  */
 
 const { io } = require('socket.io-client');
 
-const SERVER_URL = process.argv[2] || 'http://localhost:3668';
+const SERVER_URL = process.argv[2] || process.env.E2E_URL || 'http://localhost:3668';
+console.log(`[e2e] target server: ${SERVER_URL}`);
 const STEP_TIMEOUT_MS = 10000;
 
 const failures = [];
