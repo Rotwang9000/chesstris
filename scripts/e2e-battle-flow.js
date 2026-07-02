@@ -216,6 +216,13 @@ async function main() {
 	// The arena ring deliberately lingers FINISHED_LINGER_MS (60s) so the
 	// result stays on show — full dismantling is covered by unit tests.
 
+	// ── 8. Leave no trace: remove both test kingdoms from the world ───
+	const hostExit = await emitAck(host, 'exit_game', {});
+	const guestExit = await emitAck(guest, 'exit_game', {});
+	assert(hostExit.success === true && guestExit.success === true,
+		'test kingdoms removed from the world (exit_game)',
+		JSON.stringify({ hostExit, guestExit }));
+
 	host.socket.disconnect();
 	guest.socket.disconnect();
 
