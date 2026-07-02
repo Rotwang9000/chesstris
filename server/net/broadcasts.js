@@ -290,16 +290,13 @@ function createBroadcaster({ io, persistence }) {
 	}
 
 	/**
-	 * Direct-message a player. Falls back silently when the player isn't
-	 * online or doesn't have an active socket. Callers should *not* rely
+	 * Direct-message a player — every open tab of theirs. Falls back
+	 * silently when the player isn't online. Callers should *not* rely
 	 * on every player receiving the event — this is best-effort.
 	 */
 	function emitToPlayer(playerId, eventName, payload) {
 		try {
-			const socket = Sessions.socketForPlayer(playerId);
-			if (!socket || typeof socket.emit !== 'function') return false;
-			socket.emit(eventName, payload);
-			return true;
+			return Sessions.emitToPlayerSockets(playerId, eventName, payload) > 0;
 		} catch (error) {
 			console.error('[Broadcast] emitToPlayer failed:', error);
 			return false;

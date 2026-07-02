@@ -100,7 +100,13 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 	function allocateSlot() {
 		const used = new Set();
 		for (const battle of Object.values(battles())) {
-			if (battle && battle.status !== 'finished' && Number.isInteger(battle.slot)) {
+			// FINISHED battles keep their slot until cleanup removes them
+			// from the registry — during the linger window their ring,
+			// zones and pieces still occupy the arena, and a new battle
+			// building there would overwrite the ring tags (breaking the
+			// old battle's cleanup) and leave stale enemy pieces inside
+			// the fresh arena.
+			if (battle && Number.isInteger(battle.slot)) {
 				used.add(battle.slot);
 			}
 		}
@@ -134,13 +140,14 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 		};
 	}
 
-	function emitToSeatHumans(battle, event, payload) {
+	function emitToSeatHumans(battle, event, payload, { except = null } = {}) {
 		for (const seat of battle.seats) {
 			if (seat.isAi || !seat.controlledBy) continue;
-			const socket = Sessions.socketForPlayer(seat.controlledBy);
-			if (socket) {
-				try { socket.emit(event, payload); } catch (_e) { /* socket closing */ }
-			}
+			if (except && String(seat.controlledBy) === String(except)) continue;
+			// Every tab the player has open must hear battle events —
+			// emitting to a single "current" socket meant a host with a
+			// second tab open never saw joins or the battle starting.
+			Sessions.emitToPlayerSockets(seat.controlledBy, event, payload);
 		}
 	}
 
@@ -230,19 +237,38 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 	}
 
 	/**
-	 * Join an existing lobby by code.
+	 * Join a battle by code.
+	 *
+	 * • Lobby: take a free seat (if the player is waiting in a DIFFERENT
+	 *   lobby they leave it automatically — you can only queue in one).
+	 * • Active: take over a live BOT seat, keeping its pieces — this is
+	 *   how a friend can rescue you mid-battle or claim the bot from an
+	 *   invite link after the host started without them.
 	 */
 	function joinBattle({ code, playerId, playerName }) {
 		const battle = battleByCode(code);
 		if (!battle) return { success: false, error: 'Battle not found' };
-		if (battle.status !== 'lobby') return { success: false, error: 'Battle already started' };
+		if (battle.status === 'finished') return { success: false, error: 'Battle already finished' };
 
 		const existing = seatFor(battle, playerId);
 		if (existing) {
 			return { success: true, battle: publicState(battle), seatId: existing.seatId };
 		}
+
 		const otherBattle = battleForPlayer(playerId);
-		if (otherBattle) return { success: false, error: 'You are already in a battle' };
+		if (otherBattle) {
+			if (otherBattle.status === 'active') {
+				return { success: false, error: 'You are in an active battle — forfeit it first' };
+			}
+			// Waiting in another lobby: leave it (host leaving cancels it)
+			// and fall through to join this one.
+			leaveBattle({ playerId });
+		}
+
+		if (battle.status === 'active') {
+			return takeOverBotSeat({ battle, playerId, playerName });
+		}
+
 		if (battle.seats.length >= battle.seatCount) {
 			return { success: false, error: 'Battle is full' };
 		}
@@ -263,6 +289,52 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 		emitToSeatHumans(battle, 'battle_lobby_update', { battle: publicState(battle) });
 		console.log(`[Battle] ${playerId} joined battle ${battle.code} (seat ${index})`);
 		return { success: true, battle: publicState(battle), seatId: seat.seatId };
+	}
+
+	/**
+	 * Mid-battle join: hand a live bot seat (pieces and all) to a human.
+	 */
+	function takeOverBotSeat({ battle, playerId, playerName }) {
+		const seat = battle.seats.find(s => {
+			if (!s.isAi) return false;
+			const record = World.getPlayer(s.seatId);
+			return record && !record.eliminated;
+		});
+		if (!seat) {
+			return { success: false, error: 'No bot seat left to take over — battle is all humans' };
+		}
+
+		aiRunner.stopAiPlayer(seat.seatId);
+		seat.isAi = false;
+		seat.controlledBy = String(playerId);
+		if (playerName) seat.name = playerName;
+
+		const record = World.getPlayer(seat.seatId);
+		if (record) {
+			record.isComputer = false;
+			record.controlledBy = String(playerId);
+			record.connected = true;
+			if (playerName) record.name = `⚔ ${playerName}`;
+			delete record.strategy;
+			record.lastActiveAt = Date.now();
+		}
+		Sessions.setAlias(seat.seatId, String(playerId));
+		stampRealPlayer(playerId, battle.id);
+		World.markDirty();
+		persistence.markDirty();
+
+		const payload = { battle: publicState(battle) };
+		emitToSeatHumans(battle, 'battle_lobby_update', payload, { except: playerId });
+		// The joiner's client adopts the seat off `battle_started`,
+		// exactly as if they had been in the lobby at start time.
+		Sessions.emitToPlayerSockets(playerId, 'battle_started', payload);
+		emitToSeatHumans(battle, 'server_toast', {
+			message: `⚔ ${seat.name} took over a bot in battle ${battle.code}!`,
+			tone: 'info',
+		}, { except: playerId });
+
+		console.log(`[Battle] ${playerId} took over bot seat ${seat.seatId} in ${battle.code}`);
+		return { success: true, battle: publicState(battle), seatId: seat.seatId, tookOverBot: true };
 	}
 
 	/**

@@ -48,10 +48,10 @@ function createKingDuelService({ io, kingCaptureService }) {
 		const playerA = World.getPlayer(playerAId);
 		const playerB = World.getPlayer(playerBId);
 
-		const sockA = Sessions.socketForPlayer(playerAId);
-		const sockB = Sessions.socketForPlayer(playerBId);
-		if (sockA) sockA.emit('king_duel_start', { ...duelPayload, opponentName: playerB?.name || playerBId });
-		if (sockB) sockB.emit('king_duel_start', { ...duelPayload, opponentName: playerA?.name || playerAId });
+		Sessions.emitToPlayerSockets(playerAId, 'king_duel_start',
+			{ ...duelPayload, opponentName: playerB?.name || playerBId });
+		Sessions.emitToPlayerSockets(playerBId, 'king_duel_start',
+			{ ...duelPayload, opponentName: playerA?.name || playerAId });
 
 		io.to(world.id).emit('king_duel_announced', {
 			player1: playerAId,
@@ -167,10 +167,8 @@ function createKingDuelService({ io, kingCaptureService }) {
 			gridRows: duel.gridRows,
 		};
 
-		const sockA = Sessions.socketForPlayer(duel.player1.id);
-		const sockB = Sessions.socketForPlayer(duel.player2.id);
-		if (sockA) sockA.emit('king_duel_new_round', newRoundPayload);
-		if (sockB) sockB.emit('king_duel_new_round', newRoundPayload);
+		Sessions.emitToPlayerSockets(duel.player1.id, 'king_duel_new_round', newRoundPayload);
+		Sessions.emitToPlayerSockets(duel.player2.id, 'king_duel_new_round', newRoundPayload);
 	}
 
 	function finaliseDuel(duel, duelId, victorId, loserId, roundPayload) {

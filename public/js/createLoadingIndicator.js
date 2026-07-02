@@ -655,18 +655,23 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 		}
 	} catch (_e) { /* no URL params */ }
 
+	// With a battle invite in the URL, joining THAT battle is the
+	// headline action: the battle button renders first, biggest, and
+	// Enter in the name field triggers it. PLAY NOW drops to a quiet
+	// secondary option.
 	const newGameIsPrimary = !(ENABLE_WORLD_KEY && previousGameKey) && !inviteBattleCode;
-	buttonHTML += `
-		<input type="text" id="welcome-player-name" class="game-key-input"
-			placeholder="Your name (optional)" maxlength="20" value="${escapedName}"
-			autocomplete="nickname" style="text-align: center;">
-		<button id="new-game-btn" class="tutorial-btn ${newGameIsPrimary ? 'primary' : ''}">
+	const playButtonHtml = `
+		<button id="new-game-btn" class="tutorial-btn ${newGameIsPrimary ? 'primary' : ''}" ${inviteBattleCode ? 'style="font-size: 14px; padding: 10px 16px;"' : ''}>
 			✦ PLAY NOW
 		</button>
-		<div style="font-size: 12px; opacity: 0.8; text-align: center; margin-top: -2px;">
-			Jump straight in — no sign-up needed, your spot is remembered on this device.
+		<div style="font-size: ${inviteBattleCode ? '11px' : '12px'}; opacity: 0.8; text-align: center; margin-top: -2px;">
+			${inviteBattleCode
+		? 'Or skip the battle and enter the shared world instead.'
+		: 'Jump straight in — no sign-up needed, your spot is remembered on this device.'}
 		</div>
-		<button id="welcome-battle-btn" class="tutorial-btn ${inviteBattleCode ? 'primary' : ''}" style="font-size: 14px; padding: 10px 16px;">
+	`;
+	const battleButtonHtml = `
+		<button id="welcome-battle-btn" class="tutorial-btn ${inviteBattleCode ? 'primary' : ''}" style="${inviteBattleCode ? '' : 'font-size: 14px; padding: 10px 16px;'}">
 			${inviteBattleCode ? `⚔ JOIN BATTLE ${inviteBattleCode}` : '⚔ BATTLE A FRIEND'}
 		</button>
 		<div style="font-size: 11px; opacity: 0.7; text-align: center; margin-top: -4px;">
@@ -674,6 +679,12 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 		? 'You have been invited to a private battle — click to take your seat.'
 		: 'Private 2-4 player arena — share a code, or fight the bots.'}
 		</div>
+	`;
+	buttonHTML += `
+		<input type="text" id="welcome-player-name" class="game-key-input"
+			placeholder="Your name (optional)" maxlength="20" value="${escapedName}"
+			autocomplete="nickname" style="text-align: center;">
+		${inviteBattleCode ? battleButtonHtml + playButtonHtml : playButtonHtml + battleButtonHtml}
 	`;
 
 	// Account link: prominent but unmistakably optional (guests enter with
@@ -771,14 +782,17 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 		});
 	}
 
-	// Enter in the name field = PLAY NOW.
+	// Enter in the name field = the primary action (JOIN BATTLE when
+	// arriving on an invite link, PLAY NOW otherwise).
 	const welcomeNameInput = tutorialElement.querySelector('#welcome-player-name');
-	if (welcomeNameInput && newGameBtn) {
+	if (welcomeNameInput) {
 		welcomeNameInput.addEventListener('keydown', (event) => {
-			if (event.key === 'Enter') {
-				event.preventDefault();
-				newGameBtn.click();
-			}
+			if (event.key !== 'Enter') return;
+			event.preventDefault();
+			const primaryBtn = inviteBattleCode
+				? tutorialElement.querySelector('#welcome-battle-btn')
+				: newGameBtn;
+			if (primaryBtn) primaryBtn.click();
 		});
 	}
 

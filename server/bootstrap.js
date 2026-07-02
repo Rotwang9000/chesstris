@@ -72,6 +72,16 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 	const app = createApp({ projectRoot });
 	const server = http.createServer(app);
 
+	// The MCP bridge dials the game's own Socket.IO endpoint over
+	// loopback; the actual port is only known once `listen` resolves
+	// (tests bind port 0), so expose it as a live resolver.
+	app.locals.getSelfPort = () => {
+		const address = server.address();
+		if (address && typeof address === 'object' && address.port) return address.port;
+		const parsed = Number(process.env.PORT);
+		return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+	};
+
 	// Same allowlist as the Express CORS layer. In production the
 	// browser refuses Socket.IO handshakes from origins not in this
 	// list; in development localhost on any port is allowed so the

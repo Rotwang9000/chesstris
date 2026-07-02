@@ -377,4 +377,113 @@ describe('BattleManager', () => {
 		manager.tick();
 		expect(World.getPlayer('host1').activeBattleId).toBeUndefined();
 	});
+
+	// ── Mid-battle join: bot-seat takeover ───────────────────────────────
+
+	test('joining an ACTIVE battle hands a live bot seat to the human', () => {
+		const created = manager.createBattle({ hostId: 'host1', hostName: 'Hosty', seatCount: 3 });
+		manager.startBattle({ battleId: created.battle.id, playerId: 'host1' });
+
+		// Route the joiner's battle_started emit through a fake socket.
+		const got = [];
+		Sessions.bind({ id: 'sock-g', join: () => {}, emit: (ev, p) => got.push({ ev, p }) }, 'guest1');
+
+		const result = manager.joinBattle({
+			code: created.battle.code, playerId: 'guest1', playerName: 'Guesty',
+		});
+		expect(result.success).toBe(true);
+		expect(result.tookOverBot).toBe(true);
+
+		const seat = result.battle.seats.find(s => s.seatId === result.seatId);
+		expect(seat.isAi).toBe(false);
+		expect(seat.controlledBy).toBe('guest1');
+		expect(seat.name).toBe('Guesty');
+
+		// The seat record flips to human control; its ticker stops.
+		const record = World.getPlayer(result.seatId);
+		expect(record.isComputer).toBe(false);
+		expect(record.controlledBy).toBe('guest1');
+		expect(aiStopped).toContain(result.seatId);
+
+		// Gameplay for the seat resolves to the new human; the joiner's
+		// client is told the battle started so it adopts the seat.
+		expect(manager.effectivePlayerId('guest1')).toBe(result.seatId);
+		expect(got.some(m => m.ev === 'battle_started')).toBe(true);
+
+		// One bot remains (3 seats: host + taken-over bot + 1 bot).
+		expect(result.battle.seats.filter(s => s.isAi)).toHaveLength(1);
+	});
+
+	test('active-battle join fails cleanly when no live bot seat is free', () => {
+		const code = createAndJoin();  // 2 humans, 2 seats
+		manager.startBattle({ battleId: code, playerId: 'host1' });
+		World.getWorld().players.late = { id: 'late', name: 'Late' };
+		const result = manager.joinBattle({ code, playerId: 'late' });
+		expect(result.success).toBe(false);
+		expect(result.error).toMatch(/all humans/i);
+	});
+
+	test('a player mid-battle cannot join another battle', () => {
+		const code = createAndJoin();
+		manager.startBattle({ battleId: code, playerId: 'host1' });
+		World.getWorld().players.other = { id: 'other', name: 'Other' };
+		const second = manager.createBattle({ hostId: 'other', seatCount: 2 });
+		const result = manager.joinBattle({ code: second.battle.code, playerId: 'guest1' });
+		expect(result.success).toBe(false);
+		expect(result.error).toMatch(/forfeit/i);
+	});
+
+	test('a lingering FINISHED battle keeps its arena slot', () => {
+		// Repro of the "bot never moves" cascade: battle A finishes and
+		// lingers (ring + pieces still on the board). Battle B starting
+		// during that window used to be given the SAME slot, so it built
+		// its arena on top of A's leftovers — B's cleanup then stripped
+		// cells tagged for A's ring, and A's cleanup nuked B's terrain.
+		const code = createAndJoin();
+		const started = manager.startBattle({ battleId: code, playerId: 'host1' });
+		expect(started.battle.centre).toEqual(arenaCentreForSlot(0));
+
+		manager.leaveBattle({ playerId: 'guest1' });   // forfeit
+		manager.tick();                                 // sweep settles the win
+		expect(manager.getBattle(code).status).toBe('finished');
+
+		// A new battle starting during the linger window gets slot 1.
+		World.getWorld().players.h2 = { id: 'h2', name: 'H2' };
+		World.getWorld().players.g2 = { id: 'g2', name: 'G2' };
+		const second = manager.createBattle({ hostId: 'h2', hostName: 'H2', seatCount: 2 });
+		manager.joinBattle({ code: second.battle.code, playerId: 'g2', playerName: 'G2' });
+		const secondStarted = manager.startBattle({
+			battleId: second.battle.id, playerId: 'h2',
+		});
+		expect(secondStarted.success).toBe(true);
+		expect(secondStarted.battle.centre).toEqual(arenaCentreForSlot(1));
+
+		// Once the finished battle is cleaned up, slot 0 is free again.
+		manager.tick({ now: Date.now() + 10 * 60 * 1000 });
+		expect(manager.getBattle(code)).toBeNull();
+		World.getWorld().players.h3 = { id: 'h3', name: 'H3' };
+		const third = manager.createBattle({ hostId: 'h3', hostName: 'H3', seatCount: 2 });
+		World.getWorld().players.g3 = { id: 'g3', name: 'G3' };
+		manager.joinBattle({ code: third.battle.code, playerId: 'g3', playerName: 'G3' });
+		const thirdStarted = manager.startBattle({ battleId: third.battle.id, playerId: 'h3' });
+		expect(thirdStarted.battle.centre).toEqual(arenaCentreForSlot(0));
+	});
+
+	test('joining a second LOBBY leaves the first automatically', () => {
+		// guest1 waits in host1's lobby, then follows an invite to other's.
+		const first = manager.createBattle({ hostId: 'host1', seatCount: 2 });
+		manager.joinBattle({ code: first.battle.code, playerId: 'guest1', playerName: 'Guesty' });
+		World.getWorld().players.other = { id: 'other', name: 'Other' };
+		const second = manager.createBattle({ hostId: 'other', seatCount: 2 });
+
+		const result = manager.joinBattle({
+			code: second.battle.code, playerId: 'guest1', playerName: 'Guesty',
+		});
+		expect(result.success).toBe(true);
+		// Freed from the first lobby…
+		expect(manager.battleByCode(first.battle.code).seats.map(s => s.controlledBy))
+			.toEqual(['host1']);
+		// …and seated in the second.
+		expect(manager.battleForPlayer('guest1').code).toBe(second.battle.code);
+	});
 });

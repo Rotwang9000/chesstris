@@ -199,11 +199,17 @@ function createAiRunner({
 			actionType = Math.random() < strategy.buildSpeed ? 'tetromino' : 'chess';
 		}
 
+		// If the preferred action finds nothing legal, fall back to the
+		// other one in the SAME tick. A fresh battle arena has no terrain
+		// between the seats, so "chess" ticks used to burn the bot's whole
+		// move interval doing nothing — half its game vanished into no-ops.
 		let acted = false;
 		if (actionType === 'tetromino') {
-			acted = !!aiActions.performStrategicTetrominoPlacement(computerId);
+			acted = !!aiActions.performStrategicTetrominoPlacement(computerId)
+				|| !!aiActions.performStrategicChessMove(computerId, kingCaptureService, checkService);
 		} else {
-			acted = !!aiActions.performStrategicChessMove(computerId, kingCaptureService, checkService);
+			acted = !!aiActions.performStrategicChessMove(computerId, kingCaptureService, checkService)
+				|| !!aiActions.performStrategicTetrominoPlacement(computerId);
 		}
 
 		if (acted) {

@@ -63,6 +63,14 @@ function createConnectionHandler(services) {
 		}
 		Sessions.bind(socket, playerId);
 
+		// Every socket joins the world broadcast room, participant or
+		// not. Most identity paths already joined inside
+		// `resolvePlayerIdForSocket`, but brand-new visitors did NOT —
+		// so a first-visit spectator (or battle-only player, who never
+		// calls join_game) silently missed every `game_update`
+		// broadcast until their first refresh. Joining twice is a no-op.
+		socket.join(World.getWorldId());
+
 		// Wire-level flood protection (runs before any event handler).
 		attachSocketRateLimit(socket);
 
@@ -323,9 +331,18 @@ function resolvePlayerIdForSocket(socket, services) {
 
 function handleDisconnect(socket, playerId, services) {
 	const { lifecycleService, spectatorRegistry } = services;
-	console.log(`Player disconnected: ${playerId} (grace period ${Disconnects.DEFAULT_GRACE_MS / 1000}s)`);
 
 	Sessions.unbind(socket.id);
+
+	// Multi-tab: if the player still has another live socket (second
+	// browser tab), this was not a real disconnect — skip the grace
+	// timer and the lastDisconnectAt stamp entirely.
+	if (Sessions.isOnline(playerId)) {
+		console.log(`Player ${playerId} closed a tab (still connected on another socket)`);
+		return;
+	}
+
+	console.log(`Player disconnected: ${playerId} (grace period ${Disconnects.DEFAULT_GRACE_MS / 1000}s)`);
 	spectatorRegistry.stop(playerId);
 
 	// Note the disconnect time on the record so the island-decay /

@@ -298,6 +298,88 @@ async function main() {
 	bHost.socket.disconnect();
 	bGuest.socket.disconnect();
 
+	// ═══ Scenario C: multi-tab host + mid-battle bot takeover ═════════
+	// Repro of the "host hasn't detected the join / host still in the
+	// global game" report: the host had TWO tabs open, and the old
+	// session layer routed every targeted emit to whichever socket
+	// connected last. Every tab must now hear lobby updates and
+	// battle_started. Then a latecomer joins the ACTIVE battle and
+	// must be handed a live bot seat.
+	console.log('\nScenario C: multi-tab host + bot-seat takeover');
+
+	const cHost = await connectClient('E2E MultiTab Host');
+	// Second "tab": same identity via the player cookie.
+	const cHostTab2 = await new Promise((resolve, reject) => {
+		const socket = io(SERVER_URL, {
+			transports: ['websocket'],
+			reconnection: false,
+			extraHeaders: { cookie: `tetches_player_id=${cHost.playerId}` },
+		});
+		const timer = setTimeout(() => reject(new Error('tab2 connect timed out')), STEP_TIMEOUT_MS);
+		socket.on('player_id', (playerId) => {
+			clearTimeout(timer);
+			resolve({ socket, playerId, name: 'E2E MultiTab Host tab2' });
+		});
+		socket.on('connect_error', (err) => {
+			clearTimeout(timer);
+			reject(new Error(`tab2 connect_error ${err.message}`));
+		});
+	});
+	assert(cHostTab2.playerId === cHost.playerId,
+		'second tab binds the SAME player identity',
+		`tab1=${cHost.playerId} tab2=${cHostTab2.playerId}`);
+
+	const cCreate = await emitAck(cHost, 'battle_create', { seatCount: 3 });
+	assert(cCreate.success === true, 'multi-tab host creates a 3-seat battle', cCreate.error);
+	const cCode = cCreate.battle?.code;
+
+	// A guest joining the lobby must notify BOTH host tabs.
+	const tab1Update = waitForEvent(cHost, 'battle_lobby_update');
+	const tab2Update = waitForEvent(cHostTab2, 'battle_lobby_update');
+	const cGuest = await connectClient('E2E MultiTab Guest');
+	const cGuestJoin = await emitAck(cGuest, 'battle_join', { code: cCode });
+	assert(cGuestJoin.success === true, 'guest joins the multi-tab lobby', cGuestJoin.error);
+	const [tab1Payload, tab2Payload] = await Promise.all([tab1Update, tab2Update]);
+	assert(tab1Payload?.battle?.seats?.length === 2, 'host tab 1 saw the join');
+	assert(tab2Payload?.battle?.seats?.length === 2, 'host tab 2 saw the join');
+
+	// Starting must reach both tabs (the "host still in global game" fix).
+	const tab1Started = waitForEvent(cHost, 'battle_started');
+	const tab2Started = waitForEvent(cHostTab2, 'battle_started');
+	const cStart = await emitAck(cHost, 'battle_start', {});
+	assert(cStart.success === true, 'multi-tab battle starts', cStart.error);
+	assert(cStart.battle.seats.filter(s => s.isAi).length === 1,
+		'one seat went to a bot', JSON.stringify(cStart.battle.seats));
+	const [t1s, t2s] = await Promise.all([tab1Started, tab2Started]);
+	assert(t1s?.battle?.code === cCode, 'host tab 1 received battle_started');
+	assert(t2s?.battle?.code === cCode, 'host tab 2 received battle_started');
+
+	// Latecomer takes over the bot seat mid-battle.
+	const late = await connectClient('E2E Latecomer');
+	const lateStarted = waitForEvent(late, 'battle_started');
+	const takeover = await emitAck(late, 'battle_join', { code: cCode });
+	assert(takeover.success === true, 'latecomer joins the ACTIVE battle', takeover.error);
+	assert(takeover.tookOverBot === true, 'latecomer took over the bot seat',
+		JSON.stringify(takeover));
+	const lateSeat = takeover.battle.seats.find(s => s.seatId === takeover.seatId);
+	assert(lateSeat && !lateSeat.isAi && String(lateSeat.controlledBy) === late.playerId,
+		'bot seat now controlled by the latecomer', JSON.stringify(lateSeat));
+	const lateEvt = await lateStarted;
+	assert(lateEvt?.battle?.code === cCode, 'latecomer received battle_started to adopt the seat');
+	assert(takeover.battle.seats.every(s => !s.isAi),
+		'battle is now all-human', JSON.stringify(takeover.battle.seats));
+
+	// A second latecomer must be turned away politely (no bots left).
+	const late2 = await connectClient('E2E Latecomer 2');
+	const noSeat = await emitAck(late2, 'battle_join', { code: cCode });
+	assert(noSeat.success === false && /all humans/i.test(noSeat.error || ''),
+		'no free bot seat → clean refusal', JSON.stringify(noSeat));
+
+	// Wind the battle down (everyone forfeits until the sweep settles it).
+	await emitAck(cHost, 'battle_leave', {});
+	await emitAck(cGuest, 'battle_leave', {});
+	for (const c of [cHost, cHostTab2, cGuest, late, late2]) c.socket.disconnect();
+
 	console.log(`\n${stepCounter - failures.length}/${stepCounter} checks passed`);
 	if (failures.length) {
 		console.error(`\n${failures.length} FAILURE(S):`);

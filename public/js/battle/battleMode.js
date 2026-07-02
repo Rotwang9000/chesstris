@@ -8,17 +8,49 @@
  * The player's real kingdom carries on untouched back home.
  */
 
-import { getSocket, getPlayerId, on as onNetworkEvent, ensureConnected } from '../utils/networkManager.js';
+import { getSocket, getPlayerId, getGameId, on as onNetworkEvent, ensureConnected } from '../utils/networkManager.js';
 import { showToastMessage } from '../showToastMessage.js';
 
 const DIALOG_ID = 'tetches-battle-dialog';
 const CAMERA_FLY_DELAY_MS = 1200;  // let the battle board arrive first
 const CAMERA_FLY_RETRY_MS = 900;   // board updates land asynchronously
 const CAMERA_FLY_MAX_TRIES = 6;
+const BATTLE_CODE_PATTERN = /^[A-Za-z0-9]{4,8}$/;
 
 let gameStateRef = null;
 let savedRealPlayerId = null;
 let battleModeWired = false;
+
+/** The battle code carried in the page URL (invite link), or null. */
+export function inviteCodeFromUrl() {
+	try {
+		const code = new URLSearchParams(window.location.search).get('battle');
+		return (code && BATTLE_CODE_PATTERN.test(code)) ? code.toUpperCase() : null;
+	} catch (_e) {
+		return null;
+	}
+}
+
+/**
+ * Keep the address bar honest: while in a battle (lobby or active) the
+ * URL carries `?battle=CODE` — shareable directly — and drops the
+ * `gameId=global_game` param. Leaving a battle restores the world id
+ * for players who have one.
+ */
+function syncBattleUrl(code) {
+	try {
+		const url = new URL(window.location);
+		if (code) {
+			url.searchParams.set('battle', code);
+			url.searchParams.delete('gameId');
+		} else {
+			url.searchParams.delete('battle');
+			const worldId = getGameId?.();
+			if (hasEnteredWorld() && worldId) url.searchParams.set('gameId', worldId);
+		}
+		window.history.replaceState({}, '', url);
+	} catch (_e) { /* URL API unavailable (tests) */ }
+}
 
 function mySeat(battle) {
 	const realId = String(getPlayerId() || savedRealPlayerId || '');
@@ -64,6 +96,10 @@ function adoptSeat(battle) {
 	if (!gameStateRef) return;
 	const seat = mySeat(battle);
 	if (!seat) return;
+	// Idempotent: the push event and the poll/ack fallbacks can both
+	// land — the second call must not re-fly the camera.
+	if (gameStateRef.activeBattle?.id === battle.id
+		&& gameStateRef.localPlayerId === seat.seatId) return;
 	if (!savedRealPlayerId) {
 		savedRealPlayerId = gameStateRef.localPlayerId || getPlayerId() || null;
 	}
@@ -77,8 +113,11 @@ function adoptSeat(battle) {
 	gameStateRef.turnPhase = 'tetris';
 	// Battle-only players never ran the world-entry start-up — spin the
 	// gameplay systems up now (no world join; the seat IS the identity).
+	// World players need it too: it clears modals and flips the session
+	// into "playing" for the arena.
 	try { window.gameCore?.startBattleSession?.(); }
 	catch (err) { console.warn('startBattleSession failed:', err); }
+	syncBattleUrl(battle.code);
 	showToastMessage('⚔ Battle started — fight!', { variant: 'success', duration: 5000 });
 	flyToSeat(seat.seatId);
 }
@@ -87,6 +126,7 @@ function adoptSeat(battle) {
 function releaseSeat({ silent = false } = {}) {
 	if (!gameStateRef) return;
 	gameStateRef.activeBattle = null;
+	syncBattleUrl(null);
 	if (savedRealPlayerId) {
 		gameStateRef.localPlayerId = savedRealPlayerId;
 		gameStateRef.myPlayerId = savedRealPlayerId;
@@ -170,10 +210,61 @@ function inviteLinkFor(code) {
 }
 
 function closeBattleDialog() {
+	stopLobbyPoll();
 	const existing = document.getElementById(DIALOG_ID);
 	if (existing) {
 		try { document.body.removeChild(existing); } catch (_e) { /* gone */ }
 	}
+}
+
+// ── Lobby poll — belt-and-braces beside the push events ────────────────────
+// If a `battle_lobby_update` / `battle_started` push is ever lost (flaky
+// network, tab juggling), the open lobby still refreshes within a few
+// seconds and a started battle still gets adopted.
+
+const LOBBY_POLL_MS = 4000;
+let lobbyPollTimer = null;
+let lobbyPollBusy = false;
+let lastLobbyRenderJson = '';
+
+function stopLobbyPoll() {
+	if (lobbyPollTimer) {
+		clearInterval(lobbyPollTimer);
+		lobbyPollTimer = null;
+	}
+	lastLobbyRenderJson = '';
+}
+
+function startLobbyPoll(card) {
+	stopLobbyPoll();
+	lobbyPollTimer = setInterval(async () => {
+		if (lobbyPollBusy) return;
+		if (!document.getElementById(DIALOG_ID)) {
+			stopLobbyPoll();
+			return;
+		}
+		lobbyPollBusy = true;
+		try {
+			const state = await fetchBattleState();
+			const battle = state?.battle || null;
+			if (!document.getElementById(DIALOG_ID)) return;
+			if (battle && battle.status === 'active' && mySeat(battle)) {
+				// Missed battle_started — adopt now.
+				closeBattleDialog();
+				adoptSeat(battle);
+				return;
+			}
+			if (battle && battle.status === 'lobby') {
+				const snapshot = JSON.stringify(battle.seats) + battle.seatCount;
+				if (snapshot !== lastLobbyRenderJson) {
+					lastLobbyRenderJson = snapshot;
+					renderDialogContent(card, battle);
+				}
+			}
+		} finally {
+			lobbyPollBusy = false;
+		}
+	}, LOBBY_POLL_MS);
 }
 
 /**
@@ -225,7 +316,9 @@ function renderDialogContent(card, battle, options = {}) {
 	card.appendChild(heading);
 
 	if (battle && battle.status === 'lobby') {
+		syncBattleUrl(battle.code);
 		renderLobby(card, battle);
+		startLobbyPoll(card);
 		return;
 	}
 	if (battle && battle.status === 'active') {
@@ -329,7 +422,13 @@ function renderCreateJoin(card, options = {}) {
 		const result = await joinBattle(code);
 		joinBtn.disabled = false;
 		if (result.success) {
-			renderDialogContent(card, result.battle);
+			if (result.battle?.status === 'active') {
+				// Mid-battle join (took over a bot) — straight to the arena.
+				closeBattleDialog();
+				adoptSeat(result.battle);
+			} else {
+				renderDialogContent(card, result.battle);
+			}
 		} else {
 			showToastMessage(result.error || 'Could not join battle', { variant: 'alert' });
 		}
@@ -421,6 +520,7 @@ function renderLobby(card, battle) {
 	leaveBtn.addEventListener('click', async () => {
 		await leaveBattle();
 		closeBattleDialog();
+		syncBattleUrl(null);
 		showToastMessage(isHost ? 'Battle cancelled' : 'Left the battle lobby', { duration: 3500 });
 		returnToWelcomeIfHomeless();
 	});
@@ -539,19 +639,33 @@ export function initBattleMode(gameState) {
 		}
 	});
 
-	// Reconnect mid-battle: re-adopt the seat. Waits for the socket
-	// (page init calls us before the preview connection settles).
+	// Reconnect mid-battle: waits for the socket (page init calls us
+	// before the preview connection settles), then decides what to do
+	// with an existing seat. CRUCIALLY, if the welcome screen is up we
+	// do NOT yank the player into the battle — a second tab (or a
+	// deliberate fresh visit) keeps the arrival screen, and the battle
+	// button becomes "RETURN TO BATTLE" instead. Auto-adoption only
+	// happens on modal-less loads (mode-switch resume, crash recovery
+	// mid-session).
 	const reAdoptWhenConnected = (attempt = 0) => {
 		if (!getSocket()) {
 			if (attempt < 10) setTimeout(() => reAdoptWhenConnected(attempt + 1), 1000);
 			return;
 		}
 		fetchBattleState().then((state) => {
-			if (state?.battle && state.battle.status === 'active') {
-				adoptSeat(state.battle);
-			} else if (state?.battle && state.battle.status === 'lobby') {
-				showBattleDialog();
-			}
+			const battle = state?.battle || null;
+			if (!battle || gameStateRef?.activeBattle) return;
+			// Give the welcome modal a beat to render before deciding —
+			// it appears ~500 ms after WebGL spins up.
+			setTimeout(() => {
+				if (gameStateRef?.activeBattle) return;
+				if (document.getElementById('tutorial-message')) {
+					offerBattleResumeOnWelcome(battle);
+					return;
+				}
+				if (battle.status === 'active') adoptSeat(battle);
+				else showBattleDialog();
+			}, 1500);
 		}).catch(() => { /* best-effort */ });
 	};
 	reAdoptWhenConnected();
@@ -560,30 +674,37 @@ export function initBattleMode(gameState) {
 	// "JOIN BATTLE" button owns the flow — don't auto-join underneath
 	// it. This path only fires for modal-less loads (e.g. a mode-switch
 	// resume with the code still in the URL).
-	try {
-		const params = new URLSearchParams(window.location.search);
-		const code = params.get('battle');
-		if (code && /^[A-Za-z0-9]{4,8}$/.test(code)) {
-			setTimeout(() => {
-				if (document.getElementById('tutorial-message')) return;
-				if (gameStateRef?.activeBattle) return;
-				joinBattle(code).then((result) => {
-					if (result.success) {
-						showBattleDialog();
-					} else {
-						showBattleDialog({ prefillCode: code.toUpperCase() });
-						showToastMessage(result.error || 'Could not join battle', { variant: 'alert' });
-					}
-				});
-			}, 2000);
-		}
-	} catch (_e) { /* no URL params */ }
+	const code = inviteCodeFromUrl();
+	if (code) {
+		setTimeout(() => {
+			if (document.getElementById('tutorial-message')) return;
+			if (gameStateRef?.activeBattle) return;
+			enterBattleFlow(code).catch(() => { /* toasts already shown */ });
+		}, 2000);
+	}
+}
+
+/**
+ * Relabel the welcome modal's battle button as a "return to battle"
+ * action when the player already holds a seat (second tab, refresh
+ * mid-lobby, crash during a battle).
+ */
+function offerBattleResumeOnWelcome(battle) {
+	const btn = document.getElementById('welcome-battle-btn');
+	if (!btn) return;
+	btn.textContent = battle.status === 'active'
+		? `⚔ RETURN TO BATTLE ${battle.code}`
+		: `⚔ REJOIN LOBBY ${battle.code}`;
+	btn.classList.add('primary');
 }
 
 /**
  * Welcome-modal BATTLE button entry: open the dialog without joining
  * the shared world. With an invite code the seat is claimed first so
- * the lobby renders straight away.
+ * the lobby renders straight away; joining an ACTIVE battle takes over
+ * a bot seat and drops the player straight into the arena. A player
+ * who already holds a seat resumes it rather than being treated as a
+ * fresh joiner.
  * @param {string|null} inviteCode Optional code from a /?battle= link.
  */
 export async function enterBattleFlow(inviteCode = null) {
@@ -592,14 +713,47 @@ export async function enterBattleFlow(inviteCode = null) {
 	try { await ensureConnected(); }
 	catch (err) { console.warn('Battle flow: connection attempt failed:', err); }
 
-	if (inviteCode) {
-		const result = await joinBattle(inviteCode);
+	const codeUp = inviteCode ? String(inviteCode).toUpperCase() : null;
+	const state = await fetchBattleState();
+	const current = state?.battle || null;
+
+	// Already seated somewhere?
+	if (current) {
+		const sameBattle = !codeUp || String(current.code).toUpperCase() === codeUp;
+		if (sameBattle) {
+			if (current.status === 'active') {
+				adoptSeat(current);
+				return true;
+			}
+			await showBattleDialog();   // back to the lobby
+			return true;
+		}
+		if (current.status === 'active') {
+			// Invited to a DIFFERENT battle mid-fight: joining would
+			// forfeit — make that an explicit choice, not an accident.
+			showToastMessage(
+				`You're already fighting in battle ${current.code} — forfeit it before joining another.`,
+				{ variant: 'alert', duration: 8000 }
+			);
+			adoptSeat(current);
+			return false;
+		}
+		// Waiting in a different lobby: the join below swaps lobbies
+		// (the server frees the old seat automatically).
+	}
+
+	if (codeUp) {
+		const result = await joinBattle(codeUp);
 		if (result.success) {
+			if (result.battle?.status === 'active') {
+				adoptSeat(result.battle);
+				return true;
+			}
 			await showBattleDialog();
 			return true;
 		}
 		showToastMessage(result.error || 'Could not join that battle', { variant: 'alert' });
-		await showBattleDialog({ prefillCode: String(inviteCode).toUpperCase() });
+		await showBattleDialog({ prefillCode: codeUp });
 		return false;
 	}
 	await showBattleDialog();

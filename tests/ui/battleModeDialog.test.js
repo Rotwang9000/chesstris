@@ -19,6 +19,7 @@ const mockPlayerId = 'real-player-1';
 jest.mock('../../public/js/utils/networkManager.js', () => ({
 	getSocket: jest.fn(() => mockSocket),
 	getPlayerId: jest.fn(() => mockPlayerId),
+	getGameId: jest.fn(() => 'global_game'),
 	ensureConnected: jest.fn(() => Promise.resolve(true)),
 	on: jest.fn((eventType, handler) => {
 		mockListeners[eventType] = mockListeners[eventType] || [];
@@ -204,23 +205,97 @@ describe('battleMode client', () => {
 	});
 
 	test('enterBattleFlow with an invite code claims the seat then opens the lobby', async () => {
-		socketResponses.battle_join = (data) => ({
-			success: true,
-			battle: lobbyBattle({ hostId: 'someone-else', code: String(data.code).toUpperCase() }),
-			seatId: 'battle-code99-s1',
-		});
+		// Not in any battle until the join lands; afterwards battle_state
+		// serves the joined lobby (drives the dialog render).
+		let joined = false;
+		socketResponses.battle_join = (data) => {
+			joined = true;
+			return {
+				success: true,
+				battle: lobbyBattle({ hostId: 'someone-else', code: String(data.code).toUpperCase() }),
+				seatId: 'battle-code99-s1',
+			};
+		};
 		socketResponses.battle_state = () => ({
 			success: true,
-			battle: lobbyBattle({ hostId: 'someone-else' }),
+			battle: joined ? lobbyBattle({ hostId: 'someone-else' }) : null,
 		});
 
 		const ok = await battleMode.enterBattleFlow('code99');
 		expect(ok).toBe(true);
 		expect(mockSocket.emit).toHaveBeenCalledWith(
-			'battle_join', expect.objectContaining({ code: 'code99' }), expect.any(Function)
+			'battle_join', expect.objectContaining({ code: 'CODE99' }), expect.any(Function)
 		);
 		const dialog = document.getElementById('tetches-battle-dialog');
 		expect(dialog).toBeTruthy();
 		expect(dialog.textContent).toContain('Waiting for the host');
+	});
+
+	test('enterBattleFlow RESUMES an active battle the player is seated in', async () => {
+		socketResponses.battle_state = { success: true, battle: activeBattle() };
+
+		const ok = await battleMode.enterBattleFlow();
+		expect(ok).toBe(true);
+		// Seat adopted straight away — no join, no dialog.
+		expect(gameState.localPlayerId).toBe('battle-code99-s0');
+		expect(gameState.activeBattle?.id).toBe('CODE99');
+		expect(document.getElementById('tetches-battle-dialog')).toBeNull();
+		expect(mockSocket.emit).not.toHaveBeenCalledWith(
+			'battle_join', expect.anything(), expect.any(Function)
+		);
+	});
+
+	test('enterBattleFlow refuses an invite to a DIFFERENT battle mid-fight', async () => {
+		socketResponses.battle_state = { success: true, battle: activeBattle() };
+
+		const ok = await battleMode.enterBattleFlow('OTHER1');
+		expect(ok).toBe(false);
+		// Explains itself and returns the player to THEIR battle.
+		expect(showToastMessage).toHaveBeenCalledWith(
+			expect.stringContaining('forfeit'), expect.anything()
+		);
+		expect(gameState.activeBattle?.id).toBe('CODE99');
+		expect(mockSocket.emit).not.toHaveBeenCalledWith(
+			'battle_join', expect.anything(), expect.any(Function)
+		);
+	});
+
+	test('the URL carries the battle code during a battle and sheds it after', () => {
+		emitServerEvent('battle_started', { battle: activeBattle() });
+		expect(window.location.search).toContain('battle=CODE99');
+		expect(window.location.search).not.toContain('gameId');
+
+		emitServerEvent('battle_finished', {
+			battle: activeBattle({ status: 'finished', winnerSeatId: 'battle-code99-s0' }),
+		});
+		expect(window.location.search).not.toContain('battle=CODE99');
+	});
+
+	test('joining an ACTIVE battle from the dialog adopts the bot seat directly', async () => {
+		// Server answered the join with an active battle (bot takeover).
+		socketResponses.battle_join = () => ({
+			success: true,
+			battle: activeBattle({
+				seats: [
+					{ seatId: 'battle-code99-s0', index: 0, isAi: false, name: 'Other', controlledBy: 'someone-else' },
+					{ seatId: 'battle-code99-s1', index: 1, isAi: false, name: 'Me', controlledBy: mockPlayerId },
+				],
+			}),
+			seatId: 'battle-code99-s1',
+			tookOverBot: true,
+		});
+
+		await battleMode.showBattleDialog();
+		const dialog = document.getElementById('tetches-battle-dialog');
+		const codeInput = dialog.querySelector('input');
+		codeInput.value = 'CODE99';
+		const joinBtn = [...dialog.querySelectorAll('button')].find(b => b.textContent === 'Join');
+		joinBtn.click();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(gameState.localPlayerId).toBe('battle-code99-s1');
+		expect(gameState.activeBattle?.id).toBe('CODE99');
+		expect(document.getElementById('tetches-battle-dialog')).toBeNull();
 	});
 });

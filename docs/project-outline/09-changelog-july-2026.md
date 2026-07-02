@@ -283,3 +283,107 @@ stale-stamp sweep in `tick` and boot restore), and the ghost sweep +
 - Embedded-browser session had no WebGL (bundle boots clean, flow
   driven by the jsdom suites instead); to re-verify visually on
   production after deploy.
+
+## 2 July — Battle mode v3: bots that play, multi-tab hosts, takeovers + agent gateway (MCP & Gopher)
+
+Owner testing on the v2 deploy surfaced six battle bugs; fixing the
+"bot never moves" one uncovered two deeper server faults. Plus the
+long-planned agents feature: any MCP-capable agent can now play.
+
+### Battle bug fixes (all owner repros)
+
+- **Bots never moved chess pieces.** Three stacked causes:
+  1. *Move selection was hopeless*: `ai/actions.js` picked a random
+     piece and a random cell from the WHOLE board as a target — in a
+     remote arena (~2,000 cells away) the hit rate was ~0. Rewrote it
+     to enumerate legal moves outward from each piece
+     (`enumerateMovesForPiece`: knight offsets, bounded slides ≤14,
+     pawn pushes/captures), then choose among known-legal moves,
+     preferring captures by `aggressiveness`. `ai/runner.js` also
+     falls back to the other action type in the same tick when the
+     preferred one has no legal move, so chess-less early arenas
+     build terrain instead of idling.
+  2. *Arena slots were reused while a finished battle lingered*:
+     `allocateSlot` skipped `finished` battles, so the next battle
+     built at the SAME centre while the old ring/pieces still stood —
+     stale enemy pieces inside fresh arenas, and the old battle's
+     delayed cleanup stripping the new one's cells ("0 ring cells
+     removed" in the log was this). Slots now stay owned until
+     cleanup deletes the battle from the registry. Unit test walks
+     the full linger → reuse cycle.
+  3. *First-visit sockets never joined the world broadcast room*:
+     brand-new identities only entered the Socket.IO room on
+     `join_game`/`get_game_state`, so a battle-only guest received no
+     `game_update` at all — bot moves happened server-side but were
+     invisible. Every socket now joins the room at connection time.
+- **Host deaf to lobby joins / host stuck in global game on start.**
+  `Sessions` kept ONE socket per player, so a host with a second tab
+  had all targeted emits routed to the newest tab. Sessions now track
+  a Set of sockets per player (`socketsForPlayer`,
+  `emitToPlayerSockets`); battle emits, `broadcasts.emitToPlayer` and
+  king-duel notifications go to every tab; `handleDisconnect` only
+  arms the grace timer when the LAST socket closes. The lobby dialog
+  also polls `battle_state` every 4 s as a missed-event safety net.
+- **URL now carries the battle** — `?battle=CODE` while seated (lobby
+  or fight), restored to `?gameId=global_game` after
+  (`syncBattleUrl`). Links are shareable mid-battle.
+- **Joining an ACTIVE battle takes over a bot seat** —
+  `BattleManager.takeOverBotSeat`: seat flips to human control, AI
+  ticker stops, joiner gets `battle_started`, everyone else a toast;
+  polite refusal when all seats are human. Clients adopt the seat
+  straight from the join ack.
+- **Invite links default to the battle** — welcome modal reorders so
+  ⚔ JOIN BATTLE is primary (and Enter triggers it) when `?battle=` is
+  present; PLAY NOW stays secondary.
+- **Second tab no longer silently rejoins** — reconnection auto-adopt
+  is skipped when the URL carries a DIFFERENT battle's code while the
+  welcome modal is up; mid-fight invites to another battle get a
+  "forfeit first" toast instead of a hijack.
+
+### Agent gateway — MCP server + Gopher discovery
+
+The original goal "people can play with their own agents", done:
+
+- `server/mcp/mcpServer.js` (new) — MCP Streamable HTTP endpoint at
+  `/mcp` (`@modelcontextprotocol/sdk`). Each MCP session lazily
+  registers an external-AI identity and bridges tool calls over a
+  loopback Socket.IO connection, so agents go through the exact same
+  validated contract as browsers — no parallel rules. Tools:
+  `how_to_play`, `join_world`, `get_state` (compact king-centred
+  view), `place_tetromino`, `move_piece`, `create_battle`,
+  `join_battle`, `start_battle`, `battle_state`, `leave_battle`.
+  Sessions idle out after 30 min. Port resolved live via
+  `app.locals.getSelfPort` (`bootstrap.js`) so test servers on port 0
+  work.
+- `server/discovery/agentGopher.js` (new) — Gopher-over-HTTPS
+  discovery per the seneschal.space convention:
+  `/.well-known/agent.gopher` root menu + `play` submenu +
+  `about/agents/mcp/socket/battle` text leaves, served as
+  `application/gopher` with open CORS, nosniff and 10-min cache.
+  Mounted before the restrictive CORS middleware in `app.js`.
+- `docs/mcp-agents.md` (new) — connection config, tool table, session
+  behaviour, discovery notes.
+- Public companion repo **github.com/Rotwang9000/tetches-agents** —
+  README (MCP quick start, tool table, Socket API summary), the two
+  worked examples (`random-bot.js`, `spectator-feed.js`), and
+  `directory/server.json` in the official MCP-registry manifest shape
+  for directory submissions.
+- `routes/api.js` — bot registration logic extracted as
+  `registerExternalComputerPlayer()` for the MCP bridge to reuse.
+
+### Verified
+
+- **642 tests, 59 suites** (new: `battleBotMoves.test.js` — fresh
+  arena has no legal chess move but placement works, terrain unlocks
+  a first-try move, captures preferred; `agentDiscovery.test.js` —
+  headers, RFC 1436 dot-termination, every internal selector
+  resolves; slot-linger test; multi-tab Sessions tests; dialog tests
+  for URL sync, resume, refusal and bot-takeover adoption).
+- `scripts/e2e-battle-flow.js` grew Scenario C (multi-tab host hears
+  lobby joins + start on BOTH sockets; latecomer takes over the bot
+  seat mid-fight; second latecomer politely refused): **63/63 green**.
+- `scripts/e2e-mcp.js` (new) drives the real `/mcp` endpoint as an
+  MCP client: initialise → tools → join → state → placement → battle
+  round-trip: **22/22 green**.
+- 45 s live-bot watch on an isolated server: bot made 2 placements +
+  6 chess moves (was 0 before the fixes).

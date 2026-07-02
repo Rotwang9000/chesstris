@@ -162,13 +162,31 @@ describe('Sessions — ephemeral socket bindings', () => {
 		expect(Sessions.socketForPlayer('p1')).toBeNull();
 	});
 
-	test('rebinding evicts the previous socket', () => {
+	test('a second tab binds ALONGSIDE the first (multi-tab support)', () => {
 		const s1 = fakeSocket('socket-1');
 		const s2 = fakeSocket('socket-2');
 		Sessions.bind(s1, 'p1');
 		Sessions.bind(s2, 'p1');
+		// Newest socket is the "primary", but the first tab stays live.
 		expect(Sessions.socketForPlayer('p1')).toBe(s2);
-		expect(Sessions.bySocketId('socket-1')).toBeNull();
+		expect(Sessions.bySocketId('socket-1')).not.toBeNull();
+		expect(Sessions.socketsForPlayer('p1')).toEqual([s1, s2]);
+		// Closing the newer tab falls back to the older one.
+		Sessions.unbind('socket-2');
+		expect(Sessions.isOnline('p1')).toBe(true);
+		expect(Sessions.socketForPlayer('p1')).toBe(s1);
+		Sessions.unbind('socket-1');
+		expect(Sessions.isOnline('p1')).toBe(false);
+	});
+
+	test('emitToPlayerSockets reaches every tab', () => {
+		const got = [];
+		const sock = (id) => ({ id, join: () => {}, emit: (ev, p) => got.push(`${id}:${ev}:${p.n}`) });
+		Sessions.bind(sock('a'), 'p1');
+		Sessions.bind(sock('b'), 'p1');
+		const reached = Sessions.emitToPlayerSockets('p1', 'battle_lobby_update', { n: 7 });
+		expect(reached).toBe(2);
+		expect(got).toEqual(['a:battle_lobby_update:7', 'b:battle_lobby_update:7']);
 	});
 });
 

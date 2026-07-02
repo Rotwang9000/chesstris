@@ -21,6 +21,8 @@ const metrics = require('./observability/metrics');
 const funnel = require('./observability/funnel');
 const sentry = require('./observability/sentry');
 const { createIndexHtmlBundleSwap } = require('./bundling/indexHtmlBundleSwap');
+const { mountAgentDiscovery } = require('./discovery/agentGopher');
+const { createMcpRouter } = require('./mcp/mcpServer');
 
 /**
  * Build the Content-Security-Policy directive set. We're strict but
@@ -101,6 +103,12 @@ function createApp({ projectRoot = process.cwd() } = {}) {
 		// jsdelivr loads. Disable it; the rest of helmet is fine.
 		crossOriginEmbedderPolicy: false,
 	}));
+
+	// Agent discovery (Gopher-over-HTTPS at /.well-known/agent.gopher).
+	// Mounted BEFORE the CORS allowlist: the directory must be readable
+	// cross-origin by anyone (in-browser Gopher clients included) —
+	// each route sets Access-Control-Allow-Origin: * itself.
+	mountAgentDiscovery(app);
 
 	// CORS allowlist — only same-origin in development, only the
 	// configured production hosts in production. Socket.IO has its
@@ -192,6 +200,15 @@ function createApp({ projectRoot = process.cwd() } = {}) {
 	app.use('/api/advertisers', advertiserRoutes);
 	app.use('/api/wallet-auth', walletAuthRouter);
 	mountAuthRoutes(app);
+
+	// MCP endpoint — agents play the game over Model Context Protocol
+	// (Streamable HTTP). The port resolver is installed by bootstrap
+	// once the HTTP server is listening (the bridge dials loopback).
+	app.use('/mcp', createMcpRouter({
+		getSelfPort: () => (typeof app.locals.getSelfPort === 'function'
+			? app.locals.getSelfPort()
+			: null),
+	}));
 
 	// Prometheus scrape target. In production it's restricted to same-host
 	// scrapers (loopback) or callers presenting the admin token, so the
