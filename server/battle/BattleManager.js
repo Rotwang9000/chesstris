@@ -39,6 +39,12 @@ const {
 	MIN_COMPUTER_MOVE_INTERVAL_MS,
 	generateComputerStrategy,
 } = require('../ai/strategy');
+const {
+	BOT_PACE,
+	normaliseBotDifficulty,
+	pushPaceSample,
+	adaptiveBotIntervalMs,
+} = require('./pacing');
 
 const LOBBY_TIMEOUT_MS = 15 * 60 * 1000;   // Unstarted battles evaporate.
 const ACTIVE_TIMEOUT_MS = 2 * 60 * 60 * 1000; // Hard cap on battle length.
@@ -76,14 +82,20 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 		return getBattle(String(code || '').trim().toUpperCase());
 	}
 
-	/** The unfinished battle this REAL player controls a seat in, if any. */
-	function battleForPlayer(realPlayerId) {
+	/** Every unfinished battle this REAL player controls a seat in. */
+	function battlesForPlayer(realPlayerId) {
 		const rid = String(realPlayerId);
+		const out = [];
 		for (const battle of Object.values(battles())) {
 			if (!battle || battle.status === 'finished') continue;
-			if (battle.seats.some(s => !s.isAi && String(s.controlledBy) === rid)) return battle;
+			if (battle.seats.some(s => !s.isAi && String(s.controlledBy) === rid)) out.push(battle);
 		}
-		return null;
+		return out;
+	}
+
+	/** The first unfinished battle this REAL player is seated in, if any. */
+	function battleForPlayer(realPlayerId) {
+		return battlesForPlayer(realPlayerId)[0] || null;
 	}
 
 	function seatFor(battle, realPlayerId) {
@@ -93,14 +105,29 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 	}
 
 	/**
-	 * The id gameplay handlers should act as for this socket's player:
-	 * their seat id while they're in an ACTIVE battle, else their own.
+	 * The id gameplay handlers should act as for this socket's player.
+	 *
+	 * A player may hold seats in several battles at once, so each
+	 * socket carries a FOCUS (set by the client via `battle_focus`):
+	 *   • focusBattleId undefined — legacy: first active battle seat,
+	 *     else the real id (old clients never emit a focus).
+	 *   • focusBattleId null — the world view: always the real id.
+	 *   • focusBattleId set — that battle's seat while it's active.
 	 */
-	function effectivePlayerId(realPlayerId) {
-		const battle = battleForPlayer(realPlayerId);
-		if (!battle || battle.status !== 'active') return realPlayerId;
-		const seat = seatFor(battle, realPlayerId);
-		return seat ? seat.seatId : realPlayerId;
+	function effectivePlayerId(realPlayerId, { focusBattleId } = {}) {
+		if (focusBattleId === null) return realPlayerId;
+		if (focusBattleId !== undefined) {
+			const battle = getBattle(focusBattleId);
+			if (!battle || battle.status !== 'active') return realPlayerId;
+			const seat = seatFor(battle, realPlayerId);
+			return seat ? seat.seatId : realPlayerId;
+		}
+		for (const battle of battlesForPlayer(realPlayerId)) {
+			if (battle.status !== 'active') continue;
+			const seat = seatFor(battle, realPlayerId);
+			if (seat) return seat.seatId;
+		}
+		return realPlayerId;
 	}
 
 	function allocateSlot() {
@@ -133,6 +160,7 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 			// so they need the actual radius (3-4 seat arenas are larger).
 			playRadius: battle.playRadius || playRadiusForSeats(battle.seatCount || 2),
 			seatCount: battle.seatCount,
+			botDifficulty: battle.botDifficulty || 'auto',
 			hostId: battle.hostId,
 			createdAt: battle.createdAt,
 			startedAt: battle.startedAt || null,
@@ -174,8 +202,12 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 	function stampRealPlayer(playerId, battleId) {
 		const record = World.getPlayer(playerId);
 		if (!record) return;
-		if (battleId) {
-			record.activeBattleId = String(battleId);
+		// Multi-battle: "clearing" one battle's stamp falls back to any
+		// OTHER battle the player still holds a seat in, so the ghost
+		// sweep keeps protecting them until they're out of all of them.
+		const effective = battleId || (battlesForPlayer(playerId)[0]?.id ?? null);
+		if (effective) {
+			record.activeBattleId = String(effective);
 			if (record.eliminated) {
 				record.eliminated = false;
 				delete record.eliminatedAt;
@@ -198,13 +230,17 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 	 * Create a battle lobby. The host takes seat 0.
 	 * @returns {{success: boolean, error?: string, battle?: Object}}
 	 */
-	function createBattle({ hostId, hostName, seatCount = 2 }) {
+	function createBattle({ hostId, hostName, seatCount = 2, botDifficulty = 'auto' }) {
 		const seats = Number(seatCount);
 		if (!Number.isInteger(seats) || seats < BATTLE.MIN_SEATS || seats > BATTLE.MAX_SEATS) {
 			return { success: false, error: `Seat count must be ${BATTLE.MIN_SEATS}-${BATTLE.MAX_SEATS}` };
 		}
-		if (battleForPlayer(hostId)) {
-			return { success: false, error: 'You are already in a battle' };
+		// A player may hold seats in several battles (and the world) at
+		// once and switch views between them — but hosting an unlimited
+		// pile of lobbies would leak arena slots.
+		const hosting = battlesForPlayer(hostId).filter(b => String(b.hostId) === String(hostId) && b.status === 'lobby');
+		if (hosting.length >= 2) {
+			return { success: false, error: 'You already have two open lobbies — start or cancel one first' };
 		}
 		if (allocateSlot() === null) {
 			return { success: false, error: 'All arenas are busy — try again later' };
@@ -223,6 +259,7 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 			slot: null,
 			centre: null,
 			seatCount: seats,
+			botDifficulty: normaliseBotDifficulty(botDifficulty),
 			hostId: String(hostId),
 			createdAt: Date.now(),
 			startedAt: null,
@@ -248,11 +285,14 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 	/**
 	 * Join a battle by code.
 	 *
-	 * • Lobby: take a free seat (if the player is waiting in a DIFFERENT
-	 *   lobby they leave it automatically — you can only queue in one).
+	 * • Lobby: take a free seat.
 	 * • Active: take over a live BOT seat, keeping its pieces — this is
 	 *   how a friend can rescue you mid-battle or claim the bot from an
 	 *   invite link after the host started without them.
+	 *
+	 * A player may hold seats in several battles at once (and keep
+	 * their world kingdom); the client switches views between them via
+	 * `battle_focus`.
 	 */
 	function joinBattle({ code, playerId, playerName }) {
 		const battle = battleByCode(code);
@@ -262,16 +302,6 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 		const existing = seatFor(battle, playerId);
 		if (existing) {
 			return { success: true, battle: publicState(battle), seatId: existing.seatId };
-		}
-
-		const otherBattle = battleForPlayer(playerId);
-		if (otherBattle) {
-			if (otherBattle.status === 'active') {
-				return { success: false, error: 'You are in an active battle — forfeit it first' };
-			}
-			// Waiting in another lobby: leave it (host leaving cancels it)
-			// and fall through to join this one.
-			leaveBattle({ playerId });
 		}
 
 		if (battle.status === 'active') {
@@ -409,6 +439,16 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 			}];
 		}
 
+		// Fixed difficulties map straight onto the shared AI profiles;
+		// 'auto' starts bots at a relaxed default and the sweep retunes
+		// their cadence to the humans' measured tempo as the battle runs.
+		const chosen = normaliseBotDifficulty(battle.botDifficulty);
+		const isAuto = chosen === BOT_PACE.AUTO;
+		const botProfile = isAuto ? BOT_DIFFICULTY : chosen;
+		const botInterval = isAuto
+			? BOT_PACE.DEFAULT_INTERVAL_MS
+			: (MIN_COMPUTER_MOVE_INTERVAL_MS[botProfile] || 10000);
+
 		const zones = seatHomeZones(battle.centre, battle.seats.length);
 		for (const seat of battle.seats) {
 			const zone = zones[seat.index];
@@ -422,9 +462,9 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 				connected: !seat.isAi,
 				lastActiveAt: Date.now(),
 				...(seat.isAi ? {
-					difficulty: BOT_DIFFICULTY,
-					minMoveInterval: MIN_COMPUTER_MOVE_INTERVAL_MS[BOT_DIFFICULTY] || 10000,
-					strategy: generateComputerStrategy(BOT_DIFFICULTY),
+					difficulty: botProfile,
+					minMoveInterval: botInterval,
+					strategy: generateComputerStrategy(botProfile),
 					lastMoveTime: 0,
 				} : {}),
 			});
@@ -450,17 +490,27 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 	 * Leave a battle. In the lobby, the host leaving cancels it and any
 	 * other player just frees their seat. Mid-battle, leaving forfeits:
 	 * the seat is eliminated and the sweep settles the outcome.
+	 *
+	 * `battleId` picks WHICH battle to leave when the player holds
+	 * several seats; omitted, it falls back to their first battle
+	 * (legacy single-battle clients).
 	 */
-	function leaveBattle({ playerId }) {
-		const battle = battleForPlayer(playerId);
-		if (!battle) return { success: false, error: 'You are not in a battle' };
+	function leaveBattle({ playerId, battleId = null }) {
+		const battle = battleId
+			? (getBattle(battleId) || battleByCode(battleId))
+			: battleForPlayer(playerId);
+		if (!battle || !seatFor(battle, playerId)) {
+			return { success: false, error: 'You are not in that battle' };
+		}
 		const seat = seatFor(battle, playerId);
 
 		if (battle.status === 'lobby') {
 			if (String(battle.hostId) === String(playerId)) {
 				emitToSeatHumans(battle, 'battle_cancelled', { battleId: battle.id });
-				clearAllSeatStamps(battle);
+				// Delete BEFORE clearing stamps: the stamp fallback scans
+				// remaining battles and must not see the one being binned.
 				delete battles()[battle.id];
+				clearAllSeatStamps(battle);
 				console.log(`[Battle] ${battle.code} cancelled by host`);
 			} else {
 				battle.seats = battle.seats.filter(s => s !== seat);
@@ -490,6 +540,37 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 	}
 
 	// ── Sweep: eliminations, timeouts, cleanup ───────────────────────────
+
+	/**
+	 * 'Auto' bot pacing: sample the humans' cumulative committed-move
+	 * count (tetromino placements + chess moves both bump `moveCount`)
+	 * on a rolling window and retune every living bot's move interval
+	 * to match their tempo. Runs from the 5s sweep — cheap, and the
+	 * cadence only needs coarse adjustment.
+	 */
+	function retuneAutoBots(battle, now) {
+		if (normaliseBotDifficulty(battle.botDifficulty) !== BOT_PACE.AUTO) return;
+		const botSeats = battle.seats.filter(s => s.isAi);
+		if (botSeats.length === 0) return;
+
+		let humanMoves = 0;
+		for (const seat of battle.seats) {
+			if (seat.isAi) continue;
+			const record = World.getPlayer(seat.seatId);
+			humanMoves += Number(record?.moveCount) || 0;
+		}
+
+		battle.paceSamples = pushPaceSample(battle.paceSamples, { t: now, moves: humanMoves });
+		const interval = adaptiveBotIntervalMs(battle.paceSamples);
+
+		for (const seat of botSeats) {
+			const record = World.getPlayer(seat.seatId);
+			if (!record || record.eliminated) continue;
+			if (record.minMoveInterval !== interval) {
+				record.minMoveInterval = interval;
+			}
+		}
+	}
 
 	function seatIsAlive(seat) {
 		const world = World.getWorld();
@@ -570,8 +651,10 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 			if (battle.status === 'lobby') {
 				if (now - battle.createdAt > LOBBY_TIMEOUT_MS) {
 					emitToSeatHumans(battle, 'battle_cancelled', { battleId: battle.id, reason: 'timeout' });
-					clearAllSeatStamps(battle);
+					// Delete before clearing stamps (stamp fallback scans
+					// remaining battles).
 					delete battles()[battle.id];
+					clearAllSeatStamps(battle);
 					World.markDirty();
 					persistence.markDirty();
 					console.log(`[Battle] ${battle.code} lobby timed out`);
@@ -585,6 +668,8 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 					finishBattle(battle, { reason: 'elimination' });
 				} else if (now - (battle.startedAt || battle.createdAt) > ACTIVE_TIMEOUT_MS) {
 					finishBattle(battle, { reason: 'timeout' });
+				} else {
+					retuneAutoBots(battle, now);
 				}
 				continue;
 			}
@@ -644,6 +729,7 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 		leaveBattle,
 		effectivePlayerId,
 		battleForPlayer,
+		battlesForPlayer,
 		battleByCode,
 		getBattle,
 		publicState,

@@ -23,6 +23,7 @@ function registerBattleHandlers(socket, ctx) {
 				hostId: playerId,
 				hostName: player.name || 'Player 1',
 				seatCount: Number(data?.seatCount) || 2,
+				botDifficulty: data?.botDifficulty,
 			});
 			if (typeof callback === 'function') callback(result);
 		} catch (err) {
@@ -52,7 +53,14 @@ function registerBattleHandlers(socket, ctx) {
 
 	socket.on('battle_start', (data, callback) => {
 		try {
-			const battle = battleManager.battleForPlayer(playerId);
+			// With multi-battle membership the client says WHICH lobby to
+			// start; legacy clients (no id) start their first hosted lobby.
+			const requested = data?.battleId || data?.code || null;
+			const battle = requested
+				? (battleManager.getBattle(requested) || battleManager.battleByCode(requested))
+				: battleManager.battlesForPlayer(playerId)
+					.find(b => b.status === 'lobby' && String(b.hostId) === String(playerId))
+					|| battleManager.battleForPlayer(playerId);
 			const result = battle
 				? battleManager.startBattle({ battleId: battle.id, playerId })
 				: { success: false, error: 'You are not in a battle' };
@@ -65,7 +73,10 @@ function registerBattleHandlers(socket, ctx) {
 
 	socket.on('battle_leave', (data, callback) => {
 		try {
-			const result = battleManager.leaveBattle({ playerId });
+			const result = battleManager.leaveBattle({
+				playerId,
+				battleId: data?.battleId || data?.code || null,
+			});
 			if (typeof callback === 'function') callback(result);
 		} catch (err) {
 			console.error('[Battle] battle_leave failed:', err);
@@ -75,13 +86,40 @@ function registerBattleHandlers(socket, ctx) {
 
 	socket.on('battle_state', (data, callback) => {
 		try {
-			const battle = battleManager.battleForPlayer(playerId);
-			const result = battle
-				? { success: true, battle: battleManager.publicState(battle) }
-				: { success: true, battle: null };
+			const all = battleManager.battlesForPlayer(playerId);
+			const focusId = socket.data?.focusedBattleId;
+			const focused = (focusId && all.find(b => String(b.id) === String(focusId))) || all[0] || null;
+			const result = {
+				success: true,
+				battle: focused ? battleManager.publicState(focused) : null,
+				battles: all.map(b => battleManager.publicState(b)),
+			};
 			if (typeof callback === 'function') callback(result);
 		} catch (err) {
 			console.error('[Battle] battle_state failed:', err);
+			if (typeof callback === 'function') callback({ success: false, error: 'Server error' });
+		}
+	});
+
+	// The client's current VIEW: a battle id (act as that battle's seat),
+	// or null for the world (act as the real player). Focus is per
+	// SOCKET, so two tabs can watch two different battles.
+	socket.on('battle_focus', (data, callback) => {
+		try {
+			const battleId = data?.battleId ?? null;
+			if (battleId === null) {
+				socket.data.focusedBattleId = null;
+			} else {
+				const battle = battleManager.getBattle(battleId) || battleManager.battleByCode(battleId);
+				if (!battle) {
+					if (typeof callback === 'function') callback({ success: false, error: 'Battle not found' });
+					return;
+				}
+				socket.data.focusedBattleId = String(battle.id);
+			}
+			if (typeof callback === 'function') callback({ success: true, focusedBattleId: socket.data.focusedBattleId });
+		} catch (err) {
+			console.error('[Battle] battle_focus failed:', err);
 			if (typeof callback === 'function') callback({ success: false, error: 'Server error' });
 		}
 	});

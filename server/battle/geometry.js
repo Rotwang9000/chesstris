@@ -44,6 +44,15 @@ const BATTLE = Object.freeze({
 	 * with a wide-open middle.
 	 */
 	FAN_FRONT_OFFSET: 8,
+	/**
+	 * Sideways (tangential) shift of each 3-4 seat zone, forming a
+	 * pinwheel: every army is offset to the right of its advance
+	 * direction, so no two zones face each other head-on and the
+	 * closest cells of adjacent zones move from ~5.7 to ≥8 apart.
+	 * Armies must wheel toward an opponent instead of marching
+	 * straight into a mirror-image charge.
+	 */
+	FAN_TANGENT_SHIFT: 4,
 	/** Arena grid anchor — far beyond the organic cluster (~±200 cells). */
 	ARENA_BASE: Object.freeze({ x: 2000, z: 2000 }),
 	/** Centre-to-centre spacing of arena slots on the grid. */
@@ -162,28 +171,33 @@ function seatHomeZones(centre, seatCount) {
 	}
 
 	// Pawn-row distance from centre. 2 seats: a pure face-off with pawn
-	// rows exactly FRONT_ROW_GAP apart (±4). 3–4 seats: a FAN — every
-	// zone pushed out to FAN_FRONT_OFFSET (±8) so the closest cells of
-	// two adjacent zones are ≥5 apart (a pawn's opening diagonal
-	// reaches 1, a knight ~2 — nobody can touch a neighbour's spawn on
-	// move one, which the old ±5 layout allowed).
-	const frontOffset = seatCount === 2
-		? BATTLE.FRONT_ROW_GAP / 2
-		: BATTLE.FAN_FRONT_OFFSET;
+	// rows exactly FRONT_ROW_GAP apart (±4). 3–4 seats: a PINWHEEL FAN —
+	// every zone pushed out to FAN_FRONT_OFFSET (±8) *and* shifted
+	// FAN_TANGENT_SHIFT cells to its own left, so no army faces another
+	// head-on: straight pawn advances sweep past the centre beside the
+	// opposing zone, and armies must wheel to engage. Closest cells of
+	// any two zones are ≥8 apart (was ~5.7 in the symmetric cross,
+	// and the old ±5 layout even allowed move-one captures).
+	const isFan = seatCount >= 3;
+	const frontOffset = isFan ? BATTLE.FAN_FRONT_OFFSET : BATTLE.FRONT_ROW_GAP / 2;
+	const tangent = isFan ? BATTLE.FAN_TANGENT_SHIFT : 0;
 	const half = ZONE_LONG_SIDE / 2;
 
 	// Seat order: north, south, west, east. North/south first so a
-	// 2-seat battle is a pure face-off.
+	// 2-seat battle is a pure face-off. Tangent shifts follow each
+	// seat's own left hand (a rotationally consistent pinwheel):
+	// N advances +z → left is +x; S advances −z → left is −x;
+	// W advances +x → left is −z; E advances −x → left is +z.
 	const zones = [
 		{ // North seat (−z side), advancing +z towards centre.
-			x: centre.x - half,
+			x: centre.x - half + tangent,
 			z: centre.z - frontOffset - 1,
 			width: ZONE_LONG_SIDE,
 			height: ZONE_SHORT_SIDE,
 			orientation: 0,
 		},
 		{ // South seat (+z side), advancing −z towards centre.
-			x: centre.x - half,
+			x: centre.x - half - tangent,
 			z: centre.z + frontOffset,
 			width: ZONE_LONG_SIDE,
 			height: ZONE_SHORT_SIDE,
@@ -191,14 +205,14 @@ function seatHomeZones(centre, seatCount) {
 		},
 		{ // West seat (−x side), advancing +x towards centre.
 			x: centre.x - frontOffset - 1,
-			z: centre.z - half,
+			z: centre.z - half - tangent,
 			width: ZONE_SHORT_SIDE,
 			height: ZONE_LONG_SIDE,
 			orientation: 1,
 		},
 		{ // East seat (+x side), advancing −x towards centre.
 			x: centre.x + frontOffset,
-			z: centre.z - half,
+			z: centre.z - half + tangent,
 			width: ZONE_SHORT_SIDE,
 			height: ZONE_LONG_SIDE,
 			orientation: 3,

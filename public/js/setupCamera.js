@@ -75,6 +75,15 @@ const CAMERA_DEFAULTS = {
 	FLY_DURATION_MAX_MS: 4500,
 	/** Cap on how high the flight arc climbs above the endpoints. */
 	FLY_ARC_MAX_HEIGHT: 120,
+	/**
+	 * Beyond this horizontal distance a fly becomes a WARP (fade out,
+	 * teleport, fade in). Battle arenas sit ~2,000+ cells from the
+	 * world — flying that far is seconds of empty sea and sky, so the
+	 * screen "just goes blue". Ordinary in-world hops stay flights.
+	 */
+	WARP_DISTANCE: 300,
+	WARP_FADE_IN_MS: 350,
+	WARP_FADE_OUT_MS: 650,
 	KING_VIEW_DISTANCE: 16,
 	FALLBACK_POSITION: { x: 10, y: 25, z: 10 },
 	FALLBACK_TARGET: { x: 0, y: 0, z: 0 }
@@ -278,6 +287,65 @@ function easeOutCubic(t) {
 	return 1 - Math.pow(1 - t, 3);
 }
 
+// ── Warp transition (fade → teleport → fade) ───────────────────────────────
+
+let warpTimer = null;
+
+/** Full-screen sky-coloured fade layer, created lazily and reused. */
+function ensureWarpOverlay() {
+	let overlay = document.getElementById('camera-warp-overlay');
+	if (!overlay) {
+		overlay = document.createElement('div');
+		overlay.id = 'camera-warp-overlay';
+		overlay.style.cssText = [
+			'position:fixed', 'inset:0',
+			// Matches the scene fog / sky so the fade reads as "lens
+			// whiting out over the sea", not a UI curtain.
+			'background:#C5F0FF',
+			'opacity:0', 'pointer-events:none', 'z-index:9000',
+			'transition:opacity 350ms ease',
+		].join(';');
+		document.body.appendChild(overlay);
+	}
+	return overlay;
+}
+
+/**
+ * Long-haul camera move: fade the screen to sky, snap the camera at
+ * the destination, fade back in. Replaces multi-second flights over
+ * empty water (world ↔ battle arenas) with a ~1s transition.
+ */
+function warpToPosition(camera, controls, targetPosition, targetLookAt, renderer, scene, onComplete) {
+	cancelFlyAnimation();
+	if (warpTimer) {
+		clearTimeout(warpTimer);
+		warpTimer = null;
+	}
+
+	const overlay = ensureWarpOverlay();
+	overlay.style.transitionDuration = `${CAMERA_DEFAULTS.WARP_FADE_IN_MS}ms`;
+	// Force a style flush so the transition runs even if the overlay
+	// was created this frame.
+	void overlay.offsetWidth;
+	overlay.style.opacity = '1';
+
+	warpTimer = setTimeout(() => {
+		warpTimer = null;
+		controls.target.set(targetLookAt.x, targetLookAt.y, targetLookAt.z);
+		camera.position.set(targetPosition.x, targetPosition.y, targetPosition.z);
+		controls.update();
+		if (renderer && scene) {
+			try { renderer.render(scene, camera); } catch (_e) { /* main loop covers it */ }
+		}
+		// Give the destination one painted frame before lifting the veil.
+		requestAnimationFrame(() => {
+			overlay.style.transitionDuration = `${CAMERA_DEFAULTS.WARP_FADE_OUT_MS}ms`;
+			overlay.style.opacity = '0';
+			if (typeof onComplete === 'function') onComplete();
+		});
+	}, CAMERA_DEFAULTS.WARP_FADE_IN_MS + 50);
+}
+
 /**
  * Animate camera with a smooth flying arc to target position.
  *
@@ -310,12 +378,18 @@ export function flyToPosition(camera, controls, targetPosition, targetLookAt, re
 	activeFlyControlsRestore = restoreControls;
 
 	// Sweep duration and arc height both scale with distance so short
-	// hops stay snappy while long hauls (welcome overview → kingdom,
-	// world → battle arena, ~2,800 units) become a proper drone flight
-	// that climbs high over the sea instead of a 1.8s blur.
+	// hops stay snappy. TRULY long hauls (world ↔ battle arena,
+	// ~2,800 units of empty sea) warp instead: fade out, teleport,
+	// fade in — flying that far just looks like a blue screen.
 	const dx = targetPosition.x - startPosition.x;
 	const dz = targetPosition.z - startPosition.z;
 	const horizontalDist = Math.sqrt(dx * dx + dz * dz);
+	if (horizontalDist > CAMERA_DEFAULTS.WARP_DISTANCE && typeof document !== 'undefined') {
+		restoreControls();
+		activeFlyControlsRestore = null;
+		warpToPosition(camera, controls, targetPosition, targetLookAt, renderer, scene, onComplete);
+		return;
+	}
 	const duration = Math.min(
 		CAMERA_DEFAULTS.FLY_DURATION_MS + horizontalDist * 8,
 		CAMERA_DEFAULTS.FLY_DURATION_MAX_MS

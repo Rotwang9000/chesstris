@@ -19,6 +19,7 @@ import { initSponsorSystem } from '../utils/sponsors.js'; // Import sponsor syst
 import { disposeBoats } from './boatsRenderer.js';
 import { initSaveReminder } from './auth/saveReminder.js';
 import { initBattleMode } from './battle/battleMode.js';
+import { initLiteMode, liteModeRequested } from './liteMode.js';
 
 
 // Global state
@@ -40,8 +41,9 @@ function normalizeRenderProfile(value) {
 }
 
 function resolveRenderProfile() {
+	// NOTE `/2d` no longer maps to the cute profile — it boots the true
+	// 2D canvas client (lite mode) before profiles are even consulted.
 	const params = new URLSearchParams(window.location.search);
-	const fromPath = window.location.pathname === '/2d' ? 'cute' : null;
 	const fromFlags = (params.has('cute') || params.has('low') || params.has('pixel')) ? 'cute'
 		: params.has('retro') ? 'retro' : null;
 	const fromQuery =
@@ -49,7 +51,7 @@ function resolveRenderProfile() {
 		normalizeRenderProfile(params.get('mode')) ||
 		normalizeRenderProfile(params.get('quality'));
 	const stored = normalizeRenderProfile(localStorage.getItem('renderProfile'));
-	return fromQuery || fromFlags || fromPath || stored || 'normal';
+	return fromQuery || fromFlags || stored || 'normal';
 }
 
 function applyRenderProfileToDom(profile) {
@@ -174,6 +176,14 @@ async function init() {
 	hideLoadingScreen();
 	hideError();
 
+	// Explicit lite requests (/2d or ?lite=1) skip the WebGL stack
+	// entirely — the 2D canvas client is the whole game.
+	if (liteModeRequested()) {
+		hideLoadingScreen();
+		await initLiteMode();
+		return;
+	}
+
 	// Apply render profile ASAP so CSS + UI reflect it even before game starts
 	const renderProfile = resolveRenderProfile();
 	applyRenderProfileToDom(renderProfile);
@@ -193,16 +203,16 @@ async function init() {
 			throw new Error('THREE.js not available. Please check your internet connection.');
 		}
 
-		// If the browser cannot create any WebGL context, fail fast and
-		// surface the same overlay that the deeper renderer code uses.
-		// This avoids a confusing chain of "module errors" deep in
-		// `enhanced-gameCore.js`.
+		// No WebGL at all? Fall back to the 2D lite client instead of a
+		// dead-end error overlay — the game stays playable.
 		if (diagnostics.webglStatus && !diagnostics.webglStatus.hasWebGL && !diagnostics.webglStatus.hasWebGL2) {
-			if (typeof gameCore.showWebglUnavailableOverlay === 'function') {
-				gameCore.showWebglUnavailableOverlay('No WebGL context available at startup');
-			}
+			console.warn('WebGL unavailable — switching to lite (2D canvas) mode');
 			hideLoadingScreen();
-			throw new Error('WebGL unavailable: hardware acceleration disabled or unsupported.');
+			await initLiteMode({
+				reason: 'WebGL is unavailable in this browser, so the 3D view is off — '
+					+ 'you\u2019re on the 2D board instead. Same world, same rules.',
+			});
+			return;
 		}
 		
 		

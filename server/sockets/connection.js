@@ -98,10 +98,15 @@ function createConnectionHandler(services) {
 
 		// Gameplay handlers act as the player's battle SEAT while they're
 		// in an active battle; their real-world kingdom is untouched.
+		// Which battle (a player can hold several) is the socket's FOCUS,
+		// set by the client's `battle_focus` — undefined means legacy
+		// auto-resolution (first active battle).
 		const resolveActingPlayerId = () => {
 			try {
 				return services.battleManager
-					? services.battleManager.effectivePlayerId(playerId)
+					? services.battleManager.effectivePlayerId(playerId, {
+						focusBattleId: socket.data ? socket.data.focusedBattleId : undefined,
+					})
 					: playerId;
 			} catch (_e) {
 				return playerId;

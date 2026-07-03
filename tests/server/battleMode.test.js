@@ -120,12 +120,13 @@ describe('battle geometry', () => {
 		}
 	});
 
-	test.each([3, 4])('%i-seat fan keeps every pair of zones ≥4 cells apart', (seatCount) => {
+	test.each([3, 4])('%i-seat fan keeps every pair of zones ≥8 cells apart', (seatCount) => {
 		// The July 2026 report: with zones at ±5 a CPU pawn could hop
-		// straight into a neighbour's spawn on its first move. The fan
-		// layout must keep EVERY pair of zones at least 4 empty cells
-		// apart (Euclidean ≥ 5 between closest cells: beyond a pawn's
-		// diagonal capture AND a knight's opening leap).
+		// straight into a neighbour's spawn on its first move. The
+		// pinwheel fan (front offset + tangent stagger) must keep EVERY
+		// pair of zones at least 8 cells apart between closest cells —
+		// beyond a pawn's diagonal capture, a knight's leap, and any
+		// two-move combination.
 		const centre = { x: 0, z: 0 };
 		const zones = seatHomeZones(centre, seatCount);
 		for (let a = 0; a < zones.length; a++) {
@@ -137,9 +138,24 @@ describe('battle geometry', () => {
 						if (d < minDist) minDist = d;
 					}
 				}
-				expect(minDist).toBeGreaterThanOrEqual(5);
+				expect(minDist).toBeGreaterThanOrEqual(8);
 			}
 		}
+	});
+
+	test('4-seat pinwheel staggers opposing zones so nobody faces head-on', () => {
+		// A "fan" means armies are offset sideways, not mirror-image
+		// charges. Opposing pairs (N/S share the x axis, W/E share z)
+		// must have completely disjoint footprints on their cross axis.
+		const centre = { x: 0, z: 0 };
+		const [north, south, west, east] = seatHomeZones(centre, 4);
+
+		const xRange = z => [z.x, z.x + z.width - 1];
+		const zRange = z => [z.z, z.z + z.height - 1];
+		const disjoint = ([a0, a1], [b0, b1]) => a1 < b0 || b1 < a0;
+
+		expect(disjoint(xRange(north), xRange(south))).toBe(true);
+		expect(disjoint(zRange(west), zRange(east))).toBe(true);
 	});
 
 	test('seatHomeZones rejects out-of-range seat counts', () => {
@@ -267,7 +283,9 @@ describe('BattleManager', () => {
 		expect(result.battle.status).toBe('lobby');
 		expect(result.battle.seats).toHaveLength(1);
 		expect(result.battle.seats[0].controlledBy).toBe('host1');
-		// A second create by the same host is refused.
+		// Multi-battle: a second lobby is fine, a third is refused
+		// (arena slots are finite; two open lobbies per host is plenty).
+		expect(manager.createBattle({ hostId: 'host1', seatCount: 2 }).success).toBe(true);
 		expect(manager.createBattle({ hostId: 'host1', seatCount: 2 }).success).toBe(false);
 	});
 
@@ -471,14 +489,51 @@ describe('BattleManager', () => {
 		expect(result.error).toMatch(/all humans/i);
 	});
 
-	test('a player mid-battle cannot join another battle', () => {
+	test('a player mid-battle CAN join another battle and hold both seats', () => {
+		// Multi-battle membership: guest1 fights in battle 1 and queues
+		// in battle 2's lobby at the same time; the socket focus picks
+		// which seat gameplay acts as.
 		const code = createAndJoin();
 		manager.startBattle({ battleId: code, playerId: 'host1' });
 		World.getWorld().players.other = { id: 'other', name: 'Other' };
 		const second = manager.createBattle({ hostId: 'other', seatCount: 2 });
 		const result = manager.joinBattle({ code: second.battle.code, playerId: 'guest1' });
-		expect(result.success).toBe(false);
-		expect(result.error).toMatch(/forfeit/i);
+		expect(result.success).toBe(true);
+
+		const mine = manager.battlesForPlayer('guest1');
+		expect(mine.map(b => b.code).sort()).toEqual([code, second.battle.code].sort());
+	});
+
+	test('effectivePlayerId honours the socket focus across battles', () => {
+		const code = createAndJoin();
+		const started = manager.startBattle({ battleId: code, playerId: 'host1' });
+		const guestSeat = started.battle.seats[1].seatId;
+
+		// Legacy (no focus): first active battle's seat.
+		expect(manager.effectivePlayerId('guest1')).toBe(guestSeat);
+		// Explicit world focus: the real id even while a battle rages.
+		expect(manager.effectivePlayerId('guest1', { focusBattleId: null })).toBe('guest1');
+		// Focused on the battle: its seat.
+		expect(manager.effectivePlayerId('guest1', { focusBattleId: code })).toBe(guestSeat);
+		// Focused on a battle that does not exist: fall back to real id.
+		expect(manager.effectivePlayerId('guest1', { focusBattleId: 'NOPE99' })).toBe('guest1');
+	});
+
+	test('leaveBattle targets a specific battle when several are held', () => {
+		const first = manager.createBattle({ hostId: 'host1', seatCount: 2 });
+		manager.joinBattle({ code: first.battle.code, playerId: 'guest1', playerName: 'Guesty' });
+		World.getWorld().players.other = { id: 'other', name: 'Other' };
+		const second = manager.createBattle({ hostId: 'other', seatCount: 2 });
+		manager.joinBattle({ code: second.battle.code, playerId: 'guest1', playerName: 'Guesty' });
+		expect(manager.battlesForPlayer('guest1')).toHaveLength(2);
+
+		// Leave ONLY the second; the first seat is untouched and the
+		// ghost-sweep stamp falls back to the remaining battle.
+		expect(manager.leaveBattle({ playerId: 'guest1', battleId: second.battle.id }).success).toBe(true);
+		const remaining = manager.battlesForPlayer('guest1');
+		expect(remaining).toHaveLength(1);
+		expect(remaining[0].code).toBe(first.battle.code);
+		expect(World.getPlayer('guest1').activeBattleId).toBe(first.battle.id);
 	});
 
 	test('a lingering FINISHED battle keeps its arena slot', () => {
@@ -517,8 +572,9 @@ describe('BattleManager', () => {
 		expect(thirdStarted.battle.centre).toEqual(arenaCentreForSlot(0));
 	});
 
-	test('joining a second LOBBY leaves the first automatically', () => {
-		// guest1 waits in host1's lobby, then follows an invite to other's.
+	test('joining a second LOBBY keeps both seats (multi-battle)', () => {
+		// guest1 waits in host1's lobby, then follows an invite to
+		// other's — and keeps BOTH seats, switching views client-side.
 		const first = manager.createBattle({ hostId: 'host1', seatCount: 2 });
 		manager.joinBattle({ code: first.battle.code, playerId: 'guest1', playerName: 'Guesty' });
 		World.getWorld().players.other = { id: 'other', name: 'Other' };
@@ -528,10 +584,61 @@ describe('BattleManager', () => {
 			code: second.battle.code, playerId: 'guest1', playerName: 'Guesty',
 		});
 		expect(result.success).toBe(true);
-		// Freed from the first lobby…
 		expect(manager.battleByCode(first.battle.code).seats.map(s => s.controlledBy))
-			.toEqual(['host1']);
-		// …and seated in the second.
-		expect(manager.battleForPlayer('guest1').code).toBe(second.battle.code);
+			.toEqual(['host1', 'guest1']);
+		expect(manager.battlesForPlayer('guest1').map(b => b.code).sort())
+			.toEqual([first.battle.code, second.battle.code].sort());
+	});
+
+	// ── Bot difficulty + adaptive pacing ─────────────────────────────────
+
+	test('battles carry a normalised botDifficulty and expose it publicly', () => {
+		const auto = manager.createBattle({ hostId: 'host1', seatCount: 2 });
+		expect(auto.battle.botDifficulty).toBe('auto');
+
+		World.getWorld().players.h2 = { id: 'h2', name: 'H2' };
+		const hard = manager.createBattle({ hostId: 'h2', seatCount: 2, botDifficulty: 'hard' });
+		expect(hard.battle.botDifficulty).toBe('hard');
+
+		World.getWorld().players.h3 = { id: 'h3', name: 'H3' };
+		const junk = manager.createBattle({ hostId: 'h3', seatCount: 2, botDifficulty: 'ludicrous' });
+		expect(junk.battle.botDifficulty).toBe('auto');
+	});
+
+	test('fixed difficulty sets the bots\u2019 move cadence at arena build', () => {
+		const created = manager.createBattle({ hostId: 'host1', seatCount: 3, botDifficulty: 'hard' });
+		const started = manager.startBattle({ battleId: created.battle.id, playerId: 'host1' });
+		const bots = started.battle.seats.filter(s => s.isAi);
+		expect(bots.length).toBeGreaterThan(0);
+		for (const bot of bots) {
+			const record = World.getPlayer(bot.seatId);
+			expect(record.difficulty).toBe('hard');
+			expect(record.minMoveInterval).toBe(5000);
+		}
+	});
+
+	test('auto pacing retunes bots to the humans\u2019 measured tempo', () => {
+		const created = manager.createBattle({ hostId: 'host1', seatCount: 2, botDifficulty: 'auto' });
+		const started = manager.startBattle({ battleId: created.battle.id, playerId: 'host1' });
+		const battle = manager.getBattle(started.battle.id);
+		const humanSeat = started.battle.seats.find(s => !s.isAi).seatId;
+		const botSeat = started.battle.seats.find(s => s.isAi).seatId;
+
+		const t0 = Date.now();
+		// Sample 1: no human moves yet.
+		World.getPlayer(humanSeat).moveCount = 0;
+		manager.tick({ now: t0 });
+		// Sample 2: 10 human moves in 30s → ~3s tempo → clamped to the
+		// 5s floor (× handicap = 3450 → floor 5000).
+		World.getPlayer(humanSeat).moveCount = 10;
+		manager.tick({ now: t0 + 30000 });
+		expect(World.getPlayer(botSeat).minMoveInterval).toBe(5000);
+
+		// Human goes quiet: the window empties of new moves → bots ease
+		// off to the ceiling instead of steamrolling a thinking player.
+		manager.tick({ now: t0 + 65000 });
+		manager.tick({ now: t0 + 95000 });
+		expect(World.getPlayer(botSeat).minMoveInterval).toBe(18000);
+		expect(battle.paceSamples.length).toBeGreaterThan(1);
 	});
 });

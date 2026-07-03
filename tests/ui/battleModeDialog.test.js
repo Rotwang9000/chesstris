@@ -245,18 +245,81 @@ describe('battleMode client', () => {
 		);
 	});
 
-	test('enterBattleFlow refuses an invite to a DIFFERENT battle mid-fight', async () => {
-		socketResponses.battle_state = { success: true, battle: activeBattle() };
+	test('enterBattleFlow JOINS a different battle mid-fight (multi-battle)', async () => {
+		// The old single-battle guard ("forfeit it first") is gone: a
+		// player may hold seats in several battles and switch views.
+		socketResponses.battle_state = { success: true, battles: [activeBattle()] };
+		socketResponses.battle_join = () => ({
+			success: true,
+			battle: lobbyBattle({ id: 'OTHER1', code: 'OTHER1', hostId: 'someone-else' }),
+			seatId: 'battle-other1-s1',
+		});
 
 		const ok = await battleMode.enterBattleFlow('OTHER1');
-		expect(ok).toBe(false);
-		// Explains itself and returns the player to THEIR battle.
-		expect(showToastMessage).toHaveBeenCalledWith(
-			expect.stringContaining('forfeit'), expect.anything()
+		expect(ok).toBe(true);
+		expect(mockSocket.emit).toHaveBeenCalledWith(
+			'battle_join', expect.objectContaining({ code: 'OTHER1' }), expect.any(Function)
 		);
-		expect(gameState.activeBattle?.id).toBe('CODE99');
-		expect(mockSocket.emit).not.toHaveBeenCalledWith(
-			'battle_join', expect.anything(), expect.any(Function)
+	});
+
+	test('the hub lists every held battle with switch controls', async () => {
+		// Two battles at once → the dialog opens on the hub, not a lobby.
+		socketResponses.battle_state = {
+			success: true,
+			battle: activeBattle(),
+			battles: [
+				activeBattle(),
+				lobbyBattle({ id: 'SECOND', code: 'SECOND', hostId: mockPlayerId }),
+			],
+		};
+		await battleMode.showBattleDialog();
+		const dialog = document.getElementById('tetches-battle-dialog');
+		expect(dialog.textContent).toContain('YOUR BATTLES');
+		expect(dialog.textContent).toContain('CODE99');
+		expect(dialog.textContent).toContain('SECOND');
+		expect(dialog.textContent).toContain('Shared world');
+		// The active battle gets a Switch button; the lobby an Open one.
+		const buttons = [...dialog.querySelectorAll('button')].map(b => b.textContent);
+		expect(buttons).toContain('Switch');
+		expect(buttons).toContain('Open lobby');
+	});
+
+	test('switching views tells the server via battle_focus', () => {
+		emitServerEvent('battle_started', { battle: activeBattle() });
+		expect(mockSocket.emit).toHaveBeenCalledWith(
+			'battle_focus', { battleId: 'CODE99' });
+
+		emitServerEvent('battle_finished', {
+			battle: activeBattle({ status: 'finished', winnerSeatId: 'battle-code99-s0' }),
+		});
+		expect(mockSocket.emit).toHaveBeenCalledWith(
+			'battle_focus', { battleId: null });
+	});
+
+	test('a create dialog offers bot difficulty and sends it to the server', async () => {
+		socketResponses.battle_create = (data) => ({
+			success: true,
+			battle: lobbyBattle({ botDifficulty: data.botDifficulty }),
+		});
+		await battleMode.showBattleDialog();
+		const dialog = document.getElementById('tetches-battle-dialog');
+		const selects = [...dialog.querySelectorAll('select')];
+		expect(selects).toHaveLength(2);
+		const diffSelect = selects[1];
+		expect([...diffSelect.options].map(o => o.value))
+			.toEqual(['auto', 'easy', 'medium', 'hard']);
+
+		diffSelect.value = 'hard';
+		const createBtn = [...dialog.querySelectorAll('button')]
+			.find(b => b.textContent === 'Create battle');
+		createBtn.click();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(mockSocket.emit).toHaveBeenCalledWith(
+			'battle_create',
+			expect.objectContaining({ seatCount: 2, botDifficulty: 'hard' }),
+			expect.any(Function)
 		);
 	});
 
