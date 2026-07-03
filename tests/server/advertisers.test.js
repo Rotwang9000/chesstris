@@ -13,9 +13,18 @@ const express = require('express');
 const request = require('supertest');
 
 const ADVERTISERS_FILE = path.join(__dirname, '../../advertisers.json');
+const ADS_DIR = path.join(__dirname, '../../public/uploads/ads');
+const _testWrittenAdImages = new Set();
 
 function clearAdvertisersFile() {
 	try { fs.unlinkSync(ADVERTISERS_FILE); } catch { /* ignore */ }
+}
+
+function cleanupTestAdImages() {
+	for (const filename of _testWrittenAdImages) {
+		try { fs.unlinkSync(path.join(ADS_DIR, filename)); } catch { /* ignore */ }
+	}
+	_testWrittenAdImages.clear();
 }
 
 let currentModule = null;
@@ -34,6 +43,9 @@ function freshApp() {
 	delete require.cache[require.resolve('../../routes/advertisers')];
 	clearAdvertisersFile();
 	currentModule = require('../../routes/advertisers');
+	if (typeof currentModule.__resetRegistrationRateLimit === 'function') {
+		currentModule.__resetRegistrationRateLimit();
+	}
 	return mountApp();
 }
 
@@ -62,13 +74,14 @@ describe('Advertiser routes', () => {
 			currentModule.flushAdvertisersSync();
 		}
 		clearAdvertisersFile();
+		cleanupTestAdImages();
 		if (currentModule) {
 			delete require.cache[require.resolve('../../routes/advertisers')];
 			currentModule = null;
 		}
 	});
 
-	test('register → activate → list → next', async () => {
+	test('register → activate (pay) → review → list → next', async () => {
 		const app = freshApp();
 
 		const reg = await request(app)
@@ -87,24 +100,77 @@ describe('Advertiser routes', () => {
 		const id = reg.body.advertiser.id;
 		expect(id).toBeTruthy();
 		expect(reg.body.advertiser.bidStatus).toBe('pending');
+		// Registration must NOT have written the image to disk yet —
+		// only activation does. This is the spam/abuse guard.
+		const beforeActivation = fs.existsSync(path.join(ADS_DIR, `${id}.png`));
+		expect(beforeActivation).toBe(false);
 
-		const next404 = await request(app).get('/api/advertisers/next');
+		// `?force=1` bypasses the random ad-frequency gate so we test
+		// the rotation/eligibility logic deterministically rather than
+		// the "don't smother the world in ads" sampling.
+		const next404 = await request(app).get('/api/advertisers/next?force=1');
 		expect(next404.status).toBe(404);
 
+		// Pay → enters moderation (NOT live yet). This is the
+		// all-ages content-approval gate the spec requires: payment
+		// alone must never put artwork in front of players.
 		const act = await request(app)
 			.post(`/api/advertisers/${id}/activate`)
 			.send({ transactionSignature: 'sig-123' });
 		expect(act.status).toBe(200);
-		expect(act.body.advertiser.bidStatus).toBe('active');
+		expect(act.body.advertiser.bidStatus).toBe('pending_review');
+		// Still no PUBLIC image and still not served while in review.
+		const imageFilename = `${id}.png`;
+		expect(fs.existsSync(path.join(ADS_DIR, imageFilename))).toBe(false);
+		const nextDuringReview = await request(app).get('/api/advertisers/next?force=1');
+		expect(nextDuringReview.status).toBe(404);
+
+		// Moderator approves → now live. (`requireAdmin` is a no-op
+		// outside production, so no token needed in tests.)
+		const review = await request(app)
+			.post(`/api/advertisers/${id}/admin-review`)
+			.send({ action: 'approve' });
+		expect(review.status).toBe(200);
+		expect(review.body.advertiser.bidStatus).toBe('active');
+		expect(review.body.advertiser.adImage).toMatch(/^\/uploads\/ads\//);
+		// The bytes should now exist on the public disk.
+		expect(fs.existsSync(path.join(ADS_DIR, imageFilename))).toBe(true);
+		_testWrittenAdImages.add(imageFilename);
 
 		const list = await request(app).get('/api/advertisers');
 		expect(list.status).toBe(200);
 		expect(list.body.advertisers).toHaveLength(1);
 		expect(list.body.advertisers[0].bidStatus).toBe('active');
 
-		const next = await request(app).get('/api/advertisers/next');
+		const next = await request(app).get('/api/advertisers/next?force=1');
 		expect(next.status).toBe(200);
 		expect(next.body.id).toBe(id);
+	});
+
+	test('rate-limits repeat registrations from a single IP', async () => {
+		const app = freshApp();
+
+		const submit = () => request(app)
+			.post('/api/advertisers')
+			.field('name', 'Spam Co')
+			.field('email', 'a@b.co')
+			.field('walletAddress', 'wallet-xyz')
+			.field('adText', 'buy stuff')
+			.field('adLink', 'https://acme.example')
+			.field('bidAmount', '0.5')
+			.field('cellCount', '10')
+			.attach('adImage', tinyPngBuffer(), 'pixel.png');
+
+		// Three successful registrations, then the next should be
+		// rate-limited (429). We never have to wait the cooldown
+		// because we tear the app down after each test.
+		for (let i = 0; i < 3; i++) {
+			const ok = await submit();
+			expect(ok.status).toBe(201);
+		}
+		const blocked = await submit();
+		expect(blocked.status).toBe(429);
+		expect(blocked.body.success).toBe(false);
 	});
 
 	test('advertisers persist across module reload', async () => {
@@ -145,7 +211,7 @@ describe('Advertiser routes', () => {
 		expect(list.body.advertisers[0].id).toBe('persist-1');
 		expect(list.body.advertisers[0].bidStatus).toBe('active');
 
-		const next = await request(app).get('/api/advertisers/next');
+		const next = await request(app).get('/api/advertisers/next?force=1');
 		expect(next.status).toBe(200);
 		expect(next.body.id).toBe('persist-1');
 	});

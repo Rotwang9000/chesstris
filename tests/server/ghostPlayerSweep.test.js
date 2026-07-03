@@ -189,4 +189,45 @@ describe('GhostPlayerSweep', () => {
 		expect(result.removed).toEqual([]);
 		expect(world.players.p1).toBeDefined();
 	});
+
+	test('battle-only real players (activeBattleId) are never flagged despite 0 pieces', () => {
+		const world = seed();
+		// p1 sits in a battle lobby / arena via their seat — their REAL
+		// record owns no pieces in the shared world by design.
+		world.players.p1.isComputer = false;
+		world.players.p1.activeBattleId = 'ABC123';
+
+		const sweep = createGhostPlayerSweepService({
+			broadcaster: makeBroadcaster(),
+			persistence: makePersistence(),
+			lifecycleService: makeLifecycle(),
+			aiRunner: makeAiRunner(),
+		});
+
+		const t0 = 9_000_000;
+		sweep.tick({ now: t0 });
+		const { flagged } = sweep.tick({ now: t0 + NO_PIECES_GRACE_MS * 3 });
+		expect(flagged).not.toContain('p1');
+		expect(world.players.p1.eliminated).toBeFalsy();
+	});
+
+	test('reapImmediately spares battle seats and stamped real players on boot', () => {
+		const world = seed({ playerCount: 3 });
+		world.players.p1.activeBattleId = 'ABC123';   // real player in a battle
+		world.players.p2.battleId = 'ABC123';         // a battle seat record
+		// p3 is a genuine ghost (0 pieces, no battle involvement).
+
+		const lifecycle = makeLifecycle();
+		const sweep = createGhostPlayerSweepService({
+			broadcaster: makeBroadcaster(),
+			persistence: makePersistence(),
+			lifecycleService: lifecycle,
+			aiRunner: makeAiRunner(),
+		});
+
+		const result = sweep.reapImmediately();
+		expect(result.removed).toEqual(['p3']);
+		expect(world.players.p1).toBeDefined();
+		expect(world.players.p2).toBeDefined();
+	});
 });

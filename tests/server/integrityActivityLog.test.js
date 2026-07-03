@@ -55,7 +55,7 @@ describe('Integrity → activity log', () => {
 		World.resetWorld({ id: 'global_game' });
 	});
 
-	test('records chess_piece_lost when a rook has no supporting cell', () => {
+	test('gives a cell-less rook a grace window before removing it (LC-H1)', () => {
 		const world = World.getWorld();
 		World.getOrCreatePlayer('p1');
 		// Put a king so the player isn't orphaned (and so it isn't
@@ -79,6 +79,17 @@ describe('Integrity → activity log', () => {
 			activityLog,
 		});
 
+		// First sweep: the rook is NOT evaporated — it just starts its
+		// no-support grace clock. This is the LC-H1 fix: a piece that lost
+		// its footing (e.g. mid line-clear cascade) gets a window to land.
+		service.runIslandIntegrityPass({ emitAnimation: false });
+		const rook = world.chessPieces.find(p => p.id === 'p1-R');
+		expect(rook).toBeDefined();
+		expect(Number.isFinite(rook.unsupportedSince)).toBe(true);
+		expect(activityLog._events.filter(e => e.type === 'chess_piece_lost')).toHaveLength(0);
+
+		// Once the grace window has elapsed, the next sweep removes it.
+		rook.unsupportedSince = Date.now() - (60 * 1000);
 		const result = service.runIslandIntegrityPass({ emitAnimation: false });
 
 		expect(result.changed).toBe(true);
@@ -94,6 +105,42 @@ describe('Integrity → activity log', () => {
 			z: 5,
 			reason: 'no_supporting_cell',
 		});
+	});
+
+	test('clears the no-support grace once the cell reappears', () => {
+		const world = World.getWorld();
+		World.getOrCreatePlayer('p1');
+		world.chessPieces.push(
+			{ id: 'p1-K', type: 'KING', player: 'p1', position: { x: 0, z: 0 } },
+			{ id: 'p1-R', type: 'ROOK', player: 'p1', position: { x: 5, z: 5 } },
+		);
+		world.board.cells['0,0'] = [
+			{ type: 'home', player: 'p1' },
+			{ type: 'chess', player: 'p1', pieceId: 'p1-K', pieceType: 'king' },
+		];
+
+		const service = createIntegrityService({
+			gameManager: buildGameManagerStub(),
+			broadcaster: buildBroadcasterStub(),
+			persistence: buildPersistenceStub(),
+			activityLog: buildActivityLogStub(),
+		});
+
+		// Start the grace clock.
+		service.runIslandIntegrityPass({ emitAnimation: false });
+		const rook = world.chessPieces.find(p => p.id === 'p1-R');
+		expect(Number.isFinite(rook.unsupportedSince)).toBe(true);
+
+		// The piece lands on fresh terrain (its cell now exists). The next
+		// sweep should clear the grace flag and leave the piece in play.
+		world.board.cells['5,5'] = [
+			{ type: 'tetromino', player: 'p1' },
+			{ type: 'chess', player: 'p1', pieceId: 'p1-R', pieceType: 'rook' },
+		];
+		service.runIslandIntegrityPass({ emitAnimation: false });
+
+		expect(world.chessPieces.find(p => p.id === 'p1-R')).toBeDefined();
+		expect(world.chessPieces.find(p => p.id === 'p1-R').unsupportedSince).toBeUndefined();
 	});
 
 	test('records chess_piece_lost when a piece has an invalid position', () => {

@@ -340,24 +340,24 @@ describe('ChessManager', () => {
 	// ── Pawn promotion ──────────────────────────────────────────────────────
 
 	describe('pawn promotion', () => {
-		test('pawn promotes after 9 net forward squares', () => {
+		test('pawn promotes after 8 net forward squares', () => {
 			const game = createGame(boardManager);
 			addPlayer(game, 'p1');
 
 			const pawn = {
 				id: 'p1-PAWN-promo', type: 'PAWN', player: 'p1',
-				position: { x: 4, z: 9 }, hasMoved: true,
-				moveCount: 8, forwardDistance: 8, orientation: 0,
+				position: { x: 4, z: 8 }, hasMoved: true,
+				moveCount: 7, forwardDistance: 7, orientation: 0,
 			};
 			game.chessPieces.push(pawn);
-			boardManager.setCell(game.board, 4, 9, [{ type: 'tetromino', player: 'p1' }]);
-			boardManager.addToCellContents(game.board, 4, 9, {
+			boardManager.setCell(game.board, 4, 8, [{ type: 'tetromino', player: 'p1' }]);
+			boardManager.addToCellContents(game.board, 4, 8, {
 				type: 'chess', player: 'p1', pieceId: pawn.id, pieceType: 'pawn',
 			});
-			boardManager.setCell(game.board, 4, 10, [{ type: 'tetromino', player: 'p1' }]);
+			boardManager.setCell(game.board, 4, 9, [{ type: 'tetromino', player: 'p1' }]);
 
 			const result = chessManager.executeChessMove(game, 'p1', {
-				pieceId: pawn.id, toX: 4, toZ: 10,
+				pieceId: pawn.id, toX: 4, toZ: 9,
 			});
 
 			expect(result.success).toBe(true);
@@ -365,14 +365,14 @@ describe('ChessManager', () => {
 			expect(result.promotionPending.pieceId).toBe(pawn.id);
 		});
 
-		test('pawn does NOT promote with fewer than 9 net forward squares', () => {
+		test('pawn does NOT promote with fewer than 8 net forward squares', () => {
 			const game = createGame(boardManager);
 			addPlayer(game, 'p1');
 
 			const pawn = {
 				id: 'p1-PAWN-no-promo', type: 'PAWN', player: 'p1',
 				position: { x: 4, z: 5 }, hasMoved: true,
-				moveCount: 7, forwardDistance: 7, orientation: 0,
+				moveCount: 6, forwardDistance: 6, orientation: 0,
 			};
 			game.chessPieces.push(pawn);
 			boardManager.setCell(game.board, 4, 5, [{ type: 'tetromino', player: 'p1' }]);

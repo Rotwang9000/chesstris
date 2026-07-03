@@ -34,7 +34,8 @@ module.exports = {
 			name: 'tetches-production',
 			script: 'server.js',
 			cwd: '/var/www/tetches.live',
-			// Secrets (SENDGRID_API_KEY, SENTRY_DSN, AUTH0_API_KEY)
+			// Config/secrets (SENTRY_DSN, plus the public Auth0
+			// AUTH0_DOMAIN / AUTH0_CLIENT_ID / optional AUTH0_CONNECTION)
 			// live in /var/www/tetches.live/.env which PM2 picks up
 			// automatically because the server's bootstrap calls
 			// dotenv.config() at startup. NODE_ENV and PORT stay

@@ -54,6 +54,10 @@ const REMOVAL_REASONS = Object.freeze({
 	// A landing airborne piece collided with an existing piece on the
 	// target cell — the existing piece is knocked off.
 	KNOCKED_OFF: 'knocked_off',
+	// Integrity repair: a player somehow owned more than one king
+	// (historically the king-capture transfer bug). The extra kings are
+	// retired to restore the one-king-per-player invariant.
+	DUPLICATE_KING: 'duplicate_king',
 });
 
 const KING_TYPE = 'KING';
@@ -170,6 +174,22 @@ function removePiece(world, pieceOrId, ctx = {}) {
 
 	const piece = world.chessPieces[idx];
 	const pos = piecePosition(piece);
+
+	// Give kings a chance to spend a life instead of dying.  The hook
+	// is opt-in (callers pass `ctx.kingLifeService`) so unit tests and
+	// non-king flows are unaffected.  If the king is respawned, the
+	// piece object has been re-positioned and re-anchored in place —
+	// we must NOT splice it out of `world.chessPieces`.
+	if (ctx.kingLifeService && typeof ctx.kingLifeService.handleKingDeath === 'function') {
+		const outcome = ctx.kingLifeService.handleKingDeath(piece, { reason });
+		// `respawned` — king spent a life and is re-anchored in place.
+		// `detonating` — final death: the detonation service now owns this
+		// king and removes it at the end of the lemming animation. Either
+		// way we must NOT splice it out here.
+		if (outcome && (outcome.respawned || outcome.detonating)) {
+			return null;
+		}
+	}
 
 	stripChessMarker(world, piece);
 	world.chessPieces.splice(idx, 1);
@@ -314,6 +334,20 @@ function removePiecesAtCells(world, playerId, cells, ctx = {}) {
 		if (!cellSet.has(`${pos.x},${pos.z}`)) continue;
 		if (typeof ctx.protect === 'function' && ctx.protect(piece, pos)) continue;
 
+		// Give kings a chance to spend a life and respawn at home
+		// instead of being deleted with the island.  When the king
+		// survives, leave it in `chessPieces` (the service already
+		// re-anchored it) and skip the splice.
+		if (ctx.kingLifeService
+			&& isKing(piece)
+			&& typeof ctx.kingLifeService.handleKingDeath === 'function') {
+			const outcome = ctx.kingLifeService.handleKingDeath(piece, { reason });
+			// respawned → re-anchored in place; detonating → final death,
+			// the detonation service owns the king now. Skip the splice
+			// in both cases (see removePiece for the full note).
+			if (outcome && (outcome.respawned || outcome.detonating)) continue;
+		}
+
 		stripChessMarker(world, piece);
 		world.chessPieces.splice(i, 1);
 		removed.push(piece);
@@ -390,6 +424,32 @@ function addPiece(world, spec = {}) {
 		forwardDistance: 0,
 	};
 	if (ownerColor !== null) piece.color = ownerColor;
+
+	// Orphan-prevention: if any OTHER piece in `chessPieces` thinks
+	// it lives at (x, z), it must be a stale entry left behind by an
+	// earlier move that updated the cell marker but didn't update
+	// the piece record (or vice-versa). Drop those entries before
+	// pushing the new one so we don't accumulate "two pawns on the
+	// same cell" state corruption — exactly the pattern that caused
+	// the recent airborne-bump report.
+	const collidingIdx = [];
+	for (let i = 0; i < world.chessPieces.length; i++) {
+		const other = world.chessPieces[i];
+		if (!other || !other.position) continue;
+		if (other.position.x !== x || other.position.z !== z) continue;
+		if (String(other.player) !== String(spec.player)) continue;
+		collidingIdx.push(i);
+	}
+	if (collidingIdx.length > 0) {
+		console.warn(
+			`[pieces] addPiece at (${x},${z}) for ${spec.player}: dropping `
+			+ `${collidingIdx.length} stale piece record(s) on the same cell.`
+		);
+		// Remove in reverse so indices stay valid.
+		for (let i = collidingIdx.length - 1; i >= 0; i--) {
+			world.chessPieces.splice(collidingIdx[i], 1);
+		}
+	}
 
 	world.chessPieces.push(piece);
 

@@ -26,6 +26,7 @@
 
 import { getTHREE, getScene } from './gameContext.js';
 import { translatePosition } from './centreBoardMarker.js';
+import { isCellVisibleInCurrentView } from './battle/battleRules.js';
 
 const NAMEPLATE_GROUP_NAME = 'nameplate-overlay';
 const NAMEPLATE_HEIGHT_ABOVE_KING = 2.4;
@@ -257,6 +258,14 @@ export function syncNameplates(chessPieces, players, options = {}) {
 		if (!piece) continue;
 		const type = String(piece.type || '').toUpperCase();
 		if (type !== 'KING') continue;
+		// View isolation: kings outside the local player's current view
+		// (other battles' arenas, or the world while seated in a battle)
+		// must not float as orphan labels on the horizon — their cells
+		// and piece meshes are already culled by the same rule.
+		const kx = piece.position?.x ?? piece.x;
+		const kz = piece.position?.z ?? piece.z;
+		if (gameState && Number.isFinite(kx) && Number.isFinite(kz)
+			&& !isCellVisibleInCurrentView(gameState, kx, kz)) continue;
 		seenIds.add(piece.id);
 
 		const playerId = piece.player;

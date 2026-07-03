@@ -416,48 +416,54 @@ class BoardManager {
 	 * @returns {{ rows: number[], cols: number[], cells: Array<{x:number,z:number}> }}
 	 */
 	findClearableLines(game) {
-		const rows = this._findClearableLines(game, 'z');
-		const cols = this._findClearableLines(game, 'x');
+		const rowMatches = this._findClearableLines(game, 'z');
+		const colMatches = this._findClearableLines(game, 'x');
 
 		const cellsMap = new Map();
-		const collect = (axis, indices) => {
-			const start = axis === 'z' ? game.board.minX : game.board.minZ;
-			const end = axis === 'z' ? game.board.maxX : game.board.maxZ;
-			for (const idx of indices) {
-				for (let scan = start; scan <= end; scan++) {
-					const [x, z] = axis === 'z' ? [scan, idx] : [idx, scan];
+		const collectRuns = (axis, fixed, runs) => {
+			for (const run of runs) {
+				for (let scan = run.start; scan <= run.end; scan++) {
+					const [x, z] = axis === 'z' ? [scan, fixed] : [fixed, scan];
 					if (!this.wouldClearAffectCell(game.board, x, z)) continue;
 					const key = `${x},${z}`;
 					if (!cellsMap.has(key)) cellsMap.set(key, { x, z });
 				}
 			}
 		};
-		collect('z', rows);
-		collect('x', cols);
+		for (const { index, runs } of rowMatches) collectRuns('z', index, runs);
+		for (const { index, runs } of colMatches) collectRuns('x', index, runs);
 
-		// Drop candidate rows/cols that wouldn't actually modify anything
-		// (entirely chess- or home-protected runs). Keeps the report
-		// honest for callers that broadcast a "line cleared" toast.
-		const rowsTouched = rows.filter(z => {
-			const start = game.board.minX;
-			const end = game.board.maxX;
-			for (let x = start; x <= end; x++) {
-				if (cellsMap.has(`${x},${z}`)) return true;
-			}
-			return false;
-		});
-		const colsTouched = cols.filter(x => {
-			const start = game.board.minZ;
-			const end = game.board.maxZ;
-			for (let z = start; z <= end; z++) {
-				if (cellsMap.has(`${x},${z}`)) return true;
-			}
-			return false;
-		});
+		// A run is only worth announcing / clearing if it actually
+		// modifies at least one cell. A run entirely composed of
+		// chess-only cells (no terrain to strip) would survive the
+		// `_cellHasClearableContent` test that classed it as a run
+		// but contribute nothing to `cellsMap`.
+		const rowRuns = new Map();
+		for (const { index, runs } of rowMatches) {
+			const kept = runs.filter(r => {
+				for (let scan = r.start; scan <= r.end; scan++) {
+					if (cellsMap.has(`${scan},${index}`)) return true;
+				}
+				return false;
+			});
+			if (kept.length > 0) rowRuns.set(index, kept);
+		}
+		const colRuns = new Map();
+		for (const { index, runs } of colMatches) {
+			const kept = runs.filter(r => {
+				for (let scan = r.start; scan <= r.end; scan++) {
+					if (cellsMap.has(`${index},${scan}`)) return true;
+				}
+				return false;
+			});
+			if (kept.length > 0) colRuns.set(index, kept);
+		}
 
 		return {
-			rows: rowsTouched,
-			cols: colsTouched,
+			rows: [...rowRuns.keys()],
+			cols: [...colRuns.keys()],
+			rowRuns,
+			colRuns,
 			cells: [...cellsMap.values()],
 		};
 	}
@@ -471,18 +477,20 @@ class BoardManager {
 	 * @param {number[]} cols
 	 * @returns {{ rows: number[], cols: number[], totalCellsCleared: number }}
 	 */
-	applyClearedLines(game, rows, cols) {
+	applyClearedLines(game, rows, cols, options = {}) {
 		const clearedRows = [];
 		const clearedCols = [];
 		let totalCellsCleared = 0;
 		const airbornePieces = [];
+		const rowRuns = options.rowRuns instanceof Map ? options.rowRuns : null;
+		const colRuns = options.colRuns instanceof Map ? options.colRuns : null;
 
 		for (const z of rows || []) {
-			const n = this._clearLine(game, 'z', z, airbornePieces);
+			const n = this._clearLine(game, 'z', z, airbornePieces, rowRuns?.get(z) || null);
 			if (n > 0) { clearedRows.push(z); totalCellsCleared += n; }
 		}
 		for (const x of cols || []) {
-			const n = this._clearLine(game, 'x', x, airbornePieces);
+			const n = this._clearLine(game, 'x', x, airbornePieces, colRuns?.get(x) || null);
 			if (n > 0) { clearedCols.push(x); totalCellsCleared += n; }
 		}
 
@@ -518,8 +526,8 @@ class BoardManager {
 	 * @returns {{ rows: number[], cols: number[] }} Cleared z-rows and x-cols
 	 */
 	checkAndClearLines(game) {
-		const { rows: candidateRows, cols: candidateCols } = this.findClearableLines(game);
-		const applied = this.applyClearedLines(game, candidateRows, candidateCols);
+		const { rows, cols, rowRuns, colRuns } = this.findClearableLines(game);
+		const applied = this.applyClearedLines(game, rows, cols, { rowRuns, colRuns });
 		// Resolve airborne pieces synchronously so legacy / test paths
 		// that bypass `LineClearService` still see settled state at the
 		// end of the call. Without this the cell-stripped pieces would
@@ -549,67 +557,104 @@ class BoardManager {
 	 * Find all indices along `axis` that have at least
 	 * `REQUIRED_CELLS_FOR_ROW_CLEARING` consecutive filled non-home cells.
 	 *
+	 * Implementation note: this walks **occupied cells only** (bucketed
+	 * per line, sorted along the scan axis) rather than the board's
+	 * bounding box. With battle arenas parked thousands of cells from
+	 * the organic cluster, a bounding-box walk would probe millions of
+	 * empty keys per placement; the sparse walk stays proportional to
+	 * the number of real cells. Any gap in the occupancy sequence is by
+	 * definition empty space, which breaks the consecutive run exactly
+	 * as the old dense scan did.
+	 *
 	 * @param {Object} game
 	 * @param {'x'|'z'} axis  The fixed axis (i.e. 'z' = z-rows, scan along x)
-	 * @returns {number[]} indices ready to be cleared
+	 * @returns {Array<{index: number, runs: Array<{start:number,end:number}>}>}
 	 * @private
 	 */
 	_findClearableLines(game, axis) {
 		const threshold = GAME_RULES.REQUIRED_CELLS_FOR_ROW_CLEARING;
-		const cleared = [];
+		const matches = [];
 
-		const fixedStart = axis === 'z' ? game.board.minZ : game.board.minX;
-		const fixedEnd   = axis === 'z' ? game.board.maxZ : game.board.maxX;
-		const scanStart  = axis === 'z' ? game.board.minX : game.board.minZ;
-		const scanEnd    = axis === 'z' ? game.board.maxX : game.board.maxZ;
+		// Bucket occupied scan-coordinates by their fixed coordinate.
+		const lines = new Map();
+		for (const key of Object.keys(game.board.cells)) {
+			const comma = key.indexOf(',');
+			const x = Number(key.slice(0, comma));
+			const z = Number(key.slice(comma + 1));
+			if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
+			const fixed = axis === 'z' ? z : x;
+			const scan = axis === 'z' ? x : z;
+			let bucket = lines.get(fixed);
+			if (!bucket) { bucket = []; lines.set(fixed, bucket); }
+			bucket.push(scan);
+		}
 
-		for (let fixed = fixedStart; fixed <= fixedEnd; fixed++) {
+		for (const [fixed, bucket] of lines) {
+			bucket.sort((a, b) => a - b);
+
+			const runs = [];
 			let consecutive = 0;
-			let maxConsecutive = 0;
 			let runStart = null;
-			let bestRunStart = null;
-			let bestRunEnd = null;
+			let prevScan = null;
 
-			for (let scan = scanStart; scan <= scanEnd; scan++) {
+			const closeRun = (lastScan) => {
+				if (consecutive >= threshold && runStart !== null) {
+					runs.push({ start: runStart, end: lastScan });
+				}
+				consecutive = 0;
+				runStart = null;
+			};
+
+			for (const scan of bucket) {
+				// A jump in the occupancy sequence means the cells in
+				// between are empty — the run breaks there.
+				if (prevScan !== null && scan !== prevScan + 1) {
+					closeRun(prevScan);
+				}
+				prevScan = scan;
+
 				const [x, z] = axis === 'z' ? [scan, fixed] : [fixed, scan];
 
-				// Per the bible, home cells are treated as empty space for
-				// clear purposes: they break the run and aren't touched by
-				// the clear. This applies to *any* cell carrying a home
-				// marker, not just "safe" home zones.
-				if (this.cellHasHomeMarker(game.board, x, z)) {
-					consecutive = 0;
-					runStart = null;
+				// Per the bible, home cells, degraded-home remnants, battle
+				// ring cells, and any cell owned by a paused player are
+				// treated as empty space for clear purposes: they break the
+				// run AND bound the cells that get cleared. This is why we
+				// track run RANGES (not just indices) — without it the
+				// engine would clear cells on the far side of a home marker
+				// when the run on the near side hit the threshold, and
+				// players reported losing pieces "across the gap".
+				if (this.cellHasHomeMarker(game.board, x, z)
+					|| this._cellIsDegradedHomeOnly(game.board, x, z)
+					|| this._cellIsOwnedByPausedPlayer(game, x, z)
+					|| cells.hasBattleRing(this.getCell(game.board, x, z))
+					|| cells.hasAwaitingPromotion(this.getCell(game.board, x, z))) {
+					closeRun(scan - 1);
 					continue;
 				}
 
 				if (this._cellHasClearableContent(game.board, x, z)) {
 					if (consecutive === 0) runStart = scan;
 					consecutive++;
-					if (consecutive > maxConsecutive) {
-						maxConsecutive = consecutive;
-						bestRunStart = runStart;
-						bestRunEnd = scan;
-					}
 				} else {
-					consecutive = 0;
-					runStart = null;
+					closeRun(scan - 1);
 				}
 			}
+			closeRun(prevScan);
 
-			if (maxConsecutive >= threshold) {
-				cleared.push(fixed);
-				log(
-					`Found clearable ${axis}-line at ${axis}=${fixed} ` +
-					`(${maxConsecutive} consecutive filled cells from ` +
-					`${axis === 'z' ? 'x' : 'z'}=${bestRunStart} ` +
-					`to ${axis === 'z' ? 'x' : 'z'}=${bestRunEnd}; ` +
-					`threshold=${threshold})`
-				);
+			if (runs.length > 0) {
+				matches.push({ index: fixed, runs });
+				// Deliberately not logged: the cascade re-scans after every
+				// clear+gravity iteration, so this fired 2-3 times per
+				// actual clear and was the single largest source of log
+				// volume in production (~54k lines / 8 days). The
+				// "Cleared <axis>-line" log downstream records the event.
 			}
 		}
 
-		return cleared;
+		// Keep the old dense-scan ordering (ascending line index) so
+		// downstream consumers and tests see identical output.
+		matches.sort((a, b) => a.index - b.index);
+		return matches;
 	}
 
 	/**
@@ -630,17 +675,41 @@ class BoardManager {
 	_cellHasClearableContent(board, x, z) {
 		const cellContents = this.getCell(board, x, z);
 		if (!Array.isArray(cellContents) || cellContents.length === 0) return false;
-		// For *line scanning* a chess-occupied cell still counts as
-		// "filled" — the piece itself sits on something a tetromino put
-		// there. We only strip the tetromino content during the
-		// destructive step (`_clearLine`), and only after the integrity
-		// pass has had a chance to mark stranded chess cells for decay.
+		// Only live tetromino terrain extends a line-clear run. Chess
+		// markers alone must not count — otherwise a row of pieces
+		// sitting on ex-home (`fromHomeZone`) blocks would qualify,
+		// every piece would lift off, and the cyan terrain would stay
+		// put (players reported "4 rows cleared" with nothing vanishing).
 		return cellContents.some(item => {
 			if (!item) return false;
-			return !(item.type === cells.HOME_TYPE
-				|| item.type === cells.SPECIAL_TYPE
-				|| item.type === cells.CENTRE_TYPE);
+			if (item.type !== 'tetromino') return false;
+			if (item.fromHomeZone === true) return false;
+			if (cells.isBattleRingItem(item)) return false;
+			return true;
 		});
+	}
+
+	/**
+	 * Does the cell at (x, z) hold *only* a degraded-home remnant —
+	 * the leftover terrain produced when an idle home zone loses its
+	 * `home` marker? Used by the line-clear scan to treat such cells
+	 * as gaps so returning players aren't wiped by a single placement.
+	 */
+	_cellIsDegradedHomeOnly(board, x, z) {
+		return cells.onlyDegradedOrMarkers(this.getCell(board, x, z));
+	}
+
+	/**
+	 * Cells whose owner is currently paused (see `pauseService`) are
+	 * inert for the duration of the pause — the line-clear scan
+	 * treats them as gaps so an opponent can't wipe a paused player
+	 * out before they resume.
+	 */
+	_cellIsOwnedByPausedPlayer(game, x, z) {
+		const owner = cells.getOwner(this.getCell(game.board, x, z));
+		if (!owner || !game || !game.players) return false;
+		const player = game.players[owner];
+		return !!(player && player.paused === true);
 	}
 
 	/**
@@ -666,25 +735,39 @@ class BoardManager {
 	 * @returns {number} number of cells actually modified
 	 * @private
 	 */
-	_clearLine(game, axis, index, airbornePieces) {
-		const start = axis === 'z' ? game.board.minX : game.board.minZ;
-		const end   = axis === 'z' ? game.board.maxX : game.board.maxZ;
+	_clearLine(game, axis, index, airbornePieces, runs = null) {
+		// Iterate the qualifying run ranges directly when we have them
+		// (the normal path via `findClearableLines`); fall back to the
+		// board bounding box for legacy callers that pass no runs. The
+		// bounding box can span thousands of cells once battle arenas
+		// exist, so the run-bounded walk keeps this proportional to the
+		// actual clear.
+		const spans = (Array.isArray(runs) && runs.length > 0)
+			? runs
+			: [{
+				start: axis === 'z' ? game.board.minX : game.board.minZ,
+				end:   axis === 'z' ? game.board.maxX : game.board.maxZ,
+			}];
 
 		let modified = 0;
 
-		for (let scan = start; scan <= end; scan++) {
+		// The span bounds the clear to the qualifying run(s). A home /
+		// degraded-home / paused / ring cell that broke the run during
+		// the scan therefore also bounds the destruction here — cells
+		// on the far side of the gap are left alone.
+		const clearAt = (scan) => {
 			const [x, z] = axis === 'z' ? [scan, index] : [index, scan];
 			const key = `${x},${z}`;
 			const cellContents = game.board.cells[key];
-			if (!Array.isArray(cellContents) || cellContents.length === 0) continue;
+			if (!Array.isArray(cellContents) || cellContents.length === 0) return;
 
 			// Home cells are still gaps — the home overlay protects
 			// everything sat on it, including any king sitting there.
-			if (cells.hasHome(cellContents)) continue;
-			if (!cells.isLineClearTarget(cellContents)) continue;
+			if (cells.hasHome(cellContents)) return;
+			if (!cells.isLineClearTarget(cellContents)) return;
 
 			const { preserved, lifted } = cells.stripForLineClear(cellContents);
-			if (preserved.length === cellContents.length && !lifted) continue;
+			if (preserved.length === cellContents.length && !lifted) return;
 
 			modified++;
 
@@ -708,6 +791,12 @@ class BoardManager {
 				game.board.cells[key] = preserved;
 			} else {
 				delete game.board.cells[key];
+			}
+		};
+
+		for (const span of spans) {
+			for (let scan = span.start; scan <= span.end; scan++) {
+				clearAt(scan);
 			}
 		}
 
@@ -759,12 +848,14 @@ class BoardManager {
 				// (rare, but possible during heavy cascades).
 				outcomes.push({
 					pieceId: airborne.pieceId,
+					pieceOwner: airborne.pieceOwner || null,
 					x: airborne.x,
 					z: airborne.z,
 					outcome: 'gone',
 				});
 				continue;
 			}
+			const pieceOwner = piece.player != null ? String(piece.player) : null;
 
 			// The piece's position is the canonical destination; gravity
 			// never moves a piece on a cleared line (it's airborne) so
@@ -775,13 +866,16 @@ class BoardManager {
 			const cellContents = game.board.cells[key];
 
 			if (!Array.isArray(cellContents) || cellContents.length === 0) {
-				// No cell beneath — fall into the water.
+				// No cell beneath — fall into the water.  Kings get a
+				// chance to spend a life and respawn at home first.
 				pieceLifecycle.removePiece(game, piece, {
 					reason: pieceLifecycle.REMOVAL_REASONS.FELL_TO_WATER,
 					activityLog,
+					kingLifeService: this.kingLifeService || null,
 				});
 				outcomes.push({
 					pieceId: airborne.pieceId,
+					pieceOwner,
 					x: targetX,
 					z: targetZ,
 					outcome: 'fell',
@@ -811,6 +905,7 @@ class BoardManager {
 						pieceLifecycle.removePiece(game, blockerPiece, {
 							reason: pieceLifecycle.REMOVAL_REASONS.KNOCKED_OFF,
 							activityLog,
+							kingLifeService: this.kingLifeService || null,
 							note: `knocked off by ${piece.id}`,
 						});
 						bumpedPieceId = blockerId;
@@ -825,6 +920,7 @@ class BoardManager {
 
 			outcomes.push({
 				pieceId: airborne.pieceId,
+				pieceOwner,
 				x: targetX,
 				z: targetZ,
 				outcome: 'landed',
@@ -992,6 +1088,18 @@ class BoardManager {
 			return aKey - bKey;
 		});
 
+		// Track only the moves that actually happened. The old code
+		// would shift every `eligibleChess` piece by its computed
+		// (dx, dz) below — even when the cell move itself was skipped
+		// here for collision. That left the chess piece's logical
+		// position pointing at a square where its supporting cell
+		// hadn't actually moved, so the next integrity sweep removed
+		// the piece for `no_supporting_cell`. Player report:
+		// "a pawn which was on one of the cells that moved back
+		// towards the king found itself in a gap somehow… the cell
+		// it was on just moved, not cleared, it should have been OK."
+		const successfulMoves = new Map();
+
 		for (const cell of moves) {
 			const oldKey = `${cell.x},${cell.z}`;
 			const newX = cell.x + cell.dx;
@@ -1008,6 +1116,7 @@ class BoardManager {
 
 			game.board.cells[newKey] = cell.contents;
 			delete game.board.cells[oldKey];
+			successfulMoves.set(oldKey, { x: newX, z: newZ });
 
 			for (const item of cell.contents) {
 				if (!item) continue;
@@ -1017,34 +1126,39 @@ class BoardManager {
 				}
 				if (item.x !== undefined) item.x = newX;
 				if (item.z !== undefined) item.z = newZ;
+				// Some chess markers carry a direct reference to the
+				// canonical piece (`item.chessPiece = piece`). The
+				// post-loop below will catch these via the map lookup,
+				// but mutating it here too keeps the cell-content view
+				// in lock-step for any code that reads it before the
+				// post-loop runs.
+				if (item.chessPiece && item.chessPiece.position) {
+					item.chessPiece.position.x = newX;
+					item.chessPiece.position.z = newZ;
+				}
 			}
 		}
 
-		// Mirror the shift on the top-level chessPieces array so
-		// positions stay in lock-step with the board (the cell-array
-		// chess marker is moved above, but the canonical piece record
-		// lives on `game.chessPieces`). Only pieces whose cell was
-		// eligible per the connectivity check above get to ride along
-		// — pieces stranded by mixed-owner gaps or broken chains stay
-		// where they are.
+		// Mirror the actually-applied moves onto the top-level
+		// chessPieces array. We deliberately key off `successfulMoves`
+		// (cells that really did slide) rather than `eligibleChess`
+		// (cells that COULD have slid) — see the comment above
+		// `successfulMoves`. Pieces in collision-skipped cells stay
+		// put with their supporting terrain.
 		if (Array.isArray(game.chessPieces)) {
 			for (const piece of game.chessPieces) {
 				if (!piece || !piece.position) continue;
-				if (rowSet.has(piece.position.z) || colSet.has(piece.position.x)) continue;
 				const pieceKey = `${piece.position.x},${piece.position.z}`;
-				if (!eligibleChess.has(pieceKey)) continue;
-				const king = playerKing[piece.player];
-				if (!king) continue;
-				const dx = computeShift(king.x, piece.position.x, clearedCols);
-				const dz = computeShift(king.z, piece.position.z, clearedRows);
-				if (dx) piece.position.x += dx;
-				if (dz) piece.position.z += dz;
+				const dest = successfulMoves.get(pieceKey);
+				if (!dest) continue;
+				piece.position.x = dest.x;
+				piece.position.z = dest.z;
 			}
 		}
 
 		if (moves.length > 0) {
 			log(
-				`Applied gravity: ${moves.length} cell${moves.length === 1 ? '' : 's'} ` +
+				`Applied gravity: ${successfulMoves.size}/${moves.length} cell${moves.length === 1 ? '' : 's'} ` +
 				`moved towards kings (rows=[${clearedRows.join(',')}] cols=[${clearedCols.join(',')}])`
 			);
 		}

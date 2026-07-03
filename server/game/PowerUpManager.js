@@ -31,10 +31,10 @@
  *     regenerate within `SPAWN_TICK_MS` of the first tick.
  *
  * Claim flow:
- *   `tryClaimAtCell(world, playerId, x, z)` is called by the tetromino
- *   socket handler for every cell the placement covers. If an orb sits
- *   on that exact cell, the orb is consumed, a chess piece appears via
- *   `pieces.addPiece`, and a `powerup_claimed` activity event fires.
+ *   `claimAcrossPlacement` runs after each tetromino lands. An orb is
+ *   claimed when the placement **covers** the orb cell or sits on an
+ *   **orthogonally adjacent** cell (players naturally bridge onto the
+ *   glowing slot). The piece spawns on the orb's coordinates.
  *
  * Why this lives in `server/game/` rather than `server/world/`:
  *   It mutates `world.chessPieces` and the board, so it's logically a
@@ -47,16 +47,19 @@ const { v4: uuidv4 } = require('uuid');
 const World = require('../world/World');
 const pieces = require('./pieces');
 
-const SPAWN_TICK_MS = 20 * 1000;
+const SPAWN_TICK_MS = 45 * 1000;
 const ORB_LIFETIME_MS = 4 * 60 * 1000;
 
-const MAX_ACTIVE_ORBS_PER_PLAYER = 2;
-const MIN_TOTAL_ORBS = 1;
-const MAX_TOTAL_ORBS = 8;
-const SPAWN_PROBABILITY_PER_TICK = 0.6;
+const MAX_ACTIVE_ORBS_PER_PLAYER = 1;
+const MIN_TOTAL_ORBS = 0;
+const MAX_TOTAL_ORBS = 4;
+const SPAWN_PROBABILITY_PER_TICK = 0.35;
 
-const MIN_SPAWN_DISTANCE = 6;
-const MAX_SPAWN_DISTANCE = 18;
+// Orbs deliberately spawn in empty sky to create "bridge to me" goals.
+// Distance is from the target player's home zone, randomised so the
+// orbs spread across the world rather than clumping next to one base.
+const MIN_SPAWN_DISTANCE = 4;
+const MAX_SPAWN_DISTANCE = 14;
 const MAX_SPAWN_ATTEMPTS = 40;
 
 const PIECE_TYPE_WEIGHTS = Object.freeze({
@@ -141,16 +144,46 @@ function createPowerUpManager({
 		return pickWeighted(weighted);
 	}
 
+	const ORTHO_DIRS = Object.freeze([
+		[0, 1], [0, -1], [1, 0], [-1, 0],
+	]);
+
+	function normalizeCoord(value) {
+		const n = Number(value);
+		return Number.isFinite(n) ? Math.round(n) : NaN;
+	}
+
+	function isInsideAnyHomeZone(world, x, z) {
+		const homeZones = world?.homeZones;
+		if (!homeZones || typeof homeZones !== 'object') return false;
+		for (const zone of Object.values(homeZones)) {
+			if (!zone) continue;
+			const minX = Number(zone.x);
+			const minZ = Number(zone.z);
+			const width = Number(zone.width || 8);
+			const height = Number(zone.height || 2);
+			if (!Number.isFinite(minX) || !Number.isFinite(minZ)) continue;
+			if (x >= minX && x < minX + width && z >= minZ && z < minZ + height) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	function isCellAvailableForOrb(world, x, z) {
 		const key = `${x},${z}`;
 		const cellContents = world.board?.cells?.[key];
-		// We need an EMPTY cell (no tetromino / home / chess marker) so
-		// a claim moment is unambiguous — the very first tetromino to
-		// land on it wins. Cells with content are skipped.
+		// Empty host cell — first tetromino to bridge wins.
 		if (Array.isArray(cellContents) && cellContents.length > 0) return false;
+		// Refuse cells that fall inside ANY player's home-zone rectangle.
+		// Even when those cells happen to be empty (decayed / cleared),
+		// the user reads them as "their home" and the orb appearing
+		// there looks invasive. The user reported: "A bonus orb appeared
+		// for a while inside someone's home cells."
+		if (isInsideAnyHomeZone(world, x, z)) return false;
 		const orbs = world.powerUps || [];
 		for (const orb of orbs) {
-			if (orb && orb.x === x && orb.z === z) return false;
+			if (orb && normalizeCoord(orb.x) === x && normalizeCoord(orb.z) === z) return false;
 		}
 		return true;
 	}
@@ -277,8 +310,13 @@ function createPowerUpManager({
 	 */
 	function tryClaimAtCell(world, playerId, x, z) {
 		if (!world || !playerId) return null;
+		const cellX = normalizeCoord(x);
+		const cellZ = normalizeCoord(z);
+		if (!Number.isFinite(cellX) || !Number.isFinite(cellZ)) return null;
 		const orbs = ensurePowerUps(world);
-		const idx = orbs.findIndex(o => o && o.x === x && o.z === z);
+		const idx = orbs.findIndex(o => o
+			&& normalizeCoord(o.x) === cellX
+			&& normalizeCoord(o.z) === cellZ);
 		if (idx < 0) return null;
 		const orb = orbs[idx];
 		orbs.splice(idx, 1);
@@ -286,12 +324,14 @@ function createPowerUpManager({
 		const piece = pieces.addPiece(world, {
 			type: orb.pieceType,
 			player: playerId,
-			x, z,
+			x: cellX,
+			z: cellZ,
 			reason: 'powerup',
-			activityLog: null,
+			activityLog,
 		});
 		if (!piece) {
 			console.warn(`[PowerUp] tryClaimAtCell: pieces.addPiece failed for orb ${orb.id}`);
+			orbs.splice(idx, 0, orb);
 			return null;
 		}
 
@@ -325,16 +365,34 @@ function createPowerUpManager({
 	}
 
 	/**
-	 * Sweep every cell touched by a tetromino placement and claim any
-	 * orbs hidden under those cells. Returns the array of claim
-	 * outcomes (in order of placement).
+	 * Claim orbs covered by the placement or orthogonally adjacent to
+	 * any placed cell (one-step bridge onto the glowing host slot).
 	 */
 	function claimAcrossPlacement(world, playerId, placedCells) {
 		if (!Array.isArray(placedCells) || placedCells.length === 0) return [];
-		const claimed = [];
+		const touchKeys = new Set();
 		for (const cell of placedCells) {
-			if (!cell || !Number.isFinite(cell.x) || !Number.isFinite(cell.z)) continue;
-			const outcome = tryClaimAtCell(world, playerId, cell.x, cell.z);
+			if (!cell) continue;
+			const x = normalizeCoord(cell.x);
+			const z = normalizeCoord(cell.z);
+			if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
+			touchKeys.add(`${x},${z}`);
+			for (const [dx, dz] of ORTHO_DIRS) {
+				touchKeys.add(`${x + dx},${z + dz}`);
+			}
+		}
+		if (touchKeys.size === 0) return [];
+
+		const orbs = ensurePowerUps(world);
+		const candidates = orbs.filter((orb) => {
+			if (!orb || !orb.id) return false;
+			const ox = normalizeCoord(orb.x);
+			const oz = normalizeCoord(orb.z);
+			return touchKeys.has(`${ox},${oz}`);
+		});
+		const claimed = [];
+		for (const orb of candidates) {
+			const outcome = tryClaimAtCell(world, playerId, orb.x, orb.z);
 			if (outcome) claimed.push(outcome);
 		}
 		return claimed;
@@ -371,6 +429,7 @@ function createPowerUpManager({
 			pickTargetPlayer,
 			findSpawnLocation,
 			isCellAvailableForOrb,
+			normalizeCoord,
 			maxActiveOrbs,
 			pruneExpired,
 			trySpawnOne,

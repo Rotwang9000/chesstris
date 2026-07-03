@@ -18,6 +18,8 @@ import { updateChessPieces } from './updateChessPieces.js';
 import { handleMouseHover } from './chessInteraction.js';
 import { syncPowerUps, animatePowerUps } from './powerUpRenderer.js';
 import { syncNameplates, animateNameplates } from './nameplateRenderer.js';
+import { updateAwaitingPromotionHalos } from './updateChessPieces.js';
+import { applyDistanceCulling } from './distanceCulling.js';
 
 // ── Timing state ────────────────────────────────────────────────────────────
 
@@ -29,6 +31,11 @@ let lastLODUpdate = 0;
 let lastGameLogicUpdate = 0;
 let lastUiUpdate = 0;
 let lastControlsUpdate = 0;
+let lastCullUpdate = 0;
+
+// How often the view-distance cull re-evaluates. The camera moves smoothly,
+// so a few times a second is ample and keeps the per-frame cost negligible.
+const CULL_UPDATE_INTERVAL = 250;
 
 let frameCount = 0;
 let lastFpsUpdate = perfNow();
@@ -79,6 +86,7 @@ export function startGameLoop() {
 	lastGameLogicUpdate = 0;
 	lastUiUpdate = 0;
 	lastControlsUpdate = 0;
+	lastCullUpdate = 0;
 	frameCount = 0;
 	lastFpsUpdate = perfNow();
 	frameSkip = 0;
@@ -167,19 +175,194 @@ function monitorPerformance(fps) {
 		GAME_LOGIC_INTERVAL = perfMode ? 1000 : 500;
 		console.log(`Performance mode ${perfMode ? 'enabled' : 'disabled'} (fps=${fps})`);
 	}
+
+	// Reconcile render-side perf state EVERY tick, not just on the
+	// transition. Switching render profile rebuilds the renderer and
+	// re-enables shadows with `autoUpdate` defaulting back to true, without
+	// flipping perfMode — so a transition-only hook would leave a player who
+	// entered normal mode while already under load with live (expensive)
+	// shadows. The call is cheap and idempotent.
+	applyPerformanceMode(perfMode);
+}
+
+/**
+ * Apply the render-side consequences of performance mode.
+ *
+ * The only profile that casts real-time shadows is NORMAL (cute/retro turn
+ * shadow casting off at setup), and the stress test pinned the per-frame
+ * shadow pass — re-rendering the 2048² shadow map over a crowded board every
+ * frame — as a significant normal-mode cost. So under load we FREEZE the
+ * shadow map (`autoUpdate = false`) instead of toggling `shadowMap.enabled`,
+ * which would force every material to recompile its shaders and cause a
+ * visible hitch. Frozen shadows just go slightly stale as pieces move; they
+ * stay present and correctly placed for the static majority. On recovery,
+ * re-enabling `autoUpdate` re-renders the map on the very next frame, so no
+ * explicit `needsUpdate` is required. The "normal auto-adjusts under load"
+ * lever — fully reversible, no popping, no recompile.
+ *
+ * @param {boolean} perfMode true when we are in performance mode
+ */
+let _shadowsFrozenForPerf = null; // last freeze state we logged (null = unset)
+
+function applyPerformanceMode(perfMode) {
+	try {
+		// The live renderer is mirrored on gameState and exposed via the
+		// context getter; prefer gameState and fall back to the getter.
+		const gs = getGameState();
+		const renderer = (gs && gs.renderer) || getRenderer();
+		const shadowMap = renderer && renderer.shadowMap;
+		// Only meaningful when shadows are actually on (normal mode).
+		if (!shadowMap || !shadowMap.enabled) return;
+		shadowMap.autoUpdate = !perfMode;
+		// Log only on an actual state change so the stress test has a clear
+		// signal without spamming the console every tick.
+		if (_shadowsFrozenForPerf !== perfMode) {
+			_shadowsFrozenForPerf = perfMode;
+			console.log(`Shadow map ${perfMode ? 'FROZEN under load' : 'live'} (perf governor).`);
+		}
+	} catch (e) {
+		console.error('applyPerformanceMode failed:', e);
+	}
 }
 
 // ── Tetromino auto-fall ─────────────────────────────────────────────────────
 
+// Watchdog: when the game sits in `tetris` phase with no
+// `currentTetromino` for this long, we try to re-spawn one locally
+// and, failing that, ask the server for a fresh piece (which will
+// also rescue a missing king if that's what's holding us up).
+//
+// User: "Tetraminos have appeared to stop falling on their own!" —
+// this is the self-heal that catches it. Without the watchdog, an
+// edge case where the spawn-on-chess-complete path drops the ball
+// would silently freeze tetris mode forever.
+const TETROMINO_RESPAWN_WATCHDOG_MS = 5000;
+let _missingTetrominoSince = 0;
+let _lastWatchdogAction = 0;
+const WATCHDOG_COOLDOWN_MS = 4000;
+
+// Pause after a manual move/rotate. Concurrent with the regular
+// fall interval — the next fall is at MAX(lastFall + interval,
+// lastMove + pause). The user wants a brief breathing room so they
+// can slide a piece a long distance without it falling away under
+// them, but rapid keypresses must NOT compound into multi-second
+// stalls.
+const TETROMINO_POST_MOVE_PAUSE_MS = 500;
+
+/**
+ * Drive the tetromino's auto-fall. Lives outside `updateGameLogic`
+ * so the animate() loop can call it EVERY frame regardless of the
+ * non-essential frame-budget gate — the auto-fall is core gameplay
+ * and was previously stalling out whenever a single heavy frame
+ * tripped the budget for the rest of the session.
+ *
+ * Returns true if this frame produced an auto-drop (so the watchdog
+ * branch can know we're alive).
+ */
+function tickTetrominoAutoFall() {
+	const gameState = getGameState();
+	if (!gameState) return false;
+	if (gameState.paused) return false;
+	if (gameState.turnPhase !== 'tetris') return false;
+	const tetro = gameState.currentTetromino;
+	if (!tetro) return false;
+	if (!tetro.fallStarted) return false;
+	// Freeze auto-fall while the local player is the defender in a
+	// pending Check — they need their attention on the chess board,
+	// not on a piece dropping out from under them. The attacker and
+	// any onlookers keep falling normally.
+	if (gameState.pendingCheck) {
+		const selfId = gameState.localPlayerId
+			|| gameState.currentPlayer
+			|| gameState.playerId
+			|| null;
+		if (selfId && String(gameState.pendingCheck.defenderId) === String(selfId)) {
+			return false;
+		}
+	}
+
+	const now = Date.now();
+	// First tick after the player commits: prime the clock so the
+	// first drop lands one interval later, not all at once from a
+	// stale value.
+	if (!tetro.lastFallTime) {
+		tetro.lastFallTime = now;
+		return false;
+	}
+
+	const sinceFall = now - tetro.lastFallTime;
+	const lastMove = Number.isFinite(tetro.lastMoveTime) ? tetro.lastMoveTime : 0;
+	const sinceMove = now - lastMove;
+	if (sinceFall <= TETROMINO_FALL_INTERVAL_MS) return false;
+	if (sinceMove <= TETROMINO_POST_MOVE_PAUSE_MS) return false;
+	tetrominoModule.moveTetrominoY(-1, true);
+	tetro.lastFallTime = now;
+	tetrisLastFallTime = now;
+	return true;
+}
+
 function updateGameLogic(_deltaTime) {
 	try {
 		const gameState = getGameState();
+		const now = Date.now();
+
 		if (gameState.turnPhase === 'tetris' && gameState.currentTetromino) {
-			const now = Date.now();
-			if ((now - tetrisLastFallTime) > TETROMINO_FALL_INTERVAL_MS) {
-				tetrominoModule.moveTetrominoY(-1, true);
-				tetrisLastFallTime = now;
+			// Auto-fall now runs every animate() frame via
+			// `tickTetrominoAutoFall`. We only reach this branch
+			// from the budget-gated path, so do nothing extra here
+			// beyond clearing the watchdog counter.
+			_missingTetrominoSince = 0;
+			return;
+		}
+
+		if (gameState.turnPhase !== 'tetris' || gameState.currentTetromino) {
+			_missingTetrominoSince = 0;
+			return;
+		}
+
+		if (!_missingTetrominoSince) {
+			_missingTetrominoSince = now;
+			return;
+		}
+		if ((now - _missingTetrominoSince) < TETROMINO_RESPAWN_WATCHDOG_MS) return;
+		if ((now - _lastWatchdogAction) < WATCHDOG_COOLDOWN_MS) return;
+		_lastWatchdogAction = now;
+		console.warn('[Tetromino] Watchdog: tetris phase has no currentTetromino — attempting respawn.');
+
+		try {
+			const spawned = tetrominoModule.initializeNextTetromino(gameState);
+			if (spawned) {
+				gameState.currentTetromino = spawned;
+				gameState.currentTetromino.heightAboveBoard = gameState.TETROMINO_START_HEIGHT || 20;
+				if (typeof tetrominoModule.renderTetromino === 'function') {
+					tetrominoModule.renderTetromino(gameState);
+				}
+				_missingTetrominoSince = 0;
+				return;
 			}
+		} catch (spawnErr) {
+			console.warn('[Tetromino] Watchdog respawn failed:', spawnErr);
+		}
+
+		// Local spawn failed — fall back to a server-side recovery
+		// (which also runs the missing-king sweep).
+		try {
+			const nm = window.NetworkManager;
+			if (nm && typeof nm.sendMessage === 'function') {
+				nm.sendMessage('request_tetromino', {})
+					.then((response) => {
+						if (response && response.success && response.tetromino) {
+							gameState.currentTetromino = response.tetromino;
+							gameState.currentTetromino.heightAboveBoard = gameState.TETROMINO_START_HEIGHT || 20;
+							if (typeof tetrominoModule.renderTetromino === 'function') {
+								tetrominoModule.renderTetromino(gameState);
+							}
+						}
+					})
+					.catch(err => console.warn('[Tetromino] Watchdog request_tetromino failed:', err));
+			}
+		} catch (netErr) {
+			console.warn('[Tetromino] Watchdog network call failed:', netErr);
 		}
 	} catch (error) {
 		console.error('Error in updateGameLogic:', error);
@@ -279,7 +462,11 @@ function animate(time) {
 				} else if (gameState.renderProfile !== 'retro') {
 					if (typeof sceneModule.animateAmbientParticles === 'function') sceneModule.animateAmbientParticles(scene, delta);
 					if (typeof sceneModule.animateSkyDecorations === 'function') sceneModule.animateSkyDecorations(scene);
-					if (typeof sceneModule.updateWaterPlane === 'function') sceneModule.updateWaterPlane(scene);
+					// The sea follows the camera target so remote battle
+					// arenas (thousands of cells out) still sit on water.
+					if (typeof sceneModule.updateWaterPlane === 'function') {
+						sceneModule.updateWaterPlane(scene, getControls()?.target);
+					}
 				}
 			}
 
@@ -325,6 +512,16 @@ function animate(time) {
 			} catch (e) {
 				console.error('Error syncing nameplates:', e);
 			}
+
+			// Glow halo on any frozen pawn awaiting promotion. Skips the
+			// loop entirely when nobody has one queued.
+			try {
+				const piecesGroup = gameState.chessPiecesGroup
+					|| (typeof window !== 'undefined' && window.chessPiecesGroup);
+				if (piecesGroup) updateAwaitingPromotionHalos(piecesGroup);
+			} catch (e) {
+				console.error('Error animating awaiting-promotion halos:', e);
+			}
 		}
 
 		// TWEENs MUST run every frame — they drive piece moves and
@@ -354,17 +551,43 @@ function animate(time) {
 			if (time > 10000) monitorPerformance(fps);
 		}
 
+		// Tetromino auto-fall runs EVERY frame, regardless of the
+		// "non-essential frame budget" gating below. The fall used
+		// to live inside `updateGameLogic` which is gated by
+		// `!skipNonEssentialThisFrame && isHeavyFrame` — a single
+		// heavy frame would trip the budget, and recovering needed
+		// 6 consecutive on-budget frames. On real hardware that
+		// recovery never reliably happened, so the piece would just
+		// hover indefinitely and players reported "no downwards
+		// motion until you press space". The function early-outs
+		// in O(1) when not in tetris phase or while hovering, so
+		// running it every frame is cheap.
+		try { tickTetrominoAutoFall(); }
+		catch (e) { console.error('Auto-fall tick failed:', e); }
+
 		if (!skipNonEssentialThisFrame && isHeavyFrame) {
 			if (time - lastLODUpdate > LOD_UPDATE_INTERVAL) {
 				lastLODUpdate = time;
 				if (typeof animateClouds === 'function') animateClouds(scene);
 				if (typeof sceneModule.animateFloatingIslands === 'function') sceneModule.animateFloatingIslands(scene);
-				if (typeof sceneModule.updateWaterPlane === 'function') sceneModule.updateWaterPlane(scene);
+				if (typeof sceneModule.updateWaterPlane === 'function') {
+					sceneModule.updateWaterPlane(scene, getControls()?.target);
+				}
 			}
 			if (time - lastGameLogicUpdate > GAME_LOGIC_INTERVAL) {
 				lastGameLogicUpdate = time;
 				updateGameLogic(delta);
 			}
+		}
+
+		// View-distance cull runs regardless of the frame-budget skip —
+		// it's the thing that RELIEVES a heavy scene, so gating it behind
+		// "we're not behind" would be self-defeating. Throttled by wall
+		// clock; the per-pass cost is a few thousand cheap distance checks.
+		if (time - lastCullUpdate > CULL_UPDATE_INTERVAL) {
+			lastCullUpdate = time;
+			try { applyDistanceCulling(gameState); }
+			catch (e) { console.error('Distance cull failed:', e); }
 		}
 
 		if (renderer && scene && camera) {

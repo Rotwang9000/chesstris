@@ -7,14 +7,19 @@
 
 import { fetchNextSponsor, handleSponsorClick, recordImpression } from '../utils/sponsors.js';
 
-// Banner configuration
+// Banner configuration. We anchor to `bottom-left` because the
+// top-right (the prior default) collided with the "Next piece" HUD —
+// the user reported "the ad box appears under the next piece". The
+// bottom-right is the player-bar / mode toggles. Bottom-left is the
+// quietest corner, doesn't fight the camera-reset button on mobile,
+// and lets us bump z-index without obscuring critical UI.
 const BANNER_CONFIG = {
-	rotationInterval: 15000, // Rotate every 15 seconds
-	fadeTransition: 500, // Fade transition duration in ms
-	autoHideDelay: 60000, // Auto-hide after 60 seconds of no interaction
-	position: 'top-right', // 'top-right', 'top-left', 'bottom-right', 'bottom-left'
-	maxWidth: 300,
-	minimized: false
+	rotationInterval: 30000, // Rotate every 30 seconds (was 15 — felt spammy)
+	fadeTransition: 500,
+	autoHideDelay: 60000,
+	position: 'bottom-left',
+	maxWidth: 280,
+	minimized: false,
 };
 
 // State
@@ -83,7 +88,7 @@ function applyBannerStyles(container) {
 			background: linear-gradient(135deg, rgba(15, 15, 25, 0.95) 0%, rgba(30, 25, 40, 0.95) 100%);
 			border: 1px solid rgba(255, 204, 0, 0.3);
 			border-radius: 12px;
-			z-index: 400;
+			z-index: 1200;
 			font-family: 'Inter', 'Playfair Display', sans-serif;
 			box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
 			backdrop-filter: blur(10px);

@@ -14,13 +14,13 @@ const { getCooldownRemainingMs } = require('../utils/cooldowns');
 const cells = require('../game/cells');
 const pieces = require('../game/pieces');
 const territory = require('../game/territory');
+// Shared with the AI so human and computer pawns freeze identically.
+const { markPawnAwaitingPromotion } = require('../game/promotion');
 
 /**
- * Remove a pawn from the board and add a promotion credit to the
- * owner's bank. Idempotent: if a credit for this pawn already exists
- * (because the chess_move auto-bank fired first), the explicit
- * `promote_pawn` socket call returns the existing one instead of
- * double-counting.
+ * Legacy credit-banking flow — kept so persisted worlds that still
+ * carry `promotionCredits` can drain them via the old redeem path.
+ * No new credits should be created on the live server.
  */
 function bankPromotionCredit(world, playerId, pawn, { broadcaster, activityLog, io }) {
 	const player = world.players?.[playerId];
@@ -125,23 +125,53 @@ function resolveRedeemSpawnCell(world, playerId, credit) {
 
 function registerChessHandlers(socket, ctx) {
 	const {
-		playerId,
+		playerId: boundPlayerId,
 		io,
 		gameManager,
 		broadcaster,
 		integrityService,
 		kingCaptureService,
-		kingDuelService,
 		kingDetonationService,
+		checkService,
 		spectatorRegistry,
 		activityLog,
 	} = ctx;
+	// While in an active battle the socket acts as its SEAT id.
+	const actingPlayerId = typeof ctx.resolveActingPlayerId === 'function'
+		? ctx.resolveActingPlayerId
+		: () => boundPlayerId;
 
 	socket.on('chess_move', (data, callback) => {
+		const playerId = actingPlayerId();
 		try {
 			const player = World.getPlayer(playerId);
 			if (!player) {
 				if (callback) callback({ success: false, error: 'Not registered' });
+				return;
+			}
+
+			// Eliminated players are out — their king is gone for good.
+			// Without this gate a player whose run ended (king detonated /
+			// lives exhausted) could keep issuing moves if any stray piece
+			// of theirs lingered, which is exactly the "it just said Game
+			// Over and let me carry on" report.
+			if (player.eliminated) {
+				const msg = 'You have been eliminated — your king is gone.';
+				socket.emit('chessFailed', { message: msg, reason: 'eliminated' });
+				if (callback) callback({ success: false, error: msg, reason: 'eliminated' });
+				return;
+			}
+
+			// Paused players are "away": their zone, cells and pieces are
+			// frozen and immune to capture/decay (see `pauseService`). They
+			// must not also be able to act — otherwise pausing would be a
+			// free invulnerability shield while still attacking. The client
+			// shows a clear PAUSED banner and the auto-pause watcher resumes
+			// on the first input, so a returning idle player rarely hits this.
+			if (player.paused) {
+				const msg = 'You are paused — press Resume to play.';
+				socket.emit('chessFailed', { message: msg, reason: 'paused' });
+				if (callback) callback({ success: false, error: msg, reason: 'paused' });
 				return;
 			}
 
@@ -185,11 +215,50 @@ function registerChessHandlers(socket, ctx) {
 			}
 
 			const piece = world.chessPieces[pieceIndex];
+
+			// Check-mode guards. While `world.pendingCheck` is active:
+			//   • the attacker piece is committed — they can't move
+			//     it elsewhere to wriggle out of the threat;
+			//   • the defender may only make moves that escape
+			//     (validated below via `checkService.validateEscape`);
+			//   • everyone ELSE can play normally.
+			if (checkService && world.pendingCheck) {
+				const check = world.pendingCheck;
+				if (String(piece.id) === String(check.attackerPieceId)) {
+					const msg = 'Your piece is committed to the check — wait for the defender to act.';
+					socket.emit('chessFailed', { message: msg, reason: 'attacker_locked' });
+					logRejection(activityLog, world, player, piece, targetPosition, 'attacker_locked', msg);
+					if (callback) callback({ success: false, error: msg, reason: 'attacker_locked' });
+					return;
+				}
+				if (String(playerId) === String(check.defenderId)) {
+					const escape = checkService.validateEscape({
+						world, piece, toX: targetPosition.x, toZ: targetPosition.z,
+					});
+					if (!escape.ok) {
+						const msg = 'In check — your king is still threatened after that move. Try a different escape.';
+						socket.emit('chessFailed', { message: msg, reason: 'check_not_escaped' });
+						logRejection(activityLog, world, player, piece, targetPosition, 'check_not_escaped', msg);
+						if (callback) callback({ success: false, error: msg, reason: 'check_not_escaped' });
+						return;
+					}
+				}
+			}
 			if (piece.player !== playerId) {
 				const msg = 'Not your chess piece';
 				socket.emit('chessFailed', { message: msg });
 				logRejection(activityLog, world, player, piece, targetPosition, 'not_your_piece', msg);
 				if (callback) callback({ success: false, error: msg });
+				return;
+			}
+
+			// Frozen pawns can't move — they're waiting for the player
+			// to deploy a captured piece in their place.
+			if (piece.awaitingPromotion) {
+				const msg = 'Pawn is frozen — deploy a captured piece or skip to dismiss.';
+				socket.emit('chessFailed', { message: msg, reason: 'awaiting_promotion', pieceId });
+				logRejection(activityLog, world, player, piece, targetPosition, 'awaiting_promotion', msg);
+				if (callback) callback({ success: false, error: msg, reason: 'awaiting_promotion' });
 				return;
 			}
 
@@ -257,6 +326,29 @@ function registerChessHandlers(socket, ctx) {
 				item => item && item.type === 'chess' && String(item.pieceId) === String(pieceId)
 			);
 			if (!chessPieceObj) {
+				// If a DIFFERENT player's chess marker is already on the
+				// source cell, our piece record is bogus and re-stamping
+				// would stack two markers (the pattern that produced the
+				// "two pawns on one cell" bug). Force a refresh instead
+				// of pretending to move a piece that isn't there.
+				const foreignChess = sourceCell.find(item =>
+					item && item.type === 'chess'
+					&& String(item.player) !== String(playerId)
+				);
+				if (foreignChess) {
+					console.warn(
+						`[Chess] ${playerId}'s ${piece.type} (${piece.id}) claims ` +
+						`source (${piece.position.x}, ${piece.position.z}) but cell holds ` +
+						`${foreignChess.player}'s ${foreignChess.pieceType || '?'} — refusing.`
+					);
+					integrityService.runIslandIntegrityPass({ emitAnimation: false });
+					broadcaster.broadcastGameUpdate({ forceFullUpdate: true });
+					const msg = 'That piece is no longer on that square — board refreshed.';
+					socket.emit('chessFailed', { message: msg, reason: 'desync_repaired' });
+					logRejection(activityLog, world, player, piece, targetPosition, 'desync_repaired', msg);
+					if (callback) callback({ success: false, error: msg, reason: 'desync_repaired' });
+					return;
+				}
 				console.warn(
 					`[Chess] Re-stamping missing source marker for ${piece.type} (${piece.id}) ` +
 					`at (${piece.position.x}, ${piece.position.z}) before move.`
@@ -268,8 +360,22 @@ function registerChessHandlers(socket, ctx) {
 					pieceType: String(piece.type || '').toLowerCase(),
 					color: world.players?.[playerId]?.color,
 				};
-				sourceCell.push(chessPieceObj);
-				gameManager.boardManager.setCell(world.board, piece.position.x, piece.position.z, sourceCell);
+				// Strip any other markers for OUR own player on this cell
+				// before pushing ours — they're stale duplicates from a
+				// prior corruption event. The piece-side sweep in
+				// `missingKingSweep` will retire the orphaned chessPiece
+				// records on its next pass.
+				const cleaned = sourceCell.filter(item =>
+					!(item && item.type === 'chess'
+						&& String(item.player) === String(playerId)
+						&& String(item.pieceId) !== String(piece.id))
+				);
+				cleaned.push(chessPieceObj);
+				gameManager.boardManager.setCell(
+					world.board, piece.position.x, piece.position.z, cleaned
+				);
+				sourceCell.length = 0;
+				for (const item of cleaned) sourceCell.push(item);
 			}
 
 			const originalPosition = { x: piece.position.x, z: piece.position.z };
@@ -292,6 +398,79 @@ function registerChessHandlers(socket, ctx) {
 					const target = world.chessPieces.find(
 						p => p && String(p.id) === String(captureObj.pieceId)
 					);
+					// Deferred king-capture (the "Check" flow). The
+					// attacker's move is held back — piece doesn't move,
+					// king doesn't die — and the defender gets a
+					// timed window to escape. Resolution is handled by
+					// `checkService.expireCheck` (timeout: execute the
+					// queued capture) or `checkService.cancelCheck`
+					// (defender successfully moved out of danger).
+					//
+					// Anti-spam: the same attacker piece only gets to
+					// defer a few times. After
+					// `MAX_CHECK_DEFERS_PER_PIECE` deferrals, `startCheck`
+					// returns null and we fall through to the direct
+					// capture path below.
+					// A check window is already open on this very king.
+					// Don't let a SECOND piece (or a third player) skip
+					// the queue and instant-capture during the defender's
+					// grace — the bypass that made the 20s window
+					// effectively optional. The defender's escape already
+					// has to evade EVERY threat (validateEscape checks all
+					// opposing pieces), so the second attacker simply
+					// waits for this window to resolve. (Chess-C2)
+					if (target && String(target.type || '').toUpperCase() === 'KING'
+						&& checkService && world.pendingCheck
+						&& String(world.pendingCheck.defenderId) === String(target.player)) {
+						if (callback) {
+							callback({
+								success: false,
+								error: 'king_in_check',
+								message: 'That king is already in check — wait for the current attempt to resolve.',
+							});
+						}
+						return;
+					}
+
+					if (target && String(target.type || '').toUpperCase() === 'KING'
+						&& checkService
+						&& !world.pendingCheck) {
+						const started = checkService.startCheck({
+							world,
+							attackerPiece: piece,
+							kingPiece: target,
+							queuedMove: {
+								captorId: playerId,
+								defeatedId: target.player,
+								toX: targetPosition.x,
+								toZ: targetPosition.z,
+								attackerPieceId: piece.id,
+							},
+						});
+						if (started) {
+							// Starting a check IS the attacker's move for
+							// this turn — stamp the cooldown so they can't
+							// spam king attacks (H7). Without this the early
+							// return skipped the `lastChessMoveAt` update at
+							// the end of a normal move, letting a player fire
+							// off back-to-back checks with no rate limit.
+							player.lastChessMoveAt = Date.now();
+							player.moveCount = (player.moveCount || 0) + 1;
+							World.markDirty();
+							if (callback) {
+								callback({
+									success: true,
+									check: true,
+									message: `${target.player} has ${Math.round(checkService.CHECK_DEADLINE_MS / 1000)}s to escape`,
+									updatedPiece: piece,
+								});
+							}
+							return;
+						}
+						// Else: defer was denied (attacker has used up
+						// their grace). Fall through to the direct king
+						// capture path.
+					}
 					if (target) {
 						capturedPiece = target;
 						capturedPieceSnapshot = {
@@ -331,11 +510,13 @@ function registerChessHandlers(socket, ctx) {
 							}
 						}
 
+						const captorPlayer = world.players?.[playerId];
 						pieces.removePiece(world, target, {
 							reason: pieces.REMOVAL_REASONS.CAPTURED,
 							activityLog,
 							capturedBy: {
 								playerId,
+								playerName: captorPlayer?.name || captorPlayer?.username || playerId,
 								pieceType: String(piece.type || '').toLowerCase(),
 								pieceId: piece.id,
 							},
@@ -364,7 +545,7 @@ function registerChessHandlers(socket, ctx) {
 			// intrinsic to that player's home zone, per the bible.
 			const playerColor = world.players?.[playerId]?.color;
 			const targetCellContents = Array.isArray(targetCell)
-				? targetCell.filter(item => item && item.type !== 'chess')
+				? cells.stripAllChessMarkers(targetCell)
 				: [];
 			// Note the previous owner of the destination's non-home,
 			// non-chess content so we can log the territory grab — the
@@ -399,6 +580,19 @@ function registerChessHandlers(socket, ctx) {
 				} catch (logError) {
 					console.warn('[Chess] activity log failed (territory):', logError.message);
 				}
+			}
+
+			// Capture the original (pre-move) coordinates BEFORE we
+			// overwrite `piece.position` — the forward-distance
+			// helper compares them to the new position. Without this
+			// the freeze never trips because forwardDistance is the
+			// only thing the promotion guard inspects.
+			if (piece.type === 'PAWN') {
+				gameManager.chessManager.updatePawnForwardDistance(
+					piece,
+					originalPosition.x, originalPosition.z,
+					targetPosition.x, targetPosition.z,
+				);
 			}
 
 			piece.position = targetPosition;
@@ -485,28 +679,40 @@ function registerChessHandlers(socket, ctx) {
 			if (capturedPiece && capturedPiece.type === 'KING') {
 				handleKingCaptured({
 					world, playerId, capturedPiece, callback,
-					piece, kingCaptureService, kingDuelService, broadcaster, spectatorRegistry,
+					piece, kingCaptureService, broadcaster, spectatorRegistry,
 				});
 				return;
 			}
 
-			// Auto-bank a promotion credit if this pawn has walked the
-			// full promotion distance. The pawn is consumed; the
-			// player redeems the credit later via `redeem_promotion`
-			// against a captured-piece basket entry. We use
-			// `forwardDistance` (net forward progress) rather than
-			// `moveCount` so capture-shuffling and lateral moves don't
-			// trigger a fake promotion.
+			// Pawn promotion: when net forward progress crosses the
+			// threshold, the pawn freezes in place and the cell
+			// becomes home-like. The player can then optionally swap
+			// the frozen pawn for a captured piece via
+			// `deploy_promotion`. We use `forwardDistance` (net
+			// forward progress) rather than `moveCount` so
+			// capture-shuffling and lateral moves don't trigger a
+			// fake promotion.
 			if (piece.type === 'PAWN'
+				&& !piece.awaitingPromotion
 				&& (piece.forwardDistance || 0) >= GAME_RULES.PAWN_PROMOTION_DISTANCE
 			) {
 				try {
-					bankPromotionCredit(world, playerId, piece, {
+					markPawnAwaitingPromotion(world, playerId, piece, {
 						broadcaster, activityLog, io,
 					});
-				} catch (bankErr) {
-					console.warn('[Chess] auto-bank promotion failed:', bankErr.message);
+				} catch (markErr) {
+					console.warn('[Chess] freeze-for-promotion failed:', markErr.message);
 				}
+			}
+
+			// Defender successfully made an escape move — drop the
+			// pending check so the attacker's queued capture is voided.
+			// `validateEscape` already confirmed the king is no longer
+			// threatened.
+			if (checkService && world.pendingCheck
+				&& String(world.pendingCheck.defenderId) === String(playerId)) {
+				try { checkService.cancelCheck(world, 'escaped'); }
+				catch (e) { console.warn('[Check] cancel after escape failed:', e.message); }
 			}
 
 			spectatorRegistry.broadcastUpdate(playerId, world);
@@ -525,6 +731,7 @@ function registerChessHandlers(socket, ctx) {
 	// `player.promotionCredits` at the pawn's current cell. Players
 	// later spend credits via `redeem_promotion`.
 	socket.on('promote_pawn', (data, callback) => {
+		const playerId = actingPlayerId();
 		try {
 			const world = World.getWorld();
 			const { pieceId } = data || {};
@@ -560,6 +767,7 @@ function registerChessHandlers(socket, ctx) {
 	// owned cell to the player's king (the user's "if the cell got
 	// cleared, fall back to nearest-to-king" rule).
 	socket.on('redeem_promotion', (data, callback) => {
+		const playerId = actingPlayerId();
 		try {
 			const world = World.getWorld();
 			const player = World.getPlayer(playerId);
@@ -699,7 +907,172 @@ function registerChessHandlers(socket, ctx) {
 		}
 	});
 
+	// deploy_promotion: spend a captured-piece basket entry to replace
+	// a frozen pawn (awaitingPromotion) with the chosen piece type
+	// in-place. The frozen pawn must still be on the board; deploying
+	// keeps the same cell (which is locked as home-like while frozen).
+	socket.on('deploy_promotion', (data, callback) => {
+		const playerId = actingPlayerId();
+		try {
+			const world = World.getWorld();
+			const player = World.getPlayer(playerId);
+			if (!player) {
+				if (callback) callback({ success: false, error: 'Not registered' });
+				return;
+			}
+			if (player.eliminated) {
+				if (callback) callback({ success: false, error: 'Player is eliminated' });
+				return;
+			}
+
+			const pawnId = data && data.pawnId;
+			const requestedType = String((data && data.capturedType) || '').toUpperCase();
+			const validTypes = ['QUEEN', 'ROOK', 'BISHOP', 'KNIGHT'];
+			if (!validTypes.includes(requestedType)) {
+				if (callback) callback({ success: false, error: 'Invalid captured type' });
+				return;
+			}
+
+			const pawn = (world.chessPieces || []).find(p =>
+				p && String(p.id) === String(pawnId)
+				&& String(p.player) === String(playerId)
+				&& p.type === 'PAWN'
+				&& p.awaitingPromotion === true,
+			);
+			if (!pawn) {
+				if (callback) callback({ success: false, error: 'Frozen pawn not found' });
+				return;
+			}
+
+			const basket = Array.isArray(player.capturedBasket) ? player.capturedBasket : null;
+			const basketIdx = basket
+				? basket.findIndex(item => String(item?.type || '').toUpperCase() === requestedType)
+				: -1;
+			if (basketIdx < 0) {
+				if (callback) callback({
+					success: false,
+					error: `No captured ${requestedType} in basket`,
+				});
+				return;
+			}
+
+			const targetX = pawn.position?.x;
+			const targetZ = pawn.position?.z;
+			const orientation = Number.isFinite(pawn.orientation) ? pawn.orientation : 0;
+
+			// Validate the spawn coordinates BEFORE we touch the pawn —
+			// `addPiece` returns null on non-finite x/z, and we must not
+			// remove the frozen pawn if we can't place its replacement.
+			if (!Number.isFinite(targetX) || !Number.isFinite(targetZ)) {
+				if (callback) callback({ success: false, error: 'Frozen pawn has no valid cell' });
+				return;
+			}
+
+			// Remove the frozen pawn first; this strips its chess marker
+			// from the cell, leaving the supporting terrain intact (which
+			// `addPiece` will re-anchor with the new chess marker).
+			// (`addPiece` drops same-cell same-owner records, so we can't
+			// safely add the replacement before removing the pawn.)
+			pieces.removePiece(world, pawn.id, {
+				reason: 'promoted_to_credit',
+				activityLog,
+				silent: true,
+			});
+
+			const piece = pieces.addPiece(world, {
+				type: requestedType,
+				player: playerId,
+				x: targetX,
+				z: targetZ,
+				orientation,
+				reason: 'promotion_deploy',
+				activityLog,
+			});
+			if (!piece) {
+				// Transactional rollback: re-anchor the frozen pawn we
+				// just removed so a failed spawn never costs the player
+				// their promotion (and the basket entry is untouched
+				// because we splice it only after a confirmed spawn).
+				try {
+					if (!world.chessPieces.some(p => p && String(p.id) === String(pawn.id))) {
+						world.chessPieces.push(pawn);
+					}
+					const key = `${targetX},${targetZ}`;
+					const existing = Array.isArray(world.board.cells[key])
+						? world.board.cells[key].slice() : [];
+					const withoutChess = existing.filter(item => !item || item.type !== 'chess');
+					withoutChess.push({
+						type: 'chess',
+						pieceType: 'pawn',
+						player: playerId,
+						color: pawn.color,
+						pieceId: pawn.id,
+						orientation,
+					});
+					world.board.cells[key] = withoutChess;
+				} catch (rollbackErr) {
+					console.error('[Chess] deploy_promotion rollback failed:', rollbackErr.message);
+				}
+				if (callback) callback({ success: false, error: 'Failed to spawn piece' });
+				return;
+			}
+
+			basket.splice(basketIdx, 1);
+			World.markDirty();
+
+			if (activityLog && typeof activityLog.recordPromotionRedeemed === 'function') {
+				try {
+					activityLog.recordPromotionRedeemed({
+						playerId,
+						playerName: player.username || player.name || playerId,
+						capturedType: requestedType.toLowerCase(),
+						pieceId: piece.id,
+						x: targetX,
+						z: targetZ,
+					});
+				} catch (logErr) {
+					console.warn('[Chess] deploy log failed:', logErr.message);
+				}
+			}
+
+			try {
+				io.to(world.id).emit('pawn_promotion_deployed', {
+					playerId,
+					pawnId: pawn.id,
+					pieceId: piece.id,
+					pieceType: requestedType,
+					x: targetX,
+					z: targetZ,
+				});
+			} catch (emitErr) {
+				console.warn('[Chess] pawn_promotion_deployed emit failed:', emitErr.message);
+			}
+
+			broadcaster.broadcastGameUpdate();
+			if (typeof broadcaster.emitCapturedBasket === 'function') {
+				try { broadcaster.emitCapturedBasket(playerId); }
+				catch (basketErr) { console.warn('[Chess] basket emit failed:', basketErr.message); }
+			}
+
+			console.log(
+				`Player ${playerId} deployed ${requestedType} at (${targetX}, ${targetZ}) ` +
+				`replacing frozen pawn ${pawn.id}.`
+			);
+
+			if (callback) callback({
+				success: true,
+				pieceId: piece.id,
+				pieceType: requestedType,
+				position: { x: targetX, z: targetZ },
+			});
+		} catch (error) {
+			console.error('Error processing deploy_promotion:', error);
+			if (callback) callback({ success: false, error: error.message });
+		}
+	});
+
 	socket.on('skip_chess_move', (data, callback) => {
+		const playerId = actingPlayerId();
 		try {
 			const player = World.getPlayer(playerId);
 			if (!player) {
@@ -708,6 +1081,24 @@ function registerChessHandlers(socket, ctx) {
 			}
 
 			const world = World.getWorld();
+
+			// You can't duck a check by skipping to tetris. While a
+			// check window is open against this player their only legal
+			// action is a king-saving chess move (or eating the
+			// deadline). The client already pauses the fall on
+			// `pendingCheck`; this enforces it server-side too so a
+			// modified/old client can't bypass it. (Chess-H3)
+			if (checkService && checkService.isPlayerInCheck(world, playerId)) {
+				if (callback) {
+					callback({
+						success: false,
+						error: 'in_check',
+						message: 'Your king is in check — move it to safety or take the attacker first.',
+					});
+				}
+				return;
+			}
+
 			// Issue a fresh tetromino so the player can keep playing.
 			const tetrominos = gameManager.tetrominoManager.generateTetrominos(world, playerId);
 			if (!tetrominos || tetrominos.length === 0) {
@@ -747,6 +1138,7 @@ function registerChessHandlers(socket, ctx) {
 	});
 
 	socket.on('detonate_pawn', (data, callback) => {
+		const playerId = actingPlayerId();
 		try {
 			const world = World.getWorld();
 			const { pieceId } = data || {};
@@ -869,49 +1261,29 @@ function handleCastling(world, piece, originalPosition, targetPosition, gameMana
 
 function handleKingCaptured({
 	world, playerId, capturedPiece, callback, piece,
-	kingCaptureService, kingDuelService, broadcaster, spectatorRegistry,
+	kingCaptureService, broadcaster, spectatorRegistry,
 }) {
 	const defeatedId = capturedPiece.player;
-	const now = Date.now();
-	const captureWindow = GAME_RULES.SIMULTANEOUS_CAPTURE_WINDOW_MS || 1000;
 
-	if (!Array.isArray(world.pendingKingCaptures)) world.pendingKingCaptures = [];
+	// Shared with the AI path: detects a near-simultaneous reverse
+	// capture (→ King's Duel), records the capture in the window, and
+	// otherwise executes it. Behaviour for the human is unchanged — the
+	// logic simply lives in one place now (see kingCaptureService).
+	const result = kingCaptureService.resolveKingCapture({ captorId: playerId, defeatedId });
 
-	const reverseCapture = world.pendingKingCaptures.find(
-		c => c.captorId === defeatedId
-			&& c.defeatedId === playerId
-			&& (now - c.timestamp) < captureWindow
-	);
-
-	if (reverseCapture) {
-		world.pendingKingCaptures = world.pendingKingCaptures.filter(c => c !== reverseCapture);
-		const duelId = kingDuelService.startDuel(defeatedId, playerId);
-
+	if (result && result.duel) {
 		if (callback) {
 			callback({
 				success: true,
 				updatedPiece: piece,
 				capturedPiece,
 				duelStarted: true,
-				duelId,
+				duelId: result.duelId,
 			});
 		}
-		broadcaster.broadcastGameUpdate();
-		spectatorRegistry.broadcastUpdate(playerId, world);
-		return;
 	}
 
-	world.pendingKingCaptures.push({
-		captorId: playerId,
-		defeatedId,
-		timestamp: now,
-	});
-	world.pendingKingCaptures = world.pendingKingCaptures.filter(
-		c => (now - c.timestamp) < captureWindow * 2
-	);
-	World.markDirty();
-
-	kingCaptureService.executeKingCapture(playerId, defeatedId);
+	broadcaster.broadcastGameUpdate();
 	spectatorRegistry.broadcastUpdate(playerId, world);
 }
 
@@ -1004,10 +1376,24 @@ function classifyMoveRejection(gameManager, world, piece, targetPosition, destEx
 	};
 }
 
+// Per-player throttle on rejected-chess-move log entries. Without
+// this an over-eager bot (or a human spam-clicking) could fill the
+// rolling 200-event activity log with their own bad attempts in a
+// few seconds, drowning out everything interesting for spectators
+// and fly-through tools.
+const REJECTION_LOG_COOLDOWN_MS = 1500;
+const _rejectionLogLastAt = new Map();
+
 function logRejection(activityLog, world, player, piece, targetPosition, reason, message) {
 	if (!activityLog || typeof activityLog.recordChessMoveRejected !== 'function') return;
+	const playerId = player?.id || (piece && piece.player) || null;
+	if (playerId) {
+		const last = _rejectionLogLastAt.get(playerId) || 0;
+		const now = Date.now();
+		if (now - last < REJECTION_LOG_COOLDOWN_MS) return;
+		_rejectionLogLastAt.set(playerId, now);
+	}
 	try {
-		const playerId = player?.id || (piece && piece.player) || null;
 		const playerName = player?.username || player?.name || playerId;
 		activityLog.recordChessMoveRejected({
 			playerId,

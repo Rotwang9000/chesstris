@@ -18,6 +18,14 @@
 const World = require('../world/World');
 const pieces = require('../game/pieces');
 
+// Grace before a non-king piece that has lost its supporting cell ENTIRELY
+// (no cell at all under it — not merely a disconnected island) is removed.
+// Line-clear gravity / settle can leave a piece momentarily cell-less
+// before it lands; the bible's philosophy is to give pieces a grace window
+// rather than evaporate them mid-cascade (LC-H1). Marooned-but-supported
+// pieces are handled separately by island decay's own grace policy.
+const NO_SUPPORT_GRACE_MS = 30 * 1000;
+
 function createIntegrityService({ gameManager, broadcaster, persistence, activityLog = null }) {
 	if (!gameManager) throw new Error('createIntegrityService: gameManager required');
 	if (!broadcaster) throw new Error('createIntegrityService: broadcaster required');
@@ -156,6 +164,14 @@ function createIntegrityService({ gameManager, broadcaster, persistence, activit
 			const cellContents = boardCells[key];
 			const cellExists = Array.isArray(cellContents) && cellContents.length > 0;
 
+			// The piece has SOME cell beneath it again — clear any pending
+			// no-support grace timer so a piece that briefly lost its
+			// footing (mid-cascade) and got it back isn't penalised later.
+			if (cellExists && Number.isFinite(piece.unsupportedSince)) {
+				delete piece.unsupportedSince;
+				changed = true;
+			}
+
 			const hasOwnSupportingTerrain = cellExists && cellContents.some(item =>
 				item
 				&& String(item.player) === String(piece.player)
@@ -181,14 +197,29 @@ function createIntegrityService({ gameManager, broadcaster, persistence, activit
 						},
 					];
 					changed = true;
-				} else {
-					pieces.removePiece(world, piece, {
-						reason: pieces.REMOVAL_REASONS.NO_SUPPORTING_CELL,
-						activityLog,
-					});
-					removedPieces++;
-					changed = true;
+					continue;
 				}
+
+				// Non-king with NO cell at all. Don't evaporate it
+				// instantly — give it a grace window first (LC-H1). A piece
+				// with no cell isn't on any island, so island decay won't
+				// catch it; the grace + cleanup lives here instead.
+				const now = Date.now();
+				if (!Number.isFinite(piece.unsupportedSince)) {
+					piece.unsupportedSince = now;
+					changed = true;
+					continue; // start the clock; re-checked next sweep
+				}
+				if (now - piece.unsupportedSince < NO_SUPPORT_GRACE_MS) {
+					continue; // still within grace — leave it be
+				}
+				pieces.removePiece(world, piece, {
+					reason: pieces.REMOVAL_REASONS.NO_SUPPORTING_CELL,
+					activityLog,
+					note: `unsupported for ${Math.round((now - piece.unsupportedSince) / 1000)}s`,
+				});
+				removedPieces++;
+				changed = true;
 				continue;
 			}
 

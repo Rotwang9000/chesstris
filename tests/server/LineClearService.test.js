@@ -117,7 +117,9 @@ describe('LineClearService', () => {
 		expect(rowCleared[0].payload.rows).toEqual([7]);
 		expect(rowCleared[0].payload.iteration).toBe(0);
 
-		// Integrity ran exactly once (one cleared iteration).
+		// Integrity now runs once at the tail of the cascade (instead
+		// of per-iteration) so a cell that's about to reconnect on the
+		// next iteration isn't decayed prematurely.
 		expect(integrity._calls).toHaveLength(1);
 		expect(broadcasts).toHaveLength(1);
 	});

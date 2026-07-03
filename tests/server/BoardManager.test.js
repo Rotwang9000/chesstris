@@ -266,6 +266,42 @@ describe('BoardManager', () => {
 			expect(game.chessPieces.find(p => p.id === 'pawn-1')).toBeUndefined();
 		});
 
+		test('a row of chess on ex-home terrain alone does not qualify as a line clear', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+			game.chessPieces = [];
+			for (let x = 0; x < 8; x++) {
+				boardManager.setCell(game.board, x, 20, [
+					{
+						type: 'tetromino',
+						pieceType: 'home_converted',
+						player: 'p1',
+						fromHomeZone: true,
+					},
+					{
+						type: 'chess',
+						player: 'p1',
+						pieceId: `pawn-${x}`,
+						pieceType: 'pawn',
+					},
+				]);
+				game.chessPieces.push({
+					id: `pawn-${x}`,
+					type: 'PAWN',
+					player: 'p1',
+					position: { x, z: 20 },
+				});
+			}
+
+			const { rows } = boardManager.checkAndClearLines(game);
+			expect(rows).toHaveLength(0);
+			for (let x = 0; x < 8; x++) {
+				const cell = boardManager.getCell(game.board, x, 20);
+				expect(cell).not.toBeNull();
+				expect(cell.some(item => item.fromHomeZone === true)).toBe(true);
+			}
+		});
+
 		test('an airborne piece survives when gravity drags a supporting cell back under it', () => {
 			const game = createGame(boardManager);
 			addPlayer(game, 'p1');
@@ -370,6 +406,66 @@ describe('BoardManager', () => {
 			for (let x = 0; x < 8; x++) {
 				expect(boardManager.getCell(game.board, x, 60)).toBeNull();
 			}
+		});
+
+		test('home cells bound the clear to the qualifying run on their side only', () => {
+			// 8 owned cells, then a home cell, then 4 more owned cells.
+			// Only the qualifying 8-run should be cleared; the 4 cells
+			// on the far side of the home gap must survive untouched.
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+			for (let x = 0; x < 8; x++) {
+				boardManager.setCell(game.board, x, 70, [{ type: 'tetromino', player: 'p1' }]);
+			}
+			boardManager.setCell(game.board, 8, 70, [{ type: 'home', player: 'p1' }]);
+			for (let x = 9; x < 13; x++) {
+				boardManager.setCell(game.board, x, 70, [{ type: 'tetromino', player: 'p1' }]);
+			}
+
+			const { rows, cells, rowRuns } = boardManager.findClearableLines(game);
+			expect(rows).toEqual([70]);
+			expect(rowRuns.get(70)).toEqual([{ start: 0, end: 7 }]);
+			expect(cells.every(c => c.x <= 7)).toBe(true);
+
+			boardManager.applyClearedLines(game, rows, [], { rowRuns });
+
+			for (let x = 0; x < 8; x++) {
+				expect(boardManager.getCell(game.board, x, 70)).toBeNull();
+			}
+			// Home cell still present.
+			expect(boardManager.getCell(game.board, 8, 70)).toEqual([
+				expect.objectContaining({ type: 'home', player: 'p1' }),
+			]);
+			// The 4 cells on the far side must NOT have been stripped.
+			for (let x = 9; x < 13; x++) {
+				const cell = boardManager.getCell(game.board, x, 70);
+				expect(cell).toEqual([
+					expect.objectContaining({ type: 'tetromino', player: 'p1' }),
+				]);
+			}
+		});
+
+		test('two qualifying runs in the same line both clear', () => {
+			// 8 cells, gap of 2 empty, 8 more cells. Two qualifying
+			// runs → both should clear; the gap stays empty.
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+			for (let x = 0; x < 8; x++) {
+				boardManager.setCell(game.board, x, 80, [{ type: 'tetromino', player: 'p1' }]);
+			}
+			for (let x = 10; x < 18; x++) {
+				boardManager.setCell(game.board, x, 80, [{ type: 'tetromino', player: 'p1' }]);
+			}
+
+			const { rows, rowRuns } = boardManager.findClearableLines(game);
+			expect(rows).toEqual([80]);
+			expect(rowRuns.get(80)).toEqual([
+				{ start: 0, end: 7 },
+				{ start: 10, end: 17 },
+			]);
+
+			const applied = boardManager.applyClearedLines(game, rows, [], { rowRuns });
+			expect(applied.totalCellsCleared).toBe(16);
 		});
 	});
 
@@ -671,6 +767,56 @@ describe('BoardManager', () => {
 		});
 	});
 	
+	describe('settleAirbornePieces', () => {
+		test('outcomes include the owning player so the client can scope sound/toast cues', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+
+			// Set up a single piece that needs to settle. Surface beneath
+			// it is intact, so the piece "lands" rather than falling.
+			game.chessPieces.push({
+				id: 'p1-ROOK', type: 'ROOK', player: 'p1',
+				position: { x: 7, z: 11 },
+			});
+			boardManager.setCell(game.board, 7, 11, [{ type: 'tetromino', player: 'p1' }]);
+
+			const outcomes = boardManager.settleAirbornePieces(
+				game,
+				[{ pieceId: 'p1-ROOK', x: 7, z: 11 }],
+				{}
+			);
+			expect(outcomes).toHaveLength(1);
+			expect(outcomes[0]).toMatchObject({
+				pieceId: 'p1-ROOK',
+				pieceOwner: 'p1',
+				outcome: 'landed',
+			});
+		});
+
+		test('outcome for a fallen piece still carries the owner so remote-clear effects on us are detectable', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p2');
+
+			// No cell underneath → piece falls into the void.
+			game.chessPieces.push({
+				id: 'p2-PAWN', type: 'PAWN', player: 'p2',
+				position: { x: 4, z: 4 },
+			});
+
+			const outcomes = boardManager.settleAirbornePieces(
+				game,
+				[{ pieceId: 'p2-PAWN', x: 4, z: 4 }],
+				{}
+			);
+			expect(outcomes).toHaveLength(1);
+			expect(outcomes[0]).toMatchObject({
+				pieceId: 'p2-PAWN',
+				pieceOwner: 'p2',
+				outcome: 'fell',
+			});
+		});
+	});
+
 	describe('isCellInSafeHomeZone', () => {
 		test('returns false when home-zone bounds exist but the cell has no active home marker', () => {
 			const game = createGame(boardManager);

@@ -21,6 +21,29 @@ const World = require('./World');
 const GRAVITY_TICK_MS = 60_000;        // Apply gravity once a minute.
 const GRAVITY_TRIGGER_DISTANCE = 60;   // Only pull players further than this.
 const GRAVITY_STEP = 1;                // Cells per tick.
+// Don't drift a player who is online or only just stepped away. Gravity
+// exists to consolidate ABANDONED / stale far-flung territory (e.g. from
+// old saves), not to tug an active player's board one square sideways —
+// that's exactly the "I placed a piece and it jumped a space" surprise.
+const GRAVITY_ACTIVE_GRACE_MS = 5 * 60 * 1000; // 5 minutes idle before eligible.
+
+/**
+ * Most recent moment a player did anything meaningful. Mirrors the
+ * idiom in IslandManager / loneKingSweep so the various housekeeping
+ * sweeps agree on what "recently active" means.
+ *
+ * @param {Object} player
+ * @returns {number} epoch ms of the last action (0 if never / unknown)
+ */
+function lastActionAt(player) {
+	if (!player) return 0;
+	return Math.max(
+		Number(player.lastTetrominoPlacementAt) || 0,
+		Number(player.lastChessMoveAt) || 0,
+		Number(player.lastActiveAt) || 0,
+		Number(player.lastMoveTime) || 0,
+	);
+}
 
 function homeZoneCentre(zone) {
 	if (!zone) return null;
@@ -38,6 +61,9 @@ function buildWorldCentroid(world) {
 	for (const playerId of Object.keys(zones)) {
 		const player = players[playerId];
 		if (!player || player.eliminated) continue;
+		// Battle seats live in remote arenas by design — including them
+		// would drag the organic world's centroid towards the arena grid.
+		if (player.battleId) continue;
 		const centre = homeZoneCentre(zones[playerId]);
 		if (!centre) continue;
 		totalX += centre.x;
@@ -157,10 +183,17 @@ function createWorldGravityService({ boardManager, broadcaster, persistence } = 
 		if (!centroid || centroid.count < 2) return;
 
 		let shifted = false;
+		const now = Date.now();
 		const zoneEntries = Object.entries(world.homeZones);
 		for (const [playerId, zone] of zoneEntries) {
 			const player = world.players?.[playerId];
 			if (!player || player.eliminated) continue;
+			// Battle seats are pinned to their arena — never drift them.
+			if (player.battleId) continue;
+			// Leave online / freshly-active players exactly where they
+			// are. Only abandoned territory gets consolidated.
+			if (player.connected) continue;
+			if (now - lastActionAt(player) < GRAVITY_ACTIVE_GRACE_MS) continue;
 			const centre = homeZoneCentre(zone);
 			if (!centre) continue;
 			const dx = centroid.x - centre.x;
@@ -205,6 +238,8 @@ module.exports = {
 	createWorldGravityService,
 	GRAVITY_TICK_MS,
 	GRAVITY_TRIGGER_DISTANCE,
+	GRAVITY_ACTIVE_GRACE_MS,
+	lastActionAt,
 	homeZoneCentre,
 	buildWorldCentroid,
 	collectPlayerFootprint,

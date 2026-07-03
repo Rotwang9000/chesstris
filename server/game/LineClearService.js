@@ -22,7 +22,16 @@
 const World = require('../world/World');
 
 const FLASH_DURATION_MS = 700;
-const MAX_CASCADE_ITERATIONS = 16;
+// 8 is enough to handle even the wildest legitimate chain — beyond
+// that we're almost certainly in a feedback loop and should just
+// stop instead of continuing to spam clears at every connected
+// client. (Was 16; AI bots were hitting the cap every ~10 s and
+// flooding the activity log + sound channels.)
+const MAX_CASCADE_ITERATIONS = 8;
+// Throttle the "hit cap" warning to once per player per minute so a
+// chronically over-active bot doesn't paper the server log.
+const CAP_LOG_COOLDOWN_MS = 60 * 1000;
+const _lastCapLogAt = new Map();
 
 function sleep(ms) {
 	return new Promise(resolve => setTimeout(resolve, ms));
@@ -67,9 +76,9 @@ function createLineClearService({ io, gameManager, broadcaster, integrityService
 		const allSettleOutcomes = [];
 		let iterations = 0;
 		while (iterations < MAX_CASCADE_ITERATIONS) {
-			const { rows, cols } = boardManager.findClearableLines(world);
+			const { rows, cols, rowRuns, colRuns } = boardManager.findClearableLines(world);
 			if (rows.length === 0 && cols.length === 0) break;
-			const applied = boardManager.applyClearedLines(world, rows, cols);
+			const applied = boardManager.applyClearedLines(world, rows, cols, { rowRuns, colRuns });
 			if (applied.rows.length === 0 && applied.cols.length === 0) break;
 			const settleOutcomes = boardManager.settleAirbornePieces(
 				world,
@@ -102,7 +111,7 @@ function createLineClearService({ io, gameManager, broadcaster, integrityService
 		let iterations = 0;
 
 		while (iterations < MAX_CASCADE_ITERATIONS) {
-			const { rows, cols, cells } = boardManager.findClearableLines(world);
+			const { rows, cols, cells, rowRuns, colRuns } = boardManager.findClearableLines(world);
 			if (rows.length === 0 && cols.length === 0) break;
 			if (cells.length === 0) break;
 
@@ -121,6 +130,11 @@ function createLineClearService({ io, gameManager, broadcaster, integrityService
 				}
 			}
 
+			let applyRows = rows;
+			let applyCols = cols;
+			let applyRowRuns = rowRuns;
+			let applyColRuns = colRuns;
+
 			if (animate) {
 				io.to(worldId).emit('cells_clearing', {
 					playerId,
@@ -132,9 +146,25 @@ function createLineClearService({ io, gameManager, broadcaster, integrityService
 					iteration: iterations,
 				});
 				await sleep(FLASH_DURATION_MS);
+
+				// The board can change during the flash window (another
+				// player's move, or someone pausing mid-flash). Re-scan
+				// and only clear lines that are STILL clearable, using
+				// the FRESH run bounds — so we never strip a cell that
+				// became protected during the flash, and never clear more
+				// than we flashed (we intersect with the original set).
+				// (LC-C2)
+				const fresh = boardManager.findClearableLines(world);
+				const freshRowSet = new Set(fresh.rows);
+				const freshColSet = new Set(fresh.cols);
+				applyRows = rows.filter(r => freshRowSet.has(r));
+				applyCols = cols.filter(c => freshColSet.has(c));
+				applyRowRuns = fresh.rowRuns;
+				applyColRuns = fresh.colRuns;
+				if (applyRows.length === 0 && applyCols.length === 0) break;
 			}
 
-			const applied = boardManager.applyClearedLines(world, rows, cols);
+			const applied = boardManager.applyClearedLines(world, applyRows, applyCols, { rowRuns: applyRowRuns, colRuns: applyColRuns });
 
 			// Bail if the apply step (somehow) did nothing — this can
 			// happen if another action modified the board during the
@@ -158,7 +188,10 @@ function createLineClearService({ io, gameManager, broadcaster, integrityService
 			World.markDirty();
 			persistence.markDirty();
 
-			integrityService.runIslandIntegrityPass({ emitAnimation: true });
+			// Integrity used to run per-iteration here, but the user
+			// reported pieces being stripped from a cell that was
+			// about to reconnect on the NEXT iteration. We now only
+			// run it once after the whole cascade settles (see below).
 
 			broadcaster.broadcastGameUpdate();
 			io.to(worldId).emit('row_cleared', {
@@ -181,11 +214,28 @@ function createLineClearService({ io, gameManager, broadcaster, integrityService
 			iterations++;
 		}
 
+		// Always run a final integrity pass after the cascade settles —
+		// even if no rows cleared — so a placement that creates a
+		// genuine orphan island still gets decayed, but only AFTER
+		// gravity has had a chance to put cells back. This is the order
+		// the user asked for: "the clearing due to not connected needs
+		// to happen after the clearing due to 8 together".
+		try {
+			integrityService.runIslandIntegrityPass({ emitAnimation: iterations > 0 });
+		} catch (integrityErr) {
+			console.warn('[LineClear] final integrity pass failed:', integrityErr.message);
+		}
+
 		if (iterations >= MAX_CASCADE_ITERATIONS) {
-			console.warn(
-				`[LineClear] Cascade hit hard cap (${MAX_CASCADE_ITERATIONS}) for ${playerId}; ` +
-				`stopping to avoid infinite loop.`
-			);
+			const last = _lastCapLogAt.get(playerId) || 0;
+			const now = Date.now();
+			if (now - last >= CAP_LOG_COOLDOWN_MS) {
+				_lastCapLogAt.set(playerId, now);
+				console.warn(
+					`[LineClear] Cascade hit hard cap (${MAX_CASCADE_ITERATIONS}) for ${playerId}; ` +
+					`further hits within ${Math.round(CAP_LOG_COOLDOWN_MS / 1000)}s will be silent.`
+				);
+			}
 		}
 
 		return { rows: allRows, cols: allCols, iterations, settleOutcomes: allSettleOutcomes };

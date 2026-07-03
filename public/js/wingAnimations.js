@@ -20,6 +20,7 @@
  */
 
 import { getTHREE } from './gameContext.js';
+import { setPieceMatrixStatic } from './pieceMatrixState.js';
 
 const HOVER_HEIGHT = 1.4;
 const HOVER_DURATION_MS = 700;
@@ -27,6 +28,15 @@ const LAND_DURATION_MS = 520;
 const FALL_DURATION_MS = 1100;
 const FALL_DEPTH = -4.5;
 const WING_COLOUR = 0xffffff;
+
+// Max wall-clock a piece is allowed to stay airborne before the
+// watchdog forcibly settles it. The server fires `cells_clearing`
+// 700 ms ahead of `row_cleared`, so the legitimate hover window is
+// well under a second. Any piece still airborne after this has hit
+// a dropped or out-of-order event and would otherwise flap forever
+// (see player report: "queen on an island cell… won't stop flying
+// with wings").
+const MAX_AIRBORNE_MS = 6000;
 
 const airbornePieces = new Map();
 let chessGroupRef = null;
@@ -77,6 +87,10 @@ function attachWings(mesh) {
 	if (!mesh || mesh.userData?.wings) return;
 	const THREE = getTHREE();
 	if (!THREE) return;
+	// Isolate this piece's materials from the global cache so any fade
+	// we apply during the fall animation can't bleed across every other
+	// piece using the same shared `ENHANCED_MATERIALS` instance.
+	isolateMeshMaterials(mesh);
 	const wings = {
 		left: buildWing(THREE, 'left'),
 		right: buildWing(THREE, 'right'),
@@ -85,6 +99,27 @@ function attachWings(mesh) {
 	mesh.add(wings.right);
 	mesh.userData = mesh.userData || {};
 	mesh.userData.wings = wings;
+}
+
+/**
+ * Replace every material on `mesh` with a per-instance clone so opacity /
+ * colour mutations on the airborne piece don't affect any other piece
+ * that happens to share the cached material objects. Tracks the swap on
+ * `mesh.userData.materialsIsolated` so we don't double-clone if a piece
+ * survives one wing cycle and grows wings a second time.
+ */
+function isolateMeshMaterials(mesh) {
+	if (!mesh || mesh.userData?.materialsIsolated) return;
+	mesh.traverse((node) => {
+		if (!node || !node.isMesh || !node.material) return;
+		if (Array.isArray(node.material)) {
+			node.material = node.material.map(m => (m && typeof m.clone === 'function') ? m.clone() : m);
+		} else if (typeof node.material.clone === 'function') {
+			node.material = node.material.clone();
+		}
+	});
+	mesh.userData = mesh.userData || {};
+	mesh.userData.materialsIsolated = true;
 }
 
 function detachWings(mesh) {
@@ -119,6 +154,7 @@ function ensureFlapTicker() {
 			return;
 		}
 		const now = performance.now();
+		const stuckIds = [];
 		for (const [pieceId, entry] of airbornePieces) {
 			const mesh = entry.mesh;
 			if (!mesh) continue;
@@ -129,6 +165,21 @@ function ensureFlapTicker() {
 				const bob = Math.sin(now * 0.005) * 0.07;
 				mesh.position.y = entry.targetY + bob;
 			}
+			// Stuck-wings watchdog. The legitimate hover window is
+			// ~1 s between `cells_clearing` and `row_cleared`. If the
+			// settle event was dropped or sent out of order we'd
+			// otherwise flap forever. After MAX_AIRBORNE_MS we
+			// fake a "landed" settle so the piece returns to its
+			// base height and the wings come off.
+			if (entry.startedAt
+				&& (now - entry.startedAt) > MAX_AIRBORNE_MS
+				&& entry.phase !== 'falling') {
+				stuckIds.push(pieceId);
+			}
+		}
+		if (stuckIds.length > 0) {
+			console.warn('[Wings] Watchdog forcibly settling stuck pieces:', stuckIds);
+			settleAirbornePieces(stuckIds.map(id => ({ pieceId: id, outcome: 'landed' })));
 		}
 		activeFlap = requestAnimationFrame(tick);
 	};
@@ -173,6 +224,10 @@ export function liftAirbornePieces(pieceIds) {
 		// hovers; `updateChessPieces.js` checks this flag before
 		// resetting positions.
 		mesh.userData.inFlight = true;
+		// The piece may have been frozen by the static-pieces
+		// optimisation; thaw it so the per-frame hover/flap Y writes
+		// below actually render (frozen-piece failure mode).
+		setPieceMatrixStatic(mesh, false);
 		attachWings(mesh);
 
 		const baseY = mesh.position.y || 0;
@@ -182,6 +237,7 @@ export function liftAirbornePieces(pieceIds) {
 			baseY,
 			targetY,
 			phase: 'lifting',
+			startedAt: performance.now(),
 		});
 		tween(mesh, {
 			fromY: baseY,
@@ -225,6 +281,11 @@ export function settleAirbornePieces(outcomes) {
 							mesh.userData.airborne = false;
 							mesh.userData.inFlight = false;
 						}
+						// Settled back on the board — re-freeze its matrix
+						// (static-pieces optimisation). The reconciler will
+						// also re-freeze on its next pass; doing it here means
+						// we don't pay a per-frame compose in the gap.
+						setPieceMatrixStatic(mesh, true);
 						airbornePieces.delete(id);
 					},
 				});

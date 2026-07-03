@@ -1,6 +1,7 @@
 import { getTHREE } from './gameContext.js';
 import { findBoardCentreMarker, translatePosition } from './centreBoardMarker.js';
 import { boardFunctions } from './boardFunctions.js';
+import { isBattleRegionCell, getActiveBattle } from './battle/battleRules.js';
 
 /**
  * Pull the camera back to a high-level overview of the entire board.
@@ -8,27 +9,46 @@ import { boardFunctions } from './boardFunctions.js';
  * Computes the bounding box of all populated cells and frames it so
  * the whole island is visible. Falls back to a sensible default extent
  * when the board is empty.
+ *
+ * Battle arenas live thousands of cells from the origin; framing them
+ * together with the organic world would zoom the camera into orbit. So
+ * the fit uses only the region the local player is actually in: their
+ * arena while battling, the organic world otherwise.
  */
 export function setCameraToOverview(camera, controls, gameState) {
 	if (!camera || !controls) return;
 
 	const board = gameState?.board;
 	let centerX = 0, centerZ = 0, maxExtent = 50;
+	const battle = getActiveBattle(gameState);
+	const ARENA_FRAME_RADIUS = 40;
+	const includeCell = (x, z) => {
+		if (battle && battle.centre) {
+			return Math.abs(x - battle.centre.x) <= ARENA_FRAME_RADIUS
+				&& Math.abs(z - battle.centre.z) <= ARENA_FRAME_RADIUS;
+		}
+		return !isBattleRegionCell(x, z);
+	};
 
 	if (board && board.cells) {
 		const cellKeys = Object.keys(board.cells);
 		if (cellKeys.length > 0) {
 			let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+			let counted = 0;
 			for (const key of cellKeys) {
 				const [x, z] = key.split(',').map(Number);
+				if (!includeCell(x, z)) continue;
 				if (x < minX) minX = x;
 				if (x > maxX) maxX = x;
 				if (z < minZ) minZ = z;
 				if (z > maxZ) maxZ = z;
+				counted++;
 			}
-			centerX = (minX + maxX) / 2;
-			centerZ = (minZ + maxZ) / 2;
-			maxExtent = Math.max(maxX - minX, maxZ - minZ, 50);
+			if (counted > 0) {
+				centerX = (minX + maxX) / 2;
+				centerZ = (minZ + maxZ) / 2;
+				maxExtent = Math.max(maxX - minX, maxZ - minZ, 50);
+			}
 		}
 	}
 
@@ -51,6 +71,19 @@ const CAMERA_DEFAULTS = {
 	MAX_DISTANCE: 80,
 	DAMPING_FACTOR: 0.12,
 	FLY_DURATION_MS: 1800,
+	/** Longest sweep (distance-scaled) — cross-world drone flights. */
+	FLY_DURATION_MAX_MS: 4500,
+	/** Cap on how high the flight arc climbs above the endpoints. */
+	FLY_ARC_MAX_HEIGHT: 120,
+	/**
+	 * Beyond this horizontal distance a fly becomes a WARP (fade out,
+	 * teleport, fade in). Battle arenas sit ~2,000+ cells from the
+	 * world — flying that far is seconds of empty sea and sky, so the
+	 * screen "just goes blue". Ordinary in-world hops stay flights.
+	 */
+	WARP_DISTANCE: 300,
+	WARP_FADE_IN_MS: 350,
+	WARP_FADE_OUT_MS: 650,
 	KING_VIEW_DISTANCE: 16,
 	FALLBACK_POSITION: { x: 10, y: 25, z: 10 },
 	FALLBACK_TARGET: { x: 0, y: 0, z: 0 }
@@ -254,6 +287,65 @@ function easeOutCubic(t) {
 	return 1 - Math.pow(1 - t, 3);
 }
 
+// ── Warp transition (fade → teleport → fade) ───────────────────────────────
+
+let warpTimer = null;
+
+/** Full-screen sky-coloured fade layer, created lazily and reused. */
+function ensureWarpOverlay() {
+	let overlay = document.getElementById('camera-warp-overlay');
+	if (!overlay) {
+		overlay = document.createElement('div');
+		overlay.id = 'camera-warp-overlay';
+		overlay.style.cssText = [
+			'position:fixed', 'inset:0',
+			// Matches the scene fog / sky so the fade reads as "lens
+			// whiting out over the sea", not a UI curtain.
+			'background:#C5F0FF',
+			'opacity:0', 'pointer-events:none', 'z-index:9000',
+			'transition:opacity 350ms ease',
+		].join(';');
+		document.body.appendChild(overlay);
+	}
+	return overlay;
+}
+
+/**
+ * Long-haul camera move: fade the screen to sky, snap the camera at
+ * the destination, fade back in. Replaces multi-second flights over
+ * empty water (world ↔ battle arenas) with a ~1s transition.
+ */
+function warpToPosition(camera, controls, targetPosition, targetLookAt, renderer, scene, onComplete) {
+	cancelFlyAnimation();
+	if (warpTimer) {
+		clearTimeout(warpTimer);
+		warpTimer = null;
+	}
+
+	const overlay = ensureWarpOverlay();
+	overlay.style.transitionDuration = `${CAMERA_DEFAULTS.WARP_FADE_IN_MS}ms`;
+	// Force a style flush so the transition runs even if the overlay
+	// was created this frame.
+	void overlay.offsetWidth;
+	overlay.style.opacity = '1';
+
+	warpTimer = setTimeout(() => {
+		warpTimer = null;
+		controls.target.set(targetLookAt.x, targetLookAt.y, targetLookAt.z);
+		camera.position.set(targetPosition.x, targetPosition.y, targetPosition.z);
+		controls.update();
+		if (renderer && scene) {
+			try { renderer.render(scene, camera); } catch (_e) { /* main loop covers it */ }
+		}
+		// Give the destination one painted frame before lifting the veil.
+		requestAnimationFrame(() => {
+			overlay.style.transitionDuration = `${CAMERA_DEFAULTS.WARP_FADE_OUT_MS}ms`;
+			overlay.style.opacity = '0';
+			if (typeof onComplete === 'function') onComplete();
+		});
+	}, CAMERA_DEFAULTS.WARP_FADE_IN_MS + 50);
+}
+
 /**
  * Animate camera with a smooth flying arc to target position.
  *
@@ -285,14 +377,25 @@ export function flyToPosition(camera, controls, targetPosition, targetLookAt, re
 	};
 	activeFlyControlsRestore = restoreControls;
 
-	const duration = CAMERA_DEFAULTS.FLY_DURATION_MS;
-	const startTime = performance.now();
-
-	// Arc height based on distance
+	// Sweep duration and arc height both scale with distance so short
+	// hops stay snappy. TRULY long hauls (world ↔ battle arena,
+	// ~2,800 units of empty sea) warp instead: fade out, teleport,
+	// fade in — flying that far just looks like a blue screen.
 	const dx = targetPosition.x - startPosition.x;
 	const dz = targetPosition.z - startPosition.z;
 	const horizontalDist = Math.sqrt(dx * dx + dz * dz);
-	const arcHeight = Math.min(horizontalDist * 0.4, 20);
+	if (horizontalDist > CAMERA_DEFAULTS.WARP_DISTANCE && typeof document !== 'undefined') {
+		restoreControls();
+		activeFlyControlsRestore = null;
+		warpToPosition(camera, controls, targetPosition, targetLookAt, renderer, scene, onComplete);
+		return;
+	}
+	const duration = Math.min(
+		CAMERA_DEFAULTS.FLY_DURATION_MS + horizontalDist * 8,
+		CAMERA_DEFAULTS.FLY_DURATION_MAX_MS
+	);
+	const startTime = performance.now();
+	const arcHeight = Math.min(horizontalDist * 0.4, CAMERA_DEFAULTS.FLY_ARC_MAX_HEIGHT);
 
 	const midY = Math.max(startPosition.y, targetPosition.y) + arcHeight;
 

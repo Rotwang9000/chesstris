@@ -3,6 +3,8 @@ import chessPieceCreator, { createChessPiece as createDetailedChessPiece } from 
 import { getTHREE } from './gameContext.js';
 import { highlightSinglePiece, setChessPiecesGroup } from './pieceHighlightManager.js';
 import { translatePosition } from './centreBoardMarker.js';
+import { setPieceMatrixStatic } from './pieceMatrixState.js';
+import { isCellVisibleInCurrentView } from './battle/battleRules.js';
 
 
 // Add a timer to track when chess pieces were last updated
@@ -39,9 +41,12 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 	}
 	
 	// Generate a hash of the current chess pieces + render profile so
-	// switching themes triggers a rebuild even when positions haven't changed.
+	// switching themes triggers a rebuild even when positions haven't
+	// changed. The view tag makes entering/leaving a battle arena a
+	// "change" too — the visible piece set flips wholesale.
 	const profileTag = gameState.renderProfile || (gameState.retroMode ? 'retro' : 'normal');
-	let currentHash = `profile:${profileTag}|`;
+	const viewTag = gameState.activeBattle?.id || 'world';
+	let currentHash = `profile:${profileTag}|view:${viewTag}|`;
 	if (gameState.chessPieces && Array.isArray(gameState.chessPieces)) {
 		currentHash += gameState.chessPieces.map(piece => {
 			if (!piece) return '';
@@ -50,7 +55,8 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 			const pz = (pos && pos.z !== undefined) ? pos.z : piece.z;
 			const orientation = Number.isFinite(piece.orientation) ? piece.orientation : '';
 			const hasMoved = piece.hasMoved ? 1 : 0;
-			return `${piece.id}-${piece.type}-${piece.player}-${px}-${pz}-${hasMoved}-${orientation}`;
+			const awaiting = piece.awaitingPromotion ? 1 : 0;
+			return `${piece.id}-${piece.type}-${piece.player}-${px}-${pz}-${hasMoved}-${orientation}-${awaiting}`;
 		}).sort().join('|');
 	}
 	
@@ -182,6 +188,18 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 			}
 		}
 
+		// View isolation: while seated in a battle only arena pieces
+		// render; outside a battle the remote arena region's pieces are
+		// hidden. The full list stays intact on gameState — this only
+		// scopes what gets meshes (unprocessed meshes are pruned below).
+		if (Array.isArray(chessPieces) && chessPieces.length > 0) {
+			chessPieces = chessPieces.filter(piece => {
+				const pos = piece?.position;
+				if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.z)) return false;
+				return isCellVisibleInCurrentView(gameState, pos.x, pos.z);
+			});
+		}
+
 		// Quick safety check - if we have no chess pieces, stop processing
 		if (!chessPieces || chessPieces.length === 0) {
 			const existing = [...chessPiecesGroup.children];
@@ -216,6 +234,19 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 		// Reset the group position to origin - this is critical!
 		// The board cells are positioned directly at their coordinates without any group offset
 		chessPiecesGroup.position.set(0, 0, 0);
+
+		// Hoist the in-flight optimistic-move pin so the per-piece loop
+		// can suppress *position* updates (not just removals) while a
+		// tween is running. Without this a heartbeat `game_update`
+		// arriving mid-animation snaps the moving mesh back to its old
+		// cell, then forward again when the ack lands.
+		const PIN_SAFETY_MS = 2000;
+		const inFlight = gameState?.inFlightMove;
+		const inFlightId = inFlight?.pieceId ? String(inFlight.pieceId) : null;
+		const inFlightStillValid = inFlight && (
+			!Number.isFinite(inFlight.startedAt)
+				|| (now - inFlight.startedAt) < PIN_SAFETY_MS
+		);
 
 		chessPieces.forEach(piece => {
 			try {
@@ -301,7 +332,20 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 						// Y position and the surrounding XZ until the
 						// settle phase removes the airborne flag.
 						const isAirborne = existingPiece.userData && existingPiece.userData.airborne;
-						if (!isAirborne && (
+						// Don't yank pieces that are mid-tween either.
+						// `inFlightMove` covers the optimistic-move
+						// window; without this guard a heartbeat
+						// `game_update` that arrives mid-animation
+						// (server hasn't seen the move yet) snaps the
+						// mesh back to its old square, which is the
+						// "flick back then forward" the user reported.
+						const isPinned = !!(
+							inFlight
+							&& inFlightId
+							&& String(pieceId) === inFlightId
+							&& inFlightStillValid
+						);
+						if (!isAirborne && !isPinned && (
 							existingPiece.position.x !== adjustX
 							|| existingPiece.position.z !== adjustZ
 							|| existingPiece.position.y !== 0.5
@@ -431,7 +475,16 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 					pieceMesh.userData.color = getChessPieceColor(piece, gameState);
 					pieceMesh.userData.hasMoved = !!piece.hasMoved;
 					pieceMesh.userData.orientation = orientationVal;
-					
+					// Mirror per-piece stats so the selected-piece info
+					// card can render immediately on click without
+					// re-querying gameState.
+					pieceMesh.userData.moveCount = Number.isFinite(piece.moveCount) ? piece.moveCount : 0;
+					pieceMesh.userData.captureCount = Number.isFinite(piece.captureCount) ? piece.captureCount : 0;
+					pieceMesh.userData.distanceTravelled = Number.isFinite(piece.distanceTravelled) ? piece.distanceTravelled : 0;
+					pieceMesh.userData.forwardDistance = Number.isFinite(piece.forwardDistance) ? piece.forwardDistance : 0;
+					pieceMesh.userData.awaitingPromotion = piece.awaitingPromotion === true;
+					applyAwaitingPromotionHalo(pieceMesh, THREE);
+
 					// Add an invisible, larger hitbox so clicks reliably register on pieces (esp. from far camera angles)
 					try {
 						if (pieceMesh.getObjectByName && !pieceMesh.getObjectByName('raycast-hitbox')) {
@@ -453,6 +506,9 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 							hitbox.position.set(0, 0.38, 0);
 							hitbox.castShadow = false;
 							hitbox.receiveShadow = false;
+							// The hitbox never moves relative to its piece, so
+							// freeze its local matrix (static-pieces optimisation).
+							setPieceMatrixStatic(hitbox, true);
 							pieceMesh.add(hitbox);
 						}
 					} catch (e) {
@@ -513,6 +569,20 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 							console.error('Error highlighting piece:', highlightErr);
 						}
 					}
+
+					// Static-pieces optimisation: a SETTLED piece doesn't
+					// change its transform between syncs, so stop recomputing
+					// its local matrix every frame. This runs only when the
+					// reconciler fires (rate-limited + hash-gated), and bakes
+					// the final transform set above. Pieces that are mid-
+					// animation must stay dynamic — the wing animation owns an
+					// airborne piece's per-frame Y, and the optimistic-move pin
+					// owns the moving mesh — so we keep those flagged dynamic;
+					// their animation owners re-freeze them when they settle.
+					const pieceAnimating =
+						!!(pieceMesh.userData && (pieceMesh.userData.airborne || pieceMesh.userData.inFlight))
+						|| !!(inFlight && inFlightId && String(pieceId) === inFlightId && inFlightStillValid);
+					setPieceMatrixStatic(pieceMesh, !pieceAnimating);
 				}
 			} catch (pieceErr) {
 				console.error('Error processing chess piece:', pieceErr);
@@ -520,20 +590,19 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 		});
 
 		// Remove any pieces that are no longer in the game. Honour the
-		// in-flight optimistic move pin so a `game_update` arriving
-		// mid-animation can't yank the moving mesh out from underneath
-		// the tween — that race was the root cause of the user's
-		// "knight just disappeared" report. The pin is cleared once the
-		// move ack arrives (success or failure) by `chessInteraction.js`.
-		// We also stop pruning the piece for a short safety window so a
-		// failed ack still has time to revert visually.
-		const inFlight = gameState?.inFlightMove;
-		const inFlightId = inFlight?.pieceId ? String(inFlight.pieceId) : null;
-		const PIN_SAFETY_MS = 2000;
-		const inFlightStillValid = inFlight && (
-			!Number.isFinite(inFlight.startedAt)
-				|| (now - inFlight.startedAt) < PIN_SAFETY_MS
-		);
+		// in-flight optimistic move pin (hoisted earlier) so a
+		// `game_update` arriving mid-animation can't yank the moving
+		// mesh out from underneath the tween.
+		// One mesh per board cell — drop stale ghosts (e.g. captured pawn
+		// under the capturing knight) that survived a partial sync.
+		const cellToCanonicalId = new Map();
+		for (const piece of chessPieces) {
+			if (!piece?.position) continue;
+			const key = `${piece.position.x},${piece.position.z}`;
+			const pid = piece.id || `${piece.player}-${piece.type}-${piece.position.x}-${piece.position.z}`;
+			cellToCanonicalId.set(key, String(pid));
+		}
+
 		const currentPieces = [...chessPiecesGroup.children];
 		let piecesRemoved = 0;
 
@@ -575,6 +644,32 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 				console.error('Error removing chess piece:', removeErr);
 			}
 		});
+
+		for (const pieceMesh of [...chessPiecesGroup.children]) {
+			try {
+				const pos = pieceMesh?.userData?.position;
+				const meshId = pieceMesh?.userData?.id;
+				if (!pos || !meshId) continue;
+				const key = `${pos.x},${pos.z}`;
+				const canonicalId = cellToCanonicalId.get(key);
+				if (!canonicalId) continue;
+				if (String(meshId) === canonicalId) continue;
+				if (inFlightStillValid && inFlightId && String(meshId) === inFlightId) continue;
+				if (pieceMesh.userData.airborne) continue;
+				chessPiecesGroup.remove(pieceMesh);
+				if (pieceMesh.geometry) pieceMesh.geometry.dispose();
+				if (pieceMesh.material) {
+					if (Array.isArray(pieceMesh.material)) {
+						pieceMesh.material.forEach(m => m && m.dispose && m.dispose());
+					} else if (pieceMesh.material.dispose) {
+						pieceMesh.material.dispose();
+					}
+				}
+				piecesRemoved++;
+			} catch (dedupeErr) {
+				console.error('Error deduping chess piece at cell:', dedupeErr);
+			}
+		}
 
 		// If we're here due to a forced update but nothing actually changed,
 		// we can skip the verbose logging at the end
@@ -744,6 +839,65 @@ function toHexNumber(colour) {
 	return null;
 }
 
+// Animated yellow halo that hovers around frozen pawns. Shared geometry
+// + material across all halos; per-mesh user data stores the animation
+// start so each pulses independently.
+const HALO_NAME = 'awaiting-promotion-halo';
+
+function applyAwaitingPromotionHalo(pieceMesh, THREE) {
+	if (!pieceMesh || !pieceMesh.getObjectByName) return;
+	const existing = pieceMesh.getObjectByName(HALO_NAME);
+	if (!pieceMesh.userData?.awaitingPromotion) {
+		if (existing) {
+			pieceMesh.remove(existing);
+			if (existing.geometry) existing.geometry.dispose();
+			if (existing.material && existing.material.dispose) existing.material.dispose();
+		}
+		return;
+	}
+	if (existing) return;
+
+	if (!applyAwaitingPromotionHalo._geometry) {
+		applyAwaitingPromotionHalo._geometry = new THREE.RingGeometry(0.46, 0.6, 32);
+	}
+	const material = new THREE.MeshBasicMaterial({
+		color: 0xffd54a,
+		transparent: true,
+		opacity: 0.55,
+		side: THREE.DoubleSide,
+		depthTest: false,
+		depthWrite: false,
+	});
+	const halo = new THREE.Mesh(applyAwaitingPromotionHalo._geometry, material);
+	halo.name = HALO_NAME;
+	halo.rotation.x = -Math.PI / 2;
+	halo.position.set(0, 0.05, 0);
+	halo.renderOrder = 999;
+	halo.userData.bornAt = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+	pieceMesh.add(halo);
+}
+
+/**
+ * Tick every visible halo so it pulses. Called from the main render
+ * loop; cheap when nobody has a frozen pawn (loop exits immediately).
+ *
+ * @param {THREE.Group} chessPiecesGroup
+ */
+export function updateAwaitingPromotionHalos(chessPiecesGroup) {
+	if (!chessPiecesGroup || !Array.isArray(chessPiecesGroup.children)) return;
+	const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+	for (const pieceMesh of chessPiecesGroup.children) {
+		const halo = pieceMesh && pieceMesh.getObjectByName && pieceMesh.getObjectByName(HALO_NAME);
+		if (!halo) continue;
+		const t = (now - (halo.userData.bornAt || now)) / 1000;
+		const pulse = 0.4 + 0.25 * Math.sin(t * 3.2);
+		if (halo.material) halo.material.opacity = pulse;
+		const scale = 1 + 0.08 * Math.sin(t * 3.2);
+		halo.scale.set(scale, scale, 1);
+		halo.rotation.z = t * 0.6;
+	}
+}
+
 /**
  * Get the color for a chess piece
  * @param {Object} piece - The chess piece data
@@ -763,10 +917,11 @@ function getChessPieceColor(piece, gameState) {
 		return boardFunctions.getPlayerColor(piece.player, gameState, 'chess');
 	}
 	
-	// Fallback if the centralized function isn't available
-	// Always color current player pieces as red
-	if (gameState && gameState.currentPlayer && String(piece.player) === String(gameState.currentPlayer)) {
-		return 0xAA0000; // Red for current player's pieces
+	// Fallback: highlight only the local human's pieces (not whoever's
+	// tetris turn is active — that made opponents look "yours").
+	const localId = gameState && (gameState.localPlayerId || gameState.myPlayerId);
+	if (localId && String(piece.player) === String(localId)) {
+		return 0xAA0000;
 	}
 	
 	// Player 1 is usually white

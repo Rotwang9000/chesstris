@@ -39,13 +39,31 @@ fi
 
 mkdir -p "${DEPLOY_DIR}/logs"
 
-# Sync files (exclude dev-only artefacts)
+# Build the production client bundle FIRST, in the source tree (which has
+# the full dependency set incl. esbuild). The server auto-detects
+# public/dist/app.bundle.js at boot and rewrites index.html to load that
+# single minified file instead of ~60 raw ES modules. The rsync below then
+# ships the freshly built bundle. Without this step production would serve
+# the unbundled dev modules.
+echo "--- Building client bundle ---"
+npm run build:client
+
+# Sync files. Excludes dev-only artefacts AND live runtime state that the
+# running server owns — the persisted world (`/data/`), the advertiser
+# registry (`/advertisers.json`) and uploaded ad images
+# (`/advertiser-pending-images/`). Because rsync runs with `--delete`,
+# NOT excluding these would clobber the live production world with the
+# (separate) dev world on every deploy. The leading slash anchors each to
+# the deploy root so nested dirs of the same name are unaffected.
 echo "--- Syncing files ---"
 rsync -r --delete --no-times --omit-dir-times --no-perms --no-group --no-owner --chmod=ugo=rwX \
 	--exclude='node_modules' \
 	--exclude='.git' \
 	--exclude='.env' \
 	--exclude='.env.local' \
+	--exclude='/data/' \
+	--exclude='/advertisers.json' \
+	--exclude='/advertiser-pending-images/' \
 	--exclude='*.test.js' \
 	--exclude='tests/' \
 	--exclude='ci/' \
@@ -84,11 +102,11 @@ elif command -v pm2 &>/dev/null; then
 	_pm2_on_host=true
 	# Check if we can actually talk to a PM2 daemon
 	if pm2 ping &>/dev/null 2>&1; then
+		mkdir -p "${DEPLOY_DIR}/logs"
 		if pm2 describe "$PM2_NAME" &>/dev/null; then
-			pm2 restart "$PM2_NAME" --update-env
-		else
-			pm2 start "${DEPLOY_DIR}/ecosystem.config.cjs" --only "$PM2_NAME"
+			pm2 delete "$PM2_NAME" &>/dev/null || true
 		fi
+		pm2 start "${DEPLOY_DIR}/ecosystem.config.cjs" --only "$PM2_NAME"
 		pm2 save
 		echo "PM2 restarted ${PM2_NAME} directly"
 		_pm2_on_host=false

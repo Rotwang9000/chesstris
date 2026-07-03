@@ -5,7 +5,10 @@
  * to prevent injection attacks, buffer overflows, and other security issues.
  */
 
-const { expect, describe, it, beforeEach, afterEach, jest } = require('@jest/globals');
+// NOTE: `jest` is intentionally NOT destructured here — babel-jest's hoist
+// plugin injects a `jest` binding, so re-declaring it via @jest/globals is a
+// parse-time "already declared" error. The global `jest` is used directly.
+const { expect, describe, it, beforeEach, afterEach } = require('@jest/globals');
 const express = require('express');
 const request = require('supertest');
 
@@ -78,6 +81,9 @@ const validationUtils = {
 
 // Create a mock Express app for testing
 const mockApp = express();
+// Parse JSON bodies — without this every POST route's `req.body` is
+// undefined and the destructuring throws a 500 before any assertion.
+mockApp.use(express.json());
 
 // Mock middleware for the tests
 const validateInput = (req, res, next) => {
@@ -105,12 +111,21 @@ const validateInput = (req, res, next) => {
   next();
 };
 
-// Mock routes for testing
+// Mock routes for testing. The chess-move / tetromino endpoints REQUIRE
+// their payload — a request that omits `move` / `placement` entirely is
+// itself malformed (the generic validateInput only validates the field
+// when present, so the route enforces presence).
 mockApp.post('/api/games/:gameId/chess-move', validateInput, (req, res) => {
+  if (!req.body.move) {
+    return res.status(400).json({ error: 'Invalid chess move' });
+  }
   res.status(200).json({ success: true });
 });
 
 mockApp.post('/api/games/:gameId/tetromino-placement', validateInput, (req, res) => {
+  if (!req.body.placement) {
+    return res.status(400).json({ error: 'Invalid tetromino placement' });
+  }
   res.status(200).json({ success: true });
 });
 
@@ -127,13 +142,18 @@ mockApp.get('/api/games/:gameId', validateInput, (req, res) => {
 describe('Input Validation Security Tests', () => {
   describe('Parameter Validation', () => {
     it('should reject invalid game IDs', async () => {
-      // Test various invalid game IDs
+      // Test various invalid game IDs. NOTE: each must survive URL routing
+      // to actually reach the validator: a literal '/' splits the path
+      // (404) and a literal '#' is treated as a fragment (so `game#123`
+      // would arrive as the *valid* id `game`). The XSS and path-traversal
+      // cases are therefore percent-encoded; Express decodes them back into
+      // `req.params.gameId` before validation.
       const invalidGameIds = [
-        '<script>alert("xss")</script>',
-        'game#123',
-        'a'.repeat(51), // Too long
-        'ab',           // Too short
-        '../../etc/passwd' // Path traversal attempt
+        '%3Cscript%3E',          // XSS attempt (encoded <script>)
+        'game.123',              // invalid char (dot)
+        'a'.repeat(51),          // Too long
+        'ab',                    // Too short
+        '..%2F..%2Fetc%2Fpasswd' // Path traversal attempt (encoded)
       ];
       
       for (const gameId of invalidGameIds) {

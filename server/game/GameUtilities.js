@@ -84,7 +84,9 @@ function findHomeZonePosition(game) {
 	const players = (game && game.players) || {};
 	const livingZoneCount = Object.keys(game.homeZones || {}).filter(pid => {
 		const p = players[pid];
-		return !(p && p.eliminated);
+		// Battle seats don't count towards the organic-world index —
+		// their zones sit in remote arenas.
+		return !(p && (p.eliminated || p.battleId));
 	}).length;
 	const playerIndex = livingZoneCount;
 	

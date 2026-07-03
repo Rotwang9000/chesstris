@@ -3,14 +3,43 @@
 <head>
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<title>Tetches</title>
-	<meta name="description" content="Tetches is a unique game that combines elements of chess and Tetris on a dynamically expanding board.">
-	
+	<title>Tetches — Chess meets Tetris, live multiplayer</title>
+	<meta name="description" content="Tetches is a free, real-time multiplayer game that fuses chess and Tetris on a dynamically expanding board. Play instantly in your browser — no download, no sign-up.">
+	<link rel="canonical" href="https://tetches.com/">
+	<meta name="theme-color" content="#ffcc00">
+
+	<!-- Icons + PWA manifest -->
+	<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+	<link rel="apple-touch-icon" href="/favicon.svg">
+	<link rel="manifest" href="/manifest.json">
+
+	<!-- Open Graph (Facebook, Discord, Slack, etc.) -->
+	<meta property="og:type" content="website">
+	<meta property="og:site_name" content="Tetches">
+	<meta property="og:title" content="Tetches — Chess meets Tetris">
+	<meta property="og:description" content="A free, real-time multiplayer game that fuses chess and Tetris on a dynamically expanding board. Play instantly in your browser.">
+	<meta property="og:url" content="https://tetches.com/">
+	<meta property="og:image" content="https://tetches.com/img/og-image.png">
+	<meta property="og:image:width" content="1200">
+	<meta property="og:image:height" content="630">
+
+	<!-- Twitter / X card -->
+	<meta name="twitter:card" content="summary_large_image">
+	<meta name="twitter:title" content="Tetches — Chess meets Tetris">
+	<meta name="twitter:description" content="A free, real-time multiplayer game that fuses chess and Tetris on a dynamically expanding board. Play instantly in your browser.">
+	<meta name="twitter:image" content="https://tetches.com/img/og-image.png">
+
 	<!-- Libraries -->
 	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
 	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
 	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
 	<script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.8.1/dist/socket.io.min.js"></script>
+	<!-- Auth0 SPA SDK (passwordless email) is deliberately NOT loaded:
+	     the email sign-in flow is feature-flagged off (ENABLE_AUTH_SIGNIN
+	     in createLoadingIndicator.js) and the kingdom-key login needs no
+	     third party. When re-enabling Auth0, restore:
+	     <script src="https://cdn.auth0.com/js/auth0-spa-js/2.1/auth0-spa-js.production.js"></script>
+	     (auth0Client.js expects it on window.auth0). -->
 	
 	<style>
 		@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&display=swap');
@@ -136,7 +165,7 @@
 			text-shadow: 0 0 10px rgba(255, 204, 0, 0.5);
 		}
 		
-		/* Debug indicator */
+		/* Bottom-left utility strip (camera / controls / render mode) */
 		.debug-indicator {
 			position: fixed;
 			left: 10px;
@@ -144,6 +173,38 @@
 			z-index: 100;
 			color: rgba(255, 255, 255, 0.7);
 			font-size: 12px;
+			display: flex;
+			flex-wrap: wrap;
+			align-items: center;
+			gap: 6px;
+			max-width: min(62vw, 520px);
+		}
+		.debug-indicator button {
+			padding: 2px 7px;
+			background: #333;
+			color: #ffcc00;
+			border: 1px solid #ffcc00;
+			border-radius: 3px;
+			cursor: pointer;
+			font-family: 'Playfair Display', serif;
+		}
+		/* Small screens: keep only the essentials down there. The Player
+		   Code lives in the player bar and the touch pad needs the space. */
+		@media (max-width: 700px) {
+			.debug-indicator {
+				gap: 4px;
+				max-width: 55vw;
+			}
+			.debug-indicator button {
+				font-size: 11px;
+				padding: 2px 5px;
+			}
+			#session-warning {
+				display: none;
+			}
+			.advertise-link {
+				display: none;
+			}
 		}
 
 		/* Low-spec / cute mode: render at lower resolution and scale up crisply */
@@ -166,7 +227,11 @@
 			box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 		}
 		
-		/* Sponsor Ad Container */
+		/* Sponsor Ad Container. z-index used to be 500 which let the
+		   next-piece HUD (z-index 1000) overlap it — the user
+		   reported "the ad box appears under the next piece".
+		   1100 keeps it above the HUD but below modal dialogs
+		   (≥2000). */
 		#sponsor-ad {
 			position: fixed;
 			bottom: 20px;
@@ -176,7 +241,7 @@
 			border: 2px solid #ffcc00;
 			border-radius: 12px;
 			padding: 16px;
-			z-index: 500;
+			z-index: 1100;
 			display: none;
 			box-shadow: 0 8px 32px rgba(255, 204, 0, 0.3), 0 0 20px rgba(0, 0, 0, 0.5);
 			backdrop-filter: blur(10px);
@@ -270,18 +335,26 @@
 			box-shadow: 0 4px 12px rgba(255, 204, 0, 0.4);
 		}
 		
-		/* Advertise link in game title area */
+		/* Advertise link — pinned bottom-left above the camera
+		   controls strip so it doesn't disappear behind the
+		   next-piece HUD (top-right) or the activity log panel
+		   (right side). Low-key styling so it doesn't compete
+		   with gameplay UI. bottom must clear the two-row
+		   debug-indicator strip (buttons + session warning,
+		   ~56px tall anchored at bottom:10) — 44px overlapped
+		   the Reset Camera button. */
 		.advertise-link {
 			position: fixed;
-			top: 10px;
-			right: 10px;
-			z-index: 100;
+			bottom: 74px;
+			left: 10px;
+			z-index: 1100;
 			color: #888;
-			font-size: 12px;
+			font-size: 11px;
 			text-decoration: none;
-			padding: 4px 10px;
+			padding: 3px 8px;
 			border: 1px solid #444;
 			border-radius: 4px;
+			background: rgba(0, 0, 0, 0.55);
 			transition: all 0.2s;
 		}
 		
@@ -311,12 +384,13 @@
 	<!-- Game Title -->
 	<div class="game-title">TETCHES</div>
 	
-	<!-- Debug Indicator -->
+	<!-- Bottom-left utility strip -->
 	<div class="debug-indicator">
-		<button id="reset-camera-btn" style="margin-left: 10px; padding: 2px 6px; background: #333; color: #ffcc00; border: 1px solid #ffcc00; border-radius: 3px; cursor: pointer; font-family: 'Playfair Display', serif;">Reset Camera</button>
-		<button id="show-flight-controls-btn" title="Show camera & keyboard controls" style="margin-left: 6px; padding: 2px 8px; background: #333; color: #ffcc00; border: 1px solid #ffcc00; border-radius: 3px; cursor: pointer; font-family: 'Playfair Display', serif;">Controls</button>
-		<button id="toggle-render-mode-btn" style="margin-left: 10px; padding: 2px 6px; background: #333; color: #ffcc00; border: 1px solid #ffcc00; border-radius: 3px; cursor: pointer; font-family: 'Playfair Display', serif;">Mode: Normal</button>
-		<span id="session-warning" role="button" tabindex="0" title="Click to copy your Player Code (needed to resume your game later)" style="margin-left: 12px; font-size: 11px; color: #ffcc00; font-family: 'Playfair Display', serif; cursor: pointer; text-decoration: underline;">&#128190; Copy your Player Code to resume later</span>
+		<button id="reset-camera-btn">Reset Camera</button>
+		<button id="show-flight-controls-btn" title="Show camera & keyboard controls">Controls</button>
+		<button id="toggle-render-mode-btn">Mode: Normal</button>
+		<button id="battle-btn" title="Private 2-4 player arena — invite friends or fight bots">&#9876; Battle</button>
+		<span id="session-warning" role="button" tabindex="0" title="Click to copy your Player Code (needed to resume your game later)" style="font-size: 11px; color: #ffcc00; font-family: 'Playfair Display', serif; cursor: pointer; text-decoration: underline;">&#128190; Copy your Player Code to resume later</span>
 	</div>
 
 	<!-- Loading Screen -->

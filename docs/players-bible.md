@@ -55,18 +55,50 @@ Each player is assigned a home zone when they join.
 
 ### Home zone degradation
 
-Home zones now degrade by converting to normal terrain (not by deleting cells):
+Home zones degrade by converting to normal terrain (not by deleting cells):
 
 - **Interval**: after sustained inactivity
-  (`HOME_ZONE_DEGRADATION_INTERVAL = 300 000 ms` = 5 minutes, checked
-  periodically). The previous 2.5-minute window felt punitive — players
-  reported having all their cells stripped while composing a single chat
-  message.
-- Home markers are converted into normal owned terrain cells.
-- Occupied cells are preserved: pieces remain on-board; no timed auto-removal of
-  cells just because a piece is standing on them.
-- Once converted, those cells are no longer treated as protected "safe home
-  zone" cells for row-clearing rules.
+  (`HOME_ZONE_DEGRADATION_INTERVAL = 300 000 ms` = 5 minutes for
+  **offline** players; multiplied by 12 ≈ 1 hour for **online but
+  idle** players). The "if you're still in front of the screen,
+  don't pull the rug out" rule was added after players reported
+  losing their footing while composing a chat message or thinking
+  through a move.
+- Home markers are converted into normal owned terrain cells, tagged
+  `fromHomeZone: true` so the rest of the engine can recognise the
+  remnant.
+- Occupied cells are preserved: pieces remain on-board; no timed
+  auto-removal of cells just because a piece is standing on them.
+- Once converted, the cells are still owned and still gravity-anchor
+  to the king, but they are **treated as gaps by the line-clear
+  scan** (`cells.onlyDegradedOrMarkers`). A returning player can't be
+  wiped out by a single placement turning a degraded 8-cell home row
+  into a row-clear; the run breaks at the remnant.
+- Degraded cells can still be captured by another player's tetromino
+  placement and can still decay via island integrity if they end up
+  stranded from the king.
+
+### Pause / resume
+
+Players may manually freeze their footprint with the **Pause** button
+in the player sidebar. While paused:
+
+- Their cells are skipped by the line-clear scan (treated as gaps,
+  same as degraded-home cells).
+- Their chess pieces refuse capture.
+- Their home zone does not degrade.
+
+Limits per session (`server/world/pause.js`):
+
+- **PAUSE_MAX_USES = 4** pauses per session.
+- **PAUSE_MAX_TOTAL_MS = 60 minutes** of cumulative paused time.
+- **PAUSE_AUTO_RESUME_MS = 30 minutes** maximum single pause; the
+  server auto-resumes at the cap so a player can't disappear forever
+  by leaving the pause running.
+
+Opponents see a "⏸ paused" badge in the player sidebar and a
+"That player is paused — their pieces are temporarily protected"
+error if they try to capture into a paused piece.
 
 ---
 
@@ -186,9 +218,12 @@ hits the threshold first keeps the game symmetric.
 | Rule | Detail |
 |------|--------|
 | Threshold | **8 consecutive** filled cells along a single z-row (constant z) **or** x-column (constant x) |
-| Home cells are empty space | Any cell with a **home marker** counts as **empty space** for the purposes of clearing. It breaks the consecutive count exactly like an empty cell would, and it is never touched by the clear itself. This is true regardless of whether the home zone is "safe" (has a chess piece) or "unsafe" — only a **degraded** home zone (which has lost its home markers and now carries `home_converted` tetromino terrain) drops out of this rule. Cells on opposite sides of a home zone therefore have their runs counted independently. |
-| What counts as "filled" | A cell with at least one item that isn't a home / specialMarker / boardCentre marker. |
-| What is removed | Every non-home, non-chess item in the cleared segment (tetromino terrain, `home_converted` cells, etc.). Board-centre markers and chess markers are preserved. |
+| Home cells are empty space | Any cell with a **home marker** counts as **empty space** for the purposes of clearing. It breaks the consecutive count exactly like an empty cell would, and it is never touched by the clear itself. This is true regardless of whether the home zone is "safe" (has a chess piece) or "unsafe". |
+| Degraded-home remnants also break the run | A **degraded** home cell (lost its `home` marker after idle degradation but still carries the `fromHomeZone: true` flag on its terrain) is treated exactly like a home marker for clear purposes — it breaks the consecutive count and survives `stripForLineClear`. It still converts ownership on tetromino placement and still decays via island integrity. |
+| Paused-player cells also break the run | A cell whose owner has manually paused (see §Pause / Resume) is inert: line scan skips it, line clear leaves it alone, captures refuse it. The cell still exists; it just can't be cleared *through*. |
+| Runs are bounded | The destructive step only touches cells inside a qualifying run. If a line has 8 owned cells, a home / degraded / paused gap, and then 4 more owned cells, only the qualifying 8 disappear. The 4 on the far side of the gap are untouched. Two separate qualifying runs in the same line both clear, each bounded by its own gap. |
+| What counts as "filled" | A cell with at least one item that isn't a home / specialMarker / boardCentre marker, and is not a `fromHomeZone: true` remnant. |
+| What is removed | Every non-home, non-chess, non-`fromHomeZone` item in the cleared run (tetromino terrain etc.). Board-centre and chess markers are preserved, and so are degraded-home remnants. |
 | Chess pieces on cleared cells | The cell is shielded entirely during the clear — the player keeps the chess marker, the underlying tetromino terrain under the piece, **and** the cell itself. The piece may now be sitting on an island, in which case its fate is decided by **island decay** (next section), not by the row clear itself. The grace window for stranded territory is **move-based** (see §10 below) — the player gets several of their own moves to bridge back. |
 | Phantom-clear protection | A candidate line is only reported as cleared if applying the clear actually modifies at least one cell. A line whose entire run is chess-protected, for example, won't broadcast a "Line cleared!" toast even if it technically meets the threshold. |
 
@@ -208,8 +243,11 @@ disappear:
    broadcasts a `game_update`, and emits the usual `row_cleared` toast.
 4. Gravity may have created a brand-new clearable line — a **cascade**.
    The server goes back to step 1 and flashes again before clearing
-   the next wave. The cascade is capped at 16 iterations as a safety
-   net.
+   the next wave. The cascade is capped at 8 iterations
+   (`MAX_CASCADE_ITERATIONS`) as a safety net. Before each wave is
+   applied the server re-scans and only clears lines that are *still*
+   clearable, so a cell that became protected during the 700 ms flash
+   (e.g. a player paused mid-cascade) is never stripped.
 
 The `row_cleared` payload now carries an `iteration` field (0 for the
 first clear, 1 for the next link in the cascade, etc.) so the UI can
@@ -303,9 +341,11 @@ conditions:
   detection runs on the previous owner — this can disconnect and destroy
   their territory. This is a key strategic mechanic: moving pieces onto enemy
   cells claims them for your empire.
-- **Moving into check is permitted.** There is no check/checkmate concept in
-  Tetches - only king capture. Moving your king into danger is legal but
-  unwise.
+- **Check (king-capture grace).** There is no classical checkmate, but a king
+  is not taken instantly. When a move *would* capture an enemy king, the
+  capture is **deferred** and the defender is given one timed move to escape
+  or take the attacker (see "Check" below). Moving your king into danger is
+  legal but unwise — you may not get a second grace window.
 
 ### Castling
 
@@ -357,10 +397,53 @@ Frontend presentation:
 
 ### Pawn promotion
 
-When a pawn has moved **9 squares forward** from its starting position, the
-player is offered a choice to promote it to a **Queen, Rook, Bishop, or
-Knight**. (The constant `PAWN_PROMOTION_DISTANCE = 9` governs this.) If no
-choice is made within 15 seconds, the pawn auto-promotes to Queen.
+When a pawn has moved **8 squares forward** from its starting position
+(net forward progress; `PAWN_PROMOTION_DISTANCE = 8` governs this), it
+**freezes in place**:
+
+- The pawn stops accepting move commands and the cell it stands on is
+  treated as **home-like** — it cannot be cleared by line-clears, decayed
+  by island disconnection, or otherwise removed.
+- A glowing yellow halo pulses around the frozen pawn so it's
+  unmistakable on the board.
+- Clicking the frozen pawn opens the **deployment dialog**, which lists
+  the pieces (Queen / Rook / Bishop / Knight) in your captured basket.
+  Selecting one replaces the frozen pawn with that piece in-place and
+  consumes the basket entry. **Skip** dismisses the dialog without
+  consuming anything; the pawn stays frozen indefinitely until either
+  promoted or captured by an enemy.
+- An empty basket shows a "capture a piece to deploy here" message; the
+  dialog re-opens automatically every time you click the frozen pawn.
+
+Since 8 cells in a row is also the line-clear length, the pawn must
+either **capture pieces** or **wait for a row clear** to remove the cells
+in front of it before it can promote.
+
+### Check (king-capture grace)
+
+A king is never taken on the spot. When any move would capture an enemy
+king, the server opens a **pending check** instead of resolving the
+capture:
+
+1. The attacking piece is **frozen in place** (it does not move yet) and the
+   defender is notified with an on-screen banner; their camera flies to their
+   king and a countdown begins (`CHECK_DEADLINE_MS = 20 s`).
+2. While in check the defender's **tetromino fall is paused**, and their next
+   chess move **must be a legal escape** — either move the king to a square no
+   enemy piece can reach, or capture the attacker. Any other move is rejected.
+   (The king may *not* move onto a square still threatened by another piece —
+   real-chess style.)
+3. If the defender escapes in time, the check clears and the attacker must
+   re-issue any move on its own clock.
+4. If the deadline passes with no escape, the deferred capture executes
+   automatically.
+
+**Anti-stall limit:** the *same* attacking piece may grant the defender a
+grace window at most `MAX_CHECK_DEFERS_PER_PIECE = 2` times. On the third
+attack from that piece the king is **captured directly**, with no further
+escape window — this stops one piece shuffling in and out of range to freeze
+a defender indefinitely. The counter lives on the attacking piece, so it
+resets naturally when that piece is captured or removed.
 
 ### King capture and consequences
 
@@ -409,8 +492,24 @@ is in progress.
 ### One king rule
 
 Each player has exactly one king at all times. Kings cannot be purchased.
-A player whose king is captured is eliminated (their pieces and territory
+A player whose king is **captured** is eliminated (their pieces and territory
 transfer to the captor as described above).
+
+### King lives & a dramatic end
+
+A king has **three lives** (`KING_INITIAL_LIVES`). Losing a king to a
+*non-intentional* cause — falling into the water after a row clear, an island
+decaying out from under it, an invalid/unsupported position — does **not** end
+the game: the king respawns at the home-zone centre on a fresh anchor and the
+player loses one life (`king_respawned`). Intentional/terminal removals
+(capture, voluntary detonation, leaving) bypass the life cost.
+
+When the **last life is spent**, the player is eliminated *and* their king
+detonates lemming-style: every cell they own explodes furthest-from-king first
+and all their remaining pieces are consumed in the blast — the same animation as
+a voluntary/lone-king self-destruct, so the run ends with a bang rather than the
+king silently vanishing while everything else sits there. (See
+`server/king/kingLives.js` + `server/king/detonation.js`.)
 
 ---
 
@@ -430,8 +529,8 @@ server runs island detection:
 
    | Trigger | Terrain-only island | Piece-bearing island |
    |---|---|---|
-   | Owning-player moves since disconnection | **6** | **12** |
-   | Wall-clock backstop (AFK players) | **10 minutes** | **20 minutes** |
+   | Owning-player moves since disconnection (`DISCONNECTED_MOVE_LIMIT` / `DISCONNECTED_PIECE_MOVE_LIMIT`) | **15** | **30** |
+   | Wall-clock **idle** backstop (`DISCONNECTED_IDLE_LIMIT_MS` / `DISCONNECTED_PIECE_IDLE_LIMIT_MS`) | **10 minutes** | **15 minutes** |
 
    A move is one tetromino placement *or* one chess move (the
    "Skip chess move" button also counts as a move so a player can't
@@ -452,6 +551,17 @@ server runs island detection:
    clock.
 5. When the grace expires, the cells are removed and any chess pieces standing
    on them are removed too.
+
+### Knight exception
+
+Knights are the only piece that leaps. When an island decays under a knight,
+the knight survives **and** the single cell it is standing on survives with
+it — the knight reads as standing on a stranded rocky outcrop, waiting for
+the world to grow back to it. Pawns / rooks / bishops / queens stranded on
+the same island are removed normally.
+
+In practice this means a knight is the only piece that can persist on a
+1-cell island indefinitely.
 
 This prevents orphaned territory from persisting after row clears, captures, or
 strategic disconnection attacks **without** punishing players who are
@@ -475,6 +585,39 @@ AI logic:
   preferring positions that extend towards opponents.
 - **Chess**: generates all legal moves for its pieces, shuffles them, and picks
   a random valid one. It prioritises captures when available.
+
+---
+
+## 11a. Battle Mode (private 2–4 player arenas)
+
+Battles are private matches played in a circular arena away from the
+shared world. Your main kingdom is untouched while you fight — you play a
+dedicated battle *seat* with a fresh 8×2 home zone and full chess set.
+
+- **Create / join**: the ⚔ Battle button (or the welcome screen) opens the
+  dialog. The host picks 2–4 seats and gets a 6-character code plus an
+  invite link (`tetches.com/?battle=CODE`). Joining is by code. Only the
+  host can start; empty seats are filled with computer opponents
+  (Medium difficulty).
+- **Geometry**: the arena is bounded by a neutral **ring** (diameter 32, two
+  cells thick). Home zones face the centre: in a 1v1 the pawn rows are
+  exactly **8 cells apart**; with 3–4 players, seats sit at 90° to each
+  other, one cell further out.
+- **The ring** may be used by *any seated player* as friendly ground —
+  tetrominoes can anchor against it and the path-to-king may run through
+  it — but ring cells can never be cleared, moved by gravity, or owned.
+  Being a circle, it blocks long straight rook/bishop/queen runs across
+  the arena.
+- **Placement bounds**: seated players must place every cell of a
+  tetromino inside their arena (the ring is the wall). Players outside
+  the battle cannot build in or near anyone's arena.
+- **Everything else is normal Tetches**: line clears, captures, check,
+  king capture and elimination all work as in the shared world.
+- **Winning**: last seat with a king standing wins (a battle also ends if
+  it hits the 2-hour cap). Leaving an active battle forfeits your seat.
+  After the result, everyone returns to their main kingdom and the arena
+  is dismantled.
+- **Lobbies** expire after 15 minutes if not started.
 
 ---
 
@@ -566,6 +709,39 @@ colours is a trophy of conquest.
      delay. All connected players see the explosion sequence.
    - **Human players** can voluntarily detonate via the king-detonation
      button; the same lemming-style animation plays for everyone.
+10. **Knights survive island decay** - the knight is the only piece that
+    leaps in classic chess; in Tetches that translates into "leaps over the
+    rules of land". When a disconnected island would otherwise be wiped,
+    knights stranded on it are kept and the single cell they're standing
+    on is kept with them. They can then be moved off the outcrop by their
+    owner (or wait for a tetromino to bridge back).
+11. **Longship fleet** - between the islands a small fleet of Viking
+    longships wanders the sea (random waypoints inside a 52-unit box
+    rather than a fixed orbit, so they pass close to islands rather
+    than clumping on the horizon). Sails carry adverts from the active
+    bid ranking; when no advertiser has paid for a sail slot the boats
+    sail past with a "Your Ad Here →" placeholder banner. Clicking a
+    longship opens the advertiser's landing page in a new tab (or the
+    `/advertise` sign-up form for placeholder boats). Far boats fade
+    into the fog and beyond ~70 units they're culled entirely so the
+    GPU doesn't redraw them. In the retro render profile the boats
+    rebuild as low-poly box-mast ships with pixel-art sail textures.
+    Knights will eventually be able to "go viking" and ride them
+    between islands (see `server/world/boats.js` for the data model
+    used by the in-progress system).
+12. **Islands sit on the sea** - the water surface was raised and each
+    cell carries a short tapered earth pillar that bridges the gap
+    down to the water. Purely visual — it doesn't change pathing or
+    chess movement — but it makes the islands read as actually
+    floating on the sea rather than perched on tall stilts. The
+    pillars decay and respawn with their parent cells automatically.
+13. **Sail-ad uploads only ever go live after payment** - the
+    `/advertise` form streams the artwork into server memory but
+    never writes it to disk until an admin activates the slot after
+    the SOL payment lands. Unpaid registrations are dropped after an
+    hour, and each IP can register at most three pending slots in any
+    10-minute window, so the public uploads dir can't be used as a
+    free file host.
 
 ---
 
@@ -573,7 +749,7 @@ colours is a trophy of conquest.
 
 ```
 REQUIRED_CELLS_FOR_ROW_CLEARING     = 8
-PAWN_PROMOTION_DISTANCE             = 9
+PAWN_PROMOTION_DISTANCE             = 8      (pawn then freezes & deploys; see §9)
 HOME_ZONE_WIDTH                     = 8
 HOME_ZONE_HEIGHT                    = 2
 HOME_ZONE_DISTANCE                  = 16     (pawn-clash spacing)
@@ -581,10 +757,17 @@ HOME_ZONE_DEGRADATION_INTERVAL      = 150 000 ms (2.5 min)
 MAX_PLAYERS_PER_GAME                = 32
 CHESS_MOVE_COOLDOWN_MS              = 500
 TETROMINO_PLACEMENT_COOLDOWN_MS     = 800
-AUTO_QUEEN_TIMEOUT_MS               = 15 000
 SUICIDAL_PAWN_DELAY_MS              = 3 000
 SUICIDAL_PAWN_INTERVAL_MS           = 500
 SIMULTANEOUS_CAPTURE_WINDOW_MS      = 1 000
+CHECK_DEADLINE_MS                   = 20 000 (king-capture grace window; see §9)
+MAX_CHECK_DEFERS_PER_PIECE          = 2      (then the attacker captures direct)
+FLASH_DURATION_MS                   = 700    (row-clear flash before the cut)
+MAX_CASCADE_ITERATIONS             = 8
+DISCONNECTED_MOVE_LIMIT             = 15     (terrain-only island decay)
+DISCONNECTED_PIECE_MOVE_LIMIT       = 30     (piece-bearing island decay)
+DISCONNECTED_IDLE_LIMIT_MS          = 600 000 ms (10 min AFK backstop)
+DISCONNECTED_PIECE_IDLE_LIMIT_MS    = 900 000 ms (15 min AFK backstop)
 KING_DUEL_TIMEOUT_MS                = 10 000
 KING_DUEL_GRID_COLS                 = 4
 KING_DUEL_GRID_ROWS                 = 2

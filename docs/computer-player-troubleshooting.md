@@ -1,5 +1,13 @@
 # Tetches Computer Player API Troubleshooting Guide
 
+> **⚠ Deprecated.** This troubleshooting guide refers to the old
+> multi-game REST sandbox that was removed in May 2026. The
+> endpoints, npm scripts, and example files mentioned below **no
+> longer exist** in the repository.
+>
+> See [`docs/external-api.md`](external-api.md) for the current API
+> and `examples/random-bot.js` for a working bot.
+
 This document provides solutions to common issues encountered when working with the Tetches Computer Player API.
 
 ## API Connection Issues

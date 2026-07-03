@@ -12,6 +12,11 @@ const cells = require('./cells');
 // entry — otherwise a piece can vanish without leaving any trace, which
 // is the bug the user has hit multiple times.
 const pieceLifecycle = require('./pieces');
+// Move validation is a hefty self-contained piece of logic (~400
+// LOC) — extracted to `./chess/moveValidation.js` to keep this file
+// under the 1500-line refactor threshold and to give the move-rules
+// surface a clear, testable boundary.
+const moveValidation = require('./chess/moveValidation.js');
 
 class ChessManager {
 	constructor(boardManager, islandManager) {
@@ -440,301 +445,39 @@ class ChessManager {
 	 * @returns {Object} Result of the validation
 	 */
 	validateChessMove(game, playerId, moveData) {
-		try {
-			const { pieceId, toX, toZ } = moveData;
-			
-			// Find the piece
-			const piece = game.chessPieces.find(p => p.id === pieceId);
-			if (!piece) {
-				return {
-					valid: false,
-					error: `Chess piece with ID ${pieceId} not found`
-				};
-			}
-			
-			// Verify ownership
-			if (piece.player !== playerId) {
-				return {
-					valid: false,
-					error: 'You do not own this chess piece'
-				};
-			}
-			
-			// Get piece's current position
-			const fromX = piece.position.x;
-			const fromZ = piece.position.z;
-			
-			// Check if trying to move to the same position
-			if (fromX === toX && fromZ === toZ) {
-				return {
-					valid: false,
-					error: 'Cannot move to the same position'
-				};
-			}
-
-			const pieceAt = this._buildPieceLocator(game);
-			const targetCell = this.boardManager.getCell(game.board, toX, toZ);
-
-			// Friendly-piece check — uses the shared locator so the AI
-			// path agrees with the socket path about who is where.
-			const targetPiece = pieceAt(toX, toZ);
-			if (targetPiece && String(targetPiece.player) === String(playerId)) {
-				return {
-					valid: false,
-					error: 'Cannot capture your own piece'
-				};
-			}
-			
-			// Validate move based on piece type
-			const typeValidation = this._validateMoveByPieceType(game, piece, toX, toZ, pieceAt);
-			if (!typeValidation.valid) {
-				return typeValidation;
-			}
-			
-			// Check for path obstructions (except knights which can jump)
-			if (piece.type !== 'KNIGHT') {
-				const pathValidation = this._checkPathObstruction(game, piece, toX, toZ, pieceAt);
-				if (!pathValidation.valid) {
-					return pathValidation;
-				}
-			}
-			
-			// Move is valid
-			return {
-				valid: true,
-				piece,
-				fromX,
-				fromZ,
-				toX,
-				toZ,
-				targetCell,
-				castling: typeValidation.castling || null
-			};
-		} catch (error) {
-			log(`Error validating chess move: ${error.message}`);
-			return {
-				valid: false,
-				error: error.message
-			};
-		}
+		return moveValidation.validateChessMove(this._validationCtx(), game, playerId, moveData);
 	}
-	
+
 	/**
-	 * Validate a move based on the chess piece type
-	 * @param {Object} game - The game object
-	 * @param {Object} piece - The chess piece
-	 * @param {number} toX - Destination X coordinate
-	 * @param {number} toZ - Destination Z coordinate
-	 * @param {Function} [pieceAt] - Optional shared occupant locator
-	 * @returns {Object} Result of the validation
+	 * Shared "context" object passed to the extracted move-validation
+	 * helpers. Bundles the board lookup + piece-locator builder so
+	 * those functions don't need to import `World`.
 	 * @private
 	 */
-	_validateMoveByPieceType(game, piece, toX, toZ, pieceAt) {
-		const fromX = piece.position.x;
-		const fromZ = piece.position.z;
-		const type = piece.type.toLowerCase();
-		const occupantAt = pieceAt || this._buildPieceLocator(game);
-
-		const deltaX = Math.abs(toX - fromX);
-		const deltaZ = Math.abs(toZ - fromZ);
-		
-		switch (type) {
-			case 'pawn': {
-				const orientation = Number.isFinite(piece.orientation) ? piece.orientation : 0;
-				const fwd = (() => {
-					switch (orientation) {
-						case 0: return { dx: 0, dz: 1 };
-						case 2: return { dx: 0, dz: -1 };
-						case 1: return { dx: 1, dz: 0 };
-						case 3: return { dx: -1, dz: 0 };
-						default: return { dx: 0, dz: 1 };
-					}
-				})();
-
-				const isForwardOne = (toX - fromX === fwd.dx && toZ - fromZ === fwd.dz);
-				const isForwardTwo = (!piece.hasMoved &&
-					toX - fromX === fwd.dx * 2 && toZ - fromZ === fwd.dz * 2);
-
-				if (isForwardOne) {
-					if (!occupantAt(toX, toZ)) {
-						return { valid: true };
-					}
-					return { valid: false, error: 'Pawn cannot move forward into an occupied cell' };
-				}
-
-				if (isForwardTwo) {
-					const midX = fromX + fwd.dx;
-					const midZ = fromZ + fwd.dz;
-					if (occupantAt(midX, midZ) || occupantAt(toX, toZ)) {
-						return { valid: false, error: 'Pawn cannot jump over pieces' };
-					}
-					return { valid: true };
-				}
-
-				// Diagonal capture — must have an enemy occupant.
-				const isDiag = fwd.dx === 0
-					? (Math.abs(toX - fromX) === 1 && toZ - fromZ === fwd.dz)
-					: (Math.abs(toZ - fromZ) === 1 && toX - fromX === fwd.dx);
-				if (isDiag) {
-					const target = occupantAt(toX, toZ);
-					if (target && String(target.player) !== String(piece.player)) {
-						return { valid: true };
-					}
-					return { valid: false, error: 'Pawn can only move diagonally when capturing' };
-				}
-
-				return { valid: false, error: 'Invalid pawn move' };
-			}
-			
-			case 'rook': {
-				if (fromX === toX || fromZ === toZ) {
-					return { valid: true };
-				}
-				return { valid: false, error: 'Rooks can only move horizontally or vertically' };
-			}
-			
-			case 'knight': {
-				if ((deltaX === 2 && deltaZ === 1) || (deltaX === 1 && deltaZ === 2)) {
-					return { valid: true };
-				}
-				return { valid: false, error: 'Knights can only move in an L-shape' };
-			}
-			
-			case 'bishop': {
-				if (deltaX === deltaZ) {
-					return { valid: true };
-				}
-				return { valid: false, error: 'Bishops can only move diagonally' };
-			}
-			
-			case 'queen': {
-				if (fromX === toX || fromZ === toZ || deltaX === deltaZ) {
-					return { valid: true };
-				}
-				return { valid: false, error: 'Queens can only move horizontally, vertically, or diagonally' };
-			}
-			
-			case 'king': {
-				if (deltaX <= 1 && deltaZ <= 1) {
-					return { valid: true };
-				}
-
-				if (!piece.hasMoved && ((deltaX === 2 && deltaZ === 0) || (deltaX === 0 && deltaZ === 2))) {
-					const castleResult = this._validateCastle(game, piece, toX, toZ, occupantAt);
-					if (castleResult.valid) {
-						return { valid: true, castling: castleResult };
-					}
-					return castleResult;
-				}
-
-				return { valid: false, error: 'Kings can only move one step in any direction (or castle)' };
-			}
-			
-			default:
-				return { valid: false, error: `Unknown piece type: ${type}` };
+	_validationCtx() {
+		if (!this._cachedValidationCtx) {
+			this._cachedValidationCtx = {
+				boardManager: this.boardManager,
+				buildPieceLocator: (game) => this._buildPieceLocator(game),
+			};
 		}
+		return this._cachedValidationCtx;
+	}
+	
+	// Validation helpers — implementations live in
+	// `./chess/moveValidation.js`. These thin delegates are kept so
+	// any existing internal caller / test stub that goes through
+	// `this._validate*` still works.
+	_validateMoveByPieceType(game, piece, toX, toZ, pieceAt) {
+		return moveValidation.validateMoveByPieceType(this._validationCtx(), game, piece, toX, toZ, pieceAt);
 	}
 
 	_validateCastle(game, king, toX, toZ, pieceAt) {
-		const fromX = king.position.x;
-		const fromZ = king.position.z;
-		const dx = Math.sign(toX - fromX);
-		const dz = Math.sign(toZ - fromZ);
-		const occupantAt = pieceAt || this._buildPieceLocator(game);
-
-		// Find a friendly rook along the castling direction using the
-		// shared locator — agrees with the slider-blocker logic so
-		// phantoms / ghosts don't change the answer.
-		let rook = null;
-		let searchX = fromX + dx;
-		let searchZ = fromZ + dz;
-		const maxSearch = 8;
-		for (let i = 0; i < maxSearch; i++) {
-			const cell = this.boardManager.getCell(game.board, searchX, searchZ);
-			if (!cell) break;
-			const occupant = occupantAt(searchX, searchZ);
-			if (occupant) {
-				if (
-					occupant.piece &&
-					String(occupant.pieceType).toLowerCase() === 'rook' &&
-					String(occupant.player) === String(king.player)
-				) {
-					rook = occupant.piece;
-				}
-				break;
-			}
-			searchX += dx;
-			searchZ += dz;
-		}
-
-		if (!rook) {
-			return { valid: false, error: 'No rook found in that direction for castling' };
-		}
-		if (rook.hasMoved) {
-			return { valid: false, error: 'Rook has already moved' };
-		}
-
-		// Ensure path exists and is free of obstructors.
-		let checkX = fromX + dx;
-		let checkZ = fromZ + dz;
-		while (checkX !== rook.position.x || checkZ !== rook.position.z) {
-			const cell = this.boardManager.getCell(game.board, checkX, checkZ);
-			if (!cell || (Array.isArray(cell) && cell.length === 0)) {
-				return { valid: false, error: 'Gap in board between king and rook' };
-			}
-			if (occupantAt(checkX, checkZ)) {
-				return { valid: false, error: 'Piece between king and rook' };
-			}
-			checkX += dx;
-			checkZ += dz;
-		}
-
-		const rookDestX = fromX + dx;
-		const rookDestZ = fromZ + dz;
-
-		return {
-			valid: true,
-			rookId: rook.id,
-			rookFromX: rook.position.x,
-			rookFromZ: rook.position.z,
-			rookToX: rookDestX,
-			rookToZ: rookDestZ
-		};
+		return moveValidation.validateCastle(this._validationCtx(), game, king, toX, toZ, pieceAt);
 	}
-	
-	/**
-	 * Check if there are any pieces obstructing the path
-	 * @param {Object} game - The game object
-	 * @param {Object} piece - The chess piece
-	 * @param {number} toX - Destination X coordinate
-	 * @param {number} toZ - Destination Z coordinate
-	 * @param {Function} [pieceAt] - Optional shared occupant locator
-	 * @returns {Object} Result of the path check
-	 * @private
-	 */
+
 	_checkPathObstruction(game, piece, toX, toZ, pieceAt) {
-		const fromX = piece.position.x;
-		const fromZ = piece.position.z;
-		const occupantAt = pieceAt || this._buildPieceLocator(game);
-
-		const dx = Math.sign(toX - fromX);
-		const dz = Math.sign(toZ - fromZ);
-
-		let x = fromX + dx;
-		let z = fromZ + dz;
-
-		while (x !== toX || z !== toZ) {
-			if (occupantAt(x, z)) {
-				return {
-					valid: false,
-					error: `Path is obstructed at position (${x}, ${z})`
-				};
-			}
-			x += dx;
-			z += dz;
-		}
-
-		return { valid: true };
+		return moveValidation.checkPathObstruction(piece, toX, toZ, pieceAt || this._buildPieceLocator(game));
 	}
 	
 	/**
@@ -804,11 +547,17 @@ class ChessManager {
 				delete game.board.cells[fromKey];
 			}
 			
-			// Update the piece position
+			// Update the piece position + per-piece move/capture stats
+			// (used by the selected-piece info card on the client).
+			const fromDist = Math.abs(toX - fromX) + Math.abs(toZ - fromZ);
 			piece.position.x = toX;
 			piece.position.z = toZ;
 			piece.hasMoved = true;
 			piece.moveCount = (piece.moveCount || 0) + 1;
+			piece.distanceTravelled = (piece.distanceTravelled || 0) + fromDist;
+			if (capture) {
+				piece.captureCount = (piece.captureCount || 0) + 1;
+			}
 
 			// Track net forward distance for pawn promotion
 			if (piece.type === 'PAWN') {
@@ -1094,6 +843,17 @@ class ChessManager {
 	
 	/**
 	 * Update the pawn's net forward distance from its start position.
+	 * Public wrapper around `_updatePawnForwardDistance` so the socket
+	 * handler (which doesn't go through `executeChessMove`) can keep
+	 * the field in sync — otherwise pawns never accumulate progress
+	 * and never trigger the promotion freeze.
+	 */
+	updatePawnForwardDistance(piece, fromX, fromZ, toX, toZ) {
+		this._updatePawnForwardDistance(piece, fromX, fromZ, toX, toZ);
+	}
+
+	/**
+	 * Update the pawn's net forward distance from its start position.
 	 * @private
 	 */
 	_updatePawnForwardDistance(piece, fromX, fromZ, toX, toZ) {
@@ -1109,8 +869,83 @@ class ChessManager {
 	}
 
 	/**
-	 * Check for pawn promotion — triggers after 9 squares forward
-	 * from starting position (net forward distance, not total moves).
+	 * Veteran pawns persisted before forwardDistance tracking was added
+	 * have `forwardDistance: 0` even when they're several squares deep
+	 * into enemy territory. Recompute it from the home zone's pawn row
+	 * (orientation-aware) so they can still reach the promotion line.
+	 *
+	 * Safe to call repeatedly — pawns whose forwardDistance is already
+	 * non-zero are left alone. Pawns without a known home zone (e.g.
+	 * the player record is gone) are skipped.
+	 *
+	 * @param {Object} game - The game object
+	 * @returns {number} number of pawns that were backfilled
+	 */
+	backfillPawnForwardDistance(game) {
+		if (!game || !Array.isArray(game.chessPieces)) return 0;
+		const homeZones = game.homeZones || {};
+		let count = 0;
+		for (const piece of game.chessPieces) {
+			if (!piece || piece.type !== 'PAWN') continue;
+			if ((piece.forwardDistance || 0) > 0) continue;
+			const home = homeZones[piece.player];
+			if (!home) continue;
+			const orientation = Number.isFinite(piece.orientation) ? piece.orientation : 0;
+			// Pawns start on the row adjacent to the main piece row.
+			// initializeChessPieces() places them at z=home.z+1 for
+			// orientation 0 (and the mirror for the other orientations).
+			let startZ = home.z;
+			let startX = home.x;
+			switch (orientation) {
+				case 0: startZ = home.z + 1; break;
+				case 2: startZ = home.z; break; // pieces at top, pawns at home.z+1 (verified later)
+				case 1: startX = home.x + 1; break;
+				case 3: startX = home.x; break;
+			}
+			const pos = piece.position || {};
+			const toX = Number(pos.x);
+			const toZ = Number(pos.z);
+			if (!Number.isFinite(toX) || !Number.isFinite(toZ)) continue;
+			let dist = 0;
+			switch (orientation) {
+				case 0: dist = toZ - startZ; break;
+				case 1: dist = toX - startX; break;
+				case 2: dist = startZ - toZ; break;
+				case 3: dist = startX - toX; break;
+			}
+			if (dist > 0) {
+				piece.forwardDistance = dist;
+				count++;
+				// If the pawn is already deep enough to promote, freeze
+				// it immediately so the player can deploy when they're
+				// next on the board. Mirror the flag onto the cell so
+				// line-clears and decay respect the lock right away.
+				if (
+					!piece.awaitingPromotion
+					&& dist >= GAME_RULES.PAWN_PROMOTION_DISTANCE
+				) {
+					piece.awaitingPromotion = true;
+					piece.awaitingPromotionAt = Date.now();
+					const cellKey = `${toX},${toZ}`;
+					const cellContents = game.board?.cells?.[cellKey];
+					if (Array.isArray(cellContents)) {
+						for (const item of cellContents) {
+							if (!item) continue;
+							if (item.type !== 'chess') continue;
+							if (String(item.pieceId) !== String(piece.id)) continue;
+							item.awaitingPromotion = true;
+						}
+					}
+				}
+			}
+		}
+		return count;
+	}
+
+	/**
+	 * Check for pawn promotion — triggers after PAWN_PROMOTION_DISTANCE
+	 * squares forward from starting position (net forward distance,
+	 * not total moves).
 	 * @param {Object} game - The game object
 	 * @param {Object} piece - The chess piece (pawn)
 	 * @private
@@ -1324,291 +1159,20 @@ class ChessManager {
 	}
 	
 	/**
-	 * Check if a chess move is valid (sparse-board aware)
-	 * This is used by the socket server which keeps board squares (tetromino/home) separate from chess-piece occupancy.
-	 * @param {Object} game - The game object
-	 * @param {Object} piece - Chess piece object from game.chessPieces
-	 * @param {number} toX - Target X
-	 * @param {number} toZ - Target Z
-	 * @returns {boolean} True if valid
+	 * Fast yes/no validity check used by the socket server and AI.
+	 * Implementation lives in `./chess/moveValidation.js`.
 	 */
 	isValidChessMove(game, piece, toX, toZ) {
-		try {
-			if (!game || !game.board || !game.board.cells || !piece) return false;
-			
-			const pos = piece.position || piece;
-			if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.z)) return false;
-			if (!Number.isFinite(toX) || !Number.isFinite(toZ)) return false;
-			
-			const fromX = pos.x;
-			const fromZ = pos.z;
-			if (fromX === toX && fromZ === toZ) return false;
-			
-			// Destination must be an existing board square (tetromino/home/etc.)
-			const targetCell = this.boardManager.getCell(game.board, toX, toZ);
-			if (!targetCell || !Array.isArray(targetCell) || targetCell.length === 0) return false;
-			
-			const pieceOwner = piece.player;
-			const pieceType = String(piece.type || '').toUpperCase();
-
-			const pieceAt = this._buildPieceLocator(game);
-			const targetChess = pieceAt(toX, toZ);
-			if (targetChess && String(targetChess.player) === String(pieceOwner)) return false;
-
-			const deltaX = toX - fromX;
-			const deltaZ = toZ - fromZ;
-			const absX = Math.abs(deltaX);
-			const absZ = Math.abs(deltaZ);
-
-			const hasChessPieceAt = (x, z) => !!pieceAt(x, z);
-
-			const isBoardSquare = (x, z) => {
-				const cell = this.boardManager.getCell(game.board, x, z);
-				return !!(cell && Array.isArray(cell) && cell.length > 0);
-			};
-			
-			const isPathClear = () => {
-				const stepX = Math.sign(deltaX);
-				const stepZ = Math.sign(deltaZ);
-				
-				let x = fromX + stepX;
-				let z = fromZ + stepZ;
-				
-				while (x !== toX || z !== toZ) {
-					if (!isBoardSquare(x, z)) return false;
-					if (hasChessPieceAt(x, z)) return false;
-
-					x += stepX;
-					z += stepZ;
-				}
-				
-				return true;
-			};
-			
-			switch (pieceType) {
-				case 'KING':
-					if (absX <= 1 && absZ <= 1) return true;
-					if (!piece.hasMoved && ((absX === 2 && absZ === 0) || (absX === 0 && absZ === 2))) {
-						const castleResult = this._validateCastle(game, piece, toX, toZ, pieceAt);
-						return castleResult.valid;
-					}
-					return false;
-					
-				case 'KNIGHT':
-					return (absX === 1 && absZ === 2) || (absX === 2 && absZ === 1);
-					
-				case 'BISHOP':
-					if (absX !== absZ) return false;
-					return isPathClear();
-					
-				case 'ROOK':
-					if (!((absX === 0 && absZ > 0) || (absZ === 0 && absX > 0))) return false;
-					return isPathClear();
-					
-				case 'QUEEN':
-					if (
-						!((absX === 0 && absZ > 0) || (absZ === 0 && absX > 0) || (absX === absZ && absX > 0))
-					) return false;
-					return isPathClear();
-					
-			case 'PAWN': {
-				const orientation = Number.isFinite(piece.orientation) ? piece.orientation : 0;
-				const forward = (() => {
-					switch (orientation) {
-						case 0: return { dx: 0, dz: 1 };
-						case 2: return { dx: 0, dz: -1 };
-						case 1: return { dx: 1, dz: 0 };
-						case 3: return { dx: -1, dz: 0 };
-						default: return { dx: 0, dz: 1 };
-					}
-				})();
-				
-				const isForwardOne =
-					deltaX === forward.dx && deltaZ === forward.dz;
-				
-				const isForwardTwo =
-					!piece.hasMoved &&
-					deltaX === forward.dx * 2 && deltaZ === forward.dz * 2;
-				
-				const isDiagonalCapture = (() => {
-					if (forward.dx === 0) {
-						return (absX === 1 && deltaZ === forward.dz);
-					}
-					return (absZ === 1 && deltaX === forward.dx);
-				})();
-				
-				if (isForwardOne) {
-					return !hasChessPieceAt(toX, toZ);
-				}
-				
-				if (isForwardTwo) {
-					const midX = fromX + forward.dx;
-					const midZ = fromZ + forward.dz;
-					const midCell = this.boardManager.getCell(game.board, midX, midZ);
-					const midHasBoard = !!(midCell && Array.isArray(midCell) && midCell.length > 0);
-					if (!midHasBoard) return false;
-					if (hasChessPieceAt(midX, midZ)) return false;
-					return !hasChessPieceAt(toX, toZ);
-				}
-				
-				if (isDiagonalCapture) {
-					return !!targetChess && String(targetChess.player) !== String(pieceOwner);
-				}
-				
-				return false;
-			}
-				
-				default:
-					return false;
-			}
-		} catch (error) {
-			log(`Error validating chess move (isValidChessMove): ${error.message}`);
-			return false;
-		}
+		return moveValidation.isValidChessMove(this._validationCtx(), game, piece, toX, toZ);
 	}
-	
+
 	/**
-	 * Check if a player has any valid chess moves available
-	 * @param {Object} game - The game object
-	 * @param {string} playerId - The player's ID
-	 * @returns {boolean} True if the player has at least one valid move
+	 * Does the player have any legal move? Falls through to the
+	 * tetromino phase when false so the round doesn't deadlock.
+	 * Implementation lives in `./chess/moveValidation.js`.
 	 */
 	hasValidChessMoves(game, playerId) {
-		try {
-			if (!game || !game.board || !game.board.cells) return false;
-			
-			// Get all chess pieces for the player
-			const pid = String(playerId);
-			const playerPieces = game.chessPieces.filter(
-				piece => piece && String(piece.player) === pid
-			);
-			
-			// If the player has no pieces, they have no valid moves
-			if (!playerPieces.length) {
-				log(`Player ${playerId} has no chess pieces`);
-				return false;
-			}
-			
-			const pieceAt = this._buildPieceLocator(game);
-			const isBoardSquare = (x, z) => {
-				const cell = this.boardManager.getCell(game.board, x, z);
-				return !!(cell && Array.isArray(cell) && cell.length > 0);
-			};
-
-			const hasChessPieceAt = (x, z) => !!pieceAt(x, z);
-
-			// Check each piece for at least one valid move (efficient ray checks for sliders)
-			for (const piece of playerPieces) {
-				const pos = piece.position || piece;
-				if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.z)) continue;
-				
-				const type = String(piece.type || '').toUpperCase();
-				const x0 = pos.x;
-				const z0 = pos.z;
-				
-				const tryMove = (x, z) => this.isValidChessMove(game, piece, x, z);
-				
-				if (type === 'KING') {
-					for (let dx = -1; dx <= 1; dx++) {
-						for (let dz = -1; dz <= 1; dz++) {
-							if (dx === 0 && dz === 0) continue;
-							if (tryMove(x0 + dx, z0 + dz)) return true;
-						}
-					}
-					// Check castling (2 squares in each direction)
-					if (!piece.hasMoved) {
-						if (tryMove(x0 + 2, z0)) return true;
-						if (tryMove(x0 - 2, z0)) return true;
-						if (tryMove(x0, z0 + 2)) return true;
-						if (tryMove(x0, z0 - 2)) return true;
-					}
-					continue;
-				}
-				
-				if (type === 'KNIGHT') {
-					const moves = [
-						{ dx: 1, dz: 2 }, { dx: 2, dz: 1 },
-						{ dx: -1, dz: 2 }, { dx: -2, dz: 1 },
-						{ dx: 1, dz: -2 }, { dx: 2, dz: -1 },
-						{ dx: -1, dz: -2 }, { dx: -2, dz: -1 }
-					];
-					
-					for (const m of moves) {
-						if (tryMove(x0 + m.dx, z0 + m.dz)) return true;
-					}
-					continue;
-				}
-				
-			if (type === 'PAWN') {
-				const orientation = Number.isFinite(piece.orientation) ? piece.orientation : 0;
-				const forward = (() => {
-					switch (orientation) {
-						case 0: return { dx: 0, dz: 1 };
-						case 2: return { dx: 0, dz: -1 };
-						case 1: return { dx: 1, dz: 0 };
-						case 3: return { dx: -1, dz: 0 };
-						default: return { dx: 0, dz: 1 };
-					}
-				})();
-				
-				if (tryMove(x0 + forward.dx, z0 + forward.dz)) return true;
-				
-				// Two-square first move
-				if (!piece.hasMoved) {
-					if (tryMove(x0 + forward.dx * 2, z0 + forward.dz * 2)) return true;
-				}
-				
-				const diagonals = forward.dx === 0
-					? [{ dx: -1, dz: forward.dz }, { dx: 1, dz: forward.dz }]
-					: [{ dx: forward.dx, dz: -1 }, { dx: forward.dx, dz: 1 }];
-				
-				for (const d of diagonals) {
-					if (tryMove(x0 + d.dx, z0 + d.dz)) return true;
-				}
-				continue;
-			}
-				
-				// Sliding pieces: ray-cast until void
-				const directions = [];
-				if (type === 'ROOK' || type === 'QUEEN') {
-					directions.push(
-						{ dx: 1, dz: 0 }, { dx: -1, dz: 0 },
-						{ dx: 0, dz: 1 }, { dx: 0, dz: -1 }
-					);
-				}
-				if (type === 'BISHOP' || type === 'QUEEN') {
-					directions.push(
-						{ dx: 1, dz: 1 }, { dx: 1, dz: -1 },
-						{ dx: -1, dz: 1 }, { dx: -1, dz: -1 }
-					);
-				}
-				
-				for (const dir of directions) {
-					let step = 1;
-					while (true) {
-						const x = x0 + dir.dx * step;
-						const z = z0 + dir.dz * step;
-						
-						if (!isBoardSquare(x, z)) break;
-						
-						if (tryMove(x, z)) return true;
-						
-						// If square has a chess piece, ray is blocked beyond it
-						if (hasChessPieceAt(x, z)) break;
-						
-						step++;
-					}
-				}
-			}
-			
-			// If we got here, no valid moves were found
-			log(`Player ${playerId} has no valid chess moves available`);
-			return false;
-		} catch (error) {
-			log(`Error checking for valid chess moves: ${error.message}`);
-			// Default to true to be safe (don't automatically skip turns on error)
-			return true;
-		}
+		return moveValidation.hasValidChessMoves(this._validationCtx(), game, playerId);
 	}
 }
 

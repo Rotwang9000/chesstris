@@ -35,6 +35,41 @@ let world = freshWorld(GLOBAL_WORLD_ID);
 let dirty = false;
 
 /**
+ * Stable per-player colour. We pick from a small palette of high-
+ * contrast, distinguishable hues. Hashing on the playerId means the
+ * same player gets the same hue every time the record is recreated.
+ * RED is deliberately omitted from the palette — the previous
+ * default of `0xDD0000` caused the "everyone is red" bug because
+ * players that fell through the default branch and players that
+ * legitimately rolled a red hue were indistinguishable. The local
+ * player's UI palette (warm wood/red) sits on the client; the
+ * server now hands out non-red hues so they never collide visually.
+ */
+const PLAYER_PALETTE = Object.freeze([
+	'#2266dd', // royal blue
+	'#22aa66', // forest green
+	'#9933dd', // violet
+	'#dd9922', // amber
+	'#22ccbb', // teal
+	'#dd66aa', // pink
+	'#6688cc', // sky blue
+	'#88cc22', // chartreuse
+	'#cc7733', // ochre
+	'#33aacc', // cyan
+	'#bb44dd', // magenta
+	'#669944', // olive
+]);
+
+function pickDeterministicColor(playerId) {
+	const str = String(playerId || '');
+	let h = 0;
+	for (let i = 0; i < str.length; i++) {
+		h = (h * 31 + str.charCodeAt(i)) >>> 0;
+	}
+	return PLAYER_PALETTE[h % PLAYER_PALETTE.length];
+}
+
+/**
  * Build a fresh empty world with default settings.
  * @param {string} id
  * @returns {WorldState}
@@ -60,12 +95,19 @@ function freshWorld(id = GLOBAL_WORLD_ID) {
 
 		// Sparse 3D board.  Cells are indexed by `${x},${z}` and contain
 		// arrays of layered content items (`home`, `tetromino`, `chess`).
+		// `centreMarker` is the client's render-space reference point and
+		// MUST stay fixed for the world's whole life: clients place every
+		// mesh at `boardCoord + centreMarker`, so moving it teleports the
+		// entire rendered world. (Before this was pinned, clients fell
+		// back to the bounds midpoint — and a battle arena at (2000,2000)
+		// yanked that midpoint ~1000 cells sideways for every player.)
 		board: {
 			cells: {},
 			minX: 0,
 			maxX: 0,
 			minZ: 0,
 			maxZ: 0,
+			centreMarker: { x: 0, z: 0 },
 		},
 
 		// Top-level chess pieces (mirrors the chess content on the board so
@@ -118,6 +160,11 @@ function freshWorld(id = GLOBAL_WORLD_ID) {
 		// them on the next save, but a server-restart that drops them is
 		// harmless (they regenerate within a minute).
 		powerUps: [],
+
+		// Battle-arena registry keyed by battleId. Each entry describes
+		// a 2-4 seat private arena parked far from the organic cluster.
+		// See `server/battle/BattleManager.js`.
+		battles: {},
 	};
 }
 
@@ -138,7 +185,17 @@ function createPlayerRecord(playerId, overrides = {}) {
 		// keeps working without special-casing.
 		gameId: GLOBAL_WORLD_ID,
 		name: overrides.name || `Player_${String(playerId).substring(0, 6)}`,
-		color: overrides.color || 0xDD0000,
+		// We used to default to red (0xDD0000), so any player that
+		// arrived through `upsertPlayer` from `connection.js`
+		// *before* `PlayerManager.register` later set a real color
+		// got stuck red — and because that red counts as truthy, the
+		// register path's `existing.color || generateRandomColor()`
+		// preserved the broken value. The user reported "all the
+		// pieces are red" because half the world had this baked-in
+		// default. Picking a deterministic per-id colour at record
+		// creation kills the bug at the source and stays stable
+		// across reconnects.
+		color: overrides.color || pickDeterministicColor(playerId),
 
 		isObserver: false,
 		isComputer: false,
@@ -277,6 +334,81 @@ function removePlayer(playerId) {
 }
 
 /**
+ * Re-key a player's entire footprint from `oldId` to `newId`. Used when a
+ * guest claims an account on first login: their player record, home zone,
+ * chess pieces, owned cells and turn/disconnect bookkeeping all move onto
+ * the stable account key so they keep the SAME kingdom across devices.
+ *
+ * Refuses (returns false) when there's nothing under `oldId`, the ids
+ * match, or `newId` already has a record (never clobber a real account).
+ *
+ * @param {string} oldId
+ * @param {string} newId
+ * @returns {boolean} whether a re-key happened
+ */
+function reassignPlayerId(oldId, newId) {
+	if (!oldId || !newId || String(oldId) === String(newId)) return false;
+	if (!world.players[oldId]) return false;
+	if (world.players[newId]) return false;
+
+	const old = String(oldId);
+	const next = String(newId);
+
+	const record = world.players[oldId];
+	record.id = newId;
+	world.players[newId] = record;
+	delete world.players[oldId];
+
+	if (world.homeZones && world.homeZones[oldId]) {
+		const zone = world.homeZones[oldId];
+		if (zone && zone.player != null) zone.player = newId;
+		world.homeZones[newId] = zone;
+		delete world.homeZones[oldId];
+	}
+
+	if (world.currentTurns && world.currentTurns[oldId]) {
+		const turn = world.currentTurns[oldId];
+		if (turn && turn.playerId != null) turn.playerId = newId;
+		world.currentTurns[newId] = turn;
+		delete world.currentTurns[oldId];
+	}
+
+	if (Array.isArray(world.chessPieces)) {
+		for (const piece of world.chessPieces) {
+			if (piece && String(piece.player) === old) piece.player = newId;
+		}
+	}
+
+	if (world.board && world.board.cells) {
+		for (const key of Object.keys(world.board.cells)) {
+			const cell = world.board.cells[key];
+			if (!Array.isArray(cell)) continue;
+			for (const item of cell) {
+				if (item && String(item.player) === old) item.player = newId;
+			}
+		}
+	}
+
+	// Disconnect bookkeeping is keyed `pid:x,z`.
+	if (world.disconnectedSince) {
+		const remapped = {};
+		for (const [key, ts] of Object.entries(world.disconnectedSince)) {
+			const idx = key.indexOf(':');
+			const keyPid = idx >= 0 ? key.slice(0, idx) : key;
+			if (idx >= 0 && keyPid === old) {
+				remapped[`${next}:${key.slice(idx + 1)}`] = ts;
+			} else {
+				remapped[key] = ts;
+			}
+		}
+		world.disconnectedSince = remapped;
+	}
+
+	markDirty();
+	return true;
+}
+
+/**
  * Mark a player as eliminated. Their pieces and territory are NOT
  * immediately removed — that's the chess `executeKingCapture` flow's job.
  */
@@ -309,32 +441,108 @@ function restoreWorldFromSnapshot(snapshot) {
 	// Backfill new player-record fields onto restored records so we
 	// don't have to scatter null-guards across the server when a new
 	// field is introduced. Cheap (constant time per player on boot).
+	const remappedRedToColour = {};
 	for (const pid of Object.keys(players)) {
 		const p = players[pid];
 		if (!p) continue;
 		if (!Array.isArray(p.capturedBasket)) p.capturedBasket = [];
 		if (!Array.isArray(p.promotionCredits)) p.promotionCredits = [];
 		if (!Array.isArray(p.capturedStyles)) p.capturedStyles = [];
+		// One-shot migration: any player carrying the legacy default
+		// red gets remapped to a deterministic palette colour. Without
+		// this, persistence preserves the bug we just fixed in
+		// createPlayerRecord forever.
+		const isLegacyRed =
+			p.color === 0xDD0000 ||
+			p.color === 14483456 ||
+			(typeof p.color === 'string' && /^#?dd0000$/i.test(p.color));
+		if (isLegacyRed) {
+			const replacement = pickDeterministicColor(pid);
+			remappedRedToColour[pid] = replacement;
+			p.color = replacement;
+		}
 	}
+	let didMigrateColours = false;
+	if (Object.keys(remappedRedToColour).length > 0) {
+		didMigrateColours = true;
+		console.log(`[World] Migrated ${Object.keys(remappedRedToColour).length} legacy-red player(s) to palette colours.`);
+		// Cascade the new colours onto every chess piece that carried
+		// the bad red so the client doesn't render mixed palettes
+		// until those pieces happen to be respawned.
+		const pieces = Array.isArray(snapshot.chessPieces) ? snapshot.chessPieces : [];
+		for (const piece of pieces) {
+			if (!piece) continue;
+			const newColour = remappedRedToColour[piece.player];
+			if (!newColour) continue;
+			const isBadRed =
+				piece.color === 0xDD0000 ||
+				piece.color === 14483456 ||
+				(typeof piece.color === 'string' && /^#?dd0000$/i.test(piece.color));
+			if (isBadRed) piece.color = newColour;
+		}
+	}
+	// Dedupe restored chess pieces by id. Earlier code paths could
+	// occasionally double-push the same piece (e.g. the chess-move
+	// handler reassigning `chessPieces[idx] = piece` while a stale
+	// duplicate sat further along the array). Restoring the snapshot
+	// as-is would replay the corruption forever; cleaning it here is
+	// cheap and idempotent.
+	let restoredPieces = Array.isArray(snapshot.chessPieces) ? snapshot.chessPieces : [];
+	{
+		const seen = new Set();
+		const deduped = [];
+		let droppedDuplicates = 0;
+		for (const piece of restoredPieces) {
+			if (!piece || !piece.id) {
+				deduped.push(piece);
+				continue;
+			}
+			const id = String(piece.id);
+			if (seen.has(id)) { droppedDuplicates++; continue; }
+			seen.add(id);
+			deduped.push(piece);
+		}
+		if (droppedDuplicates > 0) {
+			console.log(`[World] Restore deduped ${droppedDuplicates} duplicate chess piece(s).`);
+		}
+		restoredPieces = deduped;
+	}
+
+	// Older snapshots predate the pinned centre marker — backfill it so
+	// clients never fall back to the (unstable) bounds-midpoint guess.
+	if (!snapshot.board.centreMarker
+		|| !Number.isFinite(snapshot.board.centreMarker.x)
+		|| !Number.isFinite(snapshot.board.centreMarker.z)) {
+		snapshot.board.centreMarker = { x: 0, z: 0 };
+	}
+
 	world = {
 		...fresh,
 		...snapshot,
 		board: snapshot.board,
-		chessPieces: Array.isArray(snapshot.chessPieces) ? snapshot.chessPieces : [],
+		chessPieces: restoredPieces,
 		islands: Array.isArray(snapshot.islands) ? snapshot.islands : [],
 		players,
 		homeZones: snapshot.homeZones || {},
 		currentTurns: snapshot.currentTurns || {},
 		kingPrison: Array.isArray(snapshot.kingPrison) ? snapshot.kingPrison : [],
 		pendingKingCaptures: Array.isArray(snapshot.pendingKingCaptures) ? snapshot.pendingKingCaptures : [],
+		pendingCheck: (snapshot.pendingCheck && typeof snapshot.pendingCheck === 'object')
+			? snapshot.pendingCheck
+			: null,
 		disconnectedSince: (snapshot.disconnectedSince && typeof snapshot.disconnectedSince === 'object')
 			? snapshot.disconnectedSince
 			: {},
 		activityLog: Array.isArray(snapshot.activityLog) ? snapshot.activityLog : [],
 		_activityLogNextId: Number.isFinite(snapshot._activityLogNextId) ? snapshot._activityLogNextId : 1,
 		powerUps: Array.isArray(snapshot.powerUps) ? snapshot.powerUps : [],
+		battles: (snapshot.battles && typeof snapshot.battles === 'object') ? snapshot.battles : {},
 	};
-	dirty = false;
+	// If we mutated the snapshot to fix legacy red colours, mark
+	// the world dirty so the next persistence cycle flushes the
+	// repair to disk. Without this the migration log would run on
+	// every boot until something else happened to dirty the world.
+	dirty = didMigrateColours === true;
 }
 
 /**
@@ -368,6 +576,7 @@ module.exports = {
 	getOrCreatePlayer,
 	upsertPlayer,
 	removePlayer,
+	reassignPlayerId,
 	eliminatePlayer,
 	listPlayers,
 	listHumanPlayers,

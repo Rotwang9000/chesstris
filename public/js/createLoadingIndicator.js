@@ -1,6 +1,11 @@
 import { handleTetrisPhaseClick, handleChessPhaseClick, resetGameState, startPlayingGame } from './enhanced-gameCore.js';
 import * as sceneModule from './scene';
 import gameState from './utils/gameState.js';
+import { loginWithEmail, handleAuthRedirect, isSignedIn } from './auth/auth0Client.js';
+import { showLoginDialog } from './auth/loginDialog.js';
+import { isLoggedIn as isKingdomLoggedIn, getLoggedInName as getKingdomName } from './auth/kingdomKey.js';
+import { enterBattleFlow } from './battle/battleMode.js';
+import { getSocket } from './utils/networkManager.js';
 
 /**
  * Create a loading indicator with Russian-themed styling
@@ -311,19 +316,39 @@ export function updateGameStatusDisplay(gameState) {
 	statusContainer.innerHTML = statusHTML;
 }
 /**
- * Update the network status display
- * @param {string} status - The current network status: 'connecting', 'connected', or 'disconnected'
+ * Update the network status display.
+ *
+ * Single writer for the #network-status pill: callers (event listeners,
+ * the fallback poll) all come through here so the show/hide logic stays
+ * in one place. "Connected" is the expected steady state, so it only
+ * flashes briefly and then gets out of the way; every other state stays
+ * on screen until resolved.
+ *
+ * @param {string} status - 'connecting', 'connected', 'disconnected' or 'error'
  */
+
+const NETWORK_CONNECTED_FLASH_MS = 2500;
+let lastNetworkStatus = null;
+let networkStatusHideTimer = null;
 
 export function updateNetworkStatus(status) {
 	const networkStatusElement = document.getElementById('network-status');
 
 	if (!networkStatusElement) return;
+	// The 5s fallback poll re-reports the same state forever — bail early
+	// so "connected" doesn't re-flash every poll.
+	if (status === lastNetworkStatus) return;
+	lastNetworkStatus = status;
+
+	if (networkStatusHideTimer) {
+		clearTimeout(networkStatusHideTimer);
+		networkStatusHideTimer = null;
+	}
 
 	// Set text and color based on status with Russian theme
 	switch (status) {
 		case 'connected':
-			networkStatusElement.textContent = 'Network: Connected';
+			networkStatusElement.textContent = 'Connected ✓';
 			networkStatusElement.style.backgroundColor = 'rgba(0, 128, 0, 0.7)';
 			networkStatusElement.style.borderColor = '#ffcc00'; // Gold border
 			break;
@@ -333,7 +358,7 @@ export function updateNetworkStatus(status) {
 			networkStatusElement.style.borderColor = '#ffcc00'; // Gold border
 			break;
 		case 'connecting':
-			networkStatusElement.textContent = 'Network: Connecting...';
+			networkStatusElement.textContent = 'Connecting…';
 			networkStatusElement.style.backgroundColor = 'rgba(255, 165, 0, 0.7)';
 			networkStatusElement.style.borderColor = '#ffcc00'; // Gold border
 			break;
@@ -341,6 +366,14 @@ export function updateNetworkStatus(status) {
 			networkStatusElement.textContent = `Network: ${status}`;
 			networkStatusElement.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
 			networkStatusElement.style.borderColor = '#ffcc00'; // Gold border
+	}
+
+	networkStatusElement.style.display = 'block';
+	if (status === 'connected') {
+		networkStatusHideTimer = setTimeout(() => {
+			networkStatusElement.style.display = 'none';
+			networkStatusHideTimer = null;
+		}, NETWORK_CONNECTED_FLASH_MS);
 	}
 }
 /**
@@ -359,7 +392,14 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 
 	// Check for previous game key in localStorage
 	const previousGameKey = localStorage.getItem('tetches_game_key');
-	const playerEmail = localStorage.getItem('tetches_player_email');
+
+	// Launch feature flags. Tetches currently runs a SINGLE shared world,
+	// so the "world key" input and the cross-device "sign in to save
+	// progress" path don't yet do anything meaningful (and Auth0 email
+	// login is still WIP). Hide them for launch so the modal has one clear
+	// call to action; flip these back on when those features are wired.
+	const ENABLE_WORLD_KEY = false;
+	const ENABLE_AUTH_SIGNIN = false;
 
 	// Create tutorial message container (full screen overlay)
 	const tutorialElement = document.createElement('div');
@@ -402,6 +442,7 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 	Object.assign(scrollContent.style, {
 		flex: '1',
 		overflowY: 'auto',
+		overflowX: 'hidden',
 		padding: '24px',
 		textAlign: 'center'
 	});
@@ -487,8 +528,36 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 		document.head.appendChild(style);
 	}
 
-	// Function to close tutorial and start game
+	// Persist the (optional) name typed into the welcome modal so the
+	// world join announces the player correctly. Blank = keep whatever
+	// was stored; the server auto-names brand-new guests.
+	const saveTypedPlayerName = () => {
+		try {
+			const input = tutorialElement.querySelector('#welcome-player-name');
+			const typed = (input?.value || '').trim().slice(0, 20);
+			if (typed) localStorage.setItem('playerName', typed);
+		} catch (_e) { /* private mode */ }
+	};
+
+	// The spectator socket connected before the player typed their
+	// name, so the server-side record may still carry the auto-guest
+	// name. Battle seats are named from that record, so push the
+	// rename now (world joins send the name in `join_game` anyway).
+	const pushNameToServer = () => {
+		try {
+			const socket = getSocket();
+			let stored = null;
+			try { stored = localStorage.getItem('playerName'); } catch (_e) { /* private mode */ }
+			if (socket && stored) socket.emit('change_name', { playerName: stored });
+		} catch (_e) { /* not connected yet — join_game carries the name */ }
+	};
+
+	// Function to close tutorial and start game.
+	// Returns the start function's promise so callers (e.g. the battle
+	// button) can sequence follow-up UI on the world join completing.
 	const startGame = (gameKey = null) => {
+		saveTypedPlayerName();
+
 		// Store the game key if provided
 		if (gameKey) {
 			localStorage.setItem('tetches_game_key', gameKey);
@@ -502,54 +571,56 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 		// Start the game with the key if provided
 		if (typeof startGameFunction === 'function') {
 			console.log('Entering world using passed function', gameKey ? `with key: ${gameKey}` : 'default shared world');
-			startGameFunction(gameKey);
+			return Promise.resolve(startGameFunction(gameKey));
 		} else if (typeof window.startTetchesGame === 'function') {
 			console.log('Entering world using global function');
-			window.startTetchesGame(gameKey);
-		} else {
-			console.error('No game start function available!');
-			alert('Error: Could not start the game. Please refresh and try again.');
+			return Promise.resolve(window.startTetchesGame(gameKey));
 		}
+		console.error('No game start function available!');
+		alert('Error: Could not start the game. Please refresh and try again.');
+		return Promise.resolve(false);
 	};
 
-	// Build the scrollable content
+	// Build the scrollable content. The 8-bit hero carries the title;
+	// everything long-form hides behind the "How to play" toggle so the
+	// first screen is one picture, one line, one button.
 	scrollContent.innerHTML = `
-		<h2 style="color: #ffcc00; margin: 0 0 8px 0; font-family: 'Times New Roman', serif; font-size: 28px;">
-			☦ Welcome to Tetches ☦
-		</h2>
-		<p style="margin: 0 0 20px 0; opacity: 0.8;">A massively multiplayer shared-world game combining Chess and Tetris</p>
-		
-		<div style="text-align: left; margin: 0 0 20px 0; padding: 16px; background: rgba(255, 204, 0, 0.05); border-radius: 8px;">
-			<h3 style="color: #ffcc00; margin: 0 0 12px 0; font-size: 16px;">How to Play:</h3>
+		<img src="/img/welcome-hero.png" alt="Tetches — chess pieces and falling tetromino blocks"
+			style="width: 100%; box-sizing: border-box; display: block; border-radius: 8px; image-rendering: pixelated; margin: 0 0 12px 0; border: 1px solid rgba(255, 204, 0, 0.35);">
+		<p style="margin: 0 0 14px 0; font-size: 15px; opacity: 0.9;">
+			Chess meets Tetris in one huge shared world.<br>
+			<span style="opacity: 0.75; font-size: 13px;">Drop blocks to grow your kingdom, then march your pieces out to capture kings.</span>
+		</p>
+
+		<button id="howto-toggle" aria-expanded="false"
+			style="background: none; border: 1px solid rgba(255, 204, 0, 0.5); color: #ffcc00; border-radius: 6px; padding: 8px 16px; font-size: 14px; cursor: pointer; font-family: inherit;">
+			❓ How to play
+		</button>
+
+		<div id="howto-content" style="display: none; text-align: left; margin: 14px 0 0 0; padding: 16px; background: rgba(255, 204, 0, 0.05); border-radius: 8px;">
 			<ul style="line-height: 1.6; margin: 0; padding-left: 20px;">
-				<li><strong>All Players Play Simultaneously</strong> - No waiting for turns!</li>
-				<li><strong>Your Cycle:</strong>
-					<ol style="margin: 4px 0; padding-left: 18px;">
-						<li>Place a Tetromino (falls from above)</li>
-						<li>Move one chess piece</li>
-						<li>Repeat!</li>
-					</ol>
-				</li>
-				<li><strong>Tetris Controls:</strong>
-					<span style="color: #ffcc00;">Arrow keys</span> move, 
-					<span style="color: #ffcc00;">Z/X</span> rotate, 
+				<li><strong>Everyone plays at once</strong> — no waiting for turns</li>
+				<li><strong>Your cycle:</strong> drop a tetromino, move one chess piece, repeat</li>
+				<li><strong>Tetris controls:</strong>
+					<span style="color: #ffcc00;">Arrow keys</span> move,
+					<span style="color: #ffcc00;">Z/X</span> rotate,
 					<span style="color: #ffcc00;">Space</span> drop
 				</li>
-				<li><strong>Chess:</strong> Click piece → click green circle to move</li>
-				<li><strong>Goal:</strong> Capture opponent kings! 👑</li>
+				<li><strong>Landing guide:</strong> the outline under your piece shows where it lands —
+					<span style="color: #66ff88;">green will stick</span>,
+					<span style="color: #ff6666;">red will dissolve</span>
+					(pieces must touch your territory)
+				</li>
+				<li><strong>On touch devices:</strong> on-screen buttons &amp; swipes move/rotate/drop the piece</li>
+				<li><strong>Chess:</strong> click (or tap) a piece → click the green circle to move</li>
+				<li><strong>Goal:</strong> capture opponent kings! 👑</li>
 			</ul>
-		</div>
-		
-		<div style="padding: 12px; background: rgba(255, 204, 0, 0.08); border-radius: 8px; border-left: 3px solid #ffcc00;">
-			<p style="margin: 0; font-style: italic; font-size: 14px; opacity: 0.9;">
-				Tip: Place tetrominos to expand your territory, then use your chess pieces to attack!
+			<p style="margin: 10px 0 0 0; font-style: italic; font-size: 13px; opacity: 0.85;">
+				Tip: blocks grow your territory; chess pieces do the fighting.
 			</p>
-		</div>
-		<div style="margin-top: 12px; padding: 12px; background: rgba(0, 0, 0, 0.25); border-radius: 8px; text-align: left;">
-			<div style="font-weight: bold; color: #ffcc00; margin-bottom: 6px;">Terminology</div>
-			<div style="font-size: 13px; line-height: 1.5;">
-				<div><strong>World:</strong> the shared global board everyone plays on.</div>
-				<div><strong>Player Code:</strong> your personal identity/progress inside that world.</div>
+			<div style="margin-top: 10px; font-size: 12px; opacity: 0.75; line-height: 1.5;">
+				<strong>World</strong> = the shared board everyone plays on ·
+				<strong>Player Code</strong> = your identity/progress inside it
 			</div>
 		</div>
 	`;
@@ -557,8 +628,9 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 	// Build the button area
 	let buttonHTML = '';
 	
-	// If player has a previous game key, show rejoin option
-	if (previousGameKey) {
+	// If player has a previous game key, show rejoin option (world keys are
+	// off for the single-shared-world launch).
+	if (ENABLE_WORLD_KEY && previousGameKey) {
 		buttonHTML += `
 			<button id="rejoin-game-btn" class="tutorial-btn primary">
 				⟲ REJOIN WITH SAVED WORLD KEY
@@ -567,35 +639,101 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 		`;
 	}
 	
-	buttonHTML += `
-		<button id="new-game-btn" class="tutorial-btn ${!previousGameKey ? 'primary' : ''}">
-			✦ ENTER SHARED WORLD
+	// Optional name — one field on the one modal, instead of the old
+	// separate name dialog that used to pop up over everything.
+	let storedName = '';
+	try { storedName = localStorage.getItem('playerName') || ''; } catch (_e) { /* private mode */ }
+	const escapedName = storedName.replace(/[<>&"]/g, '');
+
+	// Invite links (/?battle=CODE) surface on the battle button so the
+	// invitee knows exactly what to click.
+	let inviteBattleCode = null;
+	try {
+		const inviteParam = new URLSearchParams(window.location.search).get('battle');
+		if (inviteParam && /^[A-Za-z0-9]{4,8}$/.test(inviteParam)) {
+			inviteBattleCode = inviteParam.toUpperCase();
+		}
+	} catch (_e) { /* no URL params */ }
+
+	// With a battle invite in the URL, joining THAT battle is the
+	// headline action: the battle button renders first, biggest, and
+	// Enter in the name field triggers it. PLAY NOW drops to a quiet
+	// secondary option.
+	const newGameIsPrimary = !(ENABLE_WORLD_KEY && previousGameKey) && !inviteBattleCode;
+	const playButtonHtml = `
+		<button id="new-game-btn" class="tutorial-btn ${newGameIsPrimary ? 'primary' : ''}" ${inviteBattleCode ? 'style="font-size: 14px; padding: 10px 16px;"' : ''}>
+			✦ PLAY NOW
 		</button>
-		<div style="font-size: 12px; opacity: 0.8; text-align: center; margin-top: -2px;">
-			Resumes your position if your Player Code/session is known.
-		</div>
-		<div class="tutorial-divider"><span>OR ENTER SPECIFIC WORLD KEY</span></div>
-		<div style="display: flex; gap: 8px;">
-			<input type="text" id="game-key-input" class="game-key-input" 
-				placeholder="Enter world key..." 
-				style="flex: 1;">
-			<button id="join-key-btn" class="tutorial-btn" style="width: auto; padding: 12px 20px;">
-				JOIN
-			</button>
-		</div>
-		<div class="tutorial-divider"><span>OR SIGN IN WITH EMAIL</span></div>
-		<div id="magic-link-section">
-			<div style="display: flex; gap: 8px;">
-				<input type="email" id="email-input" class="game-key-input" 
-					placeholder="your@email.com" 
-					style="flex: 1;">
-				<button id="magic-link-btn" class="tutorial-btn" style="width: auto; padding: 12px 20px;">
-					✉ SEND LINK
-				</button>
-			</div>
-			<p id="magic-link-status" style="margin: 8px 0 0 0; font-size: 12px; color: #888; display: none;"></p>
+		<div style="font-size: ${inviteBattleCode ? '11px' : '12px'}; opacity: 0.8; text-align: center; margin-top: -2px;">
+			${inviteBattleCode
+		? 'Or skip the battle and enter the shared world instead.'
+		: 'Jump straight in — no sign-up needed, your spot is remembered on this device.'}
 		</div>
 	`;
+	const battleButtonHtml = `
+		<button id="welcome-battle-btn" class="tutorial-btn ${inviteBattleCode ? 'primary' : ''}" style="${inviteBattleCode ? '' : 'font-size: 14px; padding: 10px 16px;'}">
+			${inviteBattleCode ? `⚔ JOIN BATTLE ${inviteBattleCode}` : '⚔ BATTLE A FRIEND'}
+		</button>
+		<div style="font-size: 11px; opacity: 0.7; text-align: center; margin-top: -4px;">
+			${inviteBattleCode
+		? 'You have been invited to a private battle — click to take your seat.'
+		: 'Private 2-4 player arena — share a code, or fight the bots.'}
+		</div>
+	`;
+	buttonHTML += `
+		<input type="text" id="welcome-player-name" class="game-key-input"
+			placeholder="Your name (optional)" maxlength="20" value="${escapedName}"
+			autocomplete="nickname" style="text-align: center;">
+		${inviteBattleCode ? battleButtonHtml + playButtonHtml : playButtonHtml + battleButtonHtml}
+	`;
+
+	// Account link: prominent but unmistakably optional (guests enter with
+	// the big button above; this only adds cross-device persistence).
+	let kingdomName = null;
+	try { kingdomName = isKingdomLoggedIn() ? getKingdomName() : null; } catch (_e) { /* cookie access */ }
+	if (kingdomName) {
+		buttonHTML += `
+			<div style="font-size: 12px; text-align: center; color: #88dd88;">
+				✓ Logged in as <strong>${kingdomName.replace(/[<>&]/g, '')}</strong> — your kingdom follows you across devices.
+			</div>
+		`;
+	} else {
+		buttonHTML += `
+			<div style="font-size: 12px; text-align: center; opacity: 0.85;">
+				Optional: <a href="#" id="welcome-login-link" style="color: #ffcc00; text-decoration: underline;">log in</a>
+				to keep your kingdom on any device.
+			</div>
+		`;
+	}
+
+	if (ENABLE_WORLD_KEY) {
+		buttonHTML += `
+			<div class="tutorial-divider"><span>OR ENTER SPECIFIC WORLD KEY</span></div>
+			<div style="display: flex; gap: 8px;">
+				<input type="text" id="game-key-input" class="game-key-input" 
+					placeholder="Enter world key..." 
+					style="flex: 1;">
+				<button id="join-key-btn" class="tutorial-btn" style="width: auto; padding: 12px 20px;">
+					JOIN
+				</button>
+			</div>
+		`;
+	}
+
+	if (ENABLE_AUTH_SIGNIN) {
+		buttonHTML += `
+			<div class="tutorial-divider"><span>OR SIGN IN TO SAVE PROGRESS</span></div>
+			<div id="auth-section">
+				<button id="auth-login-btn" class="tutorial-btn" style="width: 100%;">
+					✉ SIGN IN / SIGN UP
+				</button>
+				<p style="margin: 6px 0 0 0; font-size: 11px; color: #888; text-align: center;">
+					Saves your progress across devices. Sign-in is handled securely by Auth0 — we never see your password or store your email.
+				</p>
+				<p id="auth-status" style="margin: 8px 0 0 0; font-size: 12px; color: #888; display: none;"></p>
+			</div>
+		`;
+	}
 	
 	buttonArea.innerHTML = buttonHTML;
 
@@ -613,11 +751,69 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 	const joinKeyBtn = tutorialElement.querySelector('#join-key-btn');
 	const gameKeyInput = tutorialElement.querySelector('#game-key-input');
 
+	// "How to play" starts collapsed; the toggle flips it open in place.
+	const howtoToggle = tutorialElement.querySelector('#howto-toggle');
+	const howtoContent = tutorialElement.querySelector('#howto-content');
+	if (howtoToggle && howtoContent) {
+		howtoToggle.addEventListener('click', () => {
+			const isOpen = howtoContent.style.display !== 'none';
+			howtoContent.style.display = isOpen ? 'none' : 'block';
+			howtoToggle.setAttribute('aria-expanded', String(!isOpen));
+			howtoToggle.textContent = isOpen ? '❓ How to play' : '▲ Hide the rules';
+		});
+	}
+
+	// Optional account login from the welcome screen.
+	const welcomeLoginLink = tutorialElement.querySelector('#welcome-login-link');
+	if (welcomeLoginLink) {
+		welcomeLoginLink.addEventListener('click', (event) => {
+			event.preventDefault();
+			let prefill = '';
+			try { prefill = localStorage.getItem('playerName') || ''; } catch (_e) { /* private mode */ }
+			showLoginDialog({ prefillUsername: prefill });
+		});
+	}
+
 	if (newGameBtn) {
 		newGameBtn.addEventListener('click', () => {
 			newGameBtn.disabled = true;
 			newGameBtn.textContent = 'Entering...';
 			startGame(null); // Default shared world (session may restore position)
+		});
+	}
+
+	// Enter in the name field = the primary action (JOIN BATTLE when
+	// arriving on an invite link, PLAY NOW otherwise).
+	const welcomeNameInput = tutorialElement.querySelector('#welcome-player-name');
+	if (welcomeNameInput) {
+		welcomeNameInput.addEventListener('keydown', (event) => {
+			if (event.key !== 'Enter') return;
+			event.preventDefault();
+			const primaryBtn = inviteBattleCode
+				? tutorialElement.querySelector('#welcome-battle-btn')
+				: newGameBtn;
+			if (primaryBtn) primaryBtn.click();
+		});
+	}
+
+	// Battle a friend: goes straight to the battle lobby WITHOUT
+	// joining the shared world — battle-only players never grow a
+	// kingdom, they fight in a private arena and come back here after.
+	// With an invite code in the URL the seat is claimed immediately.
+	const welcomeBattleBtn = tutorialElement.querySelector('#welcome-battle-btn');
+	if (welcomeBattleBtn) {
+		welcomeBattleBtn.addEventListener('click', () => {
+			welcomeBattleBtn.disabled = true;
+			welcomeBattleBtn.textContent = inviteBattleCode ? 'Taking your seat…' : 'Opening battle lobby…';
+			saveTypedPlayerName();
+			pushNameToServer();
+			// Hide the modal — the battle dialog takes over on top of
+			// the spectator overview (no world entry happens).
+			if (tutorialElement.parentNode) {
+				tutorialElement.parentNode.removeChild(tutorialElement);
+			}
+			enterBattleFlow(inviteBattleCode)
+				.catch((err) => console.warn('Battle entry failed:', err));
 		});
 	}
 
@@ -651,157 +847,106 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 		});
 	}
 
-	// Magic link email handler
-	const magicLinkBtn = tutorialElement.querySelector('#magic-link-btn');
-	const emailInput = tutorialElement.querySelector('#email-input');
-	const magicLinkStatus = tutorialElement.querySelector('#magic-link-status');
+	// Email sign-in via Auth0. Auth0 hosts the email entry, the one-time
+	// code/link delivery, and verification on its own pages, so the game
+	// never sees an email address. After sign-in Auth0 redirects back here.
+	// Gated off for launch (single shared world + email login WIP); the
+	// guard also keeps us from calling the CSP-restricted Auth0 SDK on
+	// every page load. Flip ENABLE_AUTH_SIGNIN to re-enable.
+	if (ENABLE_AUTH_SIGNIN) {
+		const authLoginBtn = tutorialElement.querySelector('#auth-login-btn');
+		const authStatus = tutorialElement.querySelector('#auth-status');
 
-	if (magicLinkBtn && emailInput) {
-		const requestMagicLink = async () => {
-			const email = emailInput.value.trim();
-			
-			// Validate email
-			const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-			if (!email || !emailRegex.test(email)) {
-				emailInput.style.borderColor = '#ff4444';
-				if (magicLinkStatus) {
-					magicLinkStatus.textContent = 'Please enter a valid email address';
-					magicLinkStatus.style.color = '#ff6666';
-					magicLinkStatus.style.display = 'block';
-				}
-				emailInput.focus();
-				setTimeout(() => {
-					emailInput.style.borderColor = 'rgba(255, 204, 0, 0.5)';
-				}, 2000);
-				return;
-			}
-			
-			// Show loading state
-			magicLinkBtn.disabled = true;
-			magicLinkBtn.textContent = 'Sending...';
-			if (magicLinkStatus) {
-				magicLinkStatus.textContent = 'Sending magic link...';
-				magicLinkStatus.style.color = '#ffcc00';
-				magicLinkStatus.style.display = 'block';
-			}
-			
-			try {
-				const response = await fetch('/api/auth/magic-link', {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ 
-						email, 
-						gameKey: gameKeyInput?.value.trim() || null 
-					})
-				});
-				
-				const result = await response.json();
-				
-				if (result.success) {
-					// Store email for later
-					localStorage.setItem('tetches_player_email', email);
-					
-					if (magicLinkStatus) {
-						if (result.method === 'console') {
-							// Development mode - link was logged to console
-							magicLinkStatus.innerHTML = '✓ Magic link logged to server console!<br><small>(Check server terminal for link)</small>';
-						} else {
-							magicLinkStatus.textContent = '✓ Magic link sent! Check your email.';
-						}
-						magicLinkStatus.style.color = '#66ff66';
+		const setAuthStatus = (text, color) => {
+			if (!authStatus) return;
+			authStatus.textContent = text || '';
+			authStatus.style.color = color || '#888';
+			authStatus.style.display = text ? 'block' : 'none';
+		};
+
+		if (authLoginBtn) {
+			authLoginBtn.addEventListener('click', async () => {
+				const originalLabel = authLoginBtn.textContent;
+				authLoginBtn.disabled = true;
+				try {
+					// Returning player with a live session? Skip straight in.
+					if (await isSignedIn()) {
+						authLoginBtn.textContent = 'Entering…';
+						startGame(gameKeyInput?.value.trim() || previousGameKey || null);
+						return;
 					}
-					magicLinkBtn.textContent = '✓ Sent!';
-					
-					// Keep button disabled but show success
-					setTimeout(() => {
-						magicLinkBtn.disabled = false;
-						magicLinkBtn.textContent = '✉ RESEND';
-					}, 5000);
-				} else {
-					throw new Error(result.error || 'Failed to send magic link');
+					authLoginBtn.textContent = 'Redirecting…';
+					setAuthStatus('Opening secure sign-in…', '#ffcc00');
+					await loginWithEmail(gameKeyInput?.value.trim() || null);
+					// loginWithRedirect navigates away; control won't return here.
+				} catch (error) {
+					console.error('[auth] sign-in failed to start:', error);
+					setAuthStatus(error.message || 'Could not start sign-in. Please try again.', '#ff6666');
+					authLoginBtn.disabled = false;
+					authLoginBtn.textContent = originalLabel;
+				}
+			});
+		}
+
+		// Complete an Auth0 redirect (if this page load is the return leg of
+		// one) and otherwise reflect any existing session in the button.
+		(async () => {
+			try {
+				const appState = await handleAuthRedirect();
+				if (appState) {
+					const resumedGameKey = appState.gameKey || null;
+					if (resumedGameKey) localStorage.setItem('tetches_game_key', resumedGameKey);
+					setAuthStatus('✓ Signed in! Entering…', '#66ff66');
+					setTimeout(() => startGame(resumedGameKey), 500);
+					return;
+				}
+				if ((await isSignedIn()) && authLoginBtn) {
+					authLoginBtn.textContent = '✓ SIGNED IN — ENTER';
+					setAuthStatus('You are signed in. Click to enter.', '#66ff66');
 				}
 			} catch (error) {
-				console.error('Magic link request failed:', error);
-				if (magicLinkStatus) {
-					magicLinkStatus.textContent = error.message || 'Failed to send. Try again.';
-					magicLinkStatus.style.color = '#ff6666';
-				}
-				magicLinkBtn.disabled = false;
-				magicLinkBtn.textContent = '✉ SEND LINK';
+				console.error('[auth] redirect handling failed:', error);
+				setAuthStatus('Sign-in could not be completed. Please try again.', '#ff6666');
 			}
-		};
-		
-		magicLinkBtn.addEventListener('click', requestMagicLink);
-		emailInput.addEventListener('keypress', (e) => {
-			if (e.key === 'Enter') requestMagicLink();
-		});
-	}
-
-	// Check for auth result from URL (magic link callback)
-	const urlParams = new URLSearchParams(window.location.search);
-	const authResult = urlParams.get('auth');
-	const playerKey = urlParams.get('playerKey');
-	const urlGameKey = urlParams.get('gameKey');
-	
-	if (authResult === 'success' && playerKey) {
-		console.log('Magic link authentication successful');
-		localStorage.setItem('tetches_player_key', playerKey);
-		if (urlGameKey) {
-			localStorage.setItem('tetches_game_key', urlGameKey);
-		}
-		// Clean URL
-		const cleanUrl = new URL(window.location.href);
-		cleanUrl.searchParams.delete('auth');
-		cleanUrl.searchParams.delete('playerKey');
-		cleanUrl.searchParams.delete('gameKey');
-		window.history.replaceState({}, '', cleanUrl.toString());
-		
-		// Auto-start the game
-		setTimeout(() => {
-			startGame(urlGameKey || null);
-		}, 500);
-	} else if (authResult === 'failed') {
-		const reason = urlParams.get('reason');
-		let message = 'Login failed.';
-		if (reason === 'expired') message = 'Magic link expired. Please request a new one.';
-		if (reason === 'invalid') message = 'Invalid magic link.';
-		
-		if (magicLinkStatus) {
-			magicLinkStatus.textContent = message;
-			magicLinkStatus.style.color = '#ff6666';
-			magicLinkStatus.style.display = 'block';
-		}
-		
-		// Clean URL
-		const cleanUrl = new URL(window.location.href);
-		cleanUrl.searchParams.delete('auth');
-		cleanUrl.searchParams.delete('reason');
-		window.history.replaceState({}, '', cleanUrl.toString());
+		})();
 	}
 }
 /**
- * Utility function to hide all loading elements
+ * Utility function to hide all loading elements.
+ *
+ * Called on every board update, so it must be quiet and cheap when
+ * there's nothing left to hide (the common case after the first
+ * render) — it used to log "Forcibly hiding…" in a loop forever.
  */
 export function hideAllLoadingElements() {
-	console.log("Forcibly hiding all loading elements");
+	let hidAnything = false;
 
 	// Hide loading screen
 	const loadingElement = document.getElementById('loading');
-	if (loadingElement) {
+	if (loadingElement && loadingElement.style.display !== 'none') {
 		loadingElement.style.display = 'none';
+		hidAnything = true;
 	}
 
 	// Remove loading indicator
 	const loadingIndicator = document.getElementById('loading-indicator');
 	if (loadingIndicator && loadingIndicator.parentNode) {
 		loadingIndicator.parentNode.removeChild(loadingIndicator);
+		hidAnything = true;
 	}
 
 	// Hide any other loading elements
 	const elements = document.querySelectorAll('[id*="loading"]');
 	elements.forEach(el => {
-		el.style.display = 'none';
+		if (el.style.display !== 'none') {
+			el.style.display = 'none';
+			hidAnything = true;
+		}
 	});
+
+	if (hidAnything) {
+		console.log('Hiding loading elements');
+	}
 }
 /**
  * Update game ID display

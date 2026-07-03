@@ -96,6 +96,21 @@ sudo -u "${DEPLOY_USER}" bash -c "
 	npm ci --omit=dev --prefer-offline --no-audit --no-fund || npm install --omit=dev
 "
 
+# Build the client bundle so production users load 1 file instead
+# of ~70 ES modules. The server detects `public/dist/app.bundle.js`
+# at boot and rewrites the entry script tag in index.html (see
+# server/bundling/indexHtmlBundleSwap.js).
+log "3/8 Building client bundle (esbuild)"
+sudo -u "${DEPLOY_USER}" bash -c "
+	cd '${LIVE_DIR}' &&
+	export PATH=\$PATH:/usr/local/bin &&
+	# esbuild lives in devDependencies — install it just for the
+	# build, then drop it again to keep the runtime image lean.
+	npm install --no-save --no-audit --no-fund esbuild >/dev/null &&
+	npm run build:client &&
+	echo \"[deploy] client bundle ready: \$(ls -la public/dist/app.bundle.js | awk '{print \$5}') bytes\"
+"
+
 # Make sure the data directory exists + writable for the deploy user.
 mkdir -p "${LIVE_DIR}/data" "${LIVE_DIR}/data/backups" "${LIVE_DIR}/logs"
 chown -R "${DEPLOY_USER}:${DEPLOY_GROUP}" "${LIVE_DIR}/data" "${LIVE_DIR}/logs"
@@ -154,24 +169,27 @@ systemctl reload nginx
 
 # ── 6. PM2 start (before certbot — certbot needs the port up) ───────────────
 log "6/8 Starting tetches-production on port 3666"
-PM2_BIN="$(command -v pm2 || true)"
-if [ -z "${PM2_BIN}" ]; then
-	PM2_BIN="$(sudo -u "${DEPLOY_USER}" bash -c 'command -v pm2' || true)"
-fi
-if [ -z "${PM2_BIN}" ]; then
-	# Last-resort: use npx
-	PM2_BIN="$(command -v npx)"
-	PM2_CMD="npx pm2"
-else
-	PM2_CMD="${PM2_BIN}"
+# Root often has a broken/noexec pm2 under /root/.nvm — always run PM2
+# as the deploy user with *their* login shell PATH (nvm, npm global, etc.).
+run_pm2_as_deploy_user() {
+	sudo -u "${DEPLOY_USER}" bash -l -c "$1"
+}
+
+if ! run_pm2_as_deploy_user 'command -v pm2 >/dev/null 2>&1'; then
+	log "6/8 pm2 missing for ${DEPLOY_USER}; installing via npm -g"
+	run_pm2_as_deploy_user 'npm install -g pm2' || {
+		log "ERROR: could not install pm2 for ${DEPLOY_USER}"
+		exit 1
+	}
 fi
 
-sudo -u "${DEPLOY_USER}" bash -c "
+run_pm2_as_deploy_user "
 	cd '${LIVE_DIR}' &&
-	${PM2_CMD} delete tetches-production >/dev/null 2>&1 || true &&
-	${PM2_CMD} start ecosystem.config.cjs --only tetches-production &&
-	${PM2_CMD} save || true
+	pm2 delete tetches-production >/dev/null 2>&1 || true &&
+	pm2 start ecosystem.config.cjs --only tetches-production &&
+	pm2 save || true
 "
+PM2_CMD="sudo -u ${DEPLOY_USER} bash -l -c 'pm2'"
 
 # Sanity-check the listener.
 sleep 2
@@ -191,8 +209,8 @@ if [ ! -d "/etc/letsencrypt/live/${DOMAIN}" ]; then
 		-m "${CERTBOT_EMAIL}"
 else
 	log "Cert already exists for ${DOMAIN}; skipping certbot issuance."
-	# Make sure renewal is up to date though.
-	certbot renew --dry-run || true
+	# Do not run `certbot renew --dry-run` here — it simulates renewal for
+	# every cert on the host (can take minutes and hit Let's Encrypt limits).
 fi
 
 # Generate dhparams if missing (used by the hardened nginx config).

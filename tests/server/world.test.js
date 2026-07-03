@@ -57,6 +57,47 @@ describe('World — single source of truth', () => {
 		expect(w.homeZones[pid]).toBeUndefined();
 	});
 
+	test('reassignPlayerId re-keys the full footprint (account migration)', () => {
+		const oldId = 'guest-1';
+		const newId = 'player_' + 'f'.repeat(32);
+		World.upsertPlayer(oldId, { name: 'Guesty', balance: 5 });
+		const w = World.getWorld();
+		w.board.cells['2,3'] = [{ type: 'tetromino', player: oldId }];
+		w.board.cells['9,9'] = [{ type: 'tetromino', player: 'other' }];
+		w.chessPieces.push({ id: 'k1', player: oldId, type: 'king' });
+		w.chessPieces.push({ id: 'k2', player: 'other', type: 'king' });
+		w.homeZones[oldId] = { x: 1, z: 1, width: 8, height: 2, player: oldId };
+		w.currentTurns[oldId] = { playerId: oldId, phase: 'tetromino' };
+		w.disconnectedSince = { [`${oldId}:2,3`]: 111, 'other:9,9': 222 };
+
+		expect(World.reassignPlayerId(oldId, newId)).toBe(true);
+		// Source identity gone, destination carries everything over.
+		expect(World.getPlayer(oldId)).toBeNull();
+		expect(World.getPlayer(newId)).toBeTruthy();
+		expect(World.getPlayer(newId).balance).toBe(5);
+		expect(World.getPlayer(newId).id).toBe(newId);
+		expect(w.board.cells['2,3'][0].player).toBe(newId);
+		expect(w.board.cells['9,9'][0].player).toBe('other'); // untouched
+		expect(w.chessPieces.find(p => p.id === 'k1').player).toBe(newId);
+		expect(w.chessPieces.find(p => p.id === 'k2').player).toBe('other');
+		expect(w.homeZones[newId]).toBeTruthy();
+		expect(w.homeZones[newId].player).toBe(newId);
+		expect(w.homeZones[oldId]).toBeUndefined();
+		expect(w.currentTurns[newId].playerId).toBe(newId);
+		expect(w.disconnectedSince[`${newId}:2,3`]).toBe(111);
+		expect(w.disconnectedSince['other:9,9']).toBe(222);
+	});
+
+	test('reassignPlayerId refuses to clobber an existing id and no-ops on bad input', () => {
+		World.upsertPlayer('a', { name: 'A' });
+		World.upsertPlayer('b', { name: 'B' });
+		expect(World.reassignPlayerId('a', 'b')).toBe(false); // destination exists
+		expect(World.getPlayer('a')).toBeTruthy();
+		expect(World.getPlayer('b').name).toBe('B');
+		expect(World.reassignPlayerId('missing', 'c')).toBe(false); // no source
+		expect(World.reassignPlayerId('a', 'a')).toBe(false); // identical ids
+	});
+
 	test('eliminatePlayer flags but does not delete', () => {
 		World.upsertPlayer('p1', { name: 'Alice' });
 		World.eliminatePlayer('p1');
@@ -77,6 +118,33 @@ describe('World — single source of truth', () => {
 		World.markDirty();
 		expect(World.isDirty()).toBe(true);
 	});
+
+	// The centre marker is the client's render-space anchor: every mesh
+	// sits at `boardCoord + centreMarker`, so it must exist and must
+	// never move — a bounds-derived fallback jumped ~1000 cells when a
+	// battle arena spawned, teleporting the world for every player.
+	test('fresh world pins the board centre marker at (0,0)', () => {
+		const w = World.getWorld();
+		expect(w.board.centreMarker).toEqual({ x: 0, z: 0 });
+	});
+
+	test('restoreWorldFromSnapshot backfills a missing centre marker', () => {
+		World.restoreWorldFromSnapshot({
+			id: 'global_game',
+			board: { cells: { '5,5': [{ type: 'tetromino', player: 'p1' }] }, minX: 5, maxX: 5, minZ: 5, maxZ: 5 },
+			players: { p1: { id: 'p1', name: 'Alice' } },
+		});
+		expect(World.getWorld().board.centreMarker).toEqual({ x: 0, z: 0 });
+	});
+
+	test('restoreWorldFromSnapshot keeps an existing centre marker', () => {
+		World.restoreWorldFromSnapshot({
+			id: 'global_game',
+			board: { cells: {}, minX: 0, maxX: 0, minZ: 0, maxZ: 0, centreMarker: { x: 0, z: 0 } },
+			players: {},
+		});
+		expect(World.getWorld().board.centreMarker).toEqual({ x: 0, z: 0 });
+	});
 });
 
 describe('Sessions — ephemeral socket bindings', () => {
@@ -94,13 +162,31 @@ describe('Sessions — ephemeral socket bindings', () => {
 		expect(Sessions.socketForPlayer('p1')).toBeNull();
 	});
 
-	test('rebinding evicts the previous socket', () => {
+	test('a second tab binds ALONGSIDE the first (multi-tab support)', () => {
 		const s1 = fakeSocket('socket-1');
 		const s2 = fakeSocket('socket-2');
 		Sessions.bind(s1, 'p1');
 		Sessions.bind(s2, 'p1');
+		// Newest socket is the "primary", but the first tab stays live.
 		expect(Sessions.socketForPlayer('p1')).toBe(s2);
-		expect(Sessions.bySocketId('socket-1')).toBeNull();
+		expect(Sessions.bySocketId('socket-1')).not.toBeNull();
+		expect(Sessions.socketsForPlayer('p1')).toEqual([s1, s2]);
+		// Closing the newer tab falls back to the older one.
+		Sessions.unbind('socket-2');
+		expect(Sessions.isOnline('p1')).toBe(true);
+		expect(Sessions.socketForPlayer('p1')).toBe(s1);
+		Sessions.unbind('socket-1');
+		expect(Sessions.isOnline('p1')).toBe(false);
+	});
+
+	test('emitToPlayerSockets reaches every tab', () => {
+		const got = [];
+		const sock = (id) => ({ id, join: () => {}, emit: (ev, p) => got.push(`${id}:${ev}:${p.n}`) });
+		Sessions.bind(sock('a'), 'p1');
+		Sessions.bind(sock('b'), 'p1');
+		const reached = Sessions.emitToPlayerSockets('p1', 'battle_lobby_update', { n: 7 });
+		expect(reached).toBe(2);
+		expect(got).toEqual(['a:battle_lobby_update:7', 'b:battle_lobby_update:7']);
 	});
 });
 

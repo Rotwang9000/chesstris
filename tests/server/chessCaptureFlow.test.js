@@ -159,7 +159,7 @@ describe('server/sockets/chess — capture event flow', () => {
 	let broadcaster;
 	let integrityService;
 
-	function buildCtx(playerId) {
+	function buildCtx(playerId, extraCtx = {}) {
 		const socket = makeFakeSocket(playerId);
 		const gameManager = {
 			boardManager,
@@ -177,6 +177,7 @@ describe('server/sockets/chess — capture event flow', () => {
 			...makeKingServicesStub(),
 			spectatorRegistry: makeSpectatorRegistryStub(),
 			activityLog,
+			...extraCtx,
 		};
 		registerChessHandlers(socket, ctx);
 		return { socket, ctx };
@@ -290,6 +291,48 @@ describe('server/sockets/chess — capture event flow', () => {
 				pieceId: 'p1-R',
 			},
 		});
+	});
+
+	test('starting a check consumes the chess-move cooldown (H7)', () => {
+		const world = World.getWorld();
+		// p1 rook lined up to attack p2's king at (10, 0).
+		placeChessPiece(world, boardManager, 'p1-R', 'ROOK', 'p1', 10, 3);
+		boardManager.setCell(world.board, 10, 2, [{ type: 'tetromino', player: 'p1' }]);
+		boardManager.setCell(world.board, 10, 1, [{ type: 'tetromino', player: 'p1' }]);
+		jest.spyOn(chessManager, 'isValidChessMove').mockReturnValue(true);
+
+		let startCheckCalls = 0;
+		const checkService = {
+			CHECK_DEADLINE_MS: 20000,
+			startCheck() { startCheckCalls++; return true; },
+			validateEscape() { return { valid: false }; },
+			cancelCheck() { /* noop */ },
+			expireCheck() { /* noop */ },
+		};
+
+		const { socket } = buildCtx('p1', { checkService });
+
+		let firstAck = null;
+		socket.trigger(
+			'chess_move',
+			{ pieceId: 'p1-R', targetPosition: { x: 10, z: 0 } },
+			(r) => { firstAck = r; },
+		);
+		// Attack deferred into a check, and the attacker's cooldown is now
+		// stamped.
+		expect(firstAck).toMatchObject({ success: true, check: true });
+		expect(startCheckCalls).toBe(1);
+		expect(Number.isFinite(World.getPlayer('p1').lastChessMoveAt)).toBe(true);
+
+		// An immediate follow-up move is rate-limited — no check spam.
+		let secondAck = null;
+		socket.trigger(
+			'chess_move',
+			{ pieceId: 'p1-R', targetPosition: { x: 10, z: 0 } },
+			(r) => { secondAck = r; },
+		);
+		expect(secondAck).toMatchObject({ success: false, error: 'rate_limited' });
+		expect(startCheckCalls).toBe(1); // second attempt never reached startCheck
 	});
 
 	test('`chessFailed` preserves reason=piece_gone so the client can react', () => {
@@ -434,5 +477,48 @@ describe('server/ai/actions — captures emit chess_capture + activity events', 
 			x: 6,
 			z: 6,
 		});
+	});
+
+	test('AI pawn freezes at the promotion threshold (H5)', () => {
+		const world = World.getWorld();
+		// Orientation 0 → forward is +z. One step short of the 8-square
+		// promotion walk, so a single forward move trips the freeze.
+		const pawn = placeChessPiece(world, boardManager, 'ai-P', 'PAWN', 'ai-1', 4, 4);
+		pawn.forwardDistance = 7;
+		// Destination cell must exist for the AI's target picker.
+		boardManager.setCell(world.board, 4, 5, [{ type: 'tetromino', player: 'ai-1' }]);
+
+		jest.spyOn(chessManager, 'isValidChessMove').mockImplementation((w, p, tx, tz) =>
+			p?.id === 'ai-P' && tx === 4 && tz === 5
+		);
+
+		const aiActions = createAiActions({
+			io,
+			gameManager: {
+				boardManager, islandManager, chessManager, tetrominoManager, activityLog,
+			},
+			broadcaster,
+			integrityService,
+			spectatorRegistry: makeSpectatorRegistryStub(),
+			lineClearService,
+		});
+
+		aiActions.performStrategicChessMove('ai-1', { executeKingCapture() { /* noop */ } });
+
+		expect(pawn.position).toEqual({ x: 4, z: 5 });
+		expect(pawn.forwardDistance).toBe(8);
+		// Frozen — both the piece and its cell marker carry the flag.
+		expect(pawn.awaitingPromotion).toBe(true);
+		const marker = boardManager.getCell(world.board, 4, 5)
+			.find(it => it && it.type === 'chess' && it.pieceId === 'ai-P');
+		expect(marker).toBeDefined();
+		expect(marker.awaitingPromotion).toBe(true);
+
+		// A frozen pawn is the AI's only piece → the next chess turn finds
+		// no movable piece and reports "no move" rather than dragging the
+		// locked pawn around.
+		const movedAgain = aiActions.performStrategicChessMove('ai-1', { executeKingCapture() { /* noop */ } });
+		expect(movedAgain).toBe(false);
+		expect(pawn.position).toEqual({ x: 4, z: 5 });
 	});
 });

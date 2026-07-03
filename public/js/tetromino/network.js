@@ -16,6 +16,7 @@ import { highlightClearedLines, showPlacementEffect } from './animations.js';
 import { validatePlacementLocally } from './validation.js';
 import { cleanupCurrentTetromino, cleanupGhostPiece } from './rendering.js';
 import { armSkipDropTimer } from '../skipChessButton.js';
+import { markKingdomProgress } from '../auth/saveReminder.js';
 
 let _onPlacementFailure = null;
 
@@ -142,6 +143,11 @@ export function sendTetrominoPlacementToServer(tetrominoData, gameState) {
 
 	return ensureConnectedAndSend(serverData).then(response => {
 		const serverAccepted = response && response.success;
+		if (serverAccepted) {
+			// The player now has something worth keeping — arm the
+			// "save your kingdom before you leave" reminder for guests.
+			markKingdomProgress();
+		}
 		if (serverAccepted !== isLocallyValid) {
 			console.warn('Client/server validation mismatch — server:', serverAccepted, 'local:', isLocallyValid);
 			cleanupCurrentTetromino(gameState);
@@ -180,10 +186,10 @@ function handleTetrominoFailed(data, gameState) {
 		failureMessage = 'No path back to your king - bridge from connected territory first.';
 		effect = 'DISSOLVE_FALL';
 	} else if (reason === 'not_adjacent') {
-		failureMessage = 'Tetromino must touch your own territory.';
+		failureMessage = 'Missed connection — pieces must land touching your territory. Watch the outline: green sticks, red dissolves.';
 		effect = 'DISSOLVE_FALL';
 	} else if (typeof failureMessage === 'string' && failureMessage.toLowerCase().includes('connect')) {
-		failureMessage = 'Missed connection - tetromino dissolved into sand.';
+		failureMessage = 'Missed connection — pieces must land touching your territory. Watch the outline: green sticks, red dissolves.';
 		effect = 'DISSOLVE_FALL';
 	}
 

@@ -3,7 +3,16 @@
  * 
  * This module manages the centre board marker, which is critical for
  * correctly positioning visual elements relative to the board's centre.
+ *
+ * The marker MUST be stable for the whole session: every mesh is placed
+ * at `boardCoord + marker`, so a moving marker teleports the rendered
+ * world out from under the camera. The server pins it at (0,0); the
+ * fallbacks below therefore also use (0,0) — never a bounds-derived
+ * midpoint, which jumps wildly when a remote battle arena inflates the
+ * board bounds.
  */
+
+const DEFAULT_CENTRE_MARKER = Object.freeze({ x: 0, z: 0 });
 
 /**
  * Find the board centre marker in the game state
@@ -32,7 +41,6 @@ export function findBoardCentreMarker(gameState) {
 					
 				if (markerData) {
 					const [x, z] = key.split(',').map(Number);
-					console.log(`Found centre marker in cell array at (${x}, ${z})`);
 					return { x, z };
 				}
 			}
@@ -40,25 +48,15 @@ export function findBoardCentreMarker(gameState) {
 			else if (cell && cell.specialMarker && 
 				(cell.specialMarker.type === 'boardCentre' || cell.specialMarker.isCentreMarker)) {
 				const [x, z] = key.split(',').map(Number);
-				console.log(`Found centre marker in cell object at (${x}, ${z})`);
 				return { x, z };
 			}
 		}
 	}
 	
-	// No marker found, calculate center from board bounds
-	if (gameState.boardBounds) {
-		const { minX, maxX, minZ, maxZ } = gameState.boardBounds;
-		const x = Math.floor((minX + maxX) / 2);
-		const z = Math.floor((minZ + maxZ) / 2);
-		
-		console.log(`No centre marker found, using calculated centre at (${x}, ${z})`);
-		return { x, z };
-	}
-	
-	// Complete fallback if there are no board bounds
-	console.warn('No board bounds available for center calculation, using default (15,15)');
-	return { x: 15, z: 15 };
+	// No marker anywhere: use the fixed default. Do NOT derive a centre
+	// from board bounds — bounds move (e.g. when a battle arena spawns
+	// thousands of cells away) and the render origin must not.
+	return { ...DEFAULT_CENTRE_MARKER };
 }
 
 /**
@@ -138,93 +136,27 @@ export function preserveCentreMarker(gameState, newBoardData) {
 	
 	// Check if the new board data already has a centre marker
 	if (newBoardData.centreMarker) {
-		console.log(`New board data has centre marker at (${newBoardData.centreMarker.x}, ${newBoardData.centreMarker.z})`);
+		// Only worth a log when the reference point actually moves —
+		// which should be never once the server pins it at (0,0).
+		if (marker && (marker.x !== newBoardData.centreMarker.x || marker.z !== newBoardData.centreMarker.z)) {
+			console.warn(`Centre marker moved from (${marker.x}, ${marker.z}) to (${newBoardData.centreMarker.x}, ${newBoardData.centreMarker.z}) — re-anchoring render space`);
+		}
 		return newBoardData.centreMarker;
 	}
 	
-	// If not, create one at the same location as the current marker
+	// If not, carry the current marker over. Note: only the board-level
+	// property — we deliberately do NOT plant a marker item in `cells`
+	// any more, because a cell whose only content is the marker renders
+	// as a phantom floating tile (visible in open sea at (0,0)).
 	if (marker) {
-		console.log(`Preserving centre marker at (${marker.x}, ${marker.z})`);
-		
-		// Add the marker to the new board data
 		newBoardData.centreMarker = { x: marker.x, z: marker.z };
-		
-		// Also add it to the cells structure
-		if (newBoardData.cells) {
-			const key = `${marker.x},${marker.z}`;
-			
-			if (!newBoardData.cells[key]) {
-				newBoardData.cells[key] = [{
-					type: 'specialMarker',
-					isCentreMarker: true,
-					centreX: marker.x,
-					centreZ: marker.z
-				}];
-			} else if (Array.isArray(newBoardData.cells[key])) {
-				// Check if marker already exists
-				const markerExists = newBoardData.cells[key].some(item => 
-					(item.type === 'specialMarker' && item.isCentreMarker) ||
-					(item.type === 'boardCentre'));
-					
-				if (!markerExists) {
-					newBoardData.cells[key].push({
-						type: 'specialMarker',
-						isCentreMarker: true,
-						centreX: marker.x,
-						centreZ: marker.z
-					});
-				}
-			} else if (typeof newBoardData.cells[key] === 'object') {
-				newBoardData.cells[key].specialMarker = {
-					type: 'boardCentre',
-					isCentreMarker: true,
-					centreX: marker.x,
-					centreZ: marker.z
-				};
-			}
-		}
-		
 		return marker;
 	}
 	
-	// If no marker exists in current game state, calculate a new one
-	const { minX, maxX, minZ, maxZ } = newBoardData;
-	const x = Math.floor((minX + maxX) / 2);
-	const z = Math.floor((minZ + maxZ) / 2);
-	
-	console.log(`Creating new centre marker at (${x}, ${z})`);
-	
-	// Create the marker
+	// If no marker exists anywhere, anchor at the fixed default — never
+	// at a bounds midpoint (bounds move; the render origin must not).
+	const { x, z } = DEFAULT_CENTRE_MARKER;
 	newBoardData.centreMarker = { x, z };
-	
-	// Add to cells structure
-	if (newBoardData.cells) {
-		const key = `${x},${z}`;
-		
-		if (!newBoardData.cells[key]) {
-			newBoardData.cells[key] = [{
-				type: 'specialMarker',
-				isCentreMarker: true,
-				centreX: x,
-				centreZ: z
-			}];
-		} else if (Array.isArray(newBoardData.cells[key])) {
-			newBoardData.cells[key].push({
-				type: 'specialMarker',
-				isCentreMarker: true,
-				centreX: x,
-				centreZ: z
-			});
-		} else if (typeof newBoardData.cells[key] === 'object') {
-			newBoardData.cells[key].specialMarker = {
-				type: 'boardCentre',
-				isCentreMarker: true,
-				centreX: x,
-				centreZ: z
-			};
-		}
-	}
-	
 	return { x, z };
 }
 

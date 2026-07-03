@@ -152,8 +152,25 @@ export function createChessPiece(gameState, x, z, pieceType, player, options = {
 							metalness: 0.3,
 						});
 					} else if (Array.isArray(child.material)) {
-						for (const material of child.material) applyColorToMaterial(material);
+						// `Object3D.clone()` is shallow — every clone of the
+						// shared customModel keeps the same material
+						// instances. We MUST clone the materials before
+						// mutating their `.color`, otherwise every other
+						// chess piece using this model inherits this
+						// piece's colour (the "all pieces flick to my
+						// colour" bug after a capture).
+						child.material = child.material.map(material => {
+							const cloned = material && typeof material.clone === 'function'
+								? material.clone()
+								: material;
+							applyColorToMaterial(cloned);
+							return cloned;
+						});
 					} else {
+						const original = child.material;
+						child.material = (original && typeof original.clone === 'function')
+							? original.clone()
+							: original;
 						applyColorToMaterial(child.material);
 					}
 				}

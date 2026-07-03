@@ -14,7 +14,9 @@ import {
 import { boardFunctions } from './boardFunctions.js';
 import { highlightSinglePiece, clearSinglePieceHighlight } from './pieceHighlightManager.js';
 import { updateUnifiedPlayerBar } from './unifiedPlayerBar.js';
+import { setSelectedPiece as setInfoCardPiece } from './selectedPieceCard.js';
 import { translatePosition } from './centreBoardMarker.js';
+import { setPieceMatrixStatic, bakePieceMatrixIfStatic } from './pieceMatrixState.js';
 import * as NetworkManager from './utils/networkManager.js';
 import { updateGameStatusDisplay } from './createLoadingIndicator.js';
 import * as tetrominoModule from './tetromino.js';
@@ -25,6 +27,8 @@ import {
 } from './skipChessButton.js';
 import { updateNextPieceHint } from './tetromino/nextPiece.js';
 import { showToastMessage } from './showToastMessage.js';
+import { showFrozenPawnPromotionDialog } from './uiOverlays.js';
+import { displaySponsorInfo } from '../utils/sponsors.js';
 
 /**
  * In-flight chess move tracker.
@@ -69,7 +73,176 @@ export function findChessPieceMeshAt(x, z) {
 	return null;
 }
 
+/** Remove a piece mesh from the scene and dispose GPU resources. */
+export function disposeChessPieceMesh(pieceMesh) {
+	if (!pieceMesh) return;
+	const chessPiecesGroup = getChessPiecesGroup();
+	try {
+		if (chessPiecesGroup) chessPiecesGroup.remove(pieceMesh);
+		pieceMesh.traverse(child => {
+			if (!child?.isMesh) return;
+			if (child.geometry) child.geometry.dispose();
+			if (child.material) {
+				if (Array.isArray(child.material)) {
+					child.material.forEach(m => m && m.dispose && m.dispose());
+				} else if (child.material.dispose) {
+					child.material.dispose();
+				}
+			}
+		});
+	} catch (_err) { /* best-effort */ }
+}
+
+/**
+ * Remove every chess piece mesh on a board cell except an optional keeper.
+ * Fixes stacked pawn+knight ghosts after captures.
+ */
+export function removeChessMeshesAtCell(x, z, exceptPieceId = null) {
+	const chessPiecesGroup = getChessPiecesGroup();
+	if (!chessPiecesGroup || !Number.isFinite(x) || !Number.isFinite(z)) return 0;
+
+	const keepId = exceptPieceId != null ? String(exceptPieceId) : null;
+	let removed = 0;
+	const toRemove = [];
+
+	for (const child of chessPiecesGroup.children) {
+		const pos = child?.userData?.position;
+		if (!pos || Number(pos.x) !== Number(x) || Number(pos.z) !== Number(z)) continue;
+		if (keepId && child.userData?.id && String(child.userData.id) === keepId) continue;
+		toRemove.push(child);
+	}
+
+	for (const mesh of toRemove) {
+		disposeChessPieceMesh(mesh);
+		removed++;
+	}
+	return removed;
+}
+
 // ── Raycasting ──────────────────────────────────────────────────────────────
+
+// Tracks {pieceId -> lastClickAt} for the double-click rule on pieces
+// adjacent to a valid move target. Cleared on selection / deselection.
+const _adjacentClickGuard = new Map();
+const ADJACENT_DOUBLE_CLICK_MS = 450;
+
+function isOrthogonallyAdjacent(a, b) {
+	if (!a || !b) return false;
+	const dx = Math.abs(Number(a.x) - Number(b.x));
+	const dz = Math.abs(Number(a.z) - Number(b.z));
+	return (dx + dz === 1);
+}
+
+function resolveMoveHighlightUserData(intersections) {
+	if (!intersections || intersections.length === 0) return null;
+	for (let i = 0; i < intersections.length; i++) {
+		let node = intersections[i].object;
+		while (node) {
+			if (node.userData?.moveTarget) return node.userData;
+			node = node.parent;
+		}
+	}
+	return null;
+}
+
+function tryMoveViaHighlightRaycast(raycaster) {
+	if (!raycaster || !window.moveHighlightsGroup || window.moveHighlightsGroup.children.length === 0) {
+		return false;
+	}
+	const hits = raycaster.intersectObjects(window.moveHighlightsGroup.children, true);
+	const data = resolveMoveHighlightUserData(hits);
+	if (!data) return false;
+	moveChessPieceToCell(data.x, data.z);
+	return true;
+}
+
+/**
+ * Execute a pending chess move (highlight or capture) even when the client
+ * is in the tetris phase — e.g. the player selected a piece then started
+ * dropping without clearing selection.
+ */
+export function tryPriorityChessMoveClick(mouse) {
+	const gameState = getGameState();
+	if (!gameState?.selectedChessPiece || gameState.processingMove) return false;
+	if (!Array.isArray(gameState.validMoves) || gameState.validMoves.length === 0) return false;
+
+	const raycaster = getRaycaster();
+	const camera = getCamera();
+	const pointer = mouse || getMouse();
+	if (!raycaster || !camera || !pointer) return false;
+
+	raycaster.setFromCamera(pointer, camera);
+	if (tryMoveViaHighlightRaycast(raycaster)) return true;
+
+	const chessPiecesGroup = getChessPiecesGroup();
+	const boardGroup = getBoardGroup();
+	const PIECE_TYPES = ['chess', 'chessPiece', 'ROOK', 'KNIGHT', 'BISHOP', 'QUEEN', 'KING', 'PAWN'];
+
+	if (chessPiecesGroup) {
+		const pieceHits = raycaster.intersectObjects([chessPiecesGroup], true);
+		for (let i = 0; i < pieceHits.length; i++) {
+			let parentObj = pieceHits[i].object;
+			const scene = getScene();
+			while (parentObj.parent
+				&& parentObj.parent !== chessPiecesGroup
+				&& parentObj.parent !== scene) {
+				parentObj = parentObj.parent;
+			}
+			if (!parentObj.userData) continue;
+			if (!PIECE_TYPES.includes(parentObj.userData.type) && !parentObj.userData.pieceType) continue;
+			const pos = parentObj.userData.position;
+			if (!pos) continue;
+			const isCaptureTarget = gameState.validMoves.some(
+				m => m && Number(m.x) === Number(pos.x) && Number(m.z) === Number(pos.z),
+			);
+			if (isCaptureTarget) {
+				moveChessPieceToCell(pos.x, pos.z);
+				return true;
+			}
+		}
+	}
+
+	if (boardGroup) {
+		const boardHits = raycaster.intersectObjects([boardGroup], true);
+		for (let i = 0; i < boardHits.length; i++) {
+			let parentObj = boardHits[i].object;
+			const scene = getScene();
+			while (parentObj.parent
+				&& parentObj.parent !== boardGroup
+				&& parentObj.parent !== scene) {
+				parentObj = parentObj.parent;
+			}
+			if (parentObj.userData?.type !== 'cell' || !parentObj.userData.position) continue;
+			const { x, z } = parentObj.userData.position;
+			const isValidMove = gameState.validMoves.some(
+				m => m && Number(m.x) === Number(x) && Number(m.z) === Number(z),
+			);
+			if (isValidMove) {
+				moveChessPieceToCell(x, z);
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
+function pieceIsAdjacentToValidMove(pieceMesh, validMoves) {
+	if (!pieceMesh || !pieceMesh.userData || !Array.isArray(validMoves) || validMoves.length === 0) {
+		return false;
+	}
+	const pos = pieceMesh.userData.position;
+	if (!pos) return false;
+	for (const move of validMoves) {
+		if (!move) continue;
+		if (isOrthogonallyAdjacent(pos, move)) return true;
+	}
+	return false;
+}
+
+function clearAdjacentClickGuard() {
+	_adjacentClickGuard.clear();
+}
 
 export function performRaycast() {
 	const raycaster = getRaycaster();
@@ -81,21 +254,22 @@ export function performRaycast() {
 	const gameState = getGameState();
 
 	if (!raycaster || !camera) return;
-	if (!gameState || gameState.turnPhase !== 'chess') return;
+	if (!gameState) return;
+	if (gameState.turnPhase !== 'chess') {
+		// During the brief send/ack window (`isSubmittingTetrominoPlacement`)
+		// the player is still nominally in the tetris phase, so chess
+		// raycasts get dropped silently. Surfacing a toast here means
+		// the user gets a clear "Confirming placement…" message instead
+		// of clicks that simply do nothing.
+		if (gameState.isSubmittingTetrominoPlacement) {
+			showToastMessage('Confirming placement — chess phase will open in a moment.', 1800);
+		}
+		return;
+	}
 
 	raycaster.setFromCamera(mouse, camera);
 
-	// Check move highlights first
-	if (window.moveHighlightsGroup && window.moveHighlightsGroup.children.length > 0) {
-		const moveHighlights = raycaster.intersectObjects(window.moveHighlightsGroup.children, true);
-		if (moveHighlights.length > 0) {
-			const highlight = moveHighlights[0].object;
-			if (highlight.userData && highlight.userData.moveTarget) {
-				moveChessPieceToCell(highlight.userData.x, highlight.userData.z);
-				return;
-			}
-		}
-	}
+	if (tryMoveViaHighlightRaycast(raycaster)) return;
 
 	const pieceIntersections = chessPiecesGroup
 		? raycaster.intersectObjects([chessPiecesGroup], true)
@@ -123,10 +297,40 @@ export function performRaycast() {
 		pieceIntersections,
 		(obj) => obj.userData && (PIECE_TYPES.includes(obj.userData.type) || obj.userData.pieceType)
 	);
-	const cellHit = resolveParentHit(
-		boardIntersections,
-		(obj) => obj.userData && obj.userData.type === 'cell'
-	);
+	// Resolve the nearest CELL hit, handling BOTH individual cell meshes
+	// and the shared instanced-terrain mesh. Instanced hits carry an
+	// `instanceId` we map back to a board {x,z} via the instancer. Walk
+	// the depth-sorted intersections so a closer instanced cell isn't
+	// lost to a farther individual one (or vice versa).
+	let cellHit = null;
+	for (let i = 0; i < boardIntersections.length; i++) {
+		const it = boardIntersections[i];
+		const obj = it.object;
+		if (obj && obj.userData && obj.userData.type === 'instancedCells' && it.instanceId != null) {
+			// Each instanced bucket (opaque, ex-home) carries its own
+			// instanceId → {x,z} map on userData, so the hit resolves
+			// without needing to know which bucket it came from.
+			const cellAt = obj.userData.cellAt;
+			const pos = (cellAt && it.instanceId >= 0 && it.instanceId < cellAt.length)
+				? cellAt[it.instanceId] : null;
+			if (pos) {
+				cellHit = { userData: { type: 'cell', position: { x: pos.x, z: pos.z } } };
+				break;
+			}
+			continue;
+		}
+		let parentObj = obj;
+		while (parentObj.parent &&
+			parentObj.parent !== chessPiecesGroup &&
+			parentObj.parent !== boardGroup &&
+			parentObj.parent !== scene) {
+			parentObj = parentObj.parent;
+		}
+		if (parentObj.userData && parentObj.userData.type === 'cell') {
+			cellHit = parentObj;
+			break;
+		}
+	}
 
 	// If both board cell and piece hits exist but disagree, prefer the piece on the clicked cell.
 	// This fixes occasional "one square ahead/behind" picks from overlapping hitboxes.
@@ -141,11 +345,67 @@ export function performRaycast() {
 		if (!gameState.processingMove) {
 			const piecePlayer = chessPieceHit.userData.player;
 			const isLocalPlayerPiece = String(piecePlayer) === String(gameState.localPlayerId);
-			if (isLocalPlayerPiece) {
-				selectChessPiece(chessPieceHit);
-			} else {
+			if (!isLocalPlayerPiece) {
+				const enemyPos = chessPieceHit.userData.position;
+				if (enemyPos) {
+					const isCaptureTarget = (gameState.validMoves || []).some(
+						m => m && Number(m.x) === Number(enemyPos.x) && Number(m.z) === Number(enemyPos.z),
+					);
+					if (isCaptureTarget) {
+						moveChessPieceToCell(enemyPos.x, enemyPos.z);
+						return;
+					}
+				}
 				showPieceInfo(chessPieceHit);
+				return;
 			}
+
+			// Frozen pawn → re-open the promotion deployment dialog
+			// instead of selecting. Always available so the player
+			// can come back to deploy whenever they're ready.
+			if (chessPieceHit.userData?.awaitingPromotion) {
+				const pieceId = chessPieceHit.userData.id;
+				if (pieceId) {
+					try { showFrozenPawnPromotionDialog(pieceId); }
+					catch (err) { console.warn('[FrozenPawn] dialog failed:', err); }
+					return;
+				}
+			}
+
+			// Click on the piece that's already selected → deselect.
+			// Gives the user an obvious "click-off" for misclicks and
+			// makes the green-circle move-target reachable without first
+			// having to find an empty cell to dismiss the selection.
+			if (
+				gameState.selectedChessPiece
+				&& gameState.selectedChessPiece === chessPieceHit
+			) {
+				clearChessSelection();
+				return;
+			}
+
+			// If a different piece is selected and has valid moves, and
+			// the candidate piece sits orthogonally adjacent to one of
+			// those move targets, require a double-click within
+			// ADJACENT_DOUBLE_CLICK_MS. The first click "fizzles" so
+			// the player can re-aim at the green cell behind it.
+			if (
+				gameState.selectedChessPiece
+				&& Array.isArray(gameState.validMoves)
+				&& gameState.validMoves.length > 0
+				&& pieceIsAdjacentToValidMove(chessPieceHit, gameState.validMoves)
+			) {
+				const pieceId = String(chessPieceHit.userData.id || '');
+				const now = performance.now();
+				const lastClick = _adjacentClickGuard.get(pieceId) || 0;
+				if (now - lastClick > ADJACENT_DOUBLE_CLICK_MS) {
+					_adjacentClickGuard.set(pieceId, now);
+					return; // ignore the first click; await confirm
+				}
+				_adjacentClickGuard.delete(pieceId);
+			}
+
+			selectChessPiece(chessPieceHit);
 		}
 	} else if (cellHit) {
 		const cellPosition = cellHit.userData.position;
@@ -156,12 +416,10 @@ export function performRaycast() {
 			if (isValidMove) {
 				moveChessPieceToCell(cellPosition.x, cellPosition.z);
 			} else {
-				// Clicking an empty / non-target cell while a piece is
-				// selected should cancel the selection (and dismiss any
-				// pending detonate button), so the player isn't locked
-				// out of clicking elsewhere on the board.
 				clearChessSelection();
 			}
+		} else {
+			showCellInfo(cellHit);
 		}
 	} else if (gameState.selectedChessPiece && !gameState.processingMove) {
 		// Click on empty space (sky / off-board) — treat as deselect.
@@ -229,12 +487,14 @@ export function selectChessPiece(piece) {
 	const gameState = getGameState();
 	if (!gameState || gameState.turnPhase !== 'chess') return;
 
+	clearAdjacentClickGuard();
 	clearChessSelection();
 	gameState.selectedChessPiece = piece;
 	gameState.selectedHoveredPlayer = piece.userData.player;
 	highlightSinglePiece(piece, { mode: 'selected' });
 	showValidMoves(piece);
 	updateUnifiedPlayerBar(gameState);
+	try { setInfoCardPiece(piece); } catch (_e) { /* card is non-critical */ }
 
 	const pieceType = String(piece.userData.pieceType || piece.userData.type || '').toUpperCase();
 	const isOwn = String(piece.userData.player) === String(gameState.currentPlayer);
@@ -296,20 +556,27 @@ export function highlightValidMoves(validMoves) {
 		scene.add(window.moveHighlightsGroup);
 	}
 
-	if (!window._moveHighlightCache) {
-		window._moveHighlightCache = {
+	const isRetroProfile = !!(gameState.retroMode || gameState.renderProfile === 'retro');
+	const cacheKey = isRetroProfile ? '_moveHighlightCacheRetro' : '_moveHighlightCache';
+	if (!window[cacheKey]) {
+		// Retro cells are bright green for owned territory, so the
+		// default phosphor-green ring is invisible on top. Use amber
+		// for the standard target and a deeper red-orange for captures.
+		const moveColour = isRetroProfile ? 0xFFB300 : 0x33FF66;
+		const captureColour = isRetroProfile ? 0xFF6A00 : 0xFF3355;
+		window[cacheKey] = {
 			geo: new THREE.RingGeometry(0.18, 0.42, 32),
 			matMove: new THREE.MeshBasicMaterial({
-				color: 0x33FF66, transparent: true, opacity: 0.7,
+				color: moveColour, transparent: true, opacity: 0.85,
 				side: THREE.DoubleSide, depthTest: false, depthWrite: false,
 			}),
 			matCapture: new THREE.MeshBasicMaterial({
-				color: 0xFF3355, transparent: true, opacity: 0.85,
+				color: captureColour, transparent: true, opacity: 0.9,
 				side: THREE.DoubleSide, depthTest: false, depthWrite: false,
 			}),
 		};
 	}
-	const hlCache = window._moveHighlightCache;
+	const hlCache = window[cacheKey];
 
 	validMoves.forEach(move => {
 		const absPos = translatePosition({ x: move.x, z: move.z }, gameState, true);
@@ -368,6 +635,8 @@ export function clearChessSelection() {
 	gameState.validMoves = [];
 	clearMoveHighlights();
 	hideDetonateButton();
+	try { setInfoCardPiece(null); } catch (_e) { /* card is non-critical */ }
+	clearAdjacentClickGuard();
 }
 
 // ── Movement ────────────────────────────────────────────────────────────────
@@ -413,10 +682,13 @@ export function moveChessPieceToCell(x, z) {
 	animateChessPieceMove(piece, originalX, originalZ, x, z, () => {
 		sendChessMoveToServer(pieceData, x, z, (success, responseData) => {
 			gameState.processingMove = false;
-			clearChessSelection();
 
-			if (success) {
-				updateGameStateAfterChessMove(pieceData, x, z);
+			// Both a completed move and a committed king-threat ("check")
+			// spend the player's chess move for this turn, so the follow-up
+			// — advance to the tetris phase and spawn the next piece — is
+			// identical. Factored out so the two success paths can't drift.
+			const advanceToTetrisPhase = () => {
+				gameState._forceUpdate = true;
 				gameState.turnPhase = 'tetris';
 				cancelSkipChessTimer();
 				updateGameStatusDisplay();
@@ -430,12 +702,54 @@ export function moveChessPieceToCell(x, z) {
 						tetrominoModule.renderTetromino(gameState);
 					}
 				}
+			};
 
-				clearInFlightMove(gameState);
+			// Deferred king capture — the server started a "check" and the
+			// attacker did NOT move (the king gets a grace window to
+			// escape). Don't leave the attacker sitting on the king's
+			// square as if it had captured (it would snap back when the
+			// authoritative snapshot arrived, looking like a glitch). Glide
+			// it back to where it really is; the on-board battle markers and
+			// CHECK banner (driven by the `chess_check` broadcast in
+			// checkAlert.js) make the clash obvious to both players.
+			if (success && responseData && responseData.check) {
+				clearChessSelection();
+				animateChessPieceMove(piece, x, z, originalX, originalZ, () => {
+					clearInFlightMove(gameState);
+				});
+				advanceToTetrisPhase();
+				showTemporaryMessage(
+					responseData.message
+						? `Check! ${responseData.message}`
+						: 'Check! Your piece has the enemy king pinned.',
+					'success',
+				);
+				return;
+			}
+
+			if (success) {
+				clearChessSelection();
+				updateGameStateAfterChessMove(pieceData, x, z);
+				removeChessMeshesAtCell(x, z, pieceId);
+				advanceToTetrisPhase();
+
+				// IMPORTANT: do not clear `inFlightMove` here. The server
+				// will broadcast a stale chessPieces snapshot for one or
+				// two more ticks before catching up; if we drop the pin
+				// now the smart-merge can't protect the optimistic
+				// position and the piece flicks back to its source. The
+				// PIN_SAFETY_MS timer in updateChessPieces releases it
+				// after 2s as a safety net, and any incoming snapshot
+				// that already has the piece at (x, z) is harmless.
 				showTemporaryMessage('Move successful.', 'success');
 				return;
 			}
 
+			// Rejected — the piece never actually moved, so the player
+			// stays in "chess mode" with this piece still selected. The
+			// rejection handler keeps the selection and re-shows the
+			// valid-move rings for revertible failures (only `piece_gone`
+			// drops the selection, because there's nothing left to move).
 			handleChessMoveRejection({
 				gameState,
 				piece,
@@ -465,6 +779,19 @@ function handleChessMoveRejection({
 	const reason = responseData?.reason || (responseData?.error === 'rate_limited' ? 'rate_limited' : null);
 	const retryAfterMs = Number(responseData?.retryAfterMs || 0);
 
+	// A rejected move never left the source square, so the player should
+	// stay in "chess mode" with the same piece selected and ready to try a
+	// different target. The selection itself is already intact (the move
+	// callback no longer clears it up-front); we just re-draw the
+	// valid-move rings that were cleared the moment the move was fired.
+	const keepChessMode = () => {
+		try {
+			if (gameState.selectedChessPiece && Array.isArray(gameState.validMoves) && gameState.validMoves.length) {
+				highlightValidMoves(gameState.validMoves);
+			}
+		} catch (_) { /* highlight is non-critical */ }
+	};
+
 	if (reason === 'rate_limited') {
 		// Rate-limited rejections still hold the piece at the destination
 		// briefly while the user reads the warning; we revert *and* clear
@@ -477,6 +804,7 @@ function handleChessMoveRejection({
 			seconds ? `Too fast. Try again in ${seconds}s.` : 'Too fast. Please wait a moment.',
 			'error',
 		);
+		keepChessMode();
 		return;
 	}
 
@@ -490,6 +818,9 @@ function handleChessMoveRejection({
 		// updateChessPieces sync to the canonical server state.
 		clearInFlightMove(gameState);
 		gameState._forceUpdate = true;
+		// Nothing left to move — drop out of chess mode rather than leaving
+		// a dangling selection on a piece that no longer exists.
+		clearChessSelection();
 		try { showToastMessage(
 			'That piece was already gone — the board has been refreshed.',
 			{ variant: 'alert', duration: 4500 },
@@ -509,6 +840,7 @@ function handleChessMoveRejection({
 			? 'That square is gone — board refreshed. Please pick a different target.'
 			: (responseData?.error || 'Move could not be applied — please try again.');
 		try { showToastMessage(message, { duration: 4500 }); } catch (_) { /* toast best-effort */ }
+		keepChessMode();
 		return;
 	}
 
@@ -527,11 +859,17 @@ function handleChessMoveRejection({
 		friendly_blocker: 'That square has one of your own pieces.',
 		same_square: 'Cannot move to the same square.',
 		not_your_piece: 'That piece belongs to someone else.',
+		paused: 'You are paused — press Resume to play.',
+		awaiting_promotion: 'That pawn is frozen — deploy a captured piece or skip.',
+		attacker_locked: 'That piece is committed to the check — wait for the defender.',
+		check_not_escaped: 'Your king is still threatened — pick a move that escapes.',
+		king_in_check: 'That king is already in check — wait for it to resolve.',
 	};
 	const friendly = reason && reasonToText[reason];
 	const errorMessage = friendly
 		|| (responseData?.error ? `Move failed: ${responseData.error}` : 'Move failed. Please try again.');
 	showTemporaryMessage(errorMessage, 'error');
+	keepChessMode();
 }
 
 export function animateChessPieceMove(piece, _fromX, _fromZ, toX, toZ, onComplete) {
@@ -564,6 +902,10 @@ export function animateChessPieceMove(piece, _fromX, _fromZ, toX, toZ, onComplet
 			if (onComplete) onComplete();
 		});
 
+	// Thaw the mesh so the per-frame tween writes render (the static-
+	// pieces optimisation may have frozen it). The reconciler / settle
+	// re-freezes once the move lands.
+	setPieceMatrixStatic(piece, false);
 	upTween.chain(downTween);
 	upTween.start();
 }
@@ -573,6 +915,10 @@ export function updatePiecePosition(piece, x, z) {
 	const gameState = getGameState();
 	const abs = translatePosition({ x, z }, gameState, true);
 	piece.position.set(abs.x, piece.position.y, abs.z);
+	// The piece may be frozen by the static-pieces optimisation; re-bake
+	// so this snap actually renders. The reconciler re-freezes on its
+	// next pass at the canonical cell.
+	bakePieceMatrixIfStatic(piece);
 	if (piece.userData) piece.userData.position = { x, z };
 }
 
@@ -601,10 +947,21 @@ function updateGameStateAfterChessMove(piece, toX, toZ) {
 	const gameState = getGameState();
 
 	if (gameState.chessPieces && Array.isArray(gameState.chessPieces)) {
+		gameState.chessPieces = gameState.chessPieces.filter(p => {
+			if (!p || String(p.id) === String(piece.id)) return true;
+			const pos = p.position;
+			if (!pos) return true;
+			return !(Number(pos.x) === Number(toX) && Number(pos.z) === Number(toZ));
+		});
 		const idx = gameState.chessPieces.findIndex(p => p && p.id === piece.id);
 		if (idx >= 0 && gameState.chessPieces[idx]?.position) {
 			gameState.chessPieces[idx].position.x = toX;
 			gameState.chessPieces[idx].position.z = toZ;
+			// Stamp the optimistic move so the smart-merge in
+			// gameState.update() keeps this local position until the
+			// server's chessPieces snapshot catches up. See the
+			// docblock on `mergeChessPieces`.
+			gameState.chessPieces[idx].clientMovedAt = Date.now();
 		}
 	}
 
@@ -929,6 +1286,79 @@ function runDetonationExplosion(pieceMesh) {
 }
 
 // ── Info popups ─────────────────────────────────────────────────────────────
+
+function describeCellContents(cellData) {
+	if (!cellData) return 'Empty cell';
+	const items = Array.isArray(cellData) ? cellData : [cellData];
+	const parts = [];
+	for (const item of items) {
+		if (!item || !item.type) continue;
+		if (item.type === 'tetromino' && item.fromHomeZone) {
+			parts.push(`ex-home terrain (${item.player || '?'})`);
+		} else if (item.type === 'tetromino') {
+			parts.push(`tetromino (${item.player || '?'})`);
+		} else if (item.type === 'chess') {
+			parts.push(`chess marker: ${item.pieceType || 'piece'}`);
+		} else if (item.type === 'home') {
+			parts.push(`home zone (${item.player || '?'})`);
+		} else {
+			parts.push(item.type);
+		}
+	}
+	return parts.length ? parts.join(', ') : 'Unknown cell contents';
+}
+
+export function showCellInfo(cellMesh) {
+	if (!cellMesh?.userData?.position) return;
+	const { x, z } = cellMesh.userData.position;
+	const gameState = getGameState();
+	const key = `${x},${z}`;
+	const cellData = gameState?.board?.cells?.[key] || cellMesh.userData.data;
+	const summary = describeCellContents(cellData);
+	const piece = Array.isArray(gameState?.chessPieces)
+		? gameState.chessPieces.find(p => p?.position?.x === x && p?.position?.z === z)
+		: null;
+	const pieceLine = piece
+		? ` Piece: ${piece.type} (${piece.player}).`
+		: '';
+	showToastMessage(`Cell (${x}, ${z}): ${summary}.${pieceLine}`, { duration: 5000 });
+
+	// Sponsored cell — surface the ad popup. This is the only place
+	// in the UI that opens the ad now; the auto-show on placement
+	// (and the floating banner) were removed because the user asked
+	// the ad box to "only show when clicked".
+	const sponsor = cellMesh.userData?.sponsor;
+	if (sponsor && sponsor.id) {
+		displaySponsorInfo({
+			id: sponsor.id,
+			name: sponsor.name,
+			image: sponsor.adImage || sponsor.image,
+			adText: sponsor.adText,
+			adUrl: sponsor.adLink || sponsor.adUrl,
+		});
+	}
+}
+
+/**
+ * Raycast the board in any turn phase and show cell details (tetris or chess).
+ */
+export function inspectCellAtMouse(mouse) {
+	const raycaster = getRaycaster();
+	const camera = getCamera();
+	const boardGroup = getBoardGroup();
+	if (!raycaster || !camera || !boardGroup || !mouse) return false;
+	raycaster.setFromCamera(mouse, camera);
+	const hits = raycaster.intersectObject(boardGroup, true);
+	for (const hit of hits) {
+		let obj = hit.object;
+		while (obj && obj.userData?.type !== 'cell') obj = obj.parent;
+		if (obj?.userData?.type === 'cell') {
+			showCellInfo(obj);
+			return true;
+		}
+	}
+	return false;
+}
 
 export function showPieceInfo(piece) {
 	if (!piece || !piece.userData) return;

@@ -31,6 +31,9 @@ const {
 const TICK_CHECK_MS = 1000;
 const RESPAWN_DELAY_MS = 5000;
 const AI_TARGET_COUNT = 3;
+/** Respawn when an AI has this many pieces or fewer and no owned terrain. */
+const AI_MAROONED_PIECE_MAX = 4;
+const AI_STUCK_NO_OP_THRESHOLD = 6;
 
 function createAiRunner({
 	io,
@@ -40,6 +43,7 @@ function createAiRunner({
 	aiActions,
 	kingCaptureService,
 	kingDetonationService,
+	checkService = null,
 	persistence,
 	spectatorRegistry,
 }) {
@@ -53,6 +57,13 @@ function createAiRunner({
 	if (!persistence) throw new Error('createAiRunner: persistence required');
 
 	const tickIntervals = new Map();
+
+	// Dev stress-test escape hatch: when true, `trimDuplicateAis` is a
+	// no-op so a tester can pile on many bots of the same difficulty
+	// without the continuous trim collapsing them back to one-per-tier.
+	// Never set in production (guarded at the socket handler).
+	let trimSuspended = false;
+	function setTrimSuspended(value) { trimSuspended = !!value; }
 
 	function startAiPlayer(playerId) {
 		stopAiPlayer(playerId);
@@ -83,10 +94,74 @@ function createAiRunner({
 		}
 	}
 
+	function aiOwnsTerrain(world, computerId) {
+		const cells = world.board?.cells;
+		if (!cells) return false;
+		for (const cellContents of Object.values(cells)) {
+			if (!Array.isArray(cellContents)) continue;
+			if (cellContents.some(
+				item => item && String(item.player) === String(computerId) && item.type !== 'home'
+			)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	function performComputerAction(computerId) {
 		const world = World.getWorld();
 		const computerPlayer = World.getPlayer(computerId);
 		if (!world || !computerPlayer || !computerPlayer.isComputer) return;
+		if (computerPlayer.pendingRespawn) return;
+		// Battle bot seats never respawn or self-detonate — they play
+		// until captured, and the battle sweep owns their lifecycle.
+		const isBattleSeat = !!computerPlayer.battleId;
+		if (isBattleSeat && computerPlayer.eliminated) return;
+
+		// Highest-priority response: if this AI is the defender in a
+		// pending Check, try to escape NOW. Tetromino placement and
+		// other strategic moves are useless if the king is about to
+		// die — and they'd be rejected by the chess handler anyway
+		// (only escape moves are accepted while in check).
+		if (checkService && world.pendingCheck
+			&& String(world.pendingCheck.defenderId) === String(computerId)) {
+			const escaped = aiActions.performCheckEscape(
+				computerId, checkService, kingCaptureService
+			);
+			if (escaped) return;
+			// No escape available — let the deadline timer handle it.
+			return;
+		}
+
+		// AI players that were marked `eliminated` (e.g. by the
+		// ghost-sweep or by a previous king capture that never finished
+		// its respawn) used to spin forever doing nothing because every
+		// tick returned here. Recover them automatically: if they still
+		// have a king on the board, clear the flag; otherwise kick off a
+		// fresh respawn so the seat is filled again.
+		if (computerPlayer.eliminated) {
+			const aiPieces = (world.chessPieces || []).filter(
+				p => p && String(p.player) === String(computerId)
+			);
+			const kingPiece = aiPieces.find(p => String(p.type).toUpperCase() === 'KING');
+			if (kingPiece) {
+				console.log(
+					`[AI] ${computerId} was flagged eliminated but still has a king — clearing flag.`
+				);
+				computerPlayer.eliminated = false;
+				delete computerPlayer.eliminatedAt;
+				World.markDirty();
+			} else {
+				console.log(`[AI] ${computerId} eliminated with no king — respawning fresh seat.`);
+				computerPlayer.pendingRespawn = true;
+				const difficulty = computerPlayer.difficulty || COMPUTER_DIFFICULTY.MEDIUM;
+				const minMoveInterval = computerPlayer.minMoveInterval
+					|| MIN_COMPUTER_MOVE_INTERVAL_MS[difficulty]
+					|| 10000;
+				setTimeout(() => respawnAfterDetonation(computerId, difficulty, minMoveInterval), 0);
+				return;
+			}
+		}
 
 		const strategy = computerPlayer.strategy || generateComputerStrategy(computerPlayer.difficulty);
 
@@ -96,8 +171,20 @@ function createAiRunner({
 		const onlyKingLeft = aiPieces.length === 1
 			&& String(aiPieces[0].type).toUpperCase() === 'KING';
 
-		if (onlyKingLeft) {
+		if (onlyKingLeft && !isBattleSeat) {
 			handleAiKingOnlyDetonation(computerId, aiPieces[0]);
+			return;
+		}
+
+		const kingPiece = aiPieces.find(
+			p => String(p.type).toUpperCase() === 'KING'
+		);
+		if (!isBattleSeat && aiPieces.length <= AI_MAROONED_PIECE_MAX
+			&& !aiOwnsTerrain(world, computerId) && kingPiece) {
+			console.log(
+				`[AI] ${computerId} marooned (${aiPieces.length} pieces, no cells) — respawning.`
+			);
+			handleAiKingOnlyDetonation(computerId, kingPiece);
 			return;
 		}
 
@@ -112,10 +199,50 @@ function createAiRunner({
 			actionType = Math.random() < strategy.buildSpeed ? 'tetromino' : 'chess';
 		}
 
+		// If the preferred action finds nothing legal, fall back to the
+		// other one in the SAME tick. A fresh battle arena has no terrain
+		// between the seats, so "chess" ticks used to burn the bot's whole
+		// move interval doing nothing — half its game vanished into no-ops.
+		let acted = false;
 		if (actionType === 'tetromino') {
-			aiActions.performStrategicTetrominoPlacement(computerId);
+			acted = !!aiActions.performStrategicTetrominoPlacement(computerId)
+				|| !!aiActions.performStrategicChessMove(computerId, kingCaptureService, checkService);
 		} else {
-			aiActions.performStrategicChessMove(computerId, kingCaptureService);
+			acted = !!aiActions.performStrategicChessMove(computerId, kingCaptureService, checkService)
+				|| !!aiActions.performStrategicTetrominoPlacement(computerId);
+		}
+
+		if (acted) {
+			computerPlayer.aiStuckTicks = 0;
+			return;
+		}
+
+		computerPlayer.aiStuckTicks = (computerPlayer.aiStuckTicks || 0) + 1;
+		if (!isBattleSeat && computerPlayer.aiStuckTicks >= AI_STUCK_NO_OP_THRESHOLD && kingPiece) {
+			// Only RECYCLE (self-detonate + respawn) an AI that's
+			// genuinely out of options. An AI that still has a healthy
+			// roster AND owns terrain shouldn't blow itself up just
+			// because it whiffed a handful of move attempts — that
+			// produced the "AI suicides right after I capture one of
+			// its pieces, even though it had loads left" report. Give
+			// it a clean slate and let it try again next tick; the
+			// marooned / king-only guards above already catch the
+			// truly hopeless cases.
+			const ownsTerrain = aiOwnsTerrain(world, computerId);
+			const hasFightingForce = aiPieces.length > AI_MAROONED_PIECE_MAX;
+			computerPlayer.aiStuckTicks = 0;
+			if (ownsTerrain && hasFightingForce) {
+				console.log(
+					`[AI] ${computerId} stuck (idle) but still has ${aiPieces.length} ` +
+					`pieces and owns terrain — skipping turn instead of detonating.`
+				);
+			} else {
+				console.log(
+					`[AI] ${computerId} stuck and low on resources ` +
+					`(${aiPieces.length} pieces, terrain=${ownsTerrain}) — recycling.`
+				);
+				handleAiKingOnlyDetonation(computerId, kingPiece);
+			}
 		}
 	}
 
@@ -221,13 +348,91 @@ function createAiRunner({
 	 * tick intervals to any AI players already in the world (their
 	 * strategy callbacks aren't persisted).
 	 */
+	/**
+	 * Remove every AI player except the strongest representative for
+	 * each difficulty in `AI_ROSTER_TEMPLATE`. "Strongest" is defined
+	 * as: most chess pieces, with most recent activity used to break
+	 * ties. Duplicate AIs accumulate when respawn races or persistence
+	 * restores stale records — without this trim the world can carry
+	 * 5+ "AI Standard" littering the map.
+	 *
+	 * @returns {number} number of AI players removed
+	 */
+	function trimDuplicateAis() {
+		if (trimSuspended) return 0;
+		const world = World.getWorld();
+		if (!world) return 0;
+		// Battle bot seats are deliberate per-arena duplicates — the
+		// roster trim must never collapse them.
+		const allAi = World.listComputerPlayers().filter(ai => !ai.battleId);
+		if (allAi.length === 0) return 0;
+
+		// Bucket by difficulty
+		const byDifficulty = new Map();
+		const pieceCount = new Map();
+		for (const piece of (world.chessPieces || [])) {
+			if (!piece || !piece.player) continue;
+			pieceCount.set(String(piece.player), (pieceCount.get(String(piece.player)) || 0) + 1);
+		}
+		for (const ai of allAi) {
+			const key = ai.difficulty || 'medium';
+			if (!byDifficulty.has(key)) byDifficulty.set(key, []);
+			byDifficulty.get(key).push(ai);
+		}
+
+		let removed = 0;
+		for (const [, list] of byDifficulty.entries()) {
+			if (list.length <= 1) continue;
+			// Sort: most pieces first, then most recent activity.
+			list.sort((a, b) => {
+				const pa = pieceCount.get(String(a.id)) || 0;
+				const pb = pieceCount.get(String(b.id)) || 0;
+				if (pa !== pb) return pb - pa;
+				const ta = Number(a.lastChessMoveAt || a.lastTetrominoPlacementAt || 0);
+				const tb = Number(b.lastChessMoveAt || b.lastTetrominoPlacementAt || 0);
+				return tb - ta;
+			});
+			// Keep [0], remove the rest.
+			for (let i = 1; i < list.length; i++) {
+				const dupe = list[i];
+				console.log(
+					`[AI] Trimming duplicate ${dupe.name || dupe.id} (${dupe.difficulty}) ` +
+					`— keeping ${list[0].name || list[0].id}.`,
+				);
+				try { stopAiPlayer(dupe.id); } catch (_e) { /* ignore */ }
+				try { World.removePlayer(dupe.id); } catch (_e) { /* ignore */ }
+				removed++;
+			}
+		}
+
+		if (removed > 0) {
+			persistence.markDirty();
+			try { broadcaster.broadcastGameUpdate({ forceFullUpdate: true }); }
+			catch (_e) { /* best-effort */ }
+		}
+		return removed;
+	}
+
 	function ensureRoster() {
 		const world = World.getWorld();
 		if (!world) return;
 
-		const existingAi = World.listComputerPlayers();
+		// Trim first so the top-up logic below sees a clean count.
+		trimDuplicateAis();
+
+		// Battle bot seats belong to their arena, not the world roster —
+		// the BattleManager re-arms their tickers after a restart.
+		const existingAi = World.listComputerPlayers().filter(ai => !ai.battleId);
 		for (const ai of existingAi) {
 			if (!ai.strategy) ai.strategy = generateComputerStrategy(ai.difficulty || 'medium');
+			// Stale `pendingRespawn` from before a restart would keep the
+			// AI inert forever. The respawn setTimeout is gone, so reset
+			// it now — `performComputerAction` will respawn properly if
+			// the AI truly has no king.
+			if (ai.pendingRespawn) {
+				console.log(`[AI] Clearing stale pendingRespawn on ${ai.id} during boot.`);
+				ai.pendingRespawn = false;
+			}
 			startAiPlayer(ai.id);
 		}
 
@@ -261,6 +466,8 @@ function createAiRunner({
 		registerAi,
 		addComputerPlayer,
 		ensureRoster,
+		trimDuplicateAis,
+		setTrimSuspended,
 		stopAll,
 	};
 }

@@ -5,7 +5,10 @@
  * manages sessions, and prevents unauthorized access.
  */
 
-const { expect, describe, it, beforeEach, afterEach, jest } = require('@jest/globals');
+// NOTE: `jest` is intentionally NOT destructured here — babel-jest's hoist
+// plugin injects a `jest` binding, so re-declaring it via @jest/globals is a
+// parse-time "already declared" error. The global `jest` is used directly.
+const { expect, describe, it, beforeEach, afterEach } = require('@jest/globals');
 const express = require('express');
 const request = require('supertest');
 
@@ -92,6 +95,9 @@ class AuthService {
 
 // Create a mock Express app for testing
 const mockApp = express();
+// Parse JSON bodies — without this every POST route's `req.body` is
+// undefined and the destructuring throws a 500 before any assertion.
+mockApp.use(express.json());
 const authService = new AuthService();
 
 // Mock authentication middleware
@@ -300,6 +306,11 @@ describe('Authentication Security Tests', () => {
     });
     
     it('should verify session integrity for multiplayer games', () => {
+      // These players must exist before they can authenticate — the
+      // shared beforeEach only registers `testuser`.
+      authService.registerUser('player1', 'password123', 'p1@example.com');
+      authService.registerUser('player2', 'password123', 'p2@example.com');
+
       // Create mock sessions
       const session1 = authService.authenticate('player1', 'password123').sessionToken;
       const session2 = authService.authenticate('player2', 'password123').sessionToken;

@@ -613,12 +613,14 @@ describe('server/net/broadcasts — buildPlayersList includes basket summary', (
 		const persistence = { markDirty() {} };
 		const io = { to() { return { emit() {} }; } };
 
-		// Patch the Sessions module to point alice at a fake socket.
+		// Bind alice to a fake socket through the real Sessions module —
+		// emitToPlayer routes through Sessions.emitToPlayerSockets.
 		const Sessions = require(path.join('..', '..', 'server', 'world', 'Sessions'));
-		const originalSocketForPlayer = Sessions.socketForPlayer;
-		Sessions.socketForPlayer = (pid) => pid === 'alice'
-			? { emit(event, payload) { sentToAlice.push({ event, payload }); } }
-			: null;
+		Sessions.bind({
+			id: 'sock-alice',
+			join() {},
+			emit(event, payload) { sentToAlice.push({ event, payload }); },
+		}, 'alice');
 
 		try {
 			const broadcaster = createBroadcaster({ io, persistence });
@@ -630,7 +632,7 @@ describe('server/net/broadcasts — buildPlayersList includes basket summary', (
 				payload: { basket: [{ type: 'KNIGHT' }] },
 			});
 		} finally {
-			Sessions.socketForPlayer = originalSocketForPlayer;
+			Sessions.unbind('sock-alice');
 		}
 	});
 });

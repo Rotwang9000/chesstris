@@ -17,13 +17,23 @@
 import gameState from '../utils/gameState.js';
 import * as NetworkManager from '../utils/networkManager.js';
 import { showToastMessage } from '../showToastMessage.js';
-import { clearChessSelection, findChessPieceMeshAt, clearInFlightMove } from '../chessInteraction.js';
+import {
+	clearChessSelection, findChessPieceMeshAt, clearInFlightMove,
+	removeChessMeshesAtCell, disposeChessPieceMesh,
+} from '../chessInteraction.js';
 import {
 	ensureActivityLogUI,
 	pushActivityEvent,
 	loadActivityLogSnapshot,
 	toggleActivityLog,
 } from '../activityLog.js';
+import {
+	onCheckStart,
+	onCheckClear,
+	onCheckExpired,
+	onCheckGameUpdate,
+	initCheckAlert,
+} from '../checkAlert.js';
 import { updateGameStatusDisplay } from '../createLoadingIndicator.js';
 import * as tetrominoModule from '../tetromino.js';
 import { flashCellsBeforeClear, showChessCaptureAnimation } from '../tetromino/animations.js';
@@ -33,9 +43,13 @@ import {
 } from '../wingAnimations.js';
 import { cancelSkipChessTimer, cancelSkipDropTimer } from '../skipChessButton.js';
 import { updateNextPieceHint } from '../tetromino/nextPiece.js';
-import { getChessPiecesGroup } from '../gameContext.js';
+import { getChessPiecesGroup, getCamera } from '../gameContext.js';
+import { isEventInCurrentView } from '../battle/battleRules.js';
+import { updateChessPieces } from '../updateChessPieces.js';
+import { disposeBoats } from '../boatsRenderer.js';
 import {
 	showPromotionRedeemDialog,
+	showFrozenPawnPromotionDialog,
 	showKingBattleOverlay,
 	showKingDuelOverlay,
 	handleDuelRoundResult,
@@ -66,6 +80,19 @@ const ISLAND_DECAY_LIMITS = Object.freeze({
 	dedupeMs: 1500,
 });
 
+/**
+ * Human-readable board coordinate for toasts. Battle arenas live at
+ * absolute cells like (2002, 1995) — meaningless to a player, so
+ * inside a battle we report positions relative to the arena centre.
+ */
+function formatCellForToast(x, z) {
+	const centre = gameState.activeBattle?.centre;
+	if (centre && Number.isFinite(centre.x) && Number.isFinite(centre.z)) {
+		return `(${x - centre.x}, ${z - centre.z})`;
+	}
+	return `(${x}, ${z})`;
+}
+
 // `"x,z"` → last-playback-ms map used to suppress overlapping replays.
 const recentIslandDecayPlaybacks = new Map();
 
@@ -80,21 +107,60 @@ function dispatchGameUpdate(detail) {
 	}
 }
 
+let versionBannerShown = false;
+function showVersionMismatchBanner({ serverVersion, clientVersion }) {
+	if (versionBannerShown) return;
+	versionBannerShown = true;
+	console.warn(
+		`[Version] Client bundle ${clientVersion} differs from server ${serverVersion} — prompting refresh.`
+	);
+	try {
+		const existing = document.getElementById('version-mismatch-banner');
+		if (existing) return;
+		const banner = document.createElement('div');
+		banner.id = 'version-mismatch-banner';
+		banner.style.cssText = [
+			'position:fixed', 'top:0', 'left:0', 'right:0',
+			'z-index:99999',
+			'padding:10px 14px',
+			'background:#ffba00', 'color:#1c1c1c',
+			'font-family:sans-serif', 'font-weight:600', 'font-size:14px',
+			'box-shadow:0 2px 12px rgba(0,0,0,0.3)',
+			'display:flex', 'align-items:center', 'justify-content:center',
+			'gap:14px',
+		].join(';');
+		banner.innerHTML = `
+			<span>A newer version of Tetches is available. Refresh to pick up the latest fixes.</span>
+			<button id="version-mismatch-refresh" style="padding:6px 14px;border:0;border-radius:4px;cursor:pointer;background:#1c1c1c;color:#fff;font-weight:700;">Refresh now</button>
+			<button id="version-mismatch-dismiss" style="padding:6px 10px;border:0;border-radius:4px;cursor:pointer;background:transparent;color:#1c1c1c;font-weight:600;">Later</button>
+		`;
+		document.body.appendChild(banner);
+		document.getElementById('version-mismatch-refresh')?.addEventListener('click', () => {
+			window.location.reload();
+		});
+		document.getElementById('version-mismatch-dismiss')?.addEventListener('click', () => {
+			banner.remove();
+		});
+	} catch (err) {
+		console.warn('Failed to render version-mismatch banner:', err);
+	}
+}
+
 function normalisePlayersArrayToMap(playersArray) {
 	const map = {};
 	if (!Array.isArray(playersArray)) return map;
 	for (const p of playersArray) {
 		if (!p || !p.id) continue;
+		// Carry every broadcast field through (the server's players list
+		// is already payload-safe) and only coerce the ones consumers
+		// rely on being well-typed. Cherry-picking here silently dropped
+		// `paused`, `capturedBreakdown`, `promotionCreditCount` and the
+		// battle-seat `color`/`battleId` the board painter needs.
 		map[p.id] = {
-			id: p.id,
+			...p,
 			name: p.name || p.id,
 			isComputer: !!p.isComputer,
-			// Forwarded so the sidebar can hide beaten players and
-			// the spacing helpers can ignore them.
 			eliminated: !!p.eliminated,
-			// Captured-piece basket summary (public count + per-type
-			// totals). The full basket only goes to the owning
-			// player via a separate `captured_basket` event.
 			capturedCount: Number(p.capturedCount) || 0,
 			capturedSummary: p.capturedSummary && typeof p.capturedSummary === 'object'
 				? { ...p.capturedSummary }
@@ -147,23 +213,66 @@ function handleRowCleared(payload) {
 		const rows = Array.isArray(payload?.rows) ? payload.rows : [];
 		const cols = Array.isArray(payload?.cols) ? payload.cols : [];
 		if (rows.length === 0 && cols.length === 0) return;
-		// Audible cue for every row-clear we see, not just our own.
-		// Quieter for other players' clears so the local action stays
-		// dominant in the mix.
-		const isLocalActor = payload?.playerId && String(payload.playerId) === String(gameState.localPlayerId);
-		try { playSound('lineClear', { gain: isLocalActor ? 1 : 0.6 }); } catch (_e) { /* sound is best-effort */ }
+
+		const localId = gameState.localPlayerId;
+		const isLocalActor = payload?.playerId && String(payload.playerId) === String(localId);
+
+		// "Involves us" means either we triggered the clear OR one of
+		// our chess pieces was sitting on a cleared cell (so it had to
+		// fall / land somewhere). Anything else is purely background
+		// — a bot or a stranger across the world clearing rows, which
+		// must not make our local client beep on a loop.
+		let touchesOurPieces = false;
+		if (Array.isArray(payload?.settleOutcomes) && localId) {
+			const pieces = Array.isArray(gameState.chessPieces) ? gameState.chessPieces : [];
+			for (const outcome of payload.settleOutcomes) {
+				if (!outcome) continue;
+				let owner = outcome.pieceOwner || outcome.player || outcome.playerId;
+				if (!owner && outcome.pieceId) {
+					// Fallback for servers that don't include the owner
+					// in the outcome (e.g. during a rolling deploy).
+					const match = pieces.find(p => p && String(p.id) === String(outcome.pieceId));
+					if (match) owner = match.player || match.playerId;
+				}
+				if (owner && String(owner) === String(localId)) {
+					touchesOurPieces = true;
+					break;
+				}
+			}
+		}
+		const involvesUs = isLocalActor || touchesOurPieces;
+
+		// Sound rules:
+		//   • Our own clears  → beep every cascade iteration (rewarding feedback).
+		//   • Remote clear, but a piece of ours ends up airborne → one beep at
+		//     the start of the cascade, never a chain of them.
+		//   • Pure background clears (a stranger across the world) → silent.
+		if (involvesUs) {
+			const iter = Number(payload?.iteration);
+			const allowSound = isLocalActor || !Number.isFinite(iter) || iter === 0;
+			if (allowSound) {
+				try { playSound('lineClear'); } catch (_e) { /* sound is best-effort */ }
+			}
+		}
+
 		// Even when the clear was triggered by someone else, settle our
 		// own airborne meshes — pieces on those cells need to land or
 		// fall regardless of who finished the line.
 		if (Array.isArray(payload?.settleOutcomes)) {
 			settleAirbornePieces(payload.settleOutcomes);
 		}
+
 		if (!isLocalActor) return;
+		const cellsCleared = Number(payload?.cellsCleared);
+		const iter = Number(payload?.iteration);
+		const suffix = Number.isFinite(iter) && iter > 0 ? ` (chain ×${iter + 1})` : '';
+		if (Number.isFinite(cellsCleared) && cellsCleared === 0) {
+			showToastMessage(`Pieces displaced — terrain unchanged${suffix}`);
+			return;
+		}
 		const parts = [];
 		if (rows.length) parts.push(`row${rows.length === 1 ? '' : 's'} ${rows.join(', ')}`);
 		if (cols.length) parts.push(`col${cols.length === 1 ? '' : 's'} ${cols.join(', ')}`);
-		const iter = Number(payload?.iteration);
-		const suffix = Number.isFinite(iter) && iter > 0 ? ` (chain ×${iter + 1})` : '';
 		showToastMessage(`Line cleared!${suffix} ${parts.join(' · ')}`);
 	} catch (e) {
 		console.error('Error handling row_cleared:', e);
@@ -203,7 +312,7 @@ function handleChessMoveBroadcast(payload) {
 			|| payload.movedTo
 			|| (Number.isFinite(payload.x) ? { x: payload.x, z: payload.z } : null);
 		const atSuffix = pos && Number.isFinite(pos.x) && Number.isFinite(pos.z)
-			? ` at (${pos.x}, ${pos.z})`
+			? ` at ${formatCellForToast(pos.x, pos.z)}`
 			: '';
 		if (localLost) {
 			showToastMessage(
@@ -254,7 +363,21 @@ function handleChessCapture(payload) {
 			pieceMesh = findChessPieceMeshAt(x, z);
 		}
 
-		showChessCaptureAnimation(x, z, gameState, { pieceMesh });
+		const keeperId = payload?.capturedBy?.pieceId || null;
+		if (capturedId) {
+			const group = getChessPiecesGroup();
+			if (group && Array.isArray(group.children)) {
+				for (const child of group.children) {
+					if (child?.userData?.id && String(child.userData.id) === String(capturedId)) {
+						disposeChessPieceMesh(child);
+						break;
+					}
+				}
+			}
+		}
+		removeChessMeshesAtCell(x, z, keeperId);
+
+		showChessCaptureAnimation(x, z, gameState, { pieceMesh: null });
 	} catch (e) {
 		console.error('Error handling chess_capture:', e);
 	}
@@ -358,7 +481,7 @@ function handleKingDetonation(payload, { showGameOverPulseOverlay }) {
 				if (isLocalDetonation) {
 					showToastMessage('Your king has detonated!', { variant: 'alert', duration: 6000 });
 				} else if (isAi) {
-					showToastMessage('An AI was reduced to a lone king — Lemmings!', { duration: 4500 });
+					showToastMessage('An AI was reduced to a lone king — Bye Bye!', { duration: 4500 });
 				} else {
 					showToastMessage('An opponent detonated their king!', { duration: 4500 });
 				}
@@ -554,10 +677,94 @@ function handleKingCaptured(payload) {
 	try {
 		const { captorId, captorName, defeatedId, defeatedName, defeatedColor, inheritedPawnCount } = payload || {};
 		if (!captorId || !defeatedId) return;
+		const localId = gameState.localPlayerId;
+		const involvesUs = localId && (
+			String(captorId) === String(localId)
+			|| String(defeatedId) === String(localId)
+		);
+		if (!involvesUs) return;
 		try { playSound('kingFall'); } catch (_e) { /* sound is best-effort */ }
+
+		const weWereDefeated = String(defeatedId) === String(localId);
+		if (weWereDefeated) {
+			showToastMessage(
+				`Your king was captured. Your army now fights for ${captorName || captorId} ` +
+				`(pieces turn their colour) until suicidal pawns detonate.`,
+				{ variant: 'alert', duration: 9000 }
+			);
+		} else {
+			showToastMessage(
+				`You captured ${defeatedName || defeatedId}'s king — their forces are now yours.`,
+				{ variant: 'success', duration: 6000 }
+			);
+		}
+
 		showKingBattleOverlay(captorId, captorName, defeatedId, defeatedName, defeatedColor, inheritedPawnCount);
+
+		const group = getChessPiecesGroup();
+		const camera = getCamera();
+		if (group && camera) {
+			updateChessPieces(group, camera, { ...gameState, _forceUpdate: true });
+		}
 	} catch (e) {
 		console.error('Error handling king_captured:', e);
+	}
+}
+
+function handleKingRespawned(payload) {
+	try {
+		if (!payload || !payload.playerId) return;
+		const isLocal = String(payload.playerId) === String(gameState.localPlayerId);
+		const remaining = Number(payload.remainingLives);
+		const total = Number(payload.totalLives) || 3;
+		const safeRemaining = Number.isFinite(remaining) ? remaining : (total - 1);
+		const reason = String(payload.reason || 'unknown').replace(/_/g, ' ');
+		const livesWord = safeRemaining === 1 ? 'life' : 'lives';
+
+		if (isLocal) {
+			showToastMessage(
+				`Your king fell (${reason})! ${safeRemaining} ${livesWord} left.`,
+				{ variant: 'alert', duration: 6500 }
+			);
+			try { playSound('kingFall'); } catch (_e) { /* sound is best-effort */ }
+		}
+		// Remote king falls aren't toasted or sounded — they're noisy
+		// in a busy world and the player can read about them in the
+		// activity log if they care.
+
+		// Sync local state so the player bar + sidebar reflect the
+		// remaining lives without waiting for the next full game_update.
+		if (gameState.players && gameState.players[payload.playerId]) {
+			gameState.players[payload.playerId].kingLives = safeRemaining;
+		}
+
+		if (typeof window.updateBoardVisuals === 'function') {
+			try { window.updateBoardVisuals(); } catch (_e) { /* best-effort */ }
+		}
+	} catch (e) {
+		console.error('Error handling king_respawned:', e);
+	}
+}
+
+function handleKingEliminated(payload) {
+	try {
+		if (!payload || !payload.playerId) return;
+		const isLocal = String(payload.playerId) === String(gameState.localPlayerId);
+		if (gameState.players && gameState.players[payload.playerId]) {
+			gameState.players[payload.playerId].eliminated = true;
+			gameState.players[payload.playerId].kingLives = 0;
+		}
+		if (isLocal) {
+			// The on-screen drama (explosions + "GAME OVER" pulse) is owned
+			// by the king_detonation event that always accompanies a final
+			// death now, so we don't double-toast here — just the death
+			// sound, which pairs with the detonation animation.
+			try { playSound('kingFall'); } catch (_e) { /* sound is best-effort */ }
+		}
+		// Remote eliminations are intentionally silent — the activity
+		// log still records them so spectators can watch the scoreboard.
+	} catch (e) {
+		console.error('Error handling king_eliminated:', e);
 	}
 }
 
@@ -588,7 +795,10 @@ function handleKingDuelStart(payload) {
 
 function handleKingDuelAnnounced(payload) {
 	try {
-		const { player1Name, player2Name } = payload || {};
+		const { player1, player2, player1Name, player2Name } = payload || {};
+		// A duel in someone else's battle (or in the world while we're
+		// battling) is not our news — view isolation covers toasts too.
+		if (!isEventInCurrentView(gameState, [player1, player2])) return;
 		showToastMessage(
 			`King's Duel! ${player1Name} vs ${player2Name} — both captured each other's king!`,
 			5000,
@@ -608,11 +818,14 @@ function handleKingDuelAnnounced(payload) {
 export function setupNetworkEvents(hooks = {}) {
 	if (networkEventsInitialised) return;
 	networkEventsInitialised = true;
+	try { disposeBoats(); } catch (_e) { /* fleet retired */ }
 
 	if (!NetworkManager || typeof NetworkManager.on !== 'function') {
 		console.warn('setupNetworkEvents: NetworkManager not available');
 		return;
 	}
+	try { initCheckAlert(); }
+	catch (e) { console.warn('initCheckAlert failed:', e); }
 
 	NetworkManager.on('game_state', (payload) => {
 		const state = payload?.state || payload;
@@ -634,6 +847,13 @@ export function setupNetworkEvents(hooks = {}) {
 		if (state.fullUpdate === false && Array.isArray(state.boardChanges)) {
 			applyBoardDelta(state);
 			dispatchGameUpdate({ ...state, board: gameState.board });
+			if (Array.isArray(state.chessPieces)) {
+				const group = getChessPiecesGroup();
+				const camera = getCamera();
+				if (group && camera) {
+					updateChessPieces(group, camera, { ...gameState, _forceUpdate: true });
+				}
+			}
 			return;
 		}
 		dispatchGameUpdate(state);
@@ -654,6 +874,24 @@ export function setupNetworkEvents(hooks = {}) {
 		dispatchGameUpdate({ localPlayerId: payload.playerId });
 	});
 
+	// Server tells us which client build it expects. If our bundle is
+	// older we render a non-blocking "please refresh" banner so the
+	// player picks up bug fixes / rule changes. A cheating front-end
+	// that spoofs an old bundle version still works, but at least it
+	// can't claim "I didn't know" — and all of its game-state changes
+	// are server-validated anyway.
+	NetworkManager.on('server_version', (payload) => {
+		try {
+			const serverVersion = String(payload?.bundleVersion || '');
+			const clientVersion = String(window.__BUNDLE_VERSION__ || '');
+			if (!serverVersion || !clientVersion) return;
+			if (serverVersion === clientVersion) return;
+			showVersionMismatchBanner({ serverVersion, clientVersion });
+		} catch (err) {
+			console.warn('server_version handler failed:', err);
+		}
+	});
+
 	const safe = (label, fn) => (payload) => {
 		try { fn(payload); } catch (e) { console.error(`Error handling ${label}:`, e); }
 	};
@@ -672,31 +910,82 @@ export function setupNetworkEvents(hooks = {}) {
 	NetworkManager.on('new_tetromino', (payload) => handleNewTetromino(payload, hooks));
 	NetworkManager.on('pawn_promotion_available', handlePawnPromotionAvailable);
 	NetworkManager.on('king_captured', handleKingCaptured);
+	NetworkManager.on('king_respawned', handleKingRespawned);
+	NetworkManager.on('king_eliminated', handleKingEliminated);
+	// Check (deferred king-capture). The server holds the would-be
+	// capture for `CHECK_DEADLINE_MS` so the defender has a chance to
+	// escape. `chess_check` is the warning, `chess_check_cleared` is
+	// the defender's successful escape, and `chess_check_expired` is
+	// the timer running out (the king capture follows immediately).
+	NetworkManager.on('chess_check', safe('chess_check', (payload) => {
+		try { onCheckStart(payload); }
+		catch (e) { console.warn('checkAlert start failed:', e); }
+	}));
+	NetworkManager.on('chess_check_cleared', safe('chess_check_cleared', () => {
+		try { onCheckClear(); }
+		catch (e) { console.warn('checkAlert clear failed:', e); }
+	}));
+	NetworkManager.on('chess_check_expired', safe('chess_check_expired', () => {
+		try { onCheckExpired(); }
+		catch (e) { console.warn('checkAlert expired failed:', e); }
+	}));
+	NetworkManager.on('game_update', safe('game_update', (payload) => {
+		// `pendingCheck` rides on every `game_update` payload (set or
+		// null). Treat it as the source of truth so late-joiners and
+		// reconnects also surface any active warning.
+		try { onCheckGameUpdate(payload); }
+		catch (e) { console.warn('checkAlert game_update reconcile failed:', e); }
+	}));
 	NetworkManager.on('suicidal_pawn', handleSuicidalPawn);
 	NetworkManager.on('king_duel_start', handleKingDuelStart);
 	NetworkManager.on('king_duel_round_result', safe('king_duel_round_result', handleDuelRoundResult));
 	NetworkManager.on('king_duel_new_round', safe('king_duel_new_round', handleDuelNewRound));
 	NetworkManager.on('king_duel_result', safe('king_duel_result', showKingDuelResult));
 	NetworkManager.on('king_duel_announced', handleKingDuelAnnounced);
+	// Server-initiated rename broadcast. The local UI already
+	// updated localStorage when the user submitted the dialog —
+	// this handler covers everyone *else* seeing the new name.
+	NetworkManager.on('player_renamed', (payload) => {
+		try {
+			if (!payload || !payload.playerId) return;
+			const players = gameState.players || {};
+			if (players[payload.playerId]) {
+				players[payload.playerId].name = payload.playerName;
+			}
+			if (payload.playerId === gameState.localPlayerId && payload.playerName) {
+				try { localStorage.setItem('playerName', payload.playerName); } catch (_e) { /* ignore */ }
+			}
+			if (Array.isArray(payload.players)) {
+				dispatchGameUpdate({ players: payload.players });
+			} else {
+				dispatchGameUpdate({});
+			}
+		} catch (e) {
+			console.warn('[player_renamed] update failed:', e);
+		}
+	});
+
 	NetworkManager.on('activity_event', (payload) => {
-		// Cheap audio hooks for activity events that don't have a
-		// dedicated handler. The cues are quieter when the actor
-		// isn't the local player so a busy world doesn't drown the
-		// player's own action out.
+		// Audio hooks for activity events that don't have a dedicated
+		// handler. We ONLY fire these for the local player — a busy
+		// shared world (especially with AI bots placing 1-2 pieces
+		// per second) would otherwise produce a constant background
+		// of clatter the user can do nothing about.
 		try {
 			const type = payload && payload.type ? String(payload.type) : '';
 			const isLocal = payload && payload.playerId
 				&& String(payload.playerId) === String(gameState.localPlayerId);
-			const gain = isLocal ? 1 : 0.5;
-			switch (type) {
-				case 'tetromino_placed':
-					playSound('drop', { gain });
-					break;
-				case 'pawn_promoted_to_credit':
-					playSound('promotion', { gain });
-					break;
-				default:
-					break;
+			if (isLocal) {
+				switch (type) {
+					case 'tetromino_placed':
+						playSound('drop');
+						break;
+					case 'pawn_promoted_to_credit':
+						playSound('promotion');
+						break;
+					default:
+						break;
+				}
 			}
 		} catch (_e) { /* sound is best-effort */ }
 		pushActivityEvent(payload);
@@ -742,11 +1031,15 @@ export function setupNetworkEvents(hooks = {}) {
 		try {
 			const isLocal = payload.playerId && payload.playerId === gameState.localPlayerId;
 			const label = String(payload.pieceType || 'piece').toLowerCase();
-			const message = isLocal
-				? `Power-up claimed: ${label}!`
-				: `${payload.playerName || 'A player'} claimed a ${label} power-up`;
-			showToastMessage(message, 3000);
-			try { playSound('orbClaim', { gain: isLocal ? 1 : 0.6 }); } catch (_e) { /* sound is best-effort */ }
+			// Toast + sound for our own claim. For remote claims, log
+			// the activity (the snapshot listener already does that)
+			// but stay quiet — no toast, no audio. A live world has
+			// many players, and an orb claim chime every few seconds
+			// for actions we can't influence is just noise.
+			if (isLocal) {
+				showToastMessage(`Power-up claimed: ${label}!`, 3000);
+				try { playSound('orbClaim'); } catch (_e) { /* sound is best-effort */ }
+			}
 		} catch (toastErr) {
 			console.warn('[powerup_claimed] toast failed:', toastErr);
 		}
@@ -772,7 +1065,12 @@ export function setupNetworkEvents(hooks = {}) {
 	NetworkManager.on('promotion_credit_added', (payload) => {
 		if (!payload || !payload.creditId) return;
 		const isLocal = payload.playerId && payload.playerId === gameState.localPlayerId;
-		try { playSound('promotion', { gain: isLocal ? 1 : 0.55 }); } catch (_e) { /* sound is best-effort */ }
+		// Sound only for our own promotions — remote promotions are
+		// activity-log only so the audio doesn't ping every few seconds
+		// in a busy world.
+		if (isLocal) {
+			try { playSound('promotion'); } catch (_e) { /* sound is best-effort */ }
+		}
 		if (isLocal) {
 			const list = Array.isArray(gameState.promotionCredits) ? gameState.promotionCredits : [];
 			if (!list.some(c => c && c.id === payload.creditId)) {
@@ -805,6 +1103,61 @@ export function setupNetworkEvents(hooks = {}) {
 		}
 	});
 
+	// Frozen-pawn promotion: server tells us a pawn has reached the
+	// promotion line and is now locked in place. Mark it on local
+	// state (so the renderer can draw the glow halo immediately) and
+	// pop the deployment dialog for the local player.
+	NetworkManager.on('pawn_awaiting_promotion', (payload) => {
+		if (!payload || !payload.pieceId) return;
+		const isLocal = payload.playerId && payload.playerId === gameState.localPlayerId;
+		const list = Array.isArray(gameState.chessPieces) ? gameState.chessPieces : null;
+		if (list) {
+			const piece = list.find(p => p && String(p.id) === String(payload.pieceId));
+			if (piece) {
+				piece.awaitingPromotion = true;
+				piece.awaitingPromotionAt = payload.awaitingSince || Date.now();
+			}
+		}
+		if (isLocal) {
+			try { playSound('promotion'); } catch (_e) { /* sound is best-effort */ }
+			if (payload.firstTime !== false) {
+				// `forceShow` lets the dialog open even when the local
+				// chessPieces array hasn't received the awaitingPromotion
+				// flag yet (the trailing game_update can be a beat behind
+				// this event). Otherwise the "nothing happens" symptom
+				// the user reported would re-occur on a slow snapshot.
+				try { showFrozenPawnPromotionDialog(payload.pieceId, { forceShow: true }); }
+				catch (uiErr) { console.warn('[pawn_awaiting_promotion] UI failed:', uiErr); }
+			}
+		}
+	});
+
+	// Pawn promotion deployed: server replaced the frozen pawn with a
+	// captured piece. Drop the local frozen marker preemptively so the
+	// halo disappears without waiting for the broadcast; surface a
+	// confirmation toast for the local player.
+	NetworkManager.on('pawn_promotion_deployed', (payload) => {
+		if (!payload || !payload.pawnId) return;
+		const pieces = Array.isArray(gameState.chessPieces) ? gameState.chessPieces : null;
+		if (pieces) {
+			const stale = pieces.find(p => p && String(p.id) === String(payload.pawnId));
+			if (stale) {
+				stale.awaitingPromotion = false;
+				delete stale.awaitingPromotionAt;
+			}
+		}
+		const isLocal = payload.playerId && payload.playerId === gameState.localPlayerId;
+		if (!isLocal) return;
+		try {
+			showToastMessage(
+				`${payload.pieceType || 'Piece'} deployed at ${formatCellForToast(payload.x, payload.z)}`,
+				3500,
+			);
+		} catch (toastErr) {
+			console.warn('[pawn_promotion_deployed] toast failed:', toastErr);
+		}
+	});
+
 	NetworkManager.on('promotion_credit_redeemed', (payload) => {
 		if (!payload || !payload.creditId) return;
 		const isLocal = payload.playerId && payload.playerId === gameState.localPlayerId;
@@ -815,7 +1168,7 @@ export function setupNetworkEvents(hooks = {}) {
 			try {
 				const where = payload.fallback
 					? `near your king (original cell gone)`
-					: `at (${payload.x}, ${payload.z})`;
+					: `at ${formatCellForToast(payload.x, payload.z)}`;
 				showToastMessage(`${payload.pieceType || 'piece'} deployed ${where}`, 3500);
 			} catch (toastErr) {
 				console.warn('[promotion_credit_redeemed] toast failed:', toastErr);

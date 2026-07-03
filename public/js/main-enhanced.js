@@ -16,6 +16,10 @@ import gameState from './utils/gameState.js';
 import * as tetrominoModule from './tetromino.js'; // Import tetromino module for socket events
 import { initFloatingBanner } from './floatingBanner.js'; // Import floating banner for ads
 import { initSponsorSystem } from '../utils/sponsors.js'; // Import sponsor system
+import { disposeBoats } from './boatsRenderer.js';
+import { initSaveReminder } from './auth/saveReminder.js';
+import { initBattleMode } from './battle/battleMode.js';
+import { initLiteMode, liteModeRequested } from './liteMode.js';
 
 
 // Global state
@@ -37,8 +41,9 @@ function normalizeRenderProfile(value) {
 }
 
 function resolveRenderProfile() {
+	// NOTE `/2d` no longer maps to the cute profile — it boots the true
+	// 2D canvas client (lite mode) before profiles are even consulted.
 	const params = new URLSearchParams(window.location.search);
-	const fromPath = window.location.pathname === '/2d' ? 'cute' : null;
 	const fromFlags = (params.has('cute') || params.has('low') || params.has('pixel')) ? 'cute'
 		: params.has('retro') ? 'retro' : null;
 	const fromQuery =
@@ -46,7 +51,7 @@ function resolveRenderProfile() {
 		normalizeRenderProfile(params.get('mode')) ||
 		normalizeRenderProfile(params.get('quality'));
 	const stored = normalizeRenderProfile(localStorage.getItem('renderProfile'));
-	return fromQuery || fromFlags || fromPath || stored || 'normal';
+	return fromQuery || fromFlags || stored || 'normal';
 }
 
 function applyRenderProfileToDom(profile) {
@@ -113,6 +118,12 @@ function setupRenderModeToggle(profile) {
 			gameCore.forceChessPieceRebuild();
 		}
 
+		try {
+			disposeBoats();
+		} catch (e) {
+			console.warn('Could not dispose boats after profile switch:', e);
+		}
+
 		console.log('Switched render mode to', next, 'without page reload');
 	});
 }
@@ -165,11 +176,23 @@ async function init() {
 	hideLoadingScreen();
 	hideError();
 
+	// Explicit lite requests (/2d or ?lite=1) skip the WebGL stack
+	// entirely — the 2D canvas client is the whole game.
+	if (liteModeRequested()) {
+		hideLoadingScreen();
+		await initLiteMode();
+		return;
+	}
+
 	// Apply render profile ASAP so CSS + UI reflect it even before game starts
 	const renderProfile = resolveRenderProfile();
 	applyRenderProfileToDom(renderProfile);
 	setupRenderModeToggle(renderProfile);
 	applyCrtOverlay(renderProfile === 'retro');
+
+	// Guests who played get a gentle "save your kingdom?" prompt when
+	// leaving (no-op for logged-in players; armed by the first placement).
+	initSaveReminder();
 	
 	try {
 		// Run diagnostics first to catch any issues
@@ -180,54 +203,43 @@ async function init() {
 			throw new Error('THREE.js not available. Please check your internet connection.');
 		}
 
-		// If the browser cannot create any WebGL context, fail fast and
-		// surface the same overlay that the deeper renderer code uses.
-		// This avoids a confusing chain of "module errors" deep in
-		// `enhanced-gameCore.js`.
+		// No WebGL at all? Fall back to the 2D lite client instead of a
+		// dead-end error overlay — the game stays playable.
 		if (diagnostics.webglStatus && !diagnostics.webglStatus.hasWebGL && !diagnostics.webglStatus.hasWebGL2) {
-			if (typeof gameCore.showWebglUnavailableOverlay === 'function') {
-				gameCore.showWebglUnavailableOverlay('No WebGL context available at startup');
-			}
+			console.warn('WebGL unavailable — switching to lite (2D canvas) mode');
 			hideLoadingScreen();
-			throw new Error('WebGL unavailable: hardware acceleration disabled or unsupported.');
+			await initLiteMode({
+				reason: 'WebGL is unavailable in this browser, so the 3D view is off — '
+					+ 'you\u2019re on the 2D board instead. Same world, same rules.',
+			});
+			return;
 		}
 		
 		
 		// Initialize NetworkStatusManager
 		NetworkStatusManager.init();
 		
-		// Add status listener
+		// Add status listener. The render loop keeps running while
+		// disconnected (the world is server-authoritative and resyncs on
+		// reconnect); NetworkStatusManager owns the visible status display
+		// and reconnect attempts, so there's nothing to locally pause.
 		NetworkStatusManager.addStatusListener((status) => {
 			if (status === NetworkStatusManager.NetworkStatus.DISCONNECTED) {
-				console.log('Network connection lost, game paused');
-				// If game is running, pause it
-				if (isGameStarted && gameCore.pauseGame) {
-					gameCore.pauseGame();
-				}
+				console.log('Network connection lost; awaiting reconnect');
 			} else if (status === NetworkStatusManager.NetworkStatus.CONNECTED) {
 				console.log('Network connection restored');
-				// If game was paused due to disconnect, resume it
-				if (isGameStarted && gameCore.resumeGame) {
-					gameCore.resumeGame();
-				}
 			}
 		});
 		
 		// Create network status display
 		createNetworkStatusDisplay();
 		
-		// Show player login if needed
-		if (!playerName) {
-			// Always hide loading screen before showing login
-			document.getElementById('loading').style.display = 'none';
-			showPlayerNamePrompt();
-			return;
-		}
-		
 		// Hide loading screen only after game is initialized
 		// DO NOT hide it here to avoid flash of content
 		
-		// Initialize the game first
+		// Initialize the game first. There is deliberately NO separate
+		// name dialog any more: the welcome modal carries an optional
+		// name field, and the world join waits for its PLAY button.
 		console.log('Starting enhanced game initialization...');
 		const gameContainer = document.getElementById('game-container');
 		gameContainer.style.display = 'block';
@@ -270,8 +282,26 @@ async function init() {
 		createUnifiedPlayerBar(initialState);
 		wireSessionWarningLink();
 		
-		// Join or create a game - this will handle the loading screen
-		joinGame();
+		// World entry is gated by the welcome modal: the actual
+		// `join_game` (which spawns/announces the kingdom) waits until
+		// the player clicks PLAY. Until then we only hold a background
+		// socket so the world renders as a spectator backdrop. A
+		// mode-switch resume skips the gate — that player already
+		// entered this session.
+		gameCore.setWorldJoinGate(ensureWorldJoined);
+		if (hasRecentModeSwitchState()) {
+			ensureWorldJoined();
+		} else {
+			connectForWorldPreview();
+			hideLoadingScreen();
+		}
+
+		// Battle mode wires up at page load — NOT after world join —
+		// because the welcome modal's BATTLE button goes straight to
+		// the lobby without ever joining the shared world.
+		wireTetrominoSocketListeners();
+		try { initBattleMode(gameState); }
+		catch (err) { console.warn('Battle mode init failed:', err); }
 		
 		console.log('Enhanced game initialized successfully');
 	} catch (error) {
@@ -297,84 +327,90 @@ async function init() {
 }
 
 /**
- * Show player name prompt with Russian theme
+ * True when a render-mode switch just reloaded the page — that player
+ * already entered the world this session, so skip the welcome gate.
  */
-function showPlayerNamePrompt() {
-	// Hide loading screen
-	document.getElementById('loading').style.display = 'none';
-	
-	// Create or get login container
-	let loginContainer = document.getElementById('login-container');
-	if (!loginContainer) {
-		loginContainer = document.createElement('div');
-		loginContainer.id = 'login-container';
-		
-		// Style the login container with Russian theme
-		Object.assign(loginContainer.style, {
-			position: 'fixed',
-			top: '0',
-			left: '0',
-			width: '100%',
-			height: '100%',
-			backgroundColor: 'rgba(0, 0, 0, 0.9)',
-			display: 'flex',
-			justifyContent: 'center',
-			alignItems: 'center',
-			zIndex: '1001'
-		});
-		
-		// Add login form with Russian theme
-		loginContainer.innerHTML = `
-			<div style="background-color: #111; padding: 30px; border-radius: 10px; width: 300px; max-width: 90%; text-align: center; box-shadow: 0 0 20px rgba(255, 204, 0, 0.3); border: 2px solid #ffcc00;">
-				<h2 style="color: #ffcc00; margin-top: 0; font-family: 'Times New Roman', serif;">Welcome to Tetches</h2>
-				<div style="font-size: 36px; color: #ffcc00; margin: 10px 0;">☦</div>
-				<p style="color: white; margin-bottom: 20px; font-family: 'Times New Roman', serif;">Enter your player name to start playing</p>
-				
-				<form id="player-form" style="display: flex; flex-direction: column; gap: 15px;">
-					<input 
-						type="text" 
-						id="player-name" 
-						placeholder="Your name" 
-						style="padding: 10px; border-radius: 5px; border: 1px solid #ffcc00; background-color: #222; color: white; font-size: 16px; font-family: 'Times New Roman', serif;"
-						maxlength="20"
-						required
-					>
-					
-					<button 
-						type="submit" 
-						style="padding: 10px; background-color: #333; color: #ffcc00; border: 1px solid #ffcc00; border-radius: 5px; cursor: pointer; font-size: 16px; font-weight: bold; font-family: 'Times New Roman', serif;"
-					>
-						Start Playing
-					</button>
-				</form>
-			</div>
-		`;
-		
-		document.body.appendChild(loginContainer);
-		
-		// Focus the input field
-		setTimeout(() => {
-			document.getElementById('player-name').focus();
-		}, 100);
-		
-		// Add form submit handler
-		document.getElementById('player-form').addEventListener('submit', (e) => {
-			e.preventDefault();
-			
-			const nameInput = document.getElementById('player-name');
-			const name = nameInput.value.trim();
-			
-			if (name) {
-				playerName = name;
-				localStorage.setItem('playerName', name);
-				
-				// Remove login container
-				document.body.removeChild(loginContainer);
-				
-				// Restart initialization
-				init();
+function hasRecentModeSwitchState() {
+	try {
+		const saved = sessionStorage.getItem('tetches_mode_switch_state');
+		if (!saved) return false;
+		const state = JSON.parse(saved);
+		return !!(state.gameId && Date.now() - state.timestamp < 30000);
+	} catch (_e) {
+		return false;
+	}
+}
+
+let worldJoinPromise = null;
+
+/**
+ * Join the shared world exactly once (single-flight). Registered with
+ * gameCore as the "world join gate": `startPlayingGame` awaits it, so
+ * the server-side `join_game` only happens when the player actually
+ * enters — not silently at page load.
+ *
+ * @returns {Promise<boolean>} True once joined.
+ */
+function ensureWorldJoined() {
+	if (!worldJoinPromise) {
+		// Re-read the name in case the welcome modal just saved it.
+		playerName = localStorage.getItem('playerName') || playerName || '';
+		worldJoinPromise = joinGame().then((joined) => {
+			if (joined === false) {
+				// Allow another attempt on the next click.
+				worldJoinPromise = null;
+				return false;
 			}
+			return true;
+		}).catch((error) => {
+			console.error('World join failed:', error);
+			worldJoinPromise = null;
+			return false;
 		});
+	}
+	return worldJoinPromise;
+}
+
+/**
+ * Tetromino-specific socket listeners (row clears, rejected
+ * placements). Needed by BOTH entry paths — world join and battle-only
+ * — so wiring happens once at page init. Safe before the socket
+ * connects: it registers against the NetworkManager event bus.
+ */
+let tetrominoListenersWired = false;
+function wireTetrominoSocketListeners() {
+	if (tetrominoListenersWired) return;
+	tetrominoListenersWired = true;
+	if (typeof tetrominoModule !== 'undefined' && tetrominoModule.initializeTetrominoSocketListeners) {
+		tetrominoModule.initializeTetrominoSocketListeners();
+	}
+}
+
+/**
+ * Background socket connection (no `join_game`). The server streams
+ * `game_update` broadcasts to every connected socket, so the world
+ * renders behind the welcome modal as a live backdrop, and the battle
+ * dialog can create/join lobbies before the player enters the world.
+ */
+async function connectForWorldPreview() {
+	try {
+		const connected = await NetworkManager.initialize(playerName || 'Guest');
+		if (!connected) return;
+		// Ask for one full snapshot so a quiet world still paints the
+		// backdrop instead of waiting for the next broadcast. The
+		// response also tells us the world id — battle-only players
+		// never call `join_game`, but gameplay submissions still need
+		// `NetworkManager.state.gameId` to pass the client-side guard.
+		const socket = NetworkManager.getSocket ? NetworkManager.getSocket() : null;
+		if (socket && typeof socket.emit === 'function') {
+			socket.emit('get_game_state', {}, (response) => {
+				if (response && response.gameId && NetworkManager.adoptSpectatorGameId) {
+					NetworkManager.adoptSpectatorGameId(response.gameId);
+				}
+			});
+		}
+	} catch (error) {
+		console.warn('World preview connection failed (will connect on entry):', error);
 	}
 }
 
@@ -396,6 +432,9 @@ async function joinGame(gameId = null) {
 					if (state.gameId && Date.now() - state.timestamp < 30000) {
 						console.log('Restoring game from mode switch:', state.gameId);
 						gameId = state.gameId;
+						// Resume straight back into play and suppress the welcome
+						// modal — the player has already entered this session.
+						gameState.resumeSession = true;
 						// Restore player name if saved
 						if (state.playerName) {
 							localStorage.setItem('playerName', state.playerName);
@@ -556,10 +595,9 @@ async function joinGameAfterConnection(gameId = null) {
 		// Set up network events
 		gameCore.setupNetworkEvents();
 		
-		// Set up tetromino-specific socket event listeners
-		if (typeof tetrominoModule !== 'undefined' && tetrominoModule.initializeTetrominoSocketListeners) {
-			tetrominoModule.initializeTetrominoSocketListeners();
-		}
+		// Set up tetromino-specific socket event listeners (no-op if
+		// page init already wired them).
+		wireTetrominoSocketListeners();
 		
 		// Join game
 		console.log('Joining game:', gameId || 'any available game');
@@ -574,6 +612,22 @@ async function joinGameAfterConnection(gameId = null) {
 			if (result.playerId) {
 				gameState.localPlayerId = result.playerId;
 				console.log('Local player ID set to:', gameState.localPlayerId);
+			}
+
+			if (result.playerName && result.playerName !== 'Guest') {
+				try { localStorage.setItem('playerName', result.playerName); } catch (_e) { /* ignore */ }
+				if (!gameState.players) gameState.players = {};
+				if (!gameState.players[gameState.localPlayerId]) {
+					gameState.players[gameState.localPlayerId] = { id: gameState.localPlayerId };
+				}
+				gameState.players[gameState.localPlayerId].name = result.playerName;
+			}
+			if (Array.isArray(result.players) && result.players.length > 0) {
+				gameState.players = gameState.players || {};
+				for (const entry of result.players) {
+					if (!entry || !entry.id) continue;
+					gameState.players[entry.id] = { ...gameState.players[entry.id], ...entry };
+				}
 			}
 			
 			// Update window title with world ID
@@ -596,8 +650,12 @@ async function joinGameAfterConnection(gameId = null) {
 				instructionsElement.style.display = 'none';
 			}
 			
-			// Start the game
-			if (gameCore.startPlayingGame) {
+			// Only auto-start when RESUMING (e.g. a render-mode switch).
+			// For a fresh visit the welcome modal is the gate: it calls
+			// startPlayingGame() when the player clicks "Enter shared world".
+			// Starting here would race the modal — hiding the game behind it
+			// or skipping it entirely on a fast connection.
+			if (gameState.resumeSession && gameCore.startPlayingGame) {
 				gameCore.startPlayingGame();
 			}
 			
@@ -605,18 +663,30 @@ async function joinGameAfterConnection(gameId = null) {
 			setTimeout(() => {
 				updateUnifiedPlayerBar(gameState);
 			}, 1000);
+
+			// Battle mode listeners live at page init now (see init());
+			// this re-run is a harmless no-op that just refreshes the
+			// gameState reference.
+			try { initBattleMode(gameState); }
+			catch (err) { console.warn('Battle mode init failed:', err); }
 			
-			// Initialize advertising/sponsor systems after game starts
+			// Initialize the in-world sponsored-cell decoration loop.
+			// We deliberately do NOT call initFloatingBanner anymore —
+			// the user asked for ads to only show when clicked, so
+			// the always-visible banner is gone. The sponsor popup
+			// (#sponsor-ad) is now triggered by clicking a sponsored
+			// cell in `chessInteraction.js#showCellInfo`.
 			setTimeout(() => {
 				initSponsorSystem().catch(err => console.warn('Sponsor system init error:', err));
-				initFloatingBanner().catch(err => console.warn('Floating banner init error:', err));
 			}, 2000);
+			return true;
 		} else {
 			throw new Error('Failed to join game');
 		}
 	} catch (error) {
 		console.error('Error entering world after connection:', error);
 		showError(`Failed to enter world: ${error.message || 'Unknown error'}`);
+		return false;
 	}
 }
 

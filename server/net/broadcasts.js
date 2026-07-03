@@ -135,11 +135,25 @@ function createBroadcaster({ io, persistence }) {
 				id,
 				name: record?.name || `Player_${String(id).substring(0, 6)}`,
 				isComputer: !!record?.isComputer,
+				// Battle seats carry a fixed high-contrast colour; the
+				// client paints the seat's cells with it so each army's
+				// territory is tellable at a glance (world players keep
+				// the client-side hash palette — colour arrives null).
+				color: record?.color || null,
+				battleId: record?.battleId || null,
 				// Client uses this to hide eliminated players from the
 				// sidebar — the user reported beaten kings cluttering
 				// the menu and pushing new joiners away from active
 				// players in the spawn algorithm.
 				eliminated: !!record?.eliminated,
+				// Pause snapshot — used by the player bar to render a
+				// "💤 paused" badge over the opponent's nameplate and
+				// disable capture cursors. The pause service is the
+				// source of truth; this is just the broadcast copy.
+				paused: !!record?.paused,
+				pauseUsesRemaining: Number.isFinite(record?.pauseState?.usesRemaining)
+					? record.pauseState.usesRemaining
+					: null,
 				// Total count + per-type summary of captured pieces.
 				// Used by the sidebar to render "Captured: 4 ♜" etc.
 				capturedCount: basket.length,
@@ -196,6 +210,10 @@ function createBroadcaster({ io, persistence }) {
 			// is tiny (a handful of orbs at most) and clients need it
 			// to draw glowing floating spheres at the right cells.
 			powerUps: Array.isArray(world.powerUps) ? world.powerUps : [],
+			// Outstanding Check (deferred king capture). Clients use this
+			// to render the warning banner, freeze the defender's
+			// tetromino auto-fall, and lock the attacker piece.
+			pendingCheck: world.pendingCheck || null,
 			gameId: world.id,
 		};
 	}
@@ -240,6 +258,7 @@ function createBroadcaster({ io, persistence }) {
 			disconnectedSince: world.disconnectedSince || {},
 			players: playersList,
 			powerUps: Array.isArray(world.powerUps) ? world.powerUps : [],
+			pendingCheck: world.pendingCheck || null,
 		});
 	}
 
@@ -277,16 +296,13 @@ function createBroadcaster({ io, persistence }) {
 	}
 
 	/**
-	 * Direct-message a player. Falls back silently when the player isn't
-	 * online or doesn't have an active socket. Callers should *not* rely
+	 * Direct-message a player — every open tab of theirs. Falls back
+	 * silently when the player isn't online. Callers should *not* rely
 	 * on every player receiving the event — this is best-effort.
 	 */
 	function emitToPlayer(playerId, eventName, payload) {
 		try {
-			const socket = Sessions.socketForPlayer(playerId);
-			if (!socket || typeof socket.emit !== 'function') return false;
-			socket.emit(eventName, payload);
-			return true;
+			return Sessions.emitToPlayerSockets(playerId, eventName, payload) > 0;
 		} catch (error) {
 			console.error('[Broadcast] emitToPlayer failed:', error);
 			return false;

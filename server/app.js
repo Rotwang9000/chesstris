@@ -14,10 +14,15 @@ const rateLimit = require('express-rate-limit');
 
 const apiRoutes = require('../routes/api');
 const advertiserRoutes = require('../routes/advertisers');
+const { router: walletAuthRouter } = require('../routes/walletAuth');
 const { mountAuthRoutes } = require('./auth/routes');
 const { parseAllowedOrigins, isOriginAllowed } = require('./security/origins');
 const metrics = require('./observability/metrics');
+const funnel = require('./observability/funnel');
 const sentry = require('./observability/sentry');
+const { createIndexHtmlBundleSwap } = require('./bundling/indexHtmlBundleSwap');
+const { mountAgentDiscovery } = require('./discovery/agentGopher');
+const { createMcpRouter } = require('./mcp/mcpServer');
 
 /**
  * Build the Content-Security-Policy directive set. We're strict but
@@ -31,11 +36,14 @@ function buildCSPDirectives() {
 		defaultSrc: ["'self'"],
 		// Inline + the jsdelivr CDN. `'unsafe-inline'` is needed
 		// because index.html embeds bootstrap JS inline — splitting
-		// that out is a P2 cleanup.
+		// that out is a P2 cleanup. `cdn.auth0.com` serves the Auth0
+		// SPA SDK (sign-in is feature-flagged off in the client for
+		// now, but the policy is kept ready so re-enabling it Just Works).
 		scriptSrc: [
 			"'self'",
 			"'unsafe-inline'",
 			'https://cdn.jsdelivr.net',
+			'https://cdn.auth0.com',
 		],
 		styleSrc: [
 			"'self'",
@@ -44,16 +52,31 @@ function buildCSPDirectives() {
 		],
 		fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
 		imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
-		// Socket.IO upgrade target. The browser issues these as
-		// wss://tetches.com or ws://localhost:* — same-origin is
-		// the only requirement.
-		connectSrc: ["'self'", 'ws:', 'wss:'],
+		// Socket.IO upgrade target (wss://tetches.com / ws://localhost:*)
+		// plus the Auth0 tenant API for token/session calls.
+		connectSrc: ["'self'", 'ws:', 'wss:', 'https://*.auth0.com'],
+		// Auth0 uses a hidden iframe for silent token renewal.
+		frameSrc: ["'self'", 'https://*.auth0.com'],
 		// Block plugins; no <object> / <embed>.
 		objectSrc: ["'none'"],
 		frameAncestors: ["'self'"],
 		baseUri: ["'self'"],
 		formAction: ["'self'"],
 	};
+}
+
+/**
+ * True when a request originates from the same host (loopback). Used to
+ * keep `/metrics` reachable by a same-box Prometheus scraper while hiding
+ * it from the public internet. With `trust proxy` enabled, a direct
+ * localhost scrape has no `X-Forwarded-For`, so `req.ip` falls back to the
+ * loopback socket address; a request proxied in by nginx carries the real
+ * client IP instead.
+ */
+function isLoopbackRequest(req) {
+	const ip = String((req && (req.ip || (req.socket && req.socket.remoteAddress))) || '')
+		.replace('::ffff:', '');
+	return ip === '127.0.0.1' || ip === '::1' || ip === 'localhost';
 }
 
 function createApp({ projectRoot = process.cwd() } = {}) {
@@ -80,6 +103,12 @@ function createApp({ projectRoot = process.cwd() } = {}) {
 		// jsdelivr loads. Disable it; the rest of helmet is fine.
 		crossOriginEmbedderPolicy: false,
 	}));
+
+	// Agent discovery (Gopher-over-HTTPS at /.well-known/agent.gopher).
+	// Mounted BEFORE the CORS allowlist: the directory must be readable
+	// cross-origin by anyone (in-browser Gopher clients included) —
+	// each route sets Access-Control-Allow-Origin: * itself.
+	mountAgentDiscovery(app);
 
 	// CORS allowlist — only same-origin in development, only the
 	// configured production hosts in production. Socket.IO has its
@@ -110,7 +139,33 @@ function createApp({ projectRoot = process.cwd() } = {}) {
 	});
 	app.use('/api', apiLimiter);
 
-	app.use('/node_modules', express.static(path.join(projectRoot, 'node_modules')));
+	// Visitor-funnel: count game page loads (PII-free — the UA is only
+	// inspected to skip crawlers, never stored). Mounted before the
+	// bundle-swap middleware so every index serve passes through it.
+	app.use((req, res, next) => {
+		if (req.method === 'GET'
+			&& (req.path === '/' || req.path === '/index.html' || req.path === '/2d')) {
+			funnel.recordPageView(req.get('user-agent'));
+		}
+		next();
+	});
+
+	// Bundle-aware index.html serving (rewrites the entrypoint
+	// script tag to `dist/app.bundle.js` when one exists). Mounted
+	// BEFORE express.static so it claims `/` and `/index.html`
+	// before the static handler serves the raw template.
+	const indexSwap = createIndexHtmlBundleSwap({ projectRoot });
+	app.use(indexSwap.middleware);
+	app._indexBundleStatus = indexSwap.bundleStatus;
+	app._getBundleVersion = indexSwap.getBundleVersion;
+
+	// `/node_modules` is only needed by the unbundled dev client (raw ES
+	// modules). Production serves the esbuild bundle (deps inlined, THREE
+	// & socket.io from CDN), so exposing the dependency tree there is
+	// needless attack surface.
+	if (isDevelopment) {
+		app.use('/node_modules', express.static(path.join(projectRoot, 'node_modules')));
+	}
 	app.use(express.static(path.join(projectRoot, 'public')));
 
 	if (!isDevelopment) {
@@ -118,9 +173,14 @@ function createApp({ projectRoot = process.cwd() } = {}) {
 	}
 
 	app.get('/js/*', (req, res, next) => {
-		const file = path.join(projectRoot, 'public', req.url);
+		const rel = String(req.path || '').replace(/^\/js\//, '');
+		if (!rel || rel.includes('..')) {
+			res.status(400).end();
+			return;
+		}
+		const file = path.join(projectRoot, 'public', 'js', rel);
 		if (!fs.existsSync(file) && fs.existsSync(`${file}.js`)) {
-			res.redirect(`${req.url}.js`);
+			res.redirect(`${req.path}.js`);
 			return;
 		}
 		next();
@@ -138,12 +198,31 @@ function createApp({ projectRoot = process.cwd() } = {}) {
 
 	app.use('/api', apiRoutes);
 	app.use('/api/advertisers', advertiserRoutes);
+	app.use('/api/wallet-auth', walletAuthRouter);
 	mountAuthRoutes(app);
 
-	// Prometheus scrape target. Public for now (Prometheus on the
-	// same host can scrape without auth); restrict at the nginx
-	// layer if you ever expose it externally.
-	app.get('/metrics', async (_req, res) => {
+	// MCP endpoint — agents play the game over Model Context Protocol
+	// (Streamable HTTP). The port resolver is installed by bootstrap
+	// once the HTTP server is listening (the bridge dials loopback).
+	app.use('/mcp', createMcpRouter({
+		getSelfPort: () => (typeof app.locals.getSelfPort === 'function'
+			? app.locals.getSelfPort()
+			: null),
+	}));
+
+	// Prometheus scrape target. In production it's restricted to same-host
+	// scrapers (loopback) or callers presenting the admin token, so the
+	// internal gauges aren't exposed on the public internet. Unknown
+	// callers get a 404 (hides its existence). Open in development.
+	app.get('/metrics', async (req, res) => {
+		if (!isDevelopment) {
+			const adminToken = process.env.ADMIN_TOKEN;
+			const provided = req.get('x-admin-token') || req.query.adminToken;
+			const tokenOk = !!adminToken && provided === adminToken;
+			if (!isLoopbackRequest(req) && !tokenOk) {
+				return res.status(404).end();
+			}
+		}
 		try {
 			res.set('Content-Type', metrics.register.contentType);
 			res.end(await metrics.renderMetrics());
@@ -152,22 +231,48 @@ function createApp({ projectRoot = process.cwd() } = {}) {
 		}
 	});
 
-	app.get('/2d', (_req, res) => {
-		res.sendFile(path.join(projectRoot, 'public', 'index.html'));
+	// Visitor-funnel snapshot (page loads → new visitors → world joins →
+	// first placements). Same gating as /metrics: loopback or admin token.
+	app.get('/api/admin/funnel', (req, res) => {
+		if (!isDevelopment) {
+			const adminToken = process.env.ADMIN_TOKEN;
+			const provided = req.get('x-admin-token') || req.query.adminToken;
+			const tokenOk = !!adminToken && provided === adminToken;
+			if (!isLoopbackRequest(req) && !tokenOk) {
+				return res.status(404).end();
+			}
+		}
+		const days = Math.min(60, Math.max(1, parseInt(req.query.days, 10) || 14));
+		res.json({ success: true, funnel: funnel.getSnapshot(days) });
 	});
+
+	// `/2d` and `/` both go through `indexSwap.middleware` so they
+	// receive the bundle-swapped HTML automatically. We only need
+	// explicit handlers here for the *other* HTML entry points.
 	app.get('/advertise', (_req, res) => {
 		res.sendFile(path.join(projectRoot, 'public', 'advertise.html'));
 	});
-	app.get('/admin/advertisers', (_req, res) => {
+	app.get('/admin/advertisers', (req, res) => {
+		// In production the admin panel is gated behind ADMIN_TOKEN.
+		// Browser-friendly: token via `?adminToken=…` query string.
+		if (process.env.NODE_ENV === 'production') {
+			const expected = process.env.ADMIN_TOKEN;
+			if (!expected) {
+				return res.status(503).send('Admin panel disabled (ADMIN_TOKEN not configured).');
+			}
+			const provided = req.query.adminToken;
+			if (!provided || provided !== expected) {
+				return res.status(401).send('Admin token required.');
+			}
+		}
 		res.sendFile(path.join(projectRoot, 'public', 'admin', 'advertisers.html'));
 	});
 
-	app.get('*', (_req, res) => {
-		if (isDevelopment) {
-			res.sendFile(path.join(projectRoot, 'public', 'index.html'));
-		} else {
-			res.sendFile(path.join(projectRoot, 'client/build', 'index.html'));
-		}
+	app.get('*', (req, res, next) => {
+		// Pass HTML SPA routes through the bundle-swap middleware so
+		// they pick up the same script-tag rewrite that `/` does.
+		req.url = '/';
+		return indexSwap.middleware(req, res, next);
 	});
 
 	// Sentry's error handler must be the LAST middleware before any

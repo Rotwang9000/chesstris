@@ -38,7 +38,12 @@ function metrics() {
 	return _metrics;
 }
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
+// Defaults to the repo's data/ dir. Overridable via TETCHES_DATA_DIR so a
+// local/test instance can run against an isolated world without fighting
+// another server over the same world.json (production leaves it unset).
+const DATA_DIR = process.env.TETCHES_DATA_DIR
+	? path.resolve(process.env.TETCHES_DATA_DIR)
+	: path.join(__dirname, '..', 'data');
 const STATE_FILE = path.join(DATA_DIR, 'world.json');
 const BACKUP_FILE = STATE_FILE + '.bak';
 const ROLLING_BACKUP_DIR = path.join(DATA_DIR, 'backups');
@@ -147,6 +152,10 @@ function buildSnapshot() {
 			minMoveInterval: p.minMoveInterval || 0,
 			consecutiveMoves: p.consecutiveMoves || 0,
 			lastMoveTime: p.lastMoveTime || 0,
+			// Battle-seat linkage (see server/battle/BattleManager.js).
+			// Dropping these on restart would orphan live arena seats.
+			battleId: p.battleId || null,
+			controlledBy: p.controlledBy || null,
 		};
 	}
 
@@ -174,6 +183,12 @@ function buildSnapshot() {
 			currentTurns: world.currentTurns,
 			kingPrison: Array.isArray(world.kingPrison) ? world.kingPrison : [],
 			pendingKingCaptures: Array.isArray(world.pendingKingCaptures) ? world.pendingKingCaptures : [],
+			// Persist any in-flight Check so a restart mid-window doesn't
+			// silently drop it. `checkService.rehydrate()` reschedules the
+			// deadline timer from `deadlineAt` on boot. (Chess-H1)
+			pendingCheck: (world.pendingCheck && typeof world.pendingCheck === 'object')
+				? world.pendingCheck
+				: null,
 			disconnectedSince: (world.disconnectedSince && typeof world.disconnectedSince === 'object')
 				? world.disconnectedSince
 				: {},
@@ -182,6 +197,7 @@ function buildSnapshot() {
 			_activityLogNextId: Number.isFinite(world._activityLogNextId) ? world._activityLogNextId : 1,
 			players: persistablePlayers,
 			powerUps: Array.isArray(world.powerUps) ? world.powerUps.slice() : [],
+			battles: (world.battles && typeof world.battles === 'object') ? world.battles : {},
 		},
 	};
 }

@@ -1,5 +1,12 @@
 # Frontend Computer Player Integration Guide
 
+> **⚠ Deprecated.** This guide describes a frontend integration with
+> the old multi-game REST sandbox that was removed in May 2026. None
+> of the endpoints or pages described below exist any more.
+>
+> See [`docs/external-api.md`](external-api.md) for the current
+> external API and `examples/random-bot.js` for a working bot.
+
 This document outlines how the frontend should integrate with the computer player system in Tetches.
 
 ## Overview

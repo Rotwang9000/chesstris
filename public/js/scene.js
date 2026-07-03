@@ -1,4 +1,4 @@
-import { createFewClouds } from './createFewClouds.js';
+import { createFewClouds, animateFoamPatches } from './createFewClouds.js';
 import { getTHREE, getGameState } from './gameContext.js';
 import { translatePosition } from './centreBoardMarker.js';
 
@@ -463,12 +463,18 @@ export function createFloatingCube(x, z, material, boardGroup) {
 		cellMesh.receiveShadow = true;
 
 		boardGroup.add(cellMesh);
+
+		// Per-cell foam splash is added by `createCloudPuff` in
+		// `boardFunctions/rendering.js` during the live render pass —
+		// adding one here too would double up.
+
 		return cellMesh;
 	} catch (error) {
 		console.error(`Error creating floating cube at (${x}, ${z}):`, error);
 		return null;
 	}
 }
+
 /**
  * Set up lights for the scene
  */
@@ -509,7 +515,8 @@ export function setupLights(scene, options = {}) {
 	if (lowQuality) {
 		// Deep space background - dark with purple/blue gradient feel
 		scene.background = new THREE.Color(0x0a0a1a); // Deep space dark blue
-		scene.fog = new THREE.Fog(0x0a0a2a, 80, 200); // Very subtle space fog
+		// Push fog out so distant islands and longships stay visible.
+		scene.fog = new THREE.Fog(0x0a0a2a, 140, 320);
 		
 		// Create starfield
 		createStarfield(scene, THREE);
@@ -629,19 +636,35 @@ function addWaterPlane(scene, THREE) {
 	positions.needsUpdate = true;
 	geometry.computeVertexNormals();
 
-	const material = new THREE.MeshStandardMaterial({
-		color: 0x1f6dab,
-		roughness: 0.7,
-		metalness: 0.15,
+	// Diffuse-only sea. The old MeshStandardMaterial painted a huge
+	// white specular lobe (the sun's reflection, Fresnel-boosted at
+	// grazing angles) that read as a blinding glare blob next to
+	// battle arenas — a scene bisect showed even roughness 1.0 keeps
+	// the bloom, so no PBR settings can save it. Lambert has no
+	// specular term at all; the ripple animation still carries the
+	// "this is water" read.
+	const material = new THREE.MeshLambertMaterial({
+		color: 0x2d8fd4,
 		transparent: true,
-		opacity: 0.78,
-		side: THREE.DoubleSide,
+		opacity: 0.94,
+		side: THREE.FrontSide,
 	});
 
 	const water = new THREE.Mesh(geometry, material);
 	water.name = 'tetches-water';
-	water.position.y = -2.2;
-	water.receiveShadow = true;
+	// Sea surface sits just under the cell bottom (cells are 0.94
+	// cubes centred at y=0, so the bottom face is at y=-0.47). With
+	// the water at y=-0.50 each cell looks like it's floating
+	// directly on the sea — no rock pillars, no visible stilts.
+	// Keep WATER_SURFACE_Y in `boardFunctions/rendering.js` and the
+	// `BOAT_SEA_Y` constant in `server/world/boats.js` in sync.
+	water.position.y = -0.50;
+	// The sea no longer receives shadows: the heavy dark blobs
+	// the islands used to cast made the board look glued onto a
+	// flat slab instead of floating. Cells still cast onto each
+	// other, which keeps the depth cue between stacked tetromino
+	// pieces.
+	water.receiveShadow = false;
 	water.userData.isWaterPlane = true;
 	water.userData.baseHeights = baseHeights;
 	water.userData.startedAt = performance.now();
@@ -659,7 +682,7 @@ function addWaterPlane(scene, THREE) {
 	});
 	const glow = new THREE.Mesh(glowGeo, glowMat);
 	glow.name = 'tetches-water-glow';
-	glow.position.y = -2.1;
+	glow.position.y = -0.40;
 	scene.add(glow);
 }
 
@@ -667,28 +690,53 @@ function addWaterPlane(scene, THREE) {
  * Per-frame animation — called from the gameLoop so the water doesn't
  * sit dead still. No-op when there's no water plane (cute / retro).
  *
+ * The sea plane is finite (1200 units) so it also FOLLOWS the camera
+ * target in whole-unit steps: battle arenas live thousands of cells
+ * from the origin and would otherwise float over black void.
+ *
  * @param {THREE.Scene} scene
+ * @param {{x: number, z: number}} [followTarget] Usually `controls.target`.
  */
-export function updateWaterPlane(scene) {
+export function updateWaterPlane(scene, followTarget = null) {
 	if (!scene) return;
 	const water = scene.getObjectByName('tetches-water');
 	if (!water || !water.geometry) return;
 	const base = water.userData.baseHeights;
 	if (!base) return;
 
+	const glow = scene.getObjectByName('tetches-water-glow');
+
+	if (followTarget && Number.isFinite(followTarget.x) && Number.isFinite(followTarget.z)) {
+		// Snap to whole units so the (local-space) ripple pattern doesn't
+		// visibly swim while the camera pans.
+		const fx = Math.round(followTarget.x);
+		const fz = Math.round(followTarget.z);
+		if (water.position.x !== fx || water.position.z !== fz) {
+			water.position.x = fx;
+			water.position.z = fz;
+			if (glow) {
+				glow.position.x = fx;
+				glow.position.z = fz;
+			}
+		}
+	}
+
 	const t = (performance.now() - (water.userData.startedAt || 0)) / 1000;
 	const positions = water.geometry.attributes.position;
 	for (let i = 0; i < positions.count; i++) {
 		const x = positions.getX(i);
 		const z = positions.getZ(i);
-		const ripple = Math.sin(x * 0.08 + t * 0.7) * 0.12
-			+ Math.cos(z * 0.07 - t * 0.55) * 0.1;
+		const ripple = Math.sin(x * 0.06 + t * 0.45) * 0.05
+			+ Math.cos(z * 0.05 - t * 0.4) * 0.04;
 		positions.setY(i, base[i] + ripple);
 	}
 	positions.needsUpdate = true;
 
-	const glow = scene.getObjectByName('tetches-water-glow');
 	if (glow) glow.rotation.y = t * 0.03;
+
+	// Cheap to do here so we don't need a separate frame hook just
+	// for the foam patches.
+	animateFoamPatches(scene);
 }
 
 /**
@@ -988,7 +1036,11 @@ export function animateAmbientParticles(scene, deltaTime) {
  * Add decorative clouds to the scene
  */
 function addCloudsToScene(scene) {
-	// Sky clouds replaced by createFewClouds (sparse bed beneath the board)
+	// Render the sea-foam patches that float between the islands.
+	// The helper is named `createFewClouds` for historical reasons —
+	// it now draws low, flat foam splashes on the water surface
+	// instead of fluffy cloud puffs.
+	createFewClouds(scene);
 }
 
 

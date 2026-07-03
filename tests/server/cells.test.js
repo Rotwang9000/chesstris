@@ -128,6 +128,34 @@ describe('cells helper', () => {
 		});
 	});
 
+	describe('awaiting-promotion (frozen pawn)', () => {
+		test('hasAwaitingPromotion reflects the chess marker flag', () => {
+			expect(cells.hasAwaitingPromotion([])).toBe(false);
+			expect(cells.hasAwaitingPromotion([
+				{ type: 'chess', player: 'p1', pieceId: 'k1' },
+			])).toBe(false);
+			expect(cells.hasAwaitingPromotion([
+				{ type: 'chess', player: 'p1', pieceId: 'p1', awaitingPromotion: true },
+			])).toBe(true);
+		});
+
+		test('isLineClearTarget returns false for a frozen-pawn cell', () => {
+			const items = [
+				{ type: 'tetromino', player: 'p1' },
+				{ type: 'chess', player: 'p1', pieceId: 'p1', awaitingPromotion: true },
+			];
+			expect(cells.isLineClearTarget(items)).toBe(false);
+		});
+
+		test('isLineClearTarget still allows non-frozen chess cells to clear', () => {
+			const items = [
+				{ type: 'tetromino', player: 'p1' },
+				{ type: 'chess', player: 'p1', pieceId: 'k1' },
+			];
+			expect(cells.isLineClearTarget(items)).toBe(true);
+		});
+	});
+
 	describe('stripClearable', () => {
 		test('returns array preserving home / chess / centre / special only', () => {
 			const items = [

@@ -12,8 +12,18 @@ import { getTHREE, getPlayerColors } from '../gameContext.js';
 import { boardFunctions } from '../boardFunctions.js';
 import { translatePosition } from '../centreBoardMarker.js';
 import { tetrominoPool } from './pool.js';
+import { validatePlacementLocally } from './validation.js';
 
 const PLAYER_COLORS = getPlayerColors();
+
+// Traffic-light ghost: the landing outline doubles as a legality signal.
+// New players' single biggest stumble was dropping a piece one square too
+// far, watching it silently dissolve, and not knowing why — the ghost now
+// answers "will this stick?" before they commit.
+const GHOST_VALID_COLOUR = 0x00dd66;   // green — drop here and it places
+const GHOST_INVALID_COLOUR = 0xff3344; // red — drop here and it dissolves
+const GHOST_VALID_OPACITY = 0.5;
+const GHOST_INVALID_OPACITY = 0.65;
 
 // Standard Tetris colour palette, indexed by piece type.
 const PIECE_COLOURS = Object.freeze({
@@ -30,14 +40,18 @@ const FALLBACK_COLOUR = 0xcccccc;
 const UNKNOWN_COLOUR = 0x888888;
 
 /**
- * Pick a colour for a tetromino block: prefer the boardFunctions
- * helper (which can produce per-player tints), otherwise fall back to
- * the standard piece-type palette.
+ * Pick a colour for a tetromino block. The falling piece belongs to
+ * the LOCAL player, so it is painted with the player's own territory
+ * colour (warm wood in the world, blended seat colour in a battle) —
+ * exactly what the blocks will look like once placed. Previously the
+ * SHAPE LETTER ('L', 'O', …) was fed into the player-colour hash,
+ * which painted every falling piece an arbitrary cyan/green.
  */
 function resolveColour(playerType, gameState) {
-	if (boardFunctions && typeof boardFunctions.getPlayerColor === 'function') {
+	const localId = gameState?.localPlayerId || gameState?.myPlayerId || null;
+	if (localId && boardFunctions && typeof boardFunctions.getPlayerColor === 'function') {
 		try {
-			const c = boardFunctions.getPlayerColor(playerType, gameState || {}, true);
+			const c = boardFunctions.getPlayerColor(localId, gameState, 'tetromino');
 			if (c && c !== FALLBACK_COLOUR) return c;
 		} catch (err) {
 			console.warn('Error using centralised colour function, falling back:', err);
@@ -177,6 +191,7 @@ export function renderTetromino(gameState) {
 			}
 		}
 
+		shapeGroup.userData.renderedColour = color;
 		gameState.tetrominoGroup.add(shapeGroup);
 		gameState.currentTetrominoShapeGroup = shapeGroup;
 
@@ -195,8 +210,32 @@ export function renderTetromino(gameState) {
 }
 
 /**
+ * Repaint the current falling piece if the player's resolved colour
+ * has changed since it was rendered. Player records (and battle seat
+ * colours) often arrive AFTER the piece is first drawn — without this
+ * the piece keeps the provisional colour until the player moves it.
+ */
+export function refreshTetrominoColourIfStale(gameState) {
+	const group = gameState?.currentTetrominoShapeGroup;
+	const tetromino = gameState?.currentTetromino;
+	if (!group || !tetromino) return false;
+	const colour = resolveColour(tetromino.type, gameState);
+	if (group.userData.renderedColour === colour) return false;
+	for (const block of group.children) {
+		applyBlockMaterial(block, colour, { isGhost: false, isRetro: !!gameState?.retroMode });
+	}
+	group.userData.renderedColour = colour;
+	return true;
+}
+
+/**
  * Draw an outline-only ghost piece at y=0 directly under the current
  * tetromino.  Skipped if the tetromino is already at board level.
+ *
+ * The ghost is colour-coded by placement legality at the current (x, z):
+ * green = the drop will place, red = it will dissolve (collision, not
+ * touching your territory, or no path back to your king). Validity is
+ * re-evaluated on every re-render, i.e. after each move/rotate.
  */
 function renderGhostPiece(gameState, tetromino) {
 	const currentHeight = tetromino.position.y || tetromino.heightAboveBoard || 0;
@@ -204,7 +243,17 @@ function renderGhostPiece(gameState, tetromino) {
 
 	const ghostPos = { x: tetromino.position.x, y: 0, z: tetromino.position.z };
 	const absPos = translatePosition(ghostPos, gameState, true);
-	const color = resolveColour(tetromino.type, gameState);
+
+	let wouldPlace = true;
+	try {
+		wouldPlace = validatePlacementLocally(tetromino, gameState);
+	} catch (err) {
+		// Validation is a UI hint only — on error keep the optimistic
+		// colour rather than scare the player; the server still decides.
+		console.warn('Ghost validity check failed:', err);
+	}
+	const color = wouldPlace ? GHOST_VALID_COLOUR : GHOST_INVALID_COLOUR;
+	const opacity = wouldPlace ? GHOST_VALID_OPACITY : GHOST_INVALID_OPACITY;
 
 	const THREE = getTHREE();
 	const ghostGroup = new THREE.Group();
@@ -217,7 +266,7 @@ function renderGhostPiece(gameState, tetromino) {
 			if (block.material) {
 				block.material.color.setHex(color);
 				block.material.transparent = true;
-				block.material.opacity = 0.5;
+				block.material.opacity = opacity;
 				block.material.wireframe = true;
 				block.material.wireframeLinewidth = 2;
 				if (block.material.emissive) {

@@ -138,11 +138,14 @@ router.get('/world/visualization', (req, res) => {
 	}
 });
 
-router.post('/computer-players/register', (req, res) => {
-	const { name, apiEndpoint, description } = req.body || {};
-	if (!name) {
-		return res.status(400).json({ success: false, message: 'Name is required' });
-	}
+/**
+ * Register an external computer player and return its credentials.
+ * Shared by the REST route below and the in-process MCP bridge
+ * (`server/mcp/mcpServer.js`), which registers one identity per
+ * MCP session.
+ */
+function registerExternalComputerPlayer(name, { apiEndpoint = null, description = null } = {}) {
+	if (!name) throw new Error('Name is required');
 
 	const playerId = `ext-ai-${uuidv4().substring(0, 8)}`;
 	const apiToken = generateApiToken();
@@ -155,11 +158,41 @@ router.post('/computer-players/register', (req, res) => {
 	};
 	externalApiTokens[playerId] = apiToken;
 
+	// Seed a real player record so the playerId is recognised by
+	// the socket layer the moment the bot connects. Without this
+	// step `connection.js` rejected the cookie-bound id as
+	// "unknown" and minted a fresh UUID, throwing the token away.
+	try {
+		World.upsertPlayer(playerId, {
+			name: String(name).slice(0, 32),
+			isComputer: true,
+			external: true,
+			lastActiveAt: Date.now(),
+		});
+	} catch (err) {
+		console.warn('[API] Failed to seed World record for external AI:', err.message);
+	}
+
+	return { playerId, apiToken };
+}
+
+router.post('/computer-players/register', (req, res) => {
+	const { name, apiEndpoint, description } = req.body || {};
+	if (!name) {
+		return res.status(400).json({ success: false, message: 'Name is required' });
+	}
+
+	const { playerId, apiToken } = registerExternalComputerPlayer(name, { apiEndpoint, description });
+
 	res.json({
 		success: true,
-		message: 'External computer player registered.  Connect via Socket.IO with this id+token to join the world.',
+		message: 'External computer player registered. Connect to Socket.IO with the playerId + apiToken in the handshake query (or cookies) to claim this identity.',
 		playerId,
 		apiToken,
+		socketHandshake: {
+			query: { playerId, apiToken },
+			cookies: { tetches_player_id: playerId, tetches_api_token: apiToken },
+		},
 	});
 });
 
@@ -177,3 +210,4 @@ router.get('/computer-players', (_req, res) => {
 
 module.exports = router;
 module.exports.validateApiToken = validateApiToken;
+module.exports.registerExternalComputerPlayer = registerExternalComputerPlayer;

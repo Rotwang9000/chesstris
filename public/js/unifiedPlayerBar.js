@@ -8,12 +8,28 @@
 import * as NetworkManager from './utils/networkManager.js';
 import { highlightPlayerPieces, removePlayerPiecesHighlight } from './pieceHighlightManager.js';
 import { showToastMessage } from './showToastMessage.js';
-import { showPromotionRedeemDialog } from './uiOverlays.js';
+import { showPromotionRedeemDialog, showFrozenPawnPromotionDialog } from './uiOverlays.js';
+import { promptInlineRename } from './renameDialog.js';
+import {
+	startAutoPauseWatcher,
+	isAutoPauseEnabled,
+	setAutoPauseEnabled,
+	getIdlePauseDelayMs,
+} from './autoPause.js';
+import { isCameraRelativeControls, setCameraRelativeControls } from './controlSettings.js';
+import { showLoginDialog } from './auth/loginDialog.js';
+import { isLoggedIn as isKingdomLoggedIn, getLoggedInName as getKingdomName, logout as kingdomLogout } from './auth/kingdomKey.js';
 
 // State tracking variables
 let isBarVisible = false;
 let lastPlayerDataHash = '';
 let forcedPlayerUpdateCounter = 0;
+
+// Below this viewport width the bar starts collapsed (phones/small
+// tablets) instead of sliding open over the welcome modal.
+const WIDE_SCREEN_MIN_PX = 900;
+// How long the introductory auto-open stays before tucking away.
+const INTRO_PEEK_DURATION_MS = 5000;
 
 /**
  * Coerce the various colour formats the server emits — bare integers
@@ -67,6 +83,38 @@ function getLocalPlayerId(gameState) {
 	
 	// Return null if we couldn't find a local player ID
 	return null;
+}
+
+function isPlaceholderPlayerName(name) {
+	if (!name || typeof name !== 'string') return true;
+	const trimmed = name.trim();
+	if (!trimmed || trimmed === 'Guest') return true;
+	if (/^Player_[a-f0-9]{6}$/i.test(trimmed)) return true;
+	if (/^DevPlayer_/i.test(trimmed)) return true;
+	return false;
+}
+
+/**
+ * Footer + nameplate: prefer a name the user chose in localStorage when
+ * the server still has a placeholder (`Guest`, `Player_xxx`, etc.).
+ */
+function resolveLocalDisplayName(gameState, localPlayerId) {
+	let stored = '';
+	try {
+		stored = (localStorage.getItem('playerName') || '').trim();
+	} catch (_e) { /* private browsing */ }
+
+	const serverName = (localPlayerId && gameState?.players?.[localPlayerId]?.name)
+		? String(gameState.players[localPlayerId].name).trim()
+		: '';
+
+	if (stored && (!serverName || isPlaceholderPlayerName(serverName))) {
+		return stored;
+	}
+	if (serverName && !isPlaceholderPlayerName(serverName)) {
+		return serverName;
+	}
+	return stored || serverName || 'Guest';
 }
 
 function getCookieValue(name) {
@@ -276,7 +324,21 @@ export function createUnifiedPlayerBar(gameState) {
 	
 	const worldId = resolveWorldId();
 	const playerCode = resolvePlayerCode(gameState);
-	
+
+	// Account (username+passphrase) section. Logged-in players carry their
+	// kingdom across devices; guests can upgrade to keep their progress.
+	const loggedIn = isKingdomLoggedIn();
+	const accountName = loggedIn ? (getKingdomName() || 'your account') : null;
+	const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => (
+		{ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+	));
+	const accountHtml = loggedIn
+		? `<div style="margin-bottom: 6px; font-size: 13px; color: #fff;">Signed in as <strong style="color: #ffcc00;">${escapeHtml(accountName)}</strong></div>
+			<button id="sidebar-logout" style="background: #333; color: #ffcc00; border: 1px solid #ffcc00; border-radius: 3px; padding: 6px 10px; cursor: pointer; font-family: 'Playfair Display', serif;">Log out</button>
+			<div style="font-size: 11px; color: #bbb; margin-top: 6px;">Your kingdom is saved and follows you to any device.</div>`
+		: `<button id="sidebar-login" style="background: #333; color: #ffcc00; border: 1px solid #ffcc00; border-radius: 3px; padding: 6px 10px; cursor: pointer; font-family: 'Playfair Display', serif;">Log in / Save across devices</button>
+			<div style="font-size: 11px; color: #bbb; margin-top: 6px;">Add a username + passphrase to keep your kingdom on any device. No email needed.</div>`;
+
 	gameIdSection.innerHTML = `
 		<div style="font-weight: bold; margin-bottom: 5px; color: #ffcc00;">World ID</div>
 		<div style="display: flex; align-items: center; margin-bottom: 10px;">
@@ -302,6 +364,8 @@ export function createUnifiedPlayerBar(gameState) {
 			</button>
 		</div>
 		<div style="font-size: 11px; color: #bbb;">Use this code to restore your saved position in the world.</div>
+		<div style="font-weight: bold; margin: 14px 0 6px 0; color: #ffcc00;">Account</div>
+		${accountHtml}
 	`;
 	playerBar.appendChild(gameIdSection);
 	
@@ -337,9 +401,7 @@ export function createUnifiedPlayerBar(gameState) {
 			marginTop: 'auto'
 		});
 		
-		const playerName = localPlayerId && gameState.players && gameState.players[localPlayerId] ? 
-			gameState.players[localPlayerId].name : 
-			localStorage.getItem('playerName') || 'Guest';
+		const playerName = resolveLocalDisplayName(gameState, localPlayerId);
 		
 		footer.innerHTML = `
 			<div style="font-size: 14px; color: #ffcc00;">You are playing as:</div>
@@ -347,21 +409,45 @@ export function createUnifiedPlayerBar(gameState) {
 			<button id="change-player-name" style="margin-top: 10px; padding: 5px; background: #333; color: #ffcc00; border: 1px solid #ffcc00; border-radius: 3px; cursor: pointer; font-size: 12px; width: 100%;">
 				Change Name
 			</button>
+			<button id="pause-player-btn" title="Pause your zone and pieces — uncapturable while paused. Limited uses per session." style="margin-top: 8px; padding: 5px; background: #224; color: #cef; border: 1px solid #66f; border-radius: 3px; cursor: pointer; font-size: 12px; width: 100%;">
+				⏸ Pause
+			</button>
+			<div id="pause-player-meta" style="margin-top: 4px; font-size: 10px; color: #aaa; text-align: center; min-height: 12px;"></div>
+			<label id="auto-pause-toggle-label" title="When idle for 5 minutes, automatically use one pause to protect your board. Uses one of your limited pauses." style="margin-top: 6px; display: flex; align-items: center; gap: 6px; font-size: 10px; color: #9cf; cursor: pointer; user-select: none;">
+				<input type="checkbox" id="auto-pause-toggle" style="cursor: pointer;" />
+				<span>Auto-pause when idle (5 min)</span>
+			</label>
+			<label id="camera-controls-toggle-label" title="Move pieces relative to the camera view — Left always nudges the piece left on screen, whichever way you've spun the board. Off by default." style="margin-top: 4px; display: flex; align-items: center; gap: 6px; font-size: 10px; color: #9cf; cursor: pointer; user-select: none;">
+				<input type="checkbox" id="camera-controls-toggle" style="cursor: pointer;" />
+				<span>Rotate controls with view</span>
+			</label>
 			<button id="exit-game-sidebar-btn" style="margin-top: 8px; padding: 5px; background: #600; color: #fff; border: 1px solid #f44; border-radius: 3px; cursor: pointer; font-size: 12px; width: 100%;">
 				Exit Game
 			</button>
 		`;
 		playerBar.appendChild(footer);
-		
-		// Add event listener for name change
-		document.getElementById('change-player-name')?.addEventListener('click', () => {
-			localStorage.removeItem('playerName');
-			window.location.reload();
-		});
 	}
 	
-	// Add to document
+	// Add to document FIRST. Any subsequent `document.getElementById`
+	// lookups need the bar to be in the document tree, otherwise the
+	// button references come back null and their click listeners
+	// silently never attach (this is exactly how the pause button
+	// shipped as a no-op).
 	document.body.appendChild(playerBar);
+
+	if (localPlayerId || localStorage.getItem('playerName')) {
+		// Inline rename. The previous version cleared localStorage and
+		// reloaded the page — which kicked the user out of the game,
+		// raced the dev-mode auto-init, and routinely landed them
+		// back as "Guest" or "DevPlayer_xxx". Sending a `change_name`
+		// socket message lets the server update the existing record
+		// in-place.
+		const playerName = resolveLocalDisplayName(gameState, localPlayerId);
+		document.getElementById('change-player-name')?.addEventListener('click', () => {
+			promptInlineRename(playerName);
+		});
+		try { wirePauseButton(); } catch (_e) { /* pause UI is non-critical */ }
+	}
 	
 	const worldCopyButton = document.getElementById('sidebar-copy-world-id');
 	if (worldCopyButton) {
@@ -373,6 +459,22 @@ export function createUnifiedPlayerBar(gameState) {
 	if (playerCodeCopyButton) {
 		playerCodeCopyButton.addEventListener('click', () => {
 			copyInputFieldValue('sidebar-player-code-display', playerCodeCopyButton, 'Copied!');
+		});
+	}
+	const loginButton = document.getElementById('sidebar-login');
+	if (loginButton) {
+		loginButton.addEventListener('click', () => {
+			let prefill = '';
+			try { prefill = localStorage.getItem('playerName') || ''; } catch (_e) { /* private mode */ }
+			showLoginDialog({ prefillUsername: prefill });
+		});
+	}
+	const logoutButton = document.getElementById('sidebar-logout');
+	if (logoutButton) {
+		logoutButton.addEventListener('click', () => {
+			logoutButton.disabled = true;
+			logoutButton.textContent = 'Logging out…';
+			kingdomLogout(); // clears the account cookie and reloads as a guest
 		});
 	}
 	
@@ -399,18 +501,274 @@ export function createUnifiedPlayerBar(gameState) {
 	updateUnifiedPlayerBar(gameState);
 	updateSessionDetails(gameState);
 	
-	// Show the bar initially
-	showPlayerBar();
-	
-	// Automatically hide after 5 seconds
-	setTimeout(() => {
-		if (isBarVisible) {
-			hidePlayerBar();
-		}
-	}, 5000);
+	// Flash the bar open briefly on load so players discover it — but only
+	// on wide screens. On phones the expanded bar collided with the welcome
+	// modal and touch controls, so there it stays tucked away behind its
+	// pull tab until asked for.
+	if (window.innerWidth >= WIDE_SCREEN_MIN_PX) {
+		showPlayerBar();
+		setTimeout(() => {
+			if (isBarVisible) {
+				hidePlayerBar();
+			}
+		}, INTRO_PEEK_DURATION_MS);
+	}
 	
 	console.log("Unified player bar created and attached to DOM");
 	return playerBar;
+}
+
+// ── Pause / resume button ──────────────────────────────────────────────────
+
+let pauseStatusCache = null;
+let pauseStatusListenerInstalled = false;
+
+function formatPauseMinutesLeft(status) {
+	if (!status) return '';
+	const remainingMs = Math.max(0,
+		Number(status.maxTotalMs || 0) - Number(status.totalPausedMs || 0)
+	);
+	const remainingMin = Math.floor(remainingMs / 60000);
+	return `${status.usesRemaining ?? 0} uses · ${remainingMin} min`;
+}
+
+const PAUSE_OVERLAY_ID = 'pause-overlay-banner';
+const PAUSE_OVERLAY_STYLE_ID = 'pause-overlay-style';
+
+function ensurePauseOverlayStyle() {
+	if (document.getElementById(PAUSE_OVERLAY_STYLE_ID)) return;
+	const style = document.createElement('style');
+	style.id = PAUSE_OVERLAY_STYLE_ID;
+	style.textContent = `
+		#${PAUSE_OVERLAY_ID} {
+			position: fixed;
+			inset: 0;
+			z-index: 11500;
+			pointer-events: none;
+			box-shadow: inset 0 0 0 4px rgba(102, 153, 255, 0.55),
+				inset 0 0 120px rgba(20, 40, 90, 0.45);
+			animation: pause-overlay-breathe 2.4s ease-in-out infinite;
+		}
+		#${PAUSE_OVERLAY_ID} .pause-overlay-pill {
+			position: absolute;
+			top: 14px;
+			left: 50%;
+			transform: translateX(-50%);
+			background: linear-gradient(180deg, rgba(40, 70, 150, 0.96) 0%, rgba(18, 32, 80, 0.96) 100%);
+			color: #eaf0ff;
+			padding: 10px 22px;
+			border: 2px solid #8fb0ff;
+			border-radius: 999px;
+			font-family: 'Segoe UI', system-ui, sans-serif;
+			font-size: 15px;
+			letter-spacing: 0.02em;
+			box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5);
+			white-space: nowrap;
+		}
+		#${PAUSE_OVERLAY_ID} .pause-overlay-pill b {
+			color: #ffd24c;
+			letter-spacing: 0.12em;
+		}
+		@keyframes pause-overlay-breathe {
+			0%, 100% { box-shadow: inset 0 0 0 4px rgba(102, 153, 255, 0.40), inset 0 0 120px rgba(20, 40, 90, 0.35); }
+			50% { box-shadow: inset 0 0 0 5px rgba(140, 180, 255, 0.75), inset 0 0 150px rgba(30, 55, 120, 0.55); }
+		}
+	`;
+	document.head.appendChild(style);
+}
+
+/**
+ * Show or hide the unmistakable "you are paused" overlay. The pause
+ * feature freezes the player's footprint and blocks their own moves
+ * server-side; this gives the matching visual so it's obvious the
+ * board is on hold and why a move was refused. Driven from the same
+ * pause-status plumbing as the button so the two never disagree.
+ */
+function applyPauseOverlay(status) {
+	const active = !!(status && status.active);
+	let overlay = document.getElementById(PAUSE_OVERLAY_ID);
+	if (!active) {
+		if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+		return;
+	}
+	if (!overlay) {
+		ensurePauseOverlayStyle();
+		overlay = document.createElement('div');
+		overlay.id = PAUSE_OVERLAY_ID;
+		overlay.innerHTML = `
+			<div class="pause-overlay-pill">
+				<b>⏸ PAUSED</b> — your zone &amp; pieces are protected. Press Resume to play.
+			</div>
+		`;
+		document.body.appendChild(overlay);
+	}
+}
+
+function applyPauseButtonState(status) {
+	applyPauseOverlay(status);
+	const btn = document.getElementById('pause-player-btn');
+	const meta = document.getElementById('pause-player-meta');
+	if (!btn) return;
+	if (!status) {
+		btn.textContent = 'Pause';
+		btn.disabled = false;
+		if (meta) meta.textContent = '';
+		return;
+	}
+	if (status.active) {
+		btn.textContent = '▶ Resume';
+		btn.style.background = '#460';
+		btn.style.borderColor = '#6f6';
+		btn.disabled = false;
+	} else {
+		const exhausted = (status.usesRemaining ?? 0) <= 0
+			|| (status.maxTotalMs - status.totalPausedMs) <= 0;
+		btn.textContent = exhausted ? 'Pause (no uses left)' : '⏸ Pause';
+		btn.style.background = '#224';
+		btn.style.borderColor = '#66f';
+		btn.disabled = !!exhausted;
+	}
+	if (meta) meta.textContent = formatPauseMinutesLeft(status);
+}
+
+function sendPauseRequest(eventType) {
+	if (!NetworkManager || typeof NetworkManager.sendMessage !== 'function') {
+		return Promise.reject(new Error('pause unavailable'));
+	}
+	return NetworkManager.sendMessage(eventType, {});
+}
+
+let pauseStatusRetryTimer = null;
+function requestPauseStatus({ retryOnFail = true } = {}) {
+	sendPauseRequest('pause_status')
+		.then((resp) => {
+			if (resp && resp.success && resp.status) {
+				pauseStatusCache = resp.status;
+				applyPauseButtonState(resp.status);
+				if (pauseStatusRetryTimer) {
+					clearTimeout(pauseStatusRetryTimer);
+					pauseStatusRetryTimer = null;
+				}
+			} else if (retryOnFail && !pauseStatusRetryTimer) {
+				// Server responded but join hadn't fully completed
+				// yet — try once more after the connection settles.
+				pauseStatusRetryTimer = setTimeout(() => {
+					pauseStatusRetryTimer = null;
+					requestPauseStatus({ retryOnFail: false });
+				}, 2500);
+			}
+		})
+		.catch(() => {
+			// Server may not yet support the pause endpoint, or the
+			// socket isn't connected. Retry once more so the button
+			// resolves to a sensible state after auto-connect.
+			if (retryOnFail && !pauseStatusRetryTimer) {
+				pauseStatusRetryTimer = setTimeout(() => {
+					pauseStatusRetryTimer = null;
+					requestPauseStatus({ retryOnFail: false });
+				}, 2500);
+			} else {
+				// Give up and show a usable default.
+				applyPauseButtonState(null);
+			}
+		});
+}
+
+function wirePauseButton() {
+	const btn = document.getElementById('pause-player-btn');
+	if (!btn) return;
+	btn.addEventListener('click', () => {
+		const willPause = !(pauseStatusCache && pauseStatusCache.active);
+		const event = willPause ? 'pause_player' : 'resume_player';
+		btn.disabled = true;
+		btn.textContent = willPause ? 'Pausing…' : 'Resuming…';
+		sendPauseRequest(event)
+			.then((resp) => {
+				if (!resp || !resp.success) {
+					showToastMessage(resp && resp.error
+						? `Pause failed: ${resp.error}`
+						: 'Pause request failed');
+					requestPauseStatus();
+					return;
+				}
+				pauseStatusCache = resp.status || pauseStatusCache;
+				applyPauseButtonState(pauseStatusCache);
+				showToastMessage(willPause
+					? 'Paused — your pieces and zone are frozen.'
+					: 'Resumed — back in the game!');
+			})
+			.catch((err) => {
+				showToastMessage(`Pause request failed: ${err?.message || err}`);
+				requestPauseStatus();
+			});
+	});
+
+	if (!pauseStatusListenerInstalled && NetworkManager && typeof NetworkManager.on === 'function') {
+		pauseStatusListenerInstalled = true;
+		NetworkManager.on('player_pause_state', (payload) => {
+			if (!payload) return;
+			const localId = getLocalPlayerId({});
+			if (String(payload.playerId) !== String(localId)) return;
+			pauseStatusCache = payload;
+			applyPauseButtonState(payload);
+			if (payload.resumeReason === 'auto_timeout') {
+				showToastMessage('Auto-resumed — pause time elapsed.');
+			}
+		});
+	}
+
+	wireAutoPauseToggle();
+	wireCameraControlsToggle();
+	requestPauseStatus();
+}
+
+function wireCameraControlsToggle() {
+	const toggle = document.getElementById('camera-controls-toggle');
+	if (!toggle) return;
+	toggle.checked = isCameraRelativeControls();
+	toggle.addEventListener('change', () => {
+		setCameraRelativeControls(toggle.checked);
+		// Mirror onto the Controls-overlay toggle so the two agree.
+		const overlay = document.getElementById('cam-rel-controls-overlay-toggle');
+		if (overlay) overlay.checked = toggle.checked;
+		showToastMessage(toggle.checked
+			? 'Controls now follow the camera view.'
+			: 'Controls back to fixed (home) orientation.');
+	});
+}
+
+// ── Auto-pause-when-idle toggle ─────────────────────────────────────────────
+
+let autoPauseWatcherStarted = false;
+
+function wireAutoPauseToggle() {
+	const toggle = document.getElementById('auto-pause-toggle');
+	if (toggle) {
+		toggle.checked = isAutoPauseEnabled();
+		toggle.addEventListener('change', () => {
+			setAutoPauseEnabled(toggle.checked);
+			const mins = Math.round(getIdlePauseDelayMs() / 60000);
+			showToastMessage(toggle.checked
+				? `Auto-pause on — you'll pause after ${mins} min idle.`
+				: 'Auto-pause off.');
+		});
+	}
+
+	// The watcher itself only needs starting once per page load; the
+	// toggle's enabled flag is read live on each idle check, so a
+	// single watcher honours later on/off changes for free.
+	if (autoPauseWatcherStarted) return;
+	autoPauseWatcherStarted = true;
+	try {
+		startAutoPauseWatcher({
+			getPauseStatus: () => pauseStatusCache,
+			requestPause: () => sendPauseRequest('pause_player'),
+			requestResume: () => sendPauseRequest('resume_player'),
+		});
+	} catch (err) {
+		console.warn('[AutoPause] watcher failed to start:', err?.message || err);
+		autoPauseWatcherStarted = false;
+	}
 }
 
 /**
@@ -543,6 +901,17 @@ function addPlayerToBar(playerBar, playerId, playerInfo, gameState) {
 		nameDisplay.textContent += ' (You)';
 		playerElement.style.boxShadow = '0 0 8px rgba(255,204,0,0.5)';
 	}
+	if (playerInfo.paused) {
+		const pauseBadge = document.createElement('span');
+		pauseBadge.textContent = ' ⏸ paused';
+		pauseBadge.style.marginLeft = '6px';
+		pauseBadge.style.fontSize = '11px';
+		pauseBadge.style.color = '#9cf';
+		pauseBadge.style.background = 'rgba(60,80,140,0.35)';
+		pauseBadge.style.padding = '0 5px';
+		pauseBadge.style.borderRadius = '3px';
+		nameDisplay.appendChild(pauseBadge);
+	}
 	
 	// Highlight if current turn
 	const isCurrentTurn = gameState.currentPlayer === playerId;
@@ -631,6 +1000,40 @@ function addPlayerToBar(playerBar, playerId, playerInfo, gameState) {
 			basketDisplay.style.color = '#ffd97a';
 		}
 		playerElement.appendChild(basketDisplay);
+	}
+
+	// Frozen-pawn badge — counts pawns awaiting promotion. Clicking
+	// it re-opens the deployment dialog for the oldest frozen pawn,
+	// mirroring the in-world "click the pawn" affordance for players
+	// whose camera is pointed elsewhere.
+	const frozenPawns = (playerInfo.frozenPawns || []).filter(p => p && p.id);
+	if (frozenPawns.length > 0) {
+		const frozenBadge = document.createElement('div');
+		frozenBadge.textContent = `\u2744${frozenPawns.length}`;
+		Object.assign(frozenBadge.style, {
+			marginLeft: '6px',
+			fontSize: '12px',
+			padding: '2px 6px',
+			borderRadius: '3px',
+			backgroundColor: 'rgba(212,175,55,0.18)',
+			color: '#ffd97a',
+			fontFamily: 'serif',
+			letterSpacing: '1px',
+			border: '1px solid rgba(212,175,55,0.55)',
+		});
+		if (isLocalPlayer) {
+			frozenBadge.title = 'Pawn(s) awaiting promotion. Click to deploy a captured piece.';
+			frozenBadge.style.cursor = 'pointer';
+			frozenBadge.style.boxShadow = '0 0 6px rgba(255,217,122,0.45)';
+			frozenBadge.addEventListener('click', (e) => {
+				e.stopPropagation();
+				try { showFrozenPawnPromotionDialog(frozenPawns[0].id); }
+				catch (err) { console.warn('Failed to open frozen-pawn dialog:', err); }
+			});
+		} else {
+			frozenBadge.title = `${frozenPawns.length} pawn(s) awaiting promotion`;
+		}
+		playerElement.appendChild(frozenBadge);
 	}
 
 	// Promotion-credits badge. Only meaningful for the local player —
@@ -855,11 +1258,18 @@ export function updateUnifiedPlayerBar(gameState) {
 		currentHash = Object.keys(gameState.players).map(playerId => {
 			const player = gameState.players[playerId];
 			if (!player) return '';
-			return `${playerId}-${player.name || ''}-${player.score || 0}-${player.isActive ? 1 : 0}-${player.eliminated ? 1 : 0}-${player.color || ''}-${player.capturedCount || 0}`;
+			return `${playerId}-${player.name || ''}-${player.score || 0}-${player.isActive ? 1 : 0}-${player.eliminated ? 1 : 0}-${player.paused ? 1 : 0}-${player.color || ''}-${player.capturedCount || 0}`;
 		}).sort().join('|');
-		
-		// Add current player to hash
+
+		// Add current player + frozen-pawn signature to hash so the
+		// frozen badges refresh whenever a pawn reaches the line
+		// or gets deployed.
 		currentHash += `|currentPlayer:${gameState.currentPlayer || ''}`;
+		const frozenPieces = (Array.isArray(gameState.chessPieces) ? gameState.chessPieces : [])
+			.filter(p => p && p.awaitingPromotion === true)
+			.map(p => `${p.player}:${p.id}`)
+			.sort();
+		currentHash += `|frozen:${frozenPieces.join(',')}`;
 	}
 	
 	// Force update every 20 intervals
@@ -912,6 +1322,7 @@ export function updateUnifiedPlayerBar(gameState) {
 	// system... they are all apearing in the left menu". Keeping them
 	// would also bias the spawn algorithm towards dead-king coords.
 	if (gameState.players && Object.keys(gameState.players).length > 0) {
+		const activeBattleId = gameState.activeBattle?.id || null;
 		const visibleIds = Object.keys(gameState.players).filter(pid => {
 			const player = gameState.players[pid];
 			if (!player) return false;
@@ -919,6 +1330,14 @@ export function updateUnifiedPlayerBar(gameState) {
 			// they're eliminated — we'd rather show a wrong row than
 			// hide the user from their own UI.
 			if (pid === localPlayerId) return true;
+			// View isolation, roster edition: seated in a battle the bar
+			// lists that battle's armies only; in the world view, battle
+			// seats (remote arenas) don't belong in the roster.
+			if (activeBattleId) {
+				if (String(player.battleId || '') !== String(activeBattleId)) return false;
+			} else if (player.battleId) {
+				return false;
+			}
 			return !player.eliminated;
 		});
 		console.log('Players in game state:', Object.keys(gameState.players).length,
@@ -928,9 +1347,17 @@ export function updateUnifiedPlayerBar(gameState) {
 			if (b === localPlayerId) return 1;
 			return 0;
 		});
+		const allPieces = Array.isArray(gameState.chessPieces) ? gameState.chessPieces : [];
 		sortedIds.forEach(playerId => {
 			const player = gameState.players[playerId];
 			if (!player) return;
+
+			const frozenPawns = allPieces
+				.filter(p => p
+					&& p.awaitingPromotion === true
+					&& String(p.player) === String(playerId)
+					&& String(p.type).toUpperCase() === 'PAWN')
+				.map(p => ({ id: p.id, x: p.position?.x, z: p.position?.z }));
 
 			addPlayerToBar(
 				playerBar,
@@ -941,6 +1368,7 @@ export function updateUnifiedPlayerBar(gameState) {
 					score: player.score || 0,
 					capturedCount: player.capturedCount || 0,
 					capturedSummary: player.capturedSummary || {},
+					frozenPawns,
 				},
 				gameState
 			);

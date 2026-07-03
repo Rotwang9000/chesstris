@@ -6,6 +6,7 @@
 const { log } = require('./GameUtilities');
 const cells = require('./cells');
 const pieces = require('./pieces');
+const battleRules = require('../battle/rules');
 
 // ── Disconnected-island grace policy (bible §15.2) ──────────────────────────
 //
@@ -26,14 +27,35 @@ const pieces = require('./pieces');
 // `_PIECE_` thresholds because losing a piece is much more painful than
 // losing terrain, and players have repeatedly reported feeling cheated
 // when pieces evaporate while they're composing a chat message.
-const DISCONNECTED_MOVE_LIMIT = 6;
-const DISCONNECTED_PIECE_MOVE_LIMIT = 12;
-const DISCONNECTED_TIME_LIMIT_MS   = 10 * 60 * 1000; // 10 minutes
-const DISCONNECTED_PIECE_TIME_LIMIT_MS = 20 * 60 * 1000; // 20 minutes
+//
+// User directive (2026-05): "dissolves should be mostly based on moves
+// but with a 10-min timer in case they make no moves in that time".
+// The MOVE limit is the primary metric for active players. The TIME
+// limit is an IDLE backstop — it ticks against the player's last
+// chess move / tetromino placement, NOT against the island's age.
+// An active player who can't reconnect this particular island won't
+// get punished for it just because the wall clock keeps moving; they
+// only get punished if they stop playing for too long.
+const DISCONNECTED_MOVE_LIMIT = 15;
+const DISCONNECTED_PIECE_MOVE_LIMIT = 30;
+const DISCONNECTED_IDLE_LIMIT_MS   = 10 * 60 * 1000; // 10 minutes of inactivity
+const DISCONNECTED_PIECE_IDLE_LIMIT_MS = 15 * 60 * 1000; // 15 minutes of inactivity
+
+function lastActionAt(player) {
+	if (!player) return 0;
+	return Math.max(
+		Number(player.lastChessMoveAt) || 0,
+		Number(player.lastTetrominoPlacementAt) || 0,
+		Number(player.lastActiveAt) || 0,
+	);
+}
 
 class IslandManager {
 	constructor() {
-		// No properties needed for initialization
+		// Tracks the last logged "disconnected island queue size" so
+		// the integrity maintenance sweep only emits a log line when
+		// the count actually changes (instead of every 10s tick).
+		this._lastDisconnectedCount = 0;
 	}
 	
 	/**
@@ -85,7 +107,10 @@ class IslandManager {
 				}
 			}
 			const itemIsLiveOwned = (item) => {
-				if (!item || String(item.player) !== pid) return false;
+				if (!item) return false;
+				// Battle-ring cells are shared ground for seats of that battle.
+				if (battleRules.ringItemUsableBy(game, item, playerId)) return true;
+				if (String(item.player) !== pid) return false;
 				if (item.type !== 'chess') return true;
 				if (item.pieceId == null) return true;
 				return livePieceIds.has(String(item.pieceId));
@@ -203,6 +228,16 @@ class IslandManager {
 			if (!cellContents || !Array.isArray(cellContents)) return false;
 			return cellContents.some(item => item && String(item.player) === String(playerId));
 		};
+
+		// Battle-ring cells are traversable bridge ground for seats of
+		// that battle: the BFS walks THROUGH them (so terrain linked via
+		// the ring stays connected to the king) but never claims them as
+		// part of the island — they're neutral and must not decay.
+		const isRingBridge = (x, z) => {
+			const cellContents = game.board.cells[`${x},${z}`];
+			if (!Array.isArray(cellContents)) return false;
+			return cellContents.some(item => battleRules.ringItemUsableBy(game, item, playerId));
+		};
 		
 		const hasKingAt = (x, z) => {
 			if (!Array.isArray(game.chessPieces)) return false;
@@ -234,6 +269,11 @@ class IslandManager {
 					cells.push({ x: cell.x, z: cell.z });
 					queue.push(cell);
 					
+					if (hasKingAt(cell.x, cell.z)) hasKing = true;
+				} else if (isRingBridge(cell.x, cell.z)) {
+					visited.add(vk);
+					queue.push(cell);
+					// A king standing on the ring still anchors the island.
 					if (hasKingAt(cell.x, cell.z)) hasKing = true;
 				}
 			}
@@ -293,12 +333,23 @@ class IslandManager {
 				if (!pos) return false;
 				return cells.some(cell => cell.x === pos.x && cell.z === pos.z);
 			});
-			const timeLimitMs = hasPiece ? DISCONNECTED_PIECE_TIME_LIMIT_MS : DISCONNECTED_TIME_LIMIT_MS;
+			const idleLimitMs = hasPiece ? DISCONNECTED_PIECE_IDLE_LIMIT_MS : DISCONNECTED_IDLE_LIMIT_MS;
 			const moveLimit = hasPiece ? DISCONNECTED_PIECE_MOVE_LIMIT : DISCONNECTED_MOVE_LIMIT;
 			const player = game.players && game.players[pid];
 			const currentMoves = (player && Number.isFinite(player.moveCount)) ? player.moveCount : 0;
 			const movesSince = Math.max(0, currentMoves - meta.moveSnapshot);
-			const remainingMs = Math.max(0, timeLimitMs - (now - meta.since));
+			// "Time left" is now measured against the player's last
+			// action (or, for islands that formed during an idle
+			// window, against the island itself — whichever is
+			// later). So an active player who can't reconnect this
+			// island doesn't see the clock burn down just because
+			// real time is passing, AND an idle player who returns
+			// to a newly-formed island still gets a full grace
+			// window before it dissolves.
+			const lastAct = lastActionAt(player) || meta.since;
+			const idleAnchor = Math.max(lastAct, meta.since);
+			const idleMs = Math.max(0, now - idleAnchor);
+			const remainingMs = Math.max(0, idleLimitMs - idleMs);
 			const remainingMoves = Math.max(0, moveLimit - movesSince);
 			report.push({
 				playerId,
@@ -306,7 +357,7 @@ class IslandManager {
 				remainingMs,
 				remainingMoves,
 				hasPiece,
-				timeLimitMs,
+				timeLimitMs: idleLimitMs,
 				moveLimit,
 			});
 		}
@@ -371,6 +422,79 @@ class IslandManager {
 			});
 		};
 
+		// Cells that carry one of *our* knights survive an island
+		// decay sweep — knights are the only piece that leaps over
+		// gaps, so the narrative is they can stand on a stranded
+		// rocky outcrop indefinitely waiting for the world to grow
+		// back to them. Without this, a knight on a freshly-cut
+		// island was deleted at the same time the cell beneath it
+		// was cleared.
+		const knightCellsByPlayer = new Map();
+		if (Array.isArray(game.chessPieces)) {
+			for (const piece of game.chessPieces) {
+				if (!piece || !piece.position) continue;
+				if (String(piece.type || '').toUpperCase() !== 'KNIGHT') continue;
+				const pid = String(piece.player);
+				if (!knightCellsByPlayer.has(pid)) knightCellsByPlayer.set(pid, new Set());
+				knightCellsByPlayer.get(pid).add(`${piece.position.x},${piece.position.z}`);
+			}
+		}
+		const isKnightCell = (playerId, x, z) => {
+			const set = knightCellsByPlayer.get(String(playerId));
+			return !!(set && set.has(`${x},${z}`));
+		};
+
+		// Cells holding a pawn that's awaiting promotion are frozen —
+		// the cell is treated as home-like until the pawn is either
+		// promoted or captured. Decay must skip them entirely so the
+		// player doesn't lose the locked-in promotion square.
+		const isAwaitingPromotionCell = (playerId, x, z) => {
+			const cellContents = game.board.cells[`${x},${z}`];
+			if (!Array.isArray(cellContents)) return false;
+			return cellContents.some(item =>
+				item
+				&& item.type === 'chess'
+				&& item.awaitingPromotion === true
+				&& String(item.player) === String(playerId),
+			);
+		};
+
+		// MULTI-KING PROTECTION (bible §15.2 cross-anchor rule).
+		// A cell that carries content from MORE THAN ONE player gets a
+		// safety net: as long as ANY of those other owners still has a
+		// live path back to their own king through this cell, NOBODY's
+		// content on the cell is decayed. The cell is "anchored" by
+		// the other player's connectivity even if it isn't anchored to
+		// the player being decayed.
+		//
+		// Why this rule:
+		//   * It mirrors the user's intuition — a cell sitting on
+		//     someone else's living territory shouldn't quietly vanish
+		//     because YOUR end of the bridge collapsed.
+		//   * It can't be exploited to make territory immortal — both
+		//     owners still need their own connectivity; if BOTH lose
+		//     it, the cell falls normally.
+		//   * It dovetails with how the cell-physically-deletes logic
+		//     already works (the cell already survives if any owner's
+		//     content remains).
+		const isMultiKingAnchoredCell = (playerId, x, z) => {
+			const cellContents = game.board.cells[`${x},${z}`];
+			if (!Array.isArray(cellContents)) return false;
+			const otherOwners = new Set();
+			for (const item of cellContents) {
+				if (!item || item.player == null) continue;
+				const op = String(item.player);
+				if (op === String(playerId)) continue;
+				if (op === 'system' || op === 'home') continue;
+				otherOwners.add(op);
+			}
+			if (otherOwners.size === 0) return false;
+			for (const other of otherOwners) {
+				if (this.hasPathToKing(game, x, z, other)) return true;
+			}
+			return false;
+		};
+
 		for (const island of disconnectedIslands) {
 			const { playerId, cells } = island;
 			const pid = String(playerId);
@@ -381,12 +505,29 @@ class IslandManager {
 			const player = game.players && game.players[pid];
 			const currentMoves = (player && Number.isFinite(player.moveCount)) ? player.moveCount : 0;
 			const movesSince = Math.max(0, currentMoves - meta.moveSnapshot);
+			const lastAct = lastActionAt(player) || meta.since;
+			// The idle clock starts at MAX(islandFormed, lastMove):
+			//   - Active player: lastMove ≈ now → idleMs ≈ 0, safe.
+			//   - Idle player whose island just formed: clock starts
+			//     at islandFormed so they still get a full grace
+			//     window after coming back online.
+			//   - Idle player whose island formed long ago: clock
+			//     starts at lastMove, so the limit fires as soon as
+			//     they've been quiet long enough.
+			const idleAnchor = Math.max(lastAct, meta.since);
+			const idleMs = Math.max(0, now - idleAnchor);
 
 			const moveLimit = hasPiece ? DISCONNECTED_PIECE_MOVE_LIMIT : DISCONNECTED_MOVE_LIMIT;
-			const timeLimit = hasPiece ? DISCONNECTED_PIECE_TIME_LIMIT_MS : DISCONNECTED_TIME_LIMIT_MS;
+			const idleLimit = hasPiece ? DISCONNECTED_PIECE_IDLE_LIMIT_MS : DISCONNECTED_IDLE_LIMIT_MS;
+			// MOVE-based primary, IDLE-based fallback. The previous
+			// implementation ticked the time limit against wall-clock
+			// regardless of activity, which let an active player's
+			// disconnected island evaporate at 10 min even though they
+			// were busy elsewhere. Now the time limit only fires when
+			// the player has gone quiet for too long.
 			const decayReason =
 				movesSince >= moveLimit ? 'moves'
-					: islandAge >= timeLimit ? 'time'
+					: idleMs >= idleLimit ? 'idle'
 						: null;
 
 			if (!decayReason) {
@@ -408,7 +549,16 @@ class IslandManager {
 				{
 					reason: pieces.REMOVAL_REASONS.ISLAND_DECAY,
 					activityLog: this.activityLog || null,
-					protect: (_piece, pos) => isProtectedHomeCell(playerId, pos.x, pos.z),
+					kingLifeService: this.kingLifeService || null,
+					protect: (piece, pos) => {
+						if (isProtectedHomeCell(playerId, pos.x, pos.z)) return true;
+						if (isAwaitingPromotionCell(playerId, pos.x, pos.z)) return true;
+						// Knights are exempt from disconnection-decay.
+						if (piece && String(piece.type || '').toUpperCase() === 'KNIGHT') return true;
+						// Multi-king-anchor protection.
+						if (isMultiKingAnchoredCell(playerId, pos.x, pos.z)) return true;
+						return false;
+					},
 				}
 			);
 			for (const piece of removedPieces) {
@@ -418,6 +568,36 @@ class IslandManager {
 
 			for (const cell of cells) {
 				if (isProtectedHomeCell(playerId, cell.x, cell.z)) continue;
+				if (isAwaitingPromotionCell(playerId, cell.x, cell.z)) {
+					// Same treatment as a knight cell: refresh the grace
+					// timer so we don't re-log every pass.
+					game.disconnectedSince[`${pid}:${cell.x},${cell.z}`] = {
+						since: now,
+						moveSnapshot: currentMoves,
+					};
+					continue;
+				}
+				if (isKnightCell(playerId, cell.x, cell.z)) {
+					// Keep the cell so the knight has something to
+					// stand on. Refresh the grace timer so we don't
+					// re-log it every tick.
+					game.disconnectedSince[`${pid}:${cell.x},${cell.z}`] = {
+						since: now,
+						moveSnapshot: currentMoves,
+					};
+					continue;
+				}
+				if (isMultiKingAnchoredCell(playerId, cell.x, cell.z)) {
+					// Cross-anchored cell — another player's living
+					// territory keeps the cell alive even though our
+					// own end is disconnected. Refresh the grace
+					// timer so the BFS doesn't keep retrying it.
+					game.disconnectedSince[`${pid}:${cell.x},${cell.z}`] = {
+						since: now,
+						moveSnapshot: currentMoves,
+					};
+					continue;
+				}
 
 				const key = `${cell.x},${cell.z}`;
 				const cellContents = game.board.cells[key];
@@ -436,7 +616,8 @@ class IslandManager {
 				log(
 					`Cleared player ${playerId} content at (${cell.x}, ${cell.z}) due to ` +
 					`${decayReason}-based decay (moves=${movesSince}/${moveLimit}, ` +
-					`age=${Math.round(islandAge / 1000)}s/${Math.round(timeLimit / 1000)}s, ` +
+					`idle=${Math.round(idleMs / 1000)}s/${Math.round(idleLimit / 1000)}s, ` +
+					`age=${Math.round(islandAge / 1000)}s, ` +
 					`hasPiece=${hasPiece})`
 				);
 			}
@@ -561,14 +742,26 @@ class IslandManager {
 			const playerIslands = islands.filter(island => island.playerId === playerId);
 			const disconnectedIslands = playerIslands.filter(island => !island.hasKing);
 			if (disconnectedIslands.length === 0) continue;
-			log(`Player ${playerId} has ${disconnectedIslands.length} disconnected islands after row clear`);
 			allDisconnected.push(...disconnectedIslands);
 		}
 
 		this._refreshDisconnectedTimestamps(game, islands);
 
 		if (allDisconnected.length > 0) {
+			// Only log when the disconnected-island count CHANGES.
+			// The maintenance pass runs every 10s and an island can
+			// linger in the decay queue for minutes, so the previous
+			// per-tick log spammed PM2 with the same line. Actual
+			// decay events are recorded via `activityLog.recordIslandDecay`
+			// so the in-game panel still tells the full story.
+			if (this._lastDisconnectedCount !== allDisconnected.length) {
+				log(`Island integrity: ${allDisconnected.length} disconnected island${allDisconnected.length === 1 ? '' : 's'} pending decay`);
+				this._lastDisconnectedCount = allDisconnected.length;
+			}
 			this._processDisconnectedIslands(game, allDisconnected);
+		} else if (this._lastDisconnectedCount > 0) {
+			log('Island integrity: queue cleared');
+			this._lastDisconnectedCount = 0;
 		}
 	}
 
@@ -624,7 +817,12 @@ class IslandManager {
 
 IslandManager.DISCONNECTED_MOVE_LIMIT = DISCONNECTED_MOVE_LIMIT;
 IslandManager.DISCONNECTED_PIECE_MOVE_LIMIT = DISCONNECTED_PIECE_MOVE_LIMIT;
-IslandManager.DISCONNECTED_TIME_LIMIT_MS = DISCONNECTED_TIME_LIMIT_MS;
-IslandManager.DISCONNECTED_PIECE_TIME_LIMIT_MS = DISCONNECTED_PIECE_TIME_LIMIT_MS;
+// Older names kept as aliases for any test / outside caller that
+// still looks them up via the class. The values are the idle limits;
+// the old "time since island formed" semantic has been retired.
+IslandManager.DISCONNECTED_TIME_LIMIT_MS = DISCONNECTED_IDLE_LIMIT_MS;
+IslandManager.DISCONNECTED_PIECE_TIME_LIMIT_MS = DISCONNECTED_PIECE_IDLE_LIMIT_MS;
+IslandManager.DISCONNECTED_IDLE_LIMIT_MS = DISCONNECTED_IDLE_LIMIT_MS;
+IslandManager.DISCONNECTED_PIECE_IDLE_LIMIT_MS = DISCONNECTED_PIECE_IDLE_LIMIT_MS;
 
 module.exports = IslandManager;

@@ -195,7 +195,7 @@ function processVerticalMove(height, isRelative) {
 			gameState.currentTetromino.heightAboveBoard = 0;
 			queueOperation(MOVEMENT_TYPES.EXPLODE, {
 				x: posX, z: posZ,
-				message: 'Missed connection - tetromino dissolved into sand.',
+				message: 'Missed connection — pieces must land touching your territory. Watch the outline: green sticks, red dissolves.',
 				effect: FAILURE_EFFECTS.DISSOLVE_FALL,
 			});
 			return;
@@ -265,7 +265,7 @@ function processHardDrop() {
 		console.log('Hard drop failed - tetromino not adjacent at landing position');
 		queueOperation(MOVEMENT_TYPES.EXPLODE, {
 			x: posX, z: posZ,
-			message: 'Missed connection - tetromino dissolved into sand.',
+			message: 'Missed connection — pieces must land touching your territory. Watch the outline: green sticks, red dissolves.',
 			effect: FAILURE_EFFECTS.DISSOLVE_FALL,
 		});
 		return;
@@ -285,11 +285,11 @@ function rejectionMessageForReason(response) {
 		switch (reason) {
 			case 'occupied': message = 'That space is already occupied.'; break;
 			case 'not_adjacent':
-				message = 'Missed connection - tetromino dissolved into sand.';
+				message = 'Missed connection — pieces must land touching your territory. Watch the outline: green sticks, red dissolves.';
 				rejectionEffect = FAILURE_EFFECTS.DISSOLVE_FALL;
 				break;
 			case 'no_path_to_king':
-				message = 'No king path - tetromino dissolved into sand.';
+				message = 'Each block must connect through your cells back to your king — you cannot bridge across only enemy territory.';
 				rejectionEffect = FAILURE_EFFECTS.DISSOLVE_FALL;
 				break;
 			default:
@@ -314,6 +314,14 @@ function processPlaceTetromino() {
 	const placedTetrominoSponsor = gameState.currentTetromino.sponsor;
 	cleanupGhostPiece(gameState);
 
+	// Lightweight feedback while the server is making up its mind.
+	// Previously the screen sat there silently and clicks on chess
+	// pieces did nothing because the phase hadn't flipped yet.
+	if (typeof showToastMessage === 'function') {
+		try { showToastMessage('Placing…', 900); }
+		catch (_) { /* toast is best-effort */ }
+	}
+
 	sendTetrominoPlacementToServer(gameState.currentTetromino, gameState)
 		.then(response => {
 			if (response && response.placedCells) {
@@ -326,9 +334,23 @@ function processPlaceTetromino() {
 
 			if (response && response.success === true) {
 				gameState._hasPlacedTetromino = true;
+				if (Array.isArray(response.powerUpClaims) && response.powerUpClaims.length > 0) {
+					const claimedIds = new Set(
+						response.powerUpClaims.map(c => c && c.orbId).filter(Boolean)
+					);
+					gameState.powerUps = (gameState.powerUps || [])
+						.filter(o => o && !claimedIds.has(o.id));
+					if (typeof window.updateBoardVisuals === 'function') {
+						window.updateBoardVisuals();
+					}
+				}
+				// Sponsor popup is now click-driven only — see
+				// `chessInteraction.js#showCellInfo`. We deliberately
+				// do NOT call displaySponsorInfo here; users asked
+				// for the ad box to appear only when they click a
+				// sponsored cell.
 				if (placedTetrominoSponsor) {
-					console.log('Displaying sponsor ad for:', placedTetrominoSponsor.name);
-					displaySponsorInfo(placedTetrominoSponsor);
+					console.log('Tetromino had sponsor (click cell to view):', placedTetrominoSponsor.name);
 				}
 
 				cleanupCurrentTetromino(gameState);
@@ -451,6 +473,41 @@ function processCleanup(message) {
 	if (newTetromino) {
 		gameState.currentTetromino = newTetromino;
 		gameState.currentTetromino.heightAboveBoard = gameState.TETROMINO_START_HEIGHT || 20;
+		// Spawn the 3D mesh too — without this the user sees nothing
+		// after a failed placement and a stray Space-bar drop has no
+		// visible source. The render call also tears down any stale
+		// ghost from the previous piece.
+		try { renderTetromino(gameState); }
+		catch (renderErr) { console.warn('Failed to render replacement tetromino:', renderErr); }
+	} else {
+		// Spawn returned null — almost always because the player has
+		// no king to anchor against. Don't leave the user stuck with
+		// no piece and no recourse. Ask the server for a fresh one
+		// (and a rescued king if necessary) and surface a clear toast
+		// so they know something's being done.
+		console.warn('Tetromino spawn returned null — requesting server-side recovery');
+		if (typeof showToastMessage === 'function') {
+			try { showToastMessage('Recovering game state…', 1500); }
+			catch (_) { /* best-effort */ }
+		}
+		try {
+			const networkManager = window.NetworkManager;
+			if (networkManager && typeof networkManager.sendMessage === 'function') {
+				networkManager.sendMessage('request_tetromino', {})
+					.then((response) => {
+						if (response && response.success && response.tetromino) {
+							gameState.currentTetromino = response.tetromino;
+							gameState.currentTetromino.heightAboveBoard = gameState.TETROMINO_START_HEIGHT || 20;
+							try { renderTetromino(gameState); }
+							catch (renderErr) { console.warn('Recovery render failed:', renderErr); }
+							if (typeof window.updateBoardVisuals === 'function') window.updateBoardVisuals();
+						}
+					})
+					.catch((err) => console.warn('Server-side tetromino recovery rejected:', err));
+			}
+		} catch (recoveryErr) {
+			console.warn('Server-side tetromino recovery failed:', recoveryErr);
+		}
 	}
 	cancelSkipChessTimer();
 	updateNextPieceHint(gameState);
@@ -466,11 +523,38 @@ export function queueTetrominoMovement(type, params = {}) {
 	return queueOperation(type, params);
 }
 
+// User-input markers ─────────────────────────────────────────────
+//
+// Per the user spec the auto-fall must:
+//   1. Stay paused until the player makes their first move; then
+//   2. Pause for 0.5 s after every manual move/rotate so they can
+//      shuffle the piece a long way without it falling away under
+//      them, but
+//   3. Run *concurrently* with the regular 1 s fall countdown —
+//      i.e. rapid moves don't keep stacking the pause, they only
+//      delay the next fall by 0.5 s from the LAST move.
+//
+// `markUserInteraction` stamps the currentTetromino's `fallStarted`
+// and `lastMoveTime` fields; the game loop reads both. Only the
+// USER-FACING exports below call it — the auto-fall (`moveTetrominoY`
+// from the game loop) deliberately doesn't, because that would make
+// the piece its own first input.
+
+function markUserInteraction() {
+	const gameState = getGameState();
+	const tetro = gameState && gameState.currentTetromino;
+	if (!tetro) return;
+	tetro.fallStarted = true;
+	tetro.lastMoveTime = Date.now();
+}
+
 export function moveTetrominoX(dir) {
+	markUserInteraction();
 	return queueOperation(MOVEMENT_TYPES.MOVE_X, { dir });
 }
 
 export function moveTetrominoZ(dir) {
+	markUserInteraction();
 	return queueOperation(MOVEMENT_TYPES.MOVE_Z, { dir });
 }
 
@@ -479,10 +563,18 @@ export function moveTetrominoY(height, isRelative = true) {
 }
 
 export function rotateTetromino(dir) {
+	markUserInteraction();
 	return queueOperation(MOVEMENT_TYPES.ROTATE, { dir });
 }
 
 export function hardDropTetromino() {
+	const gameState = getGameState();
+	if (gameState?.currentTetromino) {
+		// Hard drop unambiguously expresses intent — start the fall
+		// state machine but DON'T set lastMoveTime, because we don't
+		// want a pause after a one-shot hard drop.
+		gameState.currentTetromino.fallStarted = true;
+	}
 	return queueOperation(MOVEMENT_TYPES.HARD_DROP, {});
 }
 

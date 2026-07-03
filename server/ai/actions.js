@@ -9,8 +9,25 @@
 const World = require('../world/World');
 const cells = require('../game/cells');
 const pieces = require('../game/pieces');
+const { GAME_RULES } = require('../game/Constants');
+// Shared with the human chess handler so AI pawns freeze identically.
+const { markPawnAwaitingPromotion } = require('../game/promotion');
 
 const TETROMINO_TYPES = Object.freeze(['I', 'J', 'L', 'O', 'S', 'T', 'Z']);
+
+/**
+ * Longest slide the move enumerator considers for rooks/bishops/queens.
+ * Board clusters (organic islands and battle arenas alike) are ~30
+ * cells across, and path validation stops at the first gap anyway.
+ */
+const MAX_ENUMERATED_SLIDE = 14;
+
+const KNIGHT_OFFSETS = Object.freeze([
+	[1, 2], [2, 1], [-1, 2], [-2, 1],
+	[1, -2], [2, -1], [-1, -2], [-2, -1],
+]);
+const ORTHOGONAL_DIRS = Object.freeze([[1, 0], [-1, 0], [0, 1], [0, -1]]);
+const DIAGONAL_DIRS = Object.freeze([[1, 1], [1, -1], [-1, 1], [-1, -1]]);
 
 function createAiActions({
 	io, gameManager, broadcaster, integrityService, spectatorRegistry, lineClearService,
@@ -25,16 +42,16 @@ function createAiActions({
 	function performStrategicTetrominoPlacement(computerId) {
 		const world = World.getWorld();
 		const computerPlayer = World.getPlayer(computerId);
-		if (!world || !computerPlayer) return;
+		if (!world || !computerPlayer) return false;
 
 		const board = world.board;
 		const pieceType = TETROMINO_TYPES[Math.floor(Math.random() * TETROMINO_TYPES.length)];
 		const rotation = Math.floor(Math.random() * 4);
 		const shape = gameManager.tetrominoManager.getTetrisPieceShape(pieceType, rotation);
-		if (!shape) return;
+		if (!shape) return false;
 
 		const anchors = collectPlacementAnchors(world, computerId);
-		if (anchors.length === 0) return;
+		if (anchors.length === 0) return false;
 
 		const maxAttempts = 60;
 		const offsetRange = 4;
@@ -70,7 +87,15 @@ function createAiActions({
 				}
 			}
 
-			integrityService.runIslandIntegrityPass({ emitAnimation: true });
+			// IMPORTANT: do NOT run island integrity here. The human
+			// placement path deliberately defers it to the tail of the
+			// line-clear cascade (see server/sockets/tetromino.js and
+			// LineClearService.runCascade) so gravity can reconnect
+			// stranded cells before anything is decayed. Running it
+			// pre-cascade here was stripping OTHER players' pieces/cells
+			// when an AI cleared a row — the "AI Expert cleared my far
+			// cells / my Queen's wings failed" report. The cascade's
+			// final integrity pass handles orphans correctly.
 			world.lastAction = {
 				type: 'tetromino_placed',
 				playerId: computerId,
@@ -88,8 +113,9 @@ function createAiActions({
 			});
 
 			if (spectatorRegistry) spectatorRegistry.broadcastUpdate(computerId, world);
-			return;
+			return true;
 		}
+		return false;
 	}
 
 	function collectPlacementAnchors(world, computerId) {
@@ -118,34 +144,264 @@ function createAiActions({
 		return anchors;
 	}
 
-	function performStrategicChessMove(computerId, kingCaptureService) {
+	/**
+	 * AI escape under Check. Called from the runner when
+	 * `world.pendingCheck.defenderId === computerId`. We walk the AI's
+	 * pieces and every existing board cell looking for the first move
+	 * that `checkService.validateEscape` accepts (king out of danger
+	 * or attacker captured). If none exists, return false — the AI
+	 * will eat the deadline.
+	 *
+	 * We prefer king-moves first (most likely to escape) and then
+	 * captures-of-the-attacker, before falling back to the generic
+	 * "any-legal-move-that-resolves-the-threat" search. The first
+	 * accepted candidate is played; we don't pretend to evaluate
+	 * positions beyond that — the AI just survives a single tick.
+	 */
+	function performCheckEscape(computerId, checkService, kingCaptureService) {
 		const world = World.getWorld();
 		const computerPlayer = World.getPlayer(computerId);
-		if (!world || !computerPlayer) return;
+		if (!world || !computerPlayer || !checkService) return false;
+		if (!world.pendingCheck || String(world.pendingCheck.defenderId) !== String(computerId)) return false;
 
-		const chessPieces = world.chessPieces || [];
-		const ownedPieces = chessPieces.filter(piece =>
+		const attackerPieceId = world.pendingCheck.attackerPieceId;
+		const ownedPieces = (world.chessPieces || []).filter(piece =>
 			piece && piece.player === computerId && piece.position
 			&& Number.isFinite(piece.position.x) && Number.isFinite(piece.position.z)
 		);
-		if (ownedPieces.length === 0) return;
+		if (ownedPieces.length === 0) return false;
 
+		const cellKeys = Object.keys(world.board?.cells || {});
 		const existingCells = [];
-		for (const key of Object.keys(world.board?.cells || {})) {
+		for (const key of cellKeys) {
 			const [x, z] = key.split(',').map(Number);
 			if (Number.isFinite(x) && Number.isFinite(z)) existingCells.push({ x, z });
 		}
-		if (existingCells.length === 0) return;
+		if (existingCells.length === 0) return false;
 
-		const maxAttempts = 80;
-		for (let attempt = 0; attempt < maxAttempts; attempt++) {
-			const piece = ownedPieces[Math.floor(Math.random() * ownedPieces.length)];
-			const target = existingCells[Math.floor(Math.random() * existingCells.length)];
+		// Build a ranked list of move candidates: king-moves first,
+		// then "capture-the-attacker" moves, then everything else.
+		const kingPieces = ownedPieces.filter(p => String(p.type || '').toUpperCase() === 'KING');
+		const attackerPiece = (world.chessPieces || []).find(p => p && String(p.id) === String(attackerPieceId));
+		const captureMoves = [];
+		const fallback = [];
+		const kingMoves = [];
 
-			if (piece.position.x === target.x && piece.position.z === target.z) continue;
-			if (!gameManager.chessManager.isValidChessMove(world, piece, target.x, target.z)) continue;
+		for (const piece of ownedPieces) {
+			for (const target of existingCells) {
+				if (piece.position.x === target.x && piece.position.z === target.z) continue;
+				if (!gameManager.chessManager.isValidChessMove(world, piece, target.x, target.z)) continue;
+				const candidate = { piece, target };
+				if (kingPieces.includes(piece)) kingMoves.push(candidate);
+				else if (attackerPiece && target.x === attackerPiece.position.x && target.z === attackerPiece.position.z) {
+					captureMoves.push(candidate);
+				}
+				else fallback.push(candidate);
+			}
+		}
+		const ordered = kingMoves.concat(captureMoves, fallback);
+
+		for (const { piece, target } of ordered) {
+			const escape = checkService.validateEscape({
+				world, piece, toX: target.x, toZ: target.z,
+			});
+			if (!escape.ok) continue;
 
 			const moveResult = applyChessMove(world, piece, target.x, target.z, computerId);
+			if (!moveResult.success) continue;
+
+			computerPlayer.lastChessMoveAt = Date.now();
+			computerPlayer.moveCount = (computerPlayer.moveCount || 0) + 1;
+
+			integrityService.runIslandIntegrityPass({ emitAnimation: true });
+
+			world.lastAction = {
+				type: 'chess_move',
+				playerId: computerId,
+				data: {
+					pieceId: piece.id,
+					targetPosition: { x: target.x, z: target.z },
+					captured: moveResult.capturedPiece || null,
+					checkEscape: true,
+				},
+			};
+			World.markDirty();
+
+			broadcaster.broadcastGameUpdate();
+			io.to(world.id).emit('chess_move', {
+				playerId: computerId,
+				movedPiece: moveResult.movedPiece,
+				movedFrom: moveResult.from,
+				movedTo: moveResult.to,
+				capturedPiece: moveResult.capturedPieceSnapshot,
+			});
+
+			// Defender successfully escaped — clear the pending check.
+			try { checkService.cancelCheck(world, 'ai_escaped'); }
+			catch (e) { console.warn('[AI] check cancel failed:', e.message); }
+
+			if (moveResult.capturedPiece && moveResult.capturedPiece.type === 'KING' && kingCaptureService) {
+				// Escape-by-king-capture (defender takes the attacker
+				// king). Vanishingly rare but handle it cleanly — route
+				// through the shared resolver so it's duel-eligible and
+				// idempotent, exactly like the human path.
+				kingCaptureService.resolveKingCapture({
+					captorId: computerId, defeatedId: moveResult.capturedPiece.player,
+				});
+			}
+
+			if (spectatorRegistry) spectatorRegistry.broadcastUpdate(computerId, world);
+			console.log(
+				`[AI] ${computerId} escaped check via ${piece.type} → (${target.x}, ${target.z}).`
+			);
+			return true;
+		}
+
+		console.log(`[AI] ${computerId} found no legal escape — will be captured on deadline.`);
+		return false;
+	}
+
+	/**
+	 * Enumerate every legal move for a piece by walking outward from
+	 * its own position (knight offsets, pawn forwards/diagonals,
+	 * bounded slides). This replaces the old "random board cell ×80
+	 * attempts" sampler, which almost never found a legal move for
+	 * battle-arena bots: their arena is a tiny island ~2,000 cells
+	 * from the organic world, so nearly every sampled target was
+	 * either water or a cell three continents away. World AIs get the
+	 * same benefit — no more wasted ticks.
+	 */
+	function enumerateMovesForPiece(world, piece) {
+		const moves = [];
+		const type = String(piece.type || '').toUpperCase();
+		const x0 = piece.position.x;
+		const z0 = piece.position.z;
+		const tryTarget = (x, z) => {
+			if (gameManager.chessManager.isValidChessMove(world, piece, x, z)) {
+				moves.push({ x, z });
+			}
+		};
+
+		if (type === 'KING') {
+			for (let dx = -1; dx <= 1; dx++) {
+				for (let dz = -1; dz <= 1; dz++) {
+					if (dx !== 0 || dz !== 0) tryTarget(x0 + dx, z0 + dz);
+				}
+			}
+			return moves;
+		}
+		if (type === 'KNIGHT') {
+			for (const [dx, dz] of KNIGHT_OFFSETS) tryTarget(x0 + dx, z0 + dz);
+			return moves;
+		}
+		if (type === 'PAWN') {
+			// All four compass forwards plus diagonals — orientation
+			// filtering happens inside isValidChessMove, so just probe
+			// the eight near cells and the two-step opener.
+			for (let dx = -1; dx <= 1; dx++) {
+				for (let dz = -1; dz <= 1; dz++) {
+					if (dx !== 0 || dz !== 0) tryTarget(x0 + dx, z0 + dz);
+				}
+			}
+			tryTarget(x0 + 2, z0);
+			tryTarget(x0 - 2, z0);
+			tryTarget(x0, z0 + 2);
+			tryTarget(x0, z0 - 2);
+			return moves;
+		}
+
+		const dirs = [];
+		if (type === 'ROOK' || type === 'QUEEN') dirs.push(...ORTHOGONAL_DIRS);
+		if (type === 'BISHOP' || type === 'QUEEN') dirs.push(...DIAGONAL_DIRS);
+		for (const [dx, dz] of dirs) {
+			for (let step = 1; step <= MAX_ENUMERATED_SLIDE; step++) {
+				const x = x0 + dx * step;
+				const z = z0 + dz * step;
+				if (gameManager.chessManager.isValidChessMove(world, piece, x, z)) {
+					moves.push({ x, z });
+				}
+				// Stop the ray at the first gap or chess piece — slides
+				// can't pass either, so everything beyond is illegal too.
+				const cell = gameManager.boardManager.getCell(world.board, x, z);
+				const isBoard = Array.isArray(cell) && cell.length > 0;
+				if (!isBoard) break;
+				if (cell.some(item => item && item.type === 'chess')) break;
+			}
+		}
+		return moves;
+	}
+
+	function performStrategicChessMove(computerId, kingCaptureService, checkService = null) {
+		const world = World.getWorld();
+		const computerPlayer = World.getPlayer(computerId);
+		if (!world || !computerPlayer) return false;
+
+		const chessPieces = world.chessPieces || [];
+		// Mirror the human chess handler: the ATTACKER PIECE in a
+		// pending check is locked, but the attacker's OTHER pieces
+		// can still move freely — drop it from the candidate set.
+		const lockedPieceId = (world.pendingCheck
+			&& String(world.pendingCheck.attackerId) === String(computerId))
+			? String(world.pendingCheck.attackerPieceId)
+			: null;
+		const ownedPieces = chessPieces.filter(piece =>
+			piece && piece.player === computerId && piece.position
+			&& Number.isFinite(piece.position.x) && Number.isFinite(piece.position.z)
+			&& (lockedPieceId === null || String(piece.id) !== lockedPieceId)
+			// Frozen pawns awaiting promotion can't move (mirrors the
+			// human handler).
+			&& !piece.awaitingPromotion
+		);
+		if (ownedPieces.length === 0) return false;
+
+		// Full candidate list, tagged with whether the move captures.
+		const pieceAt = (x, z) => (world.chessPieces || []).find(p =>
+			p && p.position && p.position.x === x && p.position.z === z
+		);
+		const captures = [];
+		const quiet = [];
+		for (const piece of ownedPieces) {
+			for (const target of enumerateMovesForPiece(world, piece)) {
+				const victim = pieceAt(target.x, target.z);
+				if (victim && String(victim.player) !== String(computerId)) {
+					captures.push({ piece, target });
+				} else {
+					quiet.push({ piece, target });
+				}
+			}
+		}
+		if (captures.length === 0 && quiet.length === 0) return false;
+
+		// Prefer captures (proportional to aggressiveness), otherwise a
+		// random legal quiet move. Shuffle-by-random-pick with removal so
+		// a rejected candidate (e.g. deferred check denied) tries others.
+		const strategy = computerPlayer.strategy || {};
+		const preferCaptures = captures.length > 0
+			&& (quiet.length === 0 || Math.random() < Math.max(0.5, strategy.aggressiveness || 0.5));
+		const pool = preferCaptures ? captures.concat(quiet) : quiet.concat(captures);
+
+		const maxAttempts = Math.min(pool.length, 20);
+		for (let attempt = 0; attempt < maxAttempts; attempt++) {
+			// Take from the front of the ordered pool but with a little
+			// jitter inside the first few entries so bots don't all play
+			// identically.
+			const window = Math.min(pool.length, 4);
+			const pick = Math.floor(Math.random() * window);
+			const { piece, target } = pool.splice(pick, 1)[0];
+
+			const moveResult = applyChessMove(world, piece, target.x, target.z, computerId, { checkService });
+			// Deferred-check responses count as "acted" — the check
+			// service has emitted the warning, and we don't want the
+			// AI's stuck-counter ticking up for this case. Stamp the move
+			// time too so starting a check consumes the AI's turn (H7
+			// parity with the human handler) and the player reads as
+			// active for island-decay purposes.
+			if (moveResult.deferredCheck) {
+				computerPlayer.lastChessMoveAt = Date.now();
+				computerPlayer.moveCount = (computerPlayer.moveCount || 0) + 1;
+				World.markDirty();
+				return true;
+			}
 			if (!moveResult.success) continue;
 
 			computerPlayer.lastChessMoveAt = Date.now();
@@ -191,15 +447,22 @@ function createAiActions({
 			}
 
 			if (moveResult.capturedPiece && moveResult.capturedPiece.type === 'KING' && kingCaptureService) {
-				kingCaptureService.executeKingCapture(computerId, moveResult.capturedPiece.player);
+				// Shared with the human path — records the capture in the
+				// simultaneous-capture window and hands off to a King's
+				// Duel if the defender had just taken this AI's king too.
+				kingCaptureService.resolveKingCapture({
+					captorId: computerId, defeatedId: moveResult.capturedPiece.player,
+				});
 			}
 
 			if (spectatorRegistry) spectatorRegistry.broadcastUpdate(computerId, world);
-			return;
+			return true;
 		}
+		return false;
 	}
 
-	function applyChessMove(world, piece, targetX, targetZ, computerId) {
+	function applyChessMove(world, piece, targetX, targetZ, computerId, { checkService = null } = {}) {
+		const computerPlayer = world.players?.[computerId];
 		const sourceCell = gameManager.boardManager.getCell(world.board, piece.position.x, piece.position.z);
 		if (!sourceCell) return { success: false };
 
@@ -220,6 +483,46 @@ function createAiActions({
 				const target = world.chessPieces.find(
 					p => p && String(p.id) === String(capturedPieceObj.pieceId)
 				);
+				// Deferred king-capture — same flow as the human chess
+				// handler. The AI's move is held back, the king isn't
+				// removed, the defender gets `CHECK_DEADLINE_MS` to
+				// escape. Resolution is handled by `checkService.expireCheck`
+				// (timeout) or `checkService.cancelCheck` (defender moved
+				// out of danger).
+				//
+				// A check window is already open on this king — don't let
+				// the AI skip the queue and instant-capture during the
+				// defender's grace window (Chess-C2 parity with the human
+				// handler). The AI will simply pick another move.
+				if (target && String(target.type || '').toUpperCase() === 'KING'
+					&& checkService && world.pendingCheck
+					&& String(world.pendingCheck.defenderId) === String(target.player)) {
+					return { success: false };
+				}
+
+				// Anti-spam: if this AI piece has used up its grace
+				// deferrals on this king, `startCheck` returns null and
+				// the AI's attack falls through to a normal capture.
+				if (target && String(target.type || '').toUpperCase() === 'KING'
+					&& checkService && !world.pendingCheck) {
+					const started = checkService.startCheck({
+						world,
+						attackerPiece: piece,
+						kingPiece: target,
+						queuedMove: {
+							captorId: computerId,
+							defeatedId: target.player,
+							toX: targetX,
+							toZ: targetZ,
+							attackerPieceId: piece.id,
+						},
+					});
+					if (started) {
+						return { success: false, deferredCheck: true };
+					}
+					// Else: defer denied — proceed with the normal
+					// capture below.
+				}
 				if (target) {
 					capturedPiece = target;
 					capturedPieceSnapshot = {
@@ -240,6 +543,7 @@ function createAiActions({
 						activityLog: gameManager.activityLog || null,
 						capturedBy: {
 							playerId: computerId,
+							playerName: computerPlayer?.name || computerPlayer?.username || computerId,
 							pieceId: piece.id,
 							pieceType: pieces.pieceLabel(piece),
 						},
@@ -270,7 +574,7 @@ function createAiActions({
 		const aiPlayer = world.players?.[computerId];
 		const aiColor = aiPlayer?.color;
 		const targetCellContents = Array.isArray(targetCell)
-			? targetCell.filter(item => item && item.type !== 'chess')
+			? cells.stripAllChessMarkers(targetCell)
 			: [];
 		const aiPreviousOwners = new Set();
 		for (const item of targetCellContents) {
@@ -311,9 +615,33 @@ function createAiActions({
 		let movedPiece = piece;
 		if (pieceIndex !== -1) {
 			movedPiece = world.chessPieces[pieceIndex];
+			// Track net forward progress for the AI's pawns too —
+			// otherwise AI pawns never trigger the promotion freeze.
+			if (movedPiece.type === 'PAWN' && gameManager.chessManager) {
+				gameManager.chessManager.updatePawnForwardDistance(
+					movedPiece,
+					originalPosition.x, originalPosition.z,
+					targetX, targetZ,
+				);
+			}
 			movedPiece.position = { x: targetX, z: targetZ };
 			movedPiece.hasMoved = true;
 			world.chessPieces[pieceIndex] = movedPiece;
+
+			// Freeze at the promotion threshold exactly like a human pawn
+			// (H5). Without this an AI pawn that completes the promotion
+			// walk just keeps marching as an unkillable super-pawn that
+			// never promotes. The marker is already stamped at the target
+			// cell above, so the freeze flag mirrors onto it correctly.
+			if (movedPiece.type === 'PAWN'
+				&& !movedPiece.awaitingPromotion
+				&& (movedPiece.forwardDistance || 0) >= GAME_RULES.PAWN_PROMOTION_DISTANCE) {
+				markPawnAwaitingPromotion(world, computerId, movedPiece, {
+					broadcaster,
+					activityLog: gameManager.activityLog || null,
+					io,
+				});
+			}
 		}
 
 		// AI moves were previously invisible in the activity log; only
@@ -352,6 +680,7 @@ function createAiActions({
 	return {
 		performStrategicTetrominoPlacement,
 		performStrategicChessMove,
+		performCheckEscape,
 	};
 }
 

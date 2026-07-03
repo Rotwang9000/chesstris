@@ -419,23 +419,35 @@ async function activateAdvertiser(transactionSignature) {
 			throw new Error(result.message || 'Failed to activate advertiser');
 		}
 		
-		// Success!
+		const advertiserId = state.advertiserId;
 		elements.paymentStatus.innerHTML = `
 			<div style="text-align: center; padding: 20px;">
-				<div style="font-size: 60px; margin-bottom: 20px;">🎉</div>
-				<h3 style="color: #4ade80; margin-bottom: 12px;">Advertisement Activated!</h3>
-				<p>Your ad is now live and will appear on tetromino tiles.</p>
-				<p style="margin-top: 12px; font-size: 14px; color: #888;">
-					Transaction: <a href="https://explorer.solana.com/tx/${transactionSignature}" target="_blank" style="color: #ffcc00;">${transactionSignature.substring(0, 20)}...</a>
+				<div style="font-size: 60px; margin-bottom: 20px;">⌛</div>
+				<h3 style="color: #ffcc00; margin-bottom: 12px;">Payment received — awaiting review</h3>
+				<p>Your ad is in the moderator queue. We hand-review every ad to keep the game family-friendly. This usually takes less than 24 hours.</p>
+				<p style="margin-top: 16px; padding: 12px; background: rgba(0,0,0,0.3); border-radius: 8px; font-family: monospace; word-break: break-all;">
+					<strong>Advertiser ID:</strong> ${advertiserId}<br>
+					<strong>Transaction:</strong>
+					<a href="https://explorer.solana.com/tx/${transactionSignature}" target="_blank" style="color: #ffcc00;">${transactionSignature.substring(0, 20)}…</a>
 				</p>
-				<a href="/" style="display: inline-block; margin-top: 24px; padding: 12px 24px; background: linear-gradient(135deg, #ffcc00 0%, #e6b800 100%); color: #000; text-decoration: none; border-radius: 6px; font-weight: bold;">
-					Back to Game
-				</a>
+				<p style="margin-top: 12px; font-size: 14px; color: #888;">
+					Keep your Advertiser ID. Sign in with your wallet on
+					<a href="/advertise-manage.html" style="color: #ffcc00;">the manage page</a>
+					at any time to check status or re-upload if rejected.
+				</p>
+				<div style="margin-top: 24px; display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
+					<a href="/advertise-manage.html" style="display: inline-block; padding: 12px 24px; background: linear-gradient(135deg, #ffcc00 0%, #e6b800 100%); color: #000; text-decoration: none; border-radius: 6px; font-weight: bold;">
+						Manage my ads
+					</a>
+					<a href="/" style="display: inline-block; padding: 12px 24px; background: #333; color: #fff; text-decoration: none; border-radius: 6px; font-weight: bold;">
+						Back to game
+					</a>
+				</div>
 			</div>
 		`;
-		
-		elements.submitBtn.textContent = 'Activated ✓';
-		elements.submitBtn.style.background = 'linear-gradient(135deg, #4ade80 0%, #22c55e 100%)';
+
+		elements.submitBtn.textContent = 'Submitted for review';
+		elements.submitBtn.style.background = 'linear-gradient(135deg, #ffcc00 0%, #e6b800 100%)';
 		
 		// Mark all steps as completed
 		steps.forEach(step => {
