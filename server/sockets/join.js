@@ -18,6 +18,7 @@ function registerJoinHandlers(socket, ctx) {
 		persistence,
 		gameManager,
 		missingKingSweep,
+		dormantKingdom,
 	} = ctx;
 
 	socket.on('join_game', (data, callback) => {
@@ -36,6 +37,27 @@ function registerJoinHandlers(socket, ctx) {
 			}
 
 			const worldId = World.getWorldId();
+			const world = World.getWorld();
+			const hasHomeZone = !!(world?.homeZones?.[playerId]);
+
+			// Kingdom was stowed after a long idle spell — don't spawn a
+			// second kingdom on top. The client must choose relocate vs fresh.
+			if (player.stowedKingdom && !hasHomeZone && dormantKingdom) {
+				socket.join(worldId);
+				const summary = dormantKingdom.stowedSummary(player);
+				if (callback) {
+					callback({
+						success: true,
+						gameId: worldId,
+						playerId,
+						playerName: player.name,
+						needsKingdomChoice: true,
+						stowedKingdom: summary,
+						timestamp: Date.now(),
+					});
+				}
+				return;
+			}
 
 			// Funnel: no home zone yet = this is their first entry into the
 			// world (registerPlayer creates one below). Reconnects skip this.

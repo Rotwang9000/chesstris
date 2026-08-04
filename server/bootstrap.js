@@ -38,6 +38,7 @@ const { createHomeZoneDegradationService } = require('./world/homeZones');
 const { createLifecycleService } = require('./world/lifecycle');
 const { createWorldGravityService, GRAVITY_TICK_MS } = require('./world/gravity');
 const { createGhostPlayerSweepService } = require('./world/ghostPlayerSweep');
+const { createDormantKingdomService } = require('./world/dormantKingdom');
 const { createPauseService } = require('./world/pause');
 const { createBoatManager } = require('./world/boats');
 const advertisersRouter = require('../routes/advertisers');
@@ -65,6 +66,7 @@ const WORLD_INTEGRITY_CHECK_MS = 10000;
 const BATTLE_REGION_MIN_DISTANCE = 1500;
 const LONE_KING_SWEEP_MS = 15000;
 const GHOST_PLAYER_SWEEP_MS = 20000;
+const DORMANT_KINGDOM_CHECK_MS = 30 * 60 * 1000;
 const POWER_UP_TICK_MS = 45000;
 const METRICS_TICK_MS = 5000;
 
@@ -339,6 +341,13 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		activityLog,
 	});
 
+	const dormantKingdom = createDormantKingdomService({
+		gameManager,
+		broadcaster,
+		persistence,
+		integrityService,
+	});
+
 	const battleManager = createBattleManager({
 		gameManager,
 		aiRunner,
@@ -368,6 +377,14 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 	// other player". Has to happen BEFORE ensureRoster so the topped-up
 	// AI roster doesn't get its slots stolen by ghost AI records.
 	ghostPlayerSweep.reapImmediately();
+	try {
+		const dormantBoot = dormantKingdom.stowImmediately();
+		if (dormantBoot.stowed?.length > 0) {
+			console.log(`[Startup] Stowed ${dormantBoot.stowed.length} dormant kingdom(s).`);
+		}
+	} catch (err) {
+		console.warn('[Startup] Dormant-kingdom boot sweep failed:', err.message);
+	}
 	aiRunner.ensureRoster();
 	integrityService.processWorldIntegrityMaintenance({ emitAnimation: false, broadcast: false });
 
@@ -441,6 +458,7 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		boatManager,
 		missingKingSweep,
 		battleManager,
+		dormantKingdom,
 		getBundleVersion: app._getBundleVersion || (() => ''),
 	});
 	io.on('connection', socket => {
@@ -462,6 +480,10 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		setInterval(() => worldGravity.tick(), GRAVITY_TICK_MS),
 		setInterval(() => loneKingSweep.tick(), LONE_KING_SWEEP_MS),
 		setInterval(() => ghostPlayerSweep.tick(), GHOST_PLAYER_SWEEP_MS),
+		setInterval(() => {
+			try { dormantKingdom.tick(); }
+			catch (err) { logger.warn({ err: err.message }, 'dormant kingdom tick failed'); }
+		}, DORMANT_KINGDOM_CHECK_MS),
 		// Continuously trim duplicate AI players (e.g. when respawn
 		// races leave extra "AI Standard" littering the board). Cheap
 		// enough to run at the same cadence as the ghost sweep.

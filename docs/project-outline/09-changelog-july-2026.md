@@ -507,6 +507,31 @@ Headless probe (`scripts/ui-probe.mjs`, kept) verified colours, fan
 layout, glare and toast text visually. Full suite: 61 suites / 662 tests
 green.
 
+### Dormant kingdom stow + 2D chess-phase fixes (8 Jul 2026)
+
+**Why old kingdoms lingered:** home-zone degradation only strips home
+*markers* after ~5 minutes offline — pieces and terrain stay. Island
+decay only eats *disconnected* islands (10–15 min), not a king-linked
+kingdom. Disconnect grace deliberately no longer deletes players. There
+was no longer-term stow.
+
+* **Dormant sweep (`server/world/dormantKingdom.js` NEW).** After
+  **24 h** with no placement or chess move (`getLatestPlayerActionAt`,
+  not socket connects), an offline human's footprint is lifted into
+  `player.stowedKingdom` and removed from the board. AI, paused players
+  and battle seats are exempt. Runs every 30 min + at boot.
+* **Restore on return (`restore_kingdom` socket, `kingdomRestoreDialog.js`).**
+  `join_game` returns `needsKingdomChoice` when a stash exists. The
+  player picks **Restore nearby** (transplant cells/pieces to a fresh
+  home slot) or **Start fresh** (discard stash, normal spawn).
+* **Lite mode chess phase (`liteMode.js`).** After each tetromino
+  placement the client enters a chess phase (matching 3D): placement
+  blocked until a move or **Skip chess**. **Z** / **X** / **R** rotate.
+  King nameplate black bars removed (the “artifact”). Degraded-home
+  cells render muted.
+
+Tests: 63 suites / 690 green (`dormantKingdom.test.js`).
+
 ## 3 July — Feature drop: pinwheel arenas, multi-battle, camera warp, bot pacing, 2D lite mode
 
 **Five player requests in one sweep: staggered battle formations, swapping

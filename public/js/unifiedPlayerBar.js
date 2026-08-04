@@ -826,6 +826,45 @@ export function hidePlayerBar() {
 }
 
 /**
+ * Compact activity label for the player roster.
+ * Replaces the unused score badge that always rendered "0".
+ */
+function formatPlayerActivity(playerInfo) {
+	if (playerInfo?.isComputer) {
+		return {
+			label: 'AI',
+			title: 'Computer opponent',
+			colour: '#9ab',
+		};
+	}
+	const at = Number(playerInfo?.lastActionAt) || 0;
+	if (!at) {
+		return {
+			label: 'idle',
+			title: 'No recent activity recorded',
+			colour: '#888',
+		};
+	}
+	const ageMs = Math.max(0, Date.now() - at);
+	const minute = 60 * 1000;
+	const hour = 60 * minute;
+	const day = 24 * hour;
+	let label;
+	if (ageMs < 2 * minute) label = 'now';
+	else if (ageMs < hour) label = `${Math.max(1, Math.round(ageMs / minute))}m`;
+	else if (ageMs < day) label = `${Math.max(1, Math.round(ageMs / hour))}h`;
+	else label = `${Math.max(1, Math.round(ageMs / day))}d`;
+
+	const colour = ageMs < 5 * minute ? '#7d7'
+		: ageMs < hour ? '#fc6'
+		: '#888';
+	const title = playerInfo.online
+		? `Last action ${label} ago (connected)`
+		: `Last action ${label} ago`;
+	return { label, title, colour };
+}
+
+/**
  * Add a player to the player bar
  */
 function addPlayerToBar(playerBar, playerId, playerInfo, gameState) {
@@ -1076,20 +1115,26 @@ function addPlayerToBar(playerBar, playerId, playerInfo, gameState) {
 		playerElement.appendChild(creditDisplay);
 	}
 
-	// Add score if available
-	if (playerInfo.score !== undefined) {
-		const scoreDisplay = document.createElement('div');
-		scoreDisplay.textContent = `${playerInfo.score}`;
-		Object.assign(scoreDisplay.style, {
+	// Activity age — replaces the unused score badge that always showed
+	// "0" (scoring was never wired on the server). Green = recently
+	// active; amber = idle-ish; grey = long away / never moved.
+	const activity = formatPlayerActivity(playerInfo);
+	if (activity) {
+		const activityDisplay = document.createElement('div');
+		activityDisplay.textContent = activity.label;
+		activityDisplay.title = activity.title;
+		Object.assign(activityDisplay.style, {
 			marginLeft: 'auto',
 			fontWeight: 'bold',
-			color: '#ffcc00',
-			fontSize: '16px',
+			color: activity.colour,
+			fontSize: '11px',
 			padding: '2px 6px',
 			borderRadius: '3px',
-			backgroundColor: 'rgba(0,0,0,0.3)'
+			backgroundColor: 'rgba(0,0,0,0.3)',
+			letterSpacing: '0.3px',
+			whiteSpace: 'nowrap',
 		});
-		playerElement.appendChild(scoreDisplay);
+		playerElement.appendChild(activityDisplay);
 	}
 	
 	// Add hover events for piece highlighting
@@ -1258,7 +1303,7 @@ export function updateUnifiedPlayerBar(gameState) {
 		currentHash = Object.keys(gameState.players).map(playerId => {
 			const player = gameState.players[playerId];
 			if (!player) return '';
-			return `${playerId}-${player.name || ''}-${player.score || 0}-${player.isActive ? 1 : 0}-${player.eliminated ? 1 : 0}-${player.paused ? 1 : 0}-${player.color || ''}-${player.capturedCount || 0}`;
+			return `${playerId}-${player.name || ''}-${player.lastActionAt || 0}-${player.isActive ? 1 : 0}-${player.eliminated ? 1 : 0}-${player.paused ? 1 : 0}-${player.color || ''}-${player.capturedCount || 0}-${player.online ? 1 : 0}`;
 		}).sort().join('|');
 
 		// Add current player + frozen-pawn signature to hash so the
@@ -1323,6 +1368,7 @@ export function updateUnifiedPlayerBar(gameState) {
 	// would also bias the spawn algorithm towards dead-king coords.
 	if (gameState.players && Object.keys(gameState.players).length > 0) {
 		const activeBattleId = gameState.activeBattle?.id || null;
+		const allPieces = Array.isArray(gameState.chessPieces) ? gameState.chessPieces : [];
 		const visibleIds = Object.keys(gameState.players).filter(pid => {
 			const player = gameState.players[pid];
 			if (!player) return false;
@@ -1338,7 +1384,13 @@ export function updateUnifiedPlayerBar(gameState) {
 			} else if (player.battleId) {
 				return false;
 			}
-			return !player.eliminated;
+			if (player.eliminated) return false;
+			// Hide empty ghost identities (other tabs / abandoned cookies
+			// with no pieces). Pauline/Donkey/Moon-style multi-device
+			// ghosts were cluttering the roster next to real kingdoms.
+			const hasPieces = allPieces.some(p => p && String(p.player) === String(pid));
+			if (!hasPieces) return false;
+			return true;
 		});
 		console.log('Players in game state:', Object.keys(gameState.players).length,
 			'visible:', visibleIds.length);
@@ -1347,7 +1399,6 @@ export function updateUnifiedPlayerBar(gameState) {
 			if (b === localPlayerId) return 1;
 			return 0;
 		});
-		const allPieces = Array.isArray(gameState.chessPieces) ? gameState.chessPieces : [];
 		sortedIds.forEach(playerId => {
 			const player = gameState.players[playerId];
 			if (!player) return;
@@ -1365,7 +1416,10 @@ export function updateUnifiedPlayerBar(gameState) {
 				{
 					name: player.name || `Player ${playerId.substring(0, 6)}`,
 					color: player.color,
-					score: player.score || 0,
+					isComputer: !!player.isComputer,
+					lastActionAt: player.lastActionAt || 0,
+					online: !!player.online,
+					moveCount: player.moveCount || 0,
 					capturedCount: player.capturedCount || 0,
 					capturedSummary: player.capturedSummary || {},
 					frozenPawns,

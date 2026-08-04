@@ -16,6 +16,7 @@ function registerLifecycleHandlers(socket, ctx) {
 		aiRunner,
 		spectatorRegistry,
 		pauseService,
+		dormantKingdom,
 	} = ctx;
 
 	// ── Dev-only stress spawner ──────────────────────────────────────
@@ -171,6 +172,43 @@ function registerLifecycleHandlers(socket, ctx) {
 			const status = pauseService.getStatus(playerId);
 			if (callback) callback({ success: true, status: status || null });
 		} catch (err) {
+			if (callback) callback({ success: false, error: 'server_error' });
+		}
+	});
+
+	socket.on('restore_kingdom', (data, callback) => {
+		try {
+			if (!dormantKingdom) {
+				if (callback) callback({ success: false, error: 'restore_unavailable' });
+				return;
+			}
+			const mode = data?.mode === 'fresh' ? 'fresh' : 'relocate';
+			const player = World.getPlayer(playerId);
+			if (!player?.stowedKingdom) {
+				if (callback) callback({ success: false, error: 'no_stowed_kingdom' });
+				return;
+			}
+			const result = dormantKingdom.restorePlayer(playerId, mode, player.name);
+			if (!result || !result.success) {
+				if (callback) callback({ success: false, error: result?.error || 'restore_failed' });
+				return;
+			}
+			const worldId = World.getWorldId();
+			socket.join(worldId);
+			broadcaster.emitFullStateTo(socket);
+			broadcaster.broadcastGameUpdate({ forceFullUpdate: true });
+			if (callback) {
+				callback({
+					success: true,
+					mode,
+					relocateFallback: !!result.relocateFallback,
+					relocated: result.relocated || null,
+					homeZone: result.homeZone || null,
+					gameState: broadcaster.buildGameStatePayload(),
+				});
+			}
+		} catch (err) {
+			console.error('Error handling restore_kingdom:', err);
 			if (callback) callback({ success: false, error: 'server_error' });
 		}
 	});

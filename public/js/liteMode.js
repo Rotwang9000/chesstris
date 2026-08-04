@@ -24,6 +24,7 @@ import { initBattleMode, enterBattleFlow, inviteCodeFromUrl } from './battle/bat
 import { isCellVisibleInCurrentView } from './battle/battleRules.js';
 import { getPlayerColor } from './boardFunctions/colours.js';
 import { TETROMINO_SHAPES } from './tetromino/shapes.js';
+import { showKingdomRestoreDialog } from './kingdomRestoreDialog.js';
 
 const LITE = Object.freeze({
 	CELL_PX: 26,          // pixels per cell at zoom 1
@@ -58,6 +59,7 @@ let selectedPieceId = null;
 let ghost = null;            // { type, rotation }
 let tetrominoBag = [];
 let placementBusy = false;
+let skipChessBtn = null;
 
 // ── Shapes ──────────────────────────────────────────────────────────────────
 
@@ -105,12 +107,34 @@ function cssColour(value, fallback = '#888888') {
 
 function colourForItem(item) {
 	if (!item) return '#d8d2c0';
+	if (item.fromHomeZone === true || item.pieceType === 'home_converted') {
+		return 'rgba(180, 170, 150, 0.72)';
+	}
 	if (typeof item.color === 'string') return item.color;   // battle ring etc.
 	if (item.player) {
 		const context = item.type === 'home' ? 'home' : 'tetromino';
 		return cssColour(getPlayerColor(item.player, gameState, context));
 	}
 	return '#d8d2c0';
+}
+
+function rotateGhost(direction = 1) {
+	if (!ghost || gameState.turnPhase === 'chess') return;
+	ghost.rotation = (ghost.rotation + direction + 4) % 4;
+	updateHud();
+}
+
+function enterChessPhase() {
+	gameState.turnPhase = 'chess';
+	selectedPieceId = null;
+	updateHud();
+}
+
+function enterTetrisPhase() {
+	gameState.turnPhase = 'tetris';
+	selectedPieceId = null;
+	if (!ghost) drawNextGhost();
+	else updateHud();
 }
 
 // ── Coordinate transforms ───────────────────────────────────────────────────
@@ -168,9 +192,13 @@ function render() {
 		const z = Number(zs);
 		if (x < minX || x > maxX || z < minZ || z > maxZ) continue;
 		if (!isCellVisibleInCurrentView(gameState, x, z)) continue;
-		const item = contents.find(i => i && (i.type === 'home' || i.color)) || contents[0];
+		const item = contents.find(i => i && i.type === 'home')
+			|| contents.find(i => i && i.fromHomeZone)
+			|| contents.find(i => i && (i.type === 'home' || i.color))
+			|| contents[0];
+		const degraded = contents.some(i => i && (i.fromHomeZone === true || i.pieceType === 'home_converted'));
 		const { px, py } = cellToScreen(x, z);
-		drawRoundedCell(px, py, view.scale, colourForItem(item));
+		drawRoundedCell(px, py, view.scale, colourForItem(item), degraded ? 0.72 : 1);
 	}
 
 	// Grid (only when zoomed in enough for it to help).
@@ -235,22 +263,10 @@ function render() {
 		ctx.strokeText(glyph, px, py);
 		ctx.fillStyle = colour;
 		ctx.fillText(glyph, px, py);
-
-		if (String(piece.type).toUpperCase() === 'KING' && view.scale >= 10) {
-			const name = gameState.players?.[piece.player]?.name || '';
-			if (name) {
-				ctx.font = `bold ${Math.max(10, Math.round(view.scale * 0.4))}px ${LITE.FONT}`;
-				ctx.fillStyle = 'rgba(0,0,0,0.72)';
-				const w = ctx.measureText(name).width + 8;
-				ctx.fillRect(px - w / 2, py - view.scale * 1.15 - 8, w, Math.max(14, view.scale * 0.5));
-				ctx.fillStyle = '#ffcc00';
-				ctx.fillText(name, px, py - view.scale * 0.9);
-			}
-		}
 	}
 
-	// Tetromino ghost under the pointer (build mode).
-	if (ghost && playing && !selectedPieceId) {
+	// Tetromino ghost under the pointer (build mode only).
+	if (ghost && playing && gameState.turnPhase !== 'chess' && !selectedPieceId) {
 		const matrix = shapeFor(ghost.type, ghost.rotation);
 		const colour = cssColour(getPlayerColor(
 			gameState.localPlayerId || 'me', gameState, 'tetromino'));
@@ -316,14 +332,30 @@ async function submitChessMove(piece, x, z) {
 	try {
 		await NetworkManager.submitChessMove({ pieceId: piece.id, targetPosition: { x, z } });
 		selectedPieceId = null;
+		enterTetrisPhase();
+		showToastMessage('Chess move made — place your next piece', { variant: 'success' });
 		updateHud();
 	} catch (err) {
 		showToastMessage(err?.details?.message || err?.message || 'Move rejected', { variant: 'alert' });
 	}
 }
 
+async function skipChessMove() {
+	try {
+		const response = await NetworkManager.sendMessage('skip_chess_move', {});
+		if (response?.success === false) {
+			showToastMessage(response?.message || response?.error || 'Could not skip chess', { variant: 'alert' });
+			return;
+		}
+		enterTetrisPhase();
+		showToastMessage('Chess skipped — place your next piece');
+	} catch (err) {
+		showToastMessage(err?.message || 'Could not skip chess', { variant: 'alert' });
+	}
+}
+
 async function submitPlacement(x, z) {
-	if (!ghost || placementBusy) return;
+	if (!ghost || placementBusy || gameState.turnPhase === 'chess') return;
 	placementBusy = true;
 	try {
 		const result = await NetworkManager.submitTetrominoPlacement({
@@ -334,6 +366,10 @@ async function submitPlacement(x, z) {
 		});
 		if (result && result.success !== false) {
 			drawNextGhost();
+			// Mirror the 3D client: after a placement you owe a chess move
+			// unless the server later says there are none.
+			enterChessPhase();
+			showToastMessage('Make your chess move (or Skip)', { variant: 'success' });
 		} else {
 			showToastMessage(result?.message || 'Placement rejected', { variant: 'alert' });
 		}
@@ -361,6 +397,7 @@ function handleClick(px, py) {
 		if (piece) submitChessMove(piece, x, z);
 		return;
 	}
+	if (gameState.turnPhase === 'chess') return;
 	submitPlacement(x, z);
 }
 
@@ -405,9 +442,14 @@ function wireCanvasInput() {
 
 	window.addEventListener('keydown', (e) => {
 		if (e.target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
-		switch (e.key.toLowerCase()) {
+		const key = e.key.toLowerCase();
+		switch (key) {
 			case 'r':
-				if (ghost) { ghost.rotation = (ghost.rotation + 1) % 4; updateHud(); }
+			case 'x':
+				rotateGhost(1);
+				break;
+			case 'z':
+				rotateGhost(-1);
 				break;
 			case 'escape':
 				selectedPieceId = null;
@@ -437,10 +479,16 @@ let hudPieceCanvas = null;
 let hudStatus = null;
 
 function updateHud() {
+	const inChess = gameState.turnPhase === 'chess';
 	if (hudStatus) {
 		hudStatus.textContent = selectedPieceId
 			? 'Chess: click a destination (Esc cancels)'
-			: (playing ? 'Click board to place — R rotates' : 'Spectating');
+			: (inChess
+				? 'Chess phase — click your piece, then a square (or Skip)'
+				: (playing ? 'Click board to place — Z/X or R rotates' : 'Spectating'));
+	}
+	if (skipChessBtn) {
+		skipChessBtn.style.display = inChess ? 'inline-block' : 'none';
 	}
 	if (hudPieceCanvas && ghost) {
 		const pctx = hudPieceCanvas.getContext('2d');
@@ -475,10 +523,14 @@ function buildHud(container) {
 	const rotateBtn = el('button',
 		'padding:6px 10px;background:#333;color:#ffcc00;border:1px solid #ffcc00;'
 		+ 'border-radius:4px;cursor:pointer;font-family:inherit;', '↻ Rotate (R)');
-	rotateBtn.addEventListener('click', () => {
-		if (ghost) { ghost.rotation = (ghost.rotation + 1) % 4; updateHud(); }
-	});
+	rotateBtn.addEventListener('click', () => rotateGhost(1));
 	hud.appendChild(rotateBtn);
+
+	skipChessBtn = el('button',
+		'padding:6px 10px;background:#333;color:#ffcc00;border:1px solid #ffcc00;'
+		+ 'border-radius:4px;cursor:pointer;font-family:inherit;display:none;', 'Skip chess');
+	skipChessBtn.addEventListener('click', () => skipChessMove());
+	hud.appendChild(skipChessBtn);
 
 	const battleBtn = el('button',
 		'padding:6px 10px;background:#333;color:#ffcc00;border:1px solid #ffcc00;'
@@ -611,6 +663,19 @@ function hideWelcome() {
 	updateHud();
 }
 
+function showKingdomChoiceOverlay(summary) {
+	showKingdomRestoreDialog(summary, {
+		onComplete: (response) => {
+			if (response.gameState) applyGameUpdate(response.gameState);
+			joinedWorld = true;
+			playing = true;
+			enterTetrisPhase();
+			hideWelcome();
+			setTimeout(() => centreOnPlayerKing(gameState.localPlayerId), 600);
+		},
+	});
+}
+
 function showWelcome() {
 	const overlay = document.getElementById('lite-welcome');
 	if (overlay) overlay.style.display = 'flex';
@@ -629,6 +694,14 @@ async function connectAndSpectate() {
 		});
 		NetworkManager.on('chessFailed', (data) => {
 			if (data?.message) showToastMessage(data.message, { variant: 'alert' });
+		});
+		NetworkManager.on('no_valid_chess_moves', (data) => {
+			if (String(data?.playerId) !== String(gameState.localPlayerId)) return;
+			enterTetrisPhase();
+			showToastMessage('No chess moves — place your next piece');
+		});
+		NetworkManager.on('new_tetromino', () => {
+			enterTetrisPhase();
 		});
 		const socket = NetworkManager.getSocket();
 		if (socket) {
@@ -653,8 +726,14 @@ async function joinWorld() {
 		const result = await NetworkManager.joinGame();
 		if (!result || !result.gameId) throw new Error('join_game gave no game id');
 		if (result.playerId) gameState.localPlayerId = result.playerId;
+		if (result.needsKingdomChoice) {
+			hideWelcome();
+			showKingdomChoiceOverlay(result.stowedKingdom);
+			return true;
+		}
 		joinedWorld = true;
 		playing = true;
+		enterTetrisPhase();
 		setTimeout(() => centreOnPlayerKing(gameState.localPlayerId), 800);
 		return true;
 	} catch (err) {
@@ -728,6 +807,7 @@ export async function initLiteMode({ reason = '' } = {}) {
 	gameState.players = gameState.players || {};
 	gameState.chessPieces = gameState.chessPieces || [];
 	gameState.liteMode = true;
+	gameState.turnPhase = 'tetris';
 	// Same global the 3D client exposes — debug console + UI helpers rely on it.
 	window.gameState = gameState;
 

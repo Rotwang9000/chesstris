@@ -70,6 +70,37 @@ const PIECE_TYPE_WEIGHTS = Object.freeze({
 	QUEEN: 5,
 });
 
+// Soft caps so long-running AI bots don't vacuum every pawn orb into
+// a 100-piece army. Humans are uncapped — power-ups are their reward
+// loop. AI Expert had accumulated 96 pawns + 57 other pieces after
+// weeks of continuous claiming with no ceiling.
+const AI_MAX_TOTAL_PIECES = 32;
+const AI_MAX_PAWNS = 16;
+
+function countPlayerPieces(world, playerId) {
+	const counts = { total: 0, pawns: 0 };
+	if (!Array.isArray(world?.chessPieces)) return counts;
+	const pid = String(playerId);
+	for (const piece of world.chessPieces) {
+		if (!piece || String(piece.player) !== pid) continue;
+		counts.total += 1;
+		if (String(piece.type || '').toUpperCase() === 'PAWN') counts.pawns += 1;
+	}
+	return counts;
+}
+
+/** True when an AI claimant should leave this orb for someone else. */
+function aiShouldSkipOrb(world, playerId, pieceType) {
+	const player = world?.players?.[playerId];
+	if (!player || !player.isComputer) return false;
+	const counts = countPlayerPieces(world, playerId);
+	if (counts.total >= AI_MAX_TOTAL_PIECES) return true;
+	if (String(pieceType || '').toUpperCase() === 'PAWN' && counts.pawns >= AI_MAX_PAWNS) {
+		return true;
+	}
+	return false;
+}
+
 function createPowerUpManager({
 	io,
 	broadcaster,
@@ -319,6 +350,16 @@ function createPowerUpManager({
 			&& normalizeCoord(o.z) === cellZ);
 		if (idx < 0) return null;
 		const orb = orbs[idx];
+
+		// AI soft-cap: consume the orb without awarding so it doesn't
+		// linger under AI territory, and so a mega-army stops vacuuming
+		// every spawn. Humans remain uncapped.
+		if (aiShouldSkipOrb(world, playerId, orb.pieceType)) {
+			orbs.splice(idx, 1);
+			persistence.markDirty();
+			return { orb, piece: null, skipped: true };
+		}
+
 		orbs.splice(idx, 1);
 
 		const piece = pieces.addPiece(world, {
@@ -393,7 +434,7 @@ function createPowerUpManager({
 		const claimed = [];
 		for (const orb of candidates) {
 			const outcome = tryClaimAtCell(world, playerId, orb.x, orb.z);
-			if (outcome) claimed.push(outcome);
+			if (outcome && outcome.piece) claimed.push(outcome);
 		}
 		return claimed;
 	}
@@ -424,6 +465,8 @@ function createPowerUpManager({
 		MAX_SPAWN_DISTANCE,
 		MAX_TOTAL_ORBS,
 		MAX_ACTIVE_ORBS_PER_PLAYER,
+		AI_MAX_TOTAL_PIECES,
+		AI_MAX_PAWNS,
 		// Helpers usable from tests; not part of the public lifecycle.
 		_internals: {
 			pickTargetPlayer,
@@ -434,6 +477,8 @@ function createPowerUpManager({
 			pruneExpired,
 			trySpawnOne,
 			countPiecesByPlayer,
+			aiShouldSkipOrb,
+			countPlayerPieces,
 		},
 	};
 }
@@ -445,4 +490,6 @@ module.exports = {
 	SPAWN_TICK_MS,
 	MIN_SPAWN_DISTANCE,
 	MAX_SPAWN_DISTANCE,
+	AI_MAX_TOTAL_PIECES,
+	AI_MAX_PAWNS,
 };
