@@ -449,15 +449,18 @@ function createAiRunner({
 				}
 			}
 
-			// 2. Cap total army size (never remove the king).
+			// 2. Cap total army size (never remove the king). Prefer
+			// power-up spawns (`piece-*` ids) and pieces farthest from
+			// the king. Do NOT prefer pawns here — step 1 already capped
+			// them, and wiping the pawn row left bots without a front line.
 			let live = owned();
 			while (live.length > AI_MAX_TOTAL_PIECES) {
 				const candidates = live
 					.filter(p => String(p.type || '').toUpperCase() !== 'KING')
 					.sort((a, b) => {
-						const aPawn = String(a.type || '').toUpperCase() === 'PAWN' ? 0 : 1;
-						const bPawn = String(b.type || '').toUpperCase() === 'PAWN' ? 0 : 1;
-						if (aPawn !== bPawn) return aPawn - bPawn;
+						const aPu = String(a.id || '').startsWith('piece-') ? 0 : 1;
+						const bPu = String(b.id || '').startsWith('piece-') ? 0 : 1;
+						if (aPu !== bPu) return aPu - bPu;
 						return dist(b) - dist(a);
 					});
 				const drop = candidates[0];
