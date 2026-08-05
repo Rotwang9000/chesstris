@@ -28,6 +28,7 @@ const {
 	checkForThreatenedPieces,
 	isKingExposed,
 	hasAttackOpportunity,
+	hasEnemyInTheatre,
 } = require('./strategy');
 
 const TICK_CHECK_MS = 1000;
@@ -196,7 +197,13 @@ function createAiRunner({
 		} else if (isKingExposed(world, computerId) && Math.random() < strategy.kingProtection) {
 			actionType = 'tetromino';
 		} else if (hasAttackOpportunity(world, computerId) && Math.random() < strategy.aggressiveness) {
+			// Enemy inside huntRadius — march pieces (Expert: ≤10 cells).
 			actionType = 'chess';
+		} else if (hasEnemyInTheatre(world, computerId)
+			&& Math.random() < Math.max(0.35, strategy.explorationRate || 0.5)) {
+			// Bridge toward distant kingdoms more often than farm locally.
+			// Mix build + advance so terrain and pieces keep pace.
+			actionType = Math.random() < 0.55 ? 'tetromino' : 'chess';
 		} else {
 			actionType = Math.random() < strategy.buildSpeed ? 'tetromino' : 'chess';
 		}
@@ -493,7 +500,10 @@ function createAiRunner({
 		// the BattleManager re-arms their tickers after a restart.
 		const existingAi = World.listComputerPlayers().filter(ai => !ai.battleId);
 		for (const ai of existingAi) {
-			if (!ai.strategy) ai.strategy = generateComputerStrategy(ai.difficulty || 'medium');
+			// Always refresh profiles so live Expert picks up huntRadius /
+			// explorationRate retunes after a deploy (persisted strategy
+			// objects otherwise keep the old farm-heavy numbers).
+			ai.strategy = generateComputerStrategy(ai.difficulty || 'medium');
 			// Stale `pendingRespawn` from before a restart would keep the
 			// AI inert forever. The respawn setTimeout is gone, so reset
 			// it now — `performComputerAction` will respawn properly if
