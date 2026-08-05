@@ -193,7 +193,15 @@ export function initGame(container, options = {}) {
 		scene.fog = new THREE.Fog(0xC5F0FF, 60, 150);
 		setScene(scene);
 
-		const camera = new THREE.PerspectiveCamera(50, containerWidth / containerHeight, 0.1, 1000);
+		// Near plane at 1.0, not the reflexive 0.1. Depth-buffer precision
+		// is dominated by the near plane, and mobile/tablet GPUs often hand
+		// out a 16-bit depth buffer where a 0.1 near plane leaves coplanar
+		// surfaces (the sea at y=-0.50 vs the foam discs at y=-0.45 under
+		// every cell) inside the same depth bucket — they then z-fight and
+		// shimmer as the camera orbits. Orbit `minDistance` is 8, so
+		// nothing the player can look at ever gets within 1 unit of the
+		// camera and nothing is clipped by the change.
+		const camera = new THREE.PerspectiveCamera(50, containerWidth / containerHeight, 1, 1000);
 		camera.position.set(20, 25, 20);
 		camera.lookAt(0, 0, 0);
 		setCamera(camera);

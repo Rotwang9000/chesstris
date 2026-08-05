@@ -65,7 +65,10 @@ export function setCameraToOverview(camera, controls, gameState) {
 
 const CAMERA_DEFAULTS = {
 	FOV: 50,
-	NEAR: 0.1,
+	// Keep in sync with the camera built in `enhanced-gameCore.initGame`
+	// — a near plane of 1 (not 0.1) is what keeps the depth buffer
+	// precise enough on 16-bit mobile depth buffers.
+	NEAR: 1,
 	FAR: 1000,
 	MIN_DISTANCE: 8,
 	MAX_DISTANCE: 80,

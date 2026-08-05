@@ -10,6 +10,30 @@ import { getTHREE } from './gameContext.js';
 const WEBGL_CONTEXT_TYPES = ['webgl2', 'webgl', 'experimental-webgl'];
 
 /**
+ * Shader precision — `highp` on every profile, deliberately.
+ *
+ * Desktop GPUs silently execute mediump/lowp at full precision, so the
+ * old `mediump` (normal) / `lowp` (cute) hints cost nothing there. On
+ * tablet and phone GPUs those hints are REAL: mediump is a 16-bit half
+ * float, and three r132 injects the precision qualifier into the VERTEX
+ * shader as well as the fragment shader. Half floats carry ~3 decimal
+ * digits, so at the world coordinates this game actually uses — home
+ * zones sit ~100 cells from the origin, battle arenas thousands — the
+ * position quantum grows to a noticeable fraction of a cell (and to
+ * whole units out at the arenas). Every camera move re-rounds each
+ * vertex to a different quantum, which is exactly the "all the cells
+ * vibrate when I spin the view on a tablet" report: geometry snapping
+ * between quantised positions many times a second.
+ *
+ * `highp` is guaranteed available in vertex shaders on all WebGL
+ * hardware, and three downgrades automatically if a device can't do
+ * highp in fragment shaders — so this is safe everywhere. The cute
+ * profile still saves its frame time through pixel ratio, no
+ * antialiasing and shadows-off, none of which touch precision.
+ */
+const SHADER_PRECISION = 'highp';
+
+/**
  * Apply standard configuration to a renderer instance.
  */
 export function configureRenderer(rendererInstance, isCute, containerWidth, containerHeight) {
@@ -57,7 +81,7 @@ export function createRendererWithFallback(isCute, containerWidth, containerHeig
 				antialias: !isCute,
 				alpha: true,
 				powerPreference: isCute ? 'low-power' : 'high-performance',
-				precision: isCute ? 'lowp' : 'mediump'
+				precision: SHADER_PRECISION
 			}
 		},
 		{
@@ -68,7 +92,7 @@ export function createRendererWithFallback(isCute, containerWidth, containerHeig
 				stencil: false,
 				depth: true,
 				powerPreference: 'low-power',
-				precision: 'lowp',
+				precision: SHADER_PRECISION,
 				failIfMajorPerformanceCaveat: false
 			}
 		},
@@ -80,7 +104,7 @@ export function createRendererWithFallback(isCute, containerWidth, containerHeig
 				stencil: false,
 				depth: true,
 				powerPreference: 'default',
-				precision: 'lowp',
+				precision: SHADER_PRECISION,
 				failIfMajorPerformanceCaveat: false
 			}
 		}
@@ -137,7 +161,7 @@ export function createRendererWithFallback(isCute, containerWidth, containerHeig
 			antialias: false,
 			alpha: false,
 			powerPreference: 'low-power',
-			precision: 'lowp'
+			precision: SHADER_PRECISION
 		});
 		configureRenderer(manualRenderer, isCute, containerWidth, containerHeight);
 		return { renderer: manualRenderer, strategy: `manual-${contextType}` };

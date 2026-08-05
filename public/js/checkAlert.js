@@ -24,6 +24,9 @@
 import { flyToPosition } from './setupCamera.js';
 import { getCamera, getControls, getRenderer, getScene, getGameState, getTHREE } from './gameContext.js';
 import { translatePosition } from './centreBoardMarker.js';
+import { clearChessSelection, clearStaleChessSelection } from './chessInteraction.js';
+import { showToastMessage } from './showToastMessage.js';
+import { updateGameStatusDisplay } from './createLoadingIndicator.js';
 
 function playCheckSound(name) {
 	// `playSound` is a global (non-module) helper attached by the
@@ -171,6 +174,60 @@ function flyCameraToKing(pendingCheck) {
 	} catch (e) {
 		console.warn('[Check] camera fly failed:', e);
 	}
+}
+
+// ── Defender's escape window ────────────────────────────────────────────────
+//
+// The check gives the defender ONE move to save their king — but the
+// client's turn phase is local state, and a check almost always lands
+// while they're mid-drop in the tetris phase. In that phase
+// `selectChessPiece` refuses to select anything and `performRaycast`
+// returns early, so the defender watched the countdown run out unable
+// to touch their king ("I was put in check but I couldn't seem to do
+// anything about it"). The server has no notion of turn phase and
+// accepts the escape move whenever it arrives, so the fix is purely
+// client-side: open the chess phase for the duration of the check and
+// put them back afterwards.
+//
+// Their tetromino is already frozen in place while the check is live
+// (`gameLoop.tickTetrominoAutoFall` pauses auto-fall for the defender),
+// so nothing is lost by pausing the drop — it resumes on resolution.
+
+/** Phase the defender was in when we forced the chess phase (or null). */
+let phaseBeforeCheck = null;
+
+function unlockChessForDefender() {
+	const gameState = getGameState();
+	if (!gameState) return;
+	// Already in chess phase — nothing to force, and nothing to restore.
+	if (gameState.turnPhase === 'chess') {
+		clearStaleChessSelection();
+		return;
+	}
+
+	phaseBeforeCheck = gameState.turnPhase || 'tetris';
+	// Any selection carried in from an earlier turn would make a piece
+	// look "already selected" and swallow the taps meant to select the
+	// king, so start the escape window with a clean slate.
+	try { clearChessSelection(); } catch (_e) { /* best-effort */ }
+	gameState.processingMove = false;
+	gameState.turnPhase = 'chess';
+	try { updateGameStatusDisplay(gameState); } catch (_e) { /* display is non-critical */ }
+	showToastMessage('Check! Your drop is paused — pick your king (or the attacker) and move.', 5000);
+}
+
+function restorePhaseAfterCheck() {
+	const previous = phaseBeforeCheck;
+	phaseBeforeCheck = null;
+	if (!previous) return;
+	const gameState = getGameState();
+	if (!gameState) return;
+	// A successful escape already advanced the player to the tetris phase
+	// itself; only restore if we're still sitting in the phase we forced.
+	if (gameState.turnPhase !== 'chess') return;
+	if (previous === 'tetris' && !gameState.currentTetromino) return;
+	gameState.turnPhase = previous;
+	try { updateGameStatusDisplay(gameState); } catch (_e) { /* display is non-critical */ }
 }
 
 // ── On-board "battle" markers ───────────────────────────────────────────────
@@ -358,6 +415,7 @@ function reconcile(pendingCheck) {
 		if (lastCheckSig) {
 			destroyBanner();
 			destroyBattleVisual();
+			restorePhaseAfterCheck();
 			cameraFlown = false;
 			lastCheckSig = '';
 		}
@@ -381,7 +439,11 @@ function reconcile(pendingCheck) {
 
 	if (role) {
 		renderBanner(role, pendingCheck);
-		if (role === 'defender') flyCameraToKing(pendingCheck);
+		if (role === 'defender') {
+			flyCameraToKing(pendingCheck);
+			// Must come after the banner so the toast sits on top of it.
+			unlockChessForDefender();
+		}
 	}
 }
 

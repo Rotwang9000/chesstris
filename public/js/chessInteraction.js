@@ -77,6 +77,17 @@ export function findChessPieceMeshAt(x, z) {
 export function disposeChessPieceMesh(pieceMesh) {
 	if (!pieceMesh) return;
 	const chessPiecesGroup = getChessPiecesGroup();
+	// If the mesh being torn down IS the current selection, drop the
+	// selection with it. A selection pointing at a disposed mesh can't be
+	// clicked (it's out of the scene graph, so no raycast will ever hit
+	// it) yet still counts as "a piece is selected" everywhere else —
+	// which wedges the player: the piece looks selected, taps on it do
+	// nothing, and the tetris-phase click path just repeats "finish your
+	// drop first". Clearing here kills that state at the source.
+	try {
+		const gameState = getGameState();
+		if (gameState && gameState.selectedChessPiece === pieceMesh) clearChessSelection();
+	} catch (_err) { /* best-effort */ }
 	try {
 		if (chessPiecesGroup) chessPiecesGroup.remove(pieceMesh);
 		pieceMesh.traverse(child => {
@@ -225,6 +236,69 @@ export function tryPriorityChessMoveClick(mouse) {
 	}
 
 	return false;
+}
+
+/**
+ * Drop a selection that can no longer be acted on.
+ *
+ * `updateChessPieces` rebuilds meshes when the server snapshot changes,
+ * and a capture removes them outright, so `gameState.selectedChessPiece`
+ * can end up pointing at a mesh that is no longer in the scene (or at a
+ * piece the server no longer knows about). Everything that gates on "is
+ * something selected" then blocks, but nothing the player can tap will
+ * ever clear it. Sweep it instead of nagging them.
+ *
+ * @returns {boolean} true if a stale selection was cleared
+ */
+export function clearStaleChessSelection() {
+	const gameState = getGameState();
+	const selected = gameState?.selectedChessPiece;
+	if (!selected) return false;
+
+	const group = getChessPiecesGroup();
+	// No group yet (early boot) — can't judge, so leave the selection be.
+	if (!group) return false;
+	const attached = group.children.indexOf(selected) !== -1;
+
+	const id = selected.userData?.id;
+	const pieces = gameState.chessPieces;
+	// An empty/absent roster means the snapshot hasn't landed, not that
+	// the piece is gone — only treat a populated roster as authoritative.
+	const known = !id
+		|| !Array.isArray(pieces)
+		|| pieces.length === 0
+		|| pieces.some(p => p && String(p.id) === String(id));
+
+	if (attached && known) return false;
+	clearChessSelection();
+	return true;
+}
+
+/**
+ * Tapping/clicking the already-selected piece deselects it, even outside
+ * the chess phase. Touch devices have no Escape key, so without this the
+ * "finish your tetromino drop first" path is a dead end on a tablet: the
+ * piece stays selected with no gesture that can release it.
+ *
+ * @returns {boolean} true if the pointer was over the selected piece
+ */
+export function tryDeselectByClickingSelectedPiece(mouse) {
+	const gameState = getGameState();
+	const selected = gameState?.selectedChessPiece;
+	if (!selected) return false;
+
+	const raycaster = getRaycaster();
+	const camera = getCamera();
+	const pointer = mouse || getMouse();
+	if (!raycaster || !camera || !pointer) return false;
+
+	raycaster.setFromCamera(pointer, camera);
+	const hits = raycaster.intersectObject(selected, true);
+	if (!hits || hits.length === 0) return false;
+
+	clearChessSelection();
+	showToastMessage('Piece deselected.', 2000);
+	return true;
 }
 
 function pieceIsAdjacentToValidMove(pieceMesh, validMoves) {
