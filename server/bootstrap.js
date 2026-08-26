@@ -56,14 +56,12 @@ const { createAiActions } = require('./ai/actions');
 const { createAiRunner } = require('./ai/runner');
 const { createBattleManager } = require('./battle/BattleManager');
 const { createConnectionHandler } = require('./sockets/connection');
+const { isBattleRegionCell } = require('./battle/geometry');
 
 const { createApp } = require('./app');
 
 const HOME_ZONE_DEGRADATION_CHECK_MS = 30000;
 const WORLD_INTEGRITY_CHECK_MS = 10000;
-// Cells at least this far from the origin belong to the battle-arena
-// grid (BATTLE.ARENA_BASE), not the organic world.
-const BATTLE_REGION_MIN_DISTANCE = 1500;
 const LONE_KING_SWEEP_MS = 15000;
 const GHOST_PLAYER_SWEEP_MS = 20000;
 const DORMANT_KINGDOM_CHECK_MS = 30 * 60 * 1000;
@@ -170,10 +168,9 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 				const x = Number(key.slice(0, idx));
 				const z = Number(key.slice(idx + 1));
 				if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
-				// Battle arenas sit thousands of cells out — they must
-				// not drag the boats (or the framing) off the organic
-				// world.
-				if (Math.hypot(x, z) >= BATTLE_REGION_MIN_DISTANCE) continue;
+				// Battle arenas sit on their own grid — they must not
+				// drag the boats (or the framing) off the organic world.
+				if (isBattleRegionCell(x, z)) continue;
 				if (x < minX) minX = x;
 				if (x > maxX) maxX = x;
 				if (z < minZ) minZ = z;
@@ -201,7 +198,7 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 				const x = Number(key.slice(0, idx));
 				const z = Number(key.slice(idx + 1));
 				if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
-				if (Math.hypot(x, z) >= BATTLE_REGION_MIN_DISTANCE) continue;
+				if (isBattleRegionCell(x, z)) continue;
 				out.push({ x, z });
 			}
 			return out;

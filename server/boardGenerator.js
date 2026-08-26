@@ -12,6 +12,8 @@
  * Each cell is identified by a coordinate key in the format "x,z".
  */
 
+const { isBattleRegionCell } = require('./battle/geometry');
+
 /**
  * Calculate home zone position with controlled pawn clashing.
  *
@@ -170,11 +172,16 @@ function collectExistingHomeZones(gameState) {
 		if (!gameState.homeZones[playerId]) continue;
 		const player = players[playerId];
 		if (player && player.eliminated) continue;
-		// Battle-arena seats sit thousands of cells away by design;
+		// Battle-arena seats sit on the remote grid by design;
 		// counting them would drag new joiners' anchor centroid (and
-		// the "player index") towards the arena grid.
+		// the "player index") towards the arena grid. Also skip zones
+		// that sit in that grid even if the player record is gone
+		// (stale leftover from battle v1 writing into the world).
 		if (player && player.battleId) continue;
-		zones.push(gameState.homeZones[playerId]);
+		const zone = gameState.homeZones[playerId];
+		if (zone && Number.isFinite(zone.x) && Number.isFinite(zone.z)
+			&& isBattleRegionCell(zone.x, zone.z)) continue;
+		zones.push(zone);
 	}
 	return zones;
 }

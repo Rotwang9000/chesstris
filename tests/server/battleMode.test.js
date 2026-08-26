@@ -16,11 +16,13 @@ const ChessManager = require('../../server/game/ChessManager');
 const TetrominoManager = require('../../server/game/TetrominoManager');
 const {
 	BATTLE,
+	BATTLE_REGION_BOUNDS,
 	arenaCentreForSlot,
 	radialBand,
 	playRadiusForSeats,
 	ringOuterRadius,
 	isInsidePlayArea,
+	isBattleRegionCell,
 	ringCells,
 	seatHomeZones,
 	zoneCells,
@@ -38,6 +40,15 @@ describe('battle geometry', () => {
 			.toBe(BATTLE.ARENA_BASE.z + BATTLE.ARENA_PITCH);
 		expect(() => arenaCentreForSlot(-1)).toThrow();
 		expect(() => arenaCentreForSlot(BATTLE.MAX_ARENAS)).toThrow();
+	});
+
+	test('isBattleRegionCell is the arena-grid AABB, not distance-from-origin', () => {
+		expect(isBattleRegionCell(0, 0)).toBe(false);
+		expect(isBattleRegionCell(1500, 0)).toBe(false);
+		expect(isBattleRegionCell(7218, 1893)).toBe(false);
+		expect(isBattleRegionCell(BATTLE.ARENA_BASE.x, BATTLE.ARENA_BASE.z)).toBe(true);
+		expect(isBattleRegionCell(BATTLE_REGION_BOUNDS.minX, BATTLE_REGION_BOUNDS.minZ)).toBe(true);
+		expect(isBattleRegionCell(BATTLE_REGION_BOUNDS.maxX + 1, BATTLE_REGION_BOUNDS.maxZ)).toBe(false);
 	});
 
 	test.each([

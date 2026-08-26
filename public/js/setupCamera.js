@@ -10,16 +10,18 @@ import { isBattleRegionCell, getActiveBattle } from './battle/battleRules.js';
  * the whole island is visible. Falls back to a sensible default extent
  * when the board is empty.
  *
- * Battle arenas live thousands of cells from the origin; framing them
- * together with the organic world would zoom the camera into orbit. So
- * the fit uses only the region the local player is actually in: their
- * arena while battling, the organic world otherwise.
+ * Battle arenas live on a remote grid; framing them together with the
+ * organic world would zoom the camera into orbit. So the fit uses only
+ * the region the local player is actually in: their arena while
+ * battling, the organic world otherwise (wherever that cluster sits —
+ * it is not required to hug the origin).
+ *
+ * @returns {boolean} True if at least one in-view cell was framed.
  */
 export function setCameraToOverview(camera, controls, gameState) {
-	if (!camera || !controls) return;
+	if (!camera || !controls) return false;
 
 	const board = gameState?.board;
-	let centerX = 0, centerZ = 0, maxExtent = 50;
 	const battle = getActiveBattle(gameState);
 	const ARENA_FRAME_RADIUS = 40;
 	const includeCell = (x, z) => {
@@ -30,27 +32,27 @@ export function setCameraToOverview(camera, controls, gameState) {
 		return !isBattleRegionCell(x, z);
 	};
 
+	let centerX = 0, centerZ = 0, maxExtent = 50, counted = 0;
 	if (board && board.cells) {
-		const cellKeys = Object.keys(board.cells);
-		if (cellKeys.length > 0) {
-			let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
-			let counted = 0;
-			for (const key of cellKeys) {
-				const [x, z] = key.split(',').map(Number);
-				if (!includeCell(x, z)) continue;
-				if (x < minX) minX = x;
-				if (x > maxX) maxX = x;
-				if (z < minZ) minZ = z;
-				if (z > maxZ) maxZ = z;
-				counted++;
-			}
-			if (counted > 0) {
-				centerX = (minX + maxX) / 2;
-				centerZ = (minZ + maxZ) / 2;
-				maxExtent = Math.max(maxX - minX, maxZ - minZ, 50);
-			}
+		let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+		for (const key of Object.keys(board.cells)) {
+			const [x, z] = key.split(',').map(Number);
+			if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
+			if (!includeCell(x, z)) continue;
+			if (x < minX) minX = x;
+			if (x > maxX) maxX = x;
+			if (z < minZ) minZ = z;
+			if (z > maxZ) maxZ = z;
+			counted++;
+		}
+		if (counted > 0) {
+			centerX = (minX + maxX) / 2;
+			centerZ = (minZ + maxZ) / 2;
+			maxExtent = Math.max(maxX - minX, maxZ - minZ, 50);
 		}
 	}
+
+	if (counted === 0) return false;
 
 	const viewDistance = Math.max(60, maxExtent * 0.8);
 	camera.position.set(
@@ -61,6 +63,7 @@ export function setCameraToOverview(camera, controls, gameState) {
 	if (controls.target) controls.target.set(centerX, 0, centerZ);
 	camera.lookAt(centerX, 0, centerZ);
 	if (controls.update) controls.update();
+	return true;
 }
 
 const CAMERA_DEFAULTS = {

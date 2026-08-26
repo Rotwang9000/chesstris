@@ -95,3 +95,28 @@ The "my king appeared to be preselected" half of the report:
 
 Tests: `tests/core/checkAlert.test.js` (6 cases — force, restore, no-op
 for attacker, no double-force when already in chess).
+
+## 26 August — Global board vanished (battle-region heuristic)
+
+Live tetches.com had a healthy world — 317 cells, 5 players, 36 pieces —
+but arriving at the site showed empty sea. The board had drifted to
+around **(7218, 1893)**. View isolation treated any cell whose distance
+from the origin was ≥ 1500 as a remote battle arena, so the client hid
+*every* organic cell, the overview camera stayed at (0,0), and lite mode
+painted empty water.
+
+* **Battle region is the arena-grid AABB**, not "far from origin"
+  (`server/battle/geometry.js`, `public/js/battle/battleRules.js`).
+  Arenas occupy the rectangle around `ARENA_BASE` (2000, 2000); an
+  organic cluster anywhere else stays visible. Same test drives boat
+  framing in `bootstrap.js`.
+* **Overview camera / 2D view frame the actual cluster** and only mark
+  themselves framed when they found in-view cells
+  (`setupCamera.js`, `liteMode.js`, `enhanced-gameCore.js`).
+* **Home-zone placement ignores leftover arena zones** even if the
+  player record is gone, so joiners keep seeding next to the live
+  cluster rather than the battle grid (`boardGenerator.js`,
+  `GameUtilities.js`).
+
+Tests: `tests/ui/battleRulesView.test.js`, `tests/server/battleMode.test.js`,
+`tests/server/boardGenerator.test.js`.

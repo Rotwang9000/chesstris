@@ -48,6 +48,7 @@ let ctx = null;
 let rafHandle = null;
 let joinedWorld = false;
 let playing = false;
+let overviewFramed = false;
 
 /** Camera: board cell at the canvas centre + pixels per cell. */
 const view = { x: 0, z: 0, scale: LITE.CELL_PX };
@@ -312,6 +313,7 @@ function applyGameUpdate(data) {
 	if (data.homeZones) gameState.homeZones = data.homeZones;
 	if (data.players) gameState.players = normalisePlayers(data.players);
 	if (Array.isArray(data.powerUps)) gameState.powerUps = data.powerUps;
+	if (!playing && !overviewFramed && frameOrganicBoard()) overviewFramed = true;
 	renderPlayersPanel();
 }
 
@@ -589,6 +591,41 @@ function centreOnPlayerKing(playerId) {
 	return true;
 }
 
+/**
+ * Centre the 2D view on the organic (non-arena) cluster. The live world
+ * does not sit at the origin, so a default view of (0,0) shows empty sea.
+ * @returns {boolean} True if at least one in-view cell was framed.
+ */
+function frameOrganicBoard() {
+	const cells = gameState.board?.cells || {};
+	let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity, n = 0;
+	for (const key of Object.keys(cells)) {
+		const [xs, zs] = key.split(',');
+		const x = Number(xs);
+		const z = Number(zs);
+		if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
+		if (!isCellVisibleInCurrentView(gameState, x, z)) continue;
+		if (x < minX) minX = x;
+		if (x > maxX) maxX = x;
+		if (z < minZ) minZ = z;
+		if (z > maxZ) maxZ = z;
+		n++;
+	}
+	if (n === 0) return false;
+	view.x = (minX + maxX) / 2;
+	view.z = (minZ + maxZ) / 2;
+	if (canvas && canvas.width > 0 && canvas.height > 0) {
+		const spanX = Math.max(8, maxX - minX + 6);
+		const spanZ = Math.max(8, maxZ - minZ + 6);
+		const fit = Math.min(canvas.width / spanX, canvas.height / spanZ);
+		view.scale = Math.max(
+			LITE.MIN_ZOOM * LITE.CELL_PX,
+			Math.min(LITE.CELL_PX, fit),
+		);
+	}
+	return true;
+}
+
 // ── Welcome overlay ─────────────────────────────────────────────────────────
 
 function buildWelcome(container, reason) {
@@ -679,6 +716,8 @@ function showKingdomChoiceOverlay(summary) {
 function showWelcome() {
 	const overlay = document.getElementById('lite-welcome');
 	if (overlay) overlay.style.display = 'flex';
+	overviewFramed = false;
+	if (frameOrganicBoard()) overviewFramed = true;
 }
 
 // ── Networking ──────────────────────────────────────────────────────────────

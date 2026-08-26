@@ -360,7 +360,7 @@ function updateAxisHelpersVisibility() {
 // ── Camera helpers ──────────────────────────────────────────────────────────
 
 function setCameraToOverview() {
-	setCameraToOverviewExtracted(getCamera(), getControls(), gameState);
+	return setCameraToOverviewExtracted(getCamera(), getControls(), gameState);
 }
 
 // ── Event system (game update dispatcher) ───────────────────────────────────
@@ -505,13 +505,10 @@ function updateBoardState(boardData) {
 		// re-frame the overview around the now-known world so the
 		// backdrop shows the actual board, not empty sea (the initial
 		// overview at page load ran before any cells existed).
+		// Only mark framed once the camera actually found in-view cells
+		// — a snapshot whose cells are all filtered out must retry.
 		if (!worldEntered && !gameState.activeBattle && !gameState._overviewFramed) {
-			let hasCells = false;
-			for (const _k in gameState.board.cells) { hasCells = true; break; }
-			if (hasCells) {
-				gameState._overviewFramed = true;
-				setCameraToOverview();
-			}
+			if (setCameraToOverview()) gameState._overviewFramed = true;
 		}
 
 		const li = document.getElementById('loading-indicator');

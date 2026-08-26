@@ -15,12 +15,33 @@ export function battlePlayRadius(battle) {
 }
 
 /**
- * Cells further than this from the origin belong to the battle-arena
- * grid (server ARENA_BASE is (2000, 2000); the organic world stays
- * within a few hundred cells of the origin). Used to keep arena cells
- * out of "fit the whole world" camera framing.
+ * Battle-arena grid — keep in lockstep with `server/battle/geometry.js`
+ * (`BATTLE.ARENA_BASE` / pitch / columns / max arenas).
+ *
+ * The region is an AABB around that grid, NOT "anything far from the
+ * origin". The live world has drifted thousands of cells from (0,0);
+ * treating distance-from-origin ≥ 1500 as "arena" hid the entire
+ * global board.
  */
-export const BATTLE_REGION_MIN_DISTANCE = 1500;
+export const BATTLE_ARENA_BASE = Object.freeze({ x: 2000, z: 2000 });
+export const BATTLE_ARENA_PITCH = 64;
+export const BATTLE_ARENA_GRID_COLUMNS = 8;
+export const BATTLE_MAX_ARENAS = 64;
+/** PLAY_RADIUS_LARGE + RING_THICKNESS + KEEP_OUT_MARGIN */
+export const BATTLE_REGION_MARGIN = 20;
+
+function battleRegionBounds() {
+	const lastCol = BATTLE_ARENA_GRID_COLUMNS - 1;
+	const lastRow = Math.ceil(BATTLE_MAX_ARENAS / BATTLE_ARENA_GRID_COLUMNS) - 1;
+	return Object.freeze({
+		minX: BATTLE_ARENA_BASE.x - BATTLE_REGION_MARGIN,
+		maxX: BATTLE_ARENA_BASE.x + lastCol * BATTLE_ARENA_PITCH + BATTLE_REGION_MARGIN,
+		minZ: BATTLE_ARENA_BASE.z - BATTLE_REGION_MARGIN,
+		maxZ: BATTLE_ARENA_BASE.z + lastRow * BATTLE_ARENA_PITCH + BATTLE_REGION_MARGIN,
+	});
+}
+
+export const BATTLE_REGION_BOUNDS = battleRegionBounds();
 
 /** The battle the local player is currently seated in, or null. */
 export function getActiveBattle(gameState) {
@@ -55,9 +76,12 @@ export function isCellInsideOwnArena(gameState, x, z) {
 	return Math.round(Math.sqrt(dx * dx + dz * dz)) <= battlePlayRadius(battle);
 }
 
-/** Does this coordinate belong to the remote battle-arena region? */
+/** Does this coordinate belong to the remote battle-arena grid? */
 export function isBattleRegionCell(x, z) {
-	return Math.sqrt(x * x + z * z) >= BATTLE_REGION_MIN_DISTANCE;
+	return x >= BATTLE_REGION_BOUNDS.minX
+		&& x <= BATTLE_REGION_BOUNDS.maxX
+		&& z >= BATTLE_REGION_BOUNDS.minZ
+		&& z <= BATTLE_REGION_BOUNDS.maxZ;
 }
 
 /**

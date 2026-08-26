@@ -10,7 +10,7 @@
  */
 
 import {
-	BATTLE_REGION_MIN_DISTANCE,
+	BATTLE_REGION_BOUNDS,
 	battleViewRadius,
 	battlePlayRadius,
 	isBattleRegionCell,
@@ -33,7 +33,15 @@ describe('battleRules view isolation', () => {
 
 		test('battle-region cells are hidden', () => {
 			expect(isCellVisibleInCurrentView(noBattle, ARENA_CENTRE.x, ARENA_CENTRE.z)).toBe(false);
-			expect(isCellVisibleInCurrentView(noBattle, 1500, 0)).toBe(false);
+			expect(isCellVisibleInCurrentView(noBattle, 2448, 2448)).toBe(false);
+		});
+
+		test('organic cells far from the origin stay visible (live-world regression)', () => {
+			// tetches.com's global board sat around (7218, 1893). The old
+			// "hypot ≥ 1500 ⇒ arena" heuristic hid every cell.
+			expect(isCellVisibleInCurrentView(noBattle, 7218, 1893)).toBe(true);
+			expect(isCellVisibleInCurrentView(noBattle, 1500, 0)).toBe(true);
+			expect(isCellVisibleInCurrentView(noBattle, -400, 800)).toBe(true);
 		});
 
 		test('missing gameState behaves like "no battle"', () => {
@@ -88,11 +96,15 @@ describe('battleRules view isolation', () => {
 	});
 
 	describe('isBattleRegionCell', () => {
-		test('threshold sits between the organic world and the arena grid', () => {
+		test('only the arena grid AABB is battle region, not "far from origin"', () => {
 			expect(isBattleRegionCell(0, 0)).toBe(false);
 			expect(isBattleRegionCell(300, 300)).toBe(false);
-			expect(isBattleRegionCell(BATTLE_REGION_MIN_DISTANCE, 0)).toBe(true);
+			expect(isBattleRegionCell(1500, 0)).toBe(false);
+			expect(isBattleRegionCell(7218, 1893)).toBe(false);
 			expect(isBattleRegionCell(2000, 2000)).toBe(true);
+			expect(isBattleRegionCell(BATTLE_REGION_BOUNDS.minX, BATTLE_REGION_BOUNDS.minZ)).toBe(true);
+			expect(isBattleRegionCell(BATTLE_REGION_BOUNDS.maxX, BATTLE_REGION_BOUNDS.maxZ)).toBe(true);
+			expect(isBattleRegionCell(BATTLE_REGION_BOUNDS.maxX + 1, BATTLE_REGION_BOUNDS.maxZ)).toBe(false);
 		});
 	});
 });
