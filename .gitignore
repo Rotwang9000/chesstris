@@ -3,7 +3,11 @@ node_modules/
 npm-debug.log
 yarn-debug.log
 yarn-error.log
-package-lock.json
+# package-lock.json IS tracked: the Jenkins pipeline runs `npm ci`,
+# which refuses to run without it and falls back to `npm install`.
+# That fallback resolved floating versions and hoisted an ESM-only
+# htmlparser2 to the top level, which Jest (CJS) could not parse —
+# three server suites failed on CI while passing locally.
 yarn.lock
 
 # Environment variables
