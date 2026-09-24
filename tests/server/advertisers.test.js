@@ -14,17 +14,30 @@ const request = require('supertest');
 
 const ADVERTISERS_FILE = path.join(__dirname, '../../advertisers.json');
 const ADS_DIR = path.join(__dirname, '../../public/uploads/ads');
+const SUITE_STARTED_AT = Date.now();
 const _testWrittenAdImages = new Set();
 
 function clearAdvertisersFile() {
 	try { fs.unlinkSync(ADVERTISERS_FILE); } catch { /* ignore */ }
 }
 
+const ADS_PENDING_DIR = path.join(__dirname, '../../advertiser-pending-images');
+
 function cleanupTestAdImages() {
 	for (const filename of _testWrittenAdImages) {
 		try { fs.unlinkSync(path.join(ADS_DIR, filename)); } catch { /* ignore */ }
 	}
 	_testWrittenAdImages.clear();
+	// Activation parks the image in the private pending dir; remove the
+	// ones this run created so tests don't litter the working tree.
+	let pending = [];
+	try { pending = fs.readdirSync(ADS_PENDING_DIR); } catch { /* no dir */ }
+	for (const filename of pending) {
+		const full = path.join(ADS_PENDING_DIR, filename);
+		try {
+			if (fs.statSync(full).mtimeMs >= SUITE_STARTED_AT) fs.unlinkSync(full);
+		} catch { /* ignore */ }
+	}
 }
 
 let currentModule = null;
