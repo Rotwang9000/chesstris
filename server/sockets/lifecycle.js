@@ -6,6 +6,7 @@
 
 const World = require('../world/World');
 const Sessions = require('../world/Sessions');
+const { isWorldAdminAllowed } = require('../security/adminGate');
 
 function registerLifecycleHandlers(socket, ctx) {
 	const {
@@ -57,7 +58,13 @@ function registerLifecycleHandlers(socket, ctx) {
 		}
 	});
 
-	socket.on('restart_game', () => {
+	// World-admin only: this wipes every board, piece and home zone for
+	// all players. The client never emits it.
+	socket.on('restart_game', (data) => {
+		if (!isWorldAdminAllowed(data)) {
+			socket.emit('error', { message: 'Not allowed' });
+			return;
+		}
 		try {
 			lifecycleService.restartWorld({ requestedBy: playerId });
 		} catch (error) {
@@ -67,6 +74,10 @@ function registerLifecycleHandlers(socket, ctx) {
 	});
 
 	socket.on('startGame', (options = {}, callback) => {
+		if (!isWorldAdminAllowed(options)) {
+			if (typeof callback === 'function') callback({ success: false, error: 'not_allowed' });
+			return;
+		}
 		try {
 			const world = World.getWorld();
 			if (!world) {
@@ -118,9 +129,14 @@ function registerLifecycleHandlers(socket, ctx) {
 
 	socket.on('exit_game', (_data, callback) => {
 		console.log(`Player ${playerId} explicitly exiting game`);
-		lifecycleService.removePlayerCompletely(playerId);
-		Sessions.unbind(socket.id);
-		if (callback) callback({ success: true });
+		try {
+			lifecycleService.removePlayerCompletely(playerId);
+			Sessions.unbind(socket.id);
+			if (callback) callback({ success: true });
+		} catch (error) {
+			console.error('Error handling exit_game:', error);
+			if (callback) callback({ success: false, error: 'Server error' });
+		}
 	});
 
 	socket.on('pause_player', (_data, callback) => {

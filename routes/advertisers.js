@@ -259,6 +259,26 @@ function sanitizeText(text) {
 }
 
 /**
+ * Ad links end up in `href` (admin panel) and `window.open` (players),
+ * so only plain web URLs are allowed — never `javascript:` / `data:`.
+ */
+function isHttpUrl(value) {
+	try {
+		const { protocol } = new URL(String(value));
+		return protocol === 'http:' || protocol === 'https:';
+	} catch (_e) {
+		return false;
+	}
+}
+
+function rejectBadLink(res) {
+	return res.status(400).json({
+		success: false,
+		message: 'Ad link must be an http(s) URL',
+	});
+}
+
+/**
  * Write an uploaded image buffer to disk with a safe filename.
  * @returns {string|null} public URL path or null on failure
  */
@@ -319,6 +339,7 @@ router.post('/', registrationRateLimit, upload.single('adImage'), async (req, re
 				message: 'All fields are required',
 			});
 		}
+		if (!isHttpUrl(adLink)) return rejectBadLink(res);
 		if (!req.file) {
 			return res.status(400).json({
 				success: false,
@@ -690,6 +711,9 @@ router.post('/:id/revise', requireWalletSession, upload.single('adImage'), (req,
 				message: `Cannot revise an advertiser in status ${advertiser.bidStatus}`,
 			});
 		}
+		if (typeof req.body?.adLink === 'string' && !isHttpUrl(req.body.adLink)) {
+			return rejectBadLink(res);
+		}
 
 		// Replace image if a new file came through. Bytes go to
 		// the private pending dir so they survive PM2 restarts. The
@@ -944,10 +968,11 @@ router.get('/next', async (req, res) => {
 
 /**
  * @route GET /api/advertisers/:id
- * @desc Get advertiser by ID
- * @access Public
+ * @desc Get advertiser by ID (full record: email, wallet, tx signature)
+ * @access Admin — ids are public via /active and /next, so an open
+ *         route would hand every advertiser's email to anyone.
  */
-router.get('/:id', async (req, res) => {
+router.get('/:id', requireAdmin, async (req, res) => {
 	try {
 		const advertiser = advertisers.get(req.params.id);
 		
@@ -1064,7 +1089,10 @@ router.put('/:id', requireAdmin, upload.single('adImage'), async (req, res) => {
 		if (req.body.name) advertiser.name = sanitizeText(req.body.name);
 		if (req.body.email) advertiser.email = sanitizeText(req.body.email);
 		if (req.body.adText) advertiser.adText = sanitizeText(req.body.adText);
-		if (req.body.adLink) advertiser.adLink = sanitizeText(req.body.adLink);
+		if (req.body.adLink) {
+			if (!isHttpUrl(req.body.adLink)) return rejectBadLink(res);
+			advertiser.adLink = sanitizeText(req.body.adLink);
+		}
 		if (req.body.bidAmount) advertiser.bidAmount = parseFloat(req.body.bidAmount);
 		if (req.body.cellCount) advertiser.cellCount = parseInt(req.body.cellCount);
 		if (req.body.bidStatus) advertiser.bidStatus = req.body.bidStatus;

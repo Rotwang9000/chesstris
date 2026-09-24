@@ -215,4 +215,20 @@ describe('Advertiser routes', () => {
 		expect(next.status).toBe(200);
 		expect(next.body.id).toBe('persist-1');
 	});
+
+	test('rejects a non-http(s) ad link at registration', async () => {
+		const app = freshApp();
+		const reg = await request(app)
+			.post('/api/advertisers')
+			.field('name', 'Evil')
+			.field('email', 'e@b.co')
+			.field('walletAddress', 'wallet-evil')
+			.field('adText', 'click me')
+			.field('adLink', 'javascript:alert(document.cookie)')
+			.field('bidAmount', '0.5')
+			.field('cellCount', '10')
+			.attach('adImage', tinyPngBuffer(), 'pixel.png');
+		expect(reg.status).toBe(400);
+		expect(reg.body.success).toBe(false);
+	});
 });

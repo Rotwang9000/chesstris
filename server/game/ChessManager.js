@@ -22,6 +22,23 @@ class ChessManager {
 	constructor(boardManager, islandManager) {
 		this.boardManager = boardManager;
 		this.islandManager = islandManager;
+		// Pending suicidal-pawn detonation timers, so dispose() can stop
+		// them firing into a game that has since been torn down.
+		this._pawnTimers = new Set();
+	}
+
+	/** Cancel any pending suicidal-pawn detonations. */
+	dispose() {
+		for (const t of this._pawnTimers) clearTimeout(t);
+		this._pawnTimers.clear();
+	}
+
+	_later(fn, ms) {
+		const t = setTimeout(() => {
+			this._pawnTimers.delete(t);
+			fn();
+		}, ms);
+		this._pawnTimers.add(t);
 	}
 	
 	/**
@@ -781,10 +798,10 @@ class ChessManager {
 			const key = `${px},${pz}`;
 			delete game.board.cells[key];
 
-			setTimeout(detonateNext, GAME_RULES.SUICIDAL_PAWN_INTERVAL_MS);
+			this._later(detonateNext, GAME_RULES.SUICIDAL_PAWN_INTERVAL_MS);
 		};
 
-		setTimeout(detonateNext, GAME_RULES.SUICIDAL_PAWN_DELAY_MS);
+		this._later(detonateNext, GAME_RULES.SUICIDAL_PAWN_DELAY_MS);
 	}
 
 	/**
@@ -815,11 +832,14 @@ class ChessManager {
 		});
 
 		// ── 5. Track captured styles ────────────────────────────────────────
-		if (!captor.capturedStyles) captor.capturedStyles = [];
-		captor.capturedStyles.push({
-			playerId: defeatedId,
-			color: defeated ? defeated.color : null,
-		});
+		// The captor can leave during the multi-second pawn detonation.
+		if (captor) {
+			if (!captor.capturedStyles) captor.capturedStyles = [];
+			captor.capturedStyles.push({
+				playerId: defeatedId,
+				color: defeated ? defeated.color : null,
+			});
+		}
 
 		// ── 6. Eliminate the defeated player ─────────────────────────────────
 		if (defeated) {

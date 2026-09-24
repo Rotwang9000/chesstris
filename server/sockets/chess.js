@@ -595,7 +595,9 @@ function registerChessHandlers(socket, ctx) {
 				);
 			}
 
-			piece.position = targetPosition;
+			// Copy only the coordinates — the client's object could carry
+			// arbitrary extra payload that would be persisted and broadcast.
+			piece.position = { x: targetPosition.x, z: targetPosition.z };
 			piece.hasMoved = true;
 			piece.moveCount = (piece.moveCount || 0) + 1;
 			world.chessPieces[pieceIndex] = piece;

@@ -6,6 +6,7 @@
 
 const World = require('../world/World');
 const { validatePlayerName } = require('../utils/validation');
+const { isWorldAdminAllowed } = require('../security/adminGate');
 const funnel = require('../observability/funnel');
 
 function registerJoinHandlers(socket, ctx) {
@@ -139,7 +140,13 @@ function registerJoinHandlers(socket, ctx) {
 		}
 	});
 
+	// World-admin only: it rewrites shared tunables such as maxPlayers
+	// (`{ maxPlayers: 1 }` would lock every new player out).
 	socket.on('create_game', (settings, callback) => {
+		if (!isWorldAdminAllowed(settings)) {
+			if (typeof callback === 'function') callback({ success: false, error: 'not_allowed' });
+			return;
+		}
 		try {
 			const worldId = lifecycleService.applyWorldSettings(settings || {});
 			if (callback) callback({ success: true, gameId: worldId });
