@@ -55,11 +55,15 @@
 	}
 	</script>
 
-	<!-- Libraries -->
-	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
-	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
-	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
-	<script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.8.1/dist/socket.io.min.js"></script>
+	<!-- Libraries. `defer` keeps document order (THREE → addons →
+	     socket.io → the game entry, which is also deferred) without
+	     blocking first paint. Nothing inline may touch them before
+	     DOMContentLoaded. -->
+	<link rel="preconnect" href="https://cdn.jsdelivr.net">
+	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js" defer></script>
+	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js" defer></script>
+	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js" defer></script>
+	<script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.8.1/dist/socket.io.min.js" defer></script>
 	<!-- Auth0 SPA SDK (passwordless email) is deliberately NOT loaded:
 	     the email sign-in flow is feature-flagged off (ENABLE_AUTH_SIGNIN
 	     in createLoadingIndicator.js) and the kingdom-key login needs no
@@ -67,8 +71,10 @@
 	     <script src="https://cdn.auth0.com/js/auth0-spa-js/2.1/auth0-spa-js.production.js"></script>
 	     (auth0Client.js expects it on window.auth0). -->
 	
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&display=swap">
 	<style>
-		@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&display=swap');
 		
 		body, html {
 			margin: 0;
@@ -475,13 +481,16 @@
 	
 	<!-- Core game scripts -->
 	<script>
-		// Ensure socket.io is loaded (provided by CDN script above)
-		if (typeof io === 'undefined') {
-			console.error('Socket.io failed to load');
-			document.getElementById('error-message').textContent = 'Socket.io failed to load. Please check your internet connection and refresh the page.';
-			document.getElementById('error-message').style.display = 'block';
-			document.getElementById('loading').style.display = 'none';
-		}
+		// Ensure socket.io is loaded (deferred CDN script above — it has
+		// run by DOMContentLoaded, not yet at this point in parsing).
+		document.addEventListener('DOMContentLoaded', function() {
+			if (typeof io === 'undefined') {
+				console.error('Socket.io failed to load');
+				document.getElementById('error-message').textContent = 'Socket.io failed to load. Please check your internet connection and refresh the page.';
+				document.getElementById('error-message').style.display = 'block';
+				document.getElementById('loading').style.display = 'none';
+			}
+		});
 		
 		// Handle error dismissal
 		document.getElementById('dismiss-error').addEventListener('click', function() {

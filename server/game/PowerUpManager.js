@@ -42,7 +42,7 @@
  *   `TetrominoManager`, not a generic world bookkeeping helper.
  */
 
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID: uuidv4 } = require('crypto');
 
 const World = require('../world/World');
 const pieces = require('./pieces');
