@@ -205,7 +205,13 @@ export default class NetworkManager {
 
 			socket.on('set_session', (data) => {
 				if (data && data.playerId) {
-					document.cookie = `tetches_player_id=${data.playerId};path=/;max-age=${60 * 60 * 24 * 30};SameSite=Lax`;
+					const secure = location.protocol === 'https:' ? ';Secure' : '';
+					document.cookie = `tetches_player_id=${data.playerId};path=/;max-age=${60 * 60 * 24 * 30};SameSite=Lax${secure}`;
+					// The player id is public; this secret is what proves the
+					// kingdom is ours on reconnect. Only sent when issued.
+					if (data.sessionSecret) {
+						document.cookie = `tetches_session=${data.sessionSecret};path=/;max-age=${60 * 60 * 24 * 365};SameSite=Lax${secure}`;
+					}
 					console.log('NetworkManager: Session cookie set for', data.playerId);
 				}
 			});
@@ -670,6 +676,7 @@ export default class NetworkManager {
 
 	_clearSession() {
 		document.cookie = 'tetches_player_id=;path=/;max-age=0';
+		document.cookie = 'tetches_session=;path=/;max-age=0';
 		this.state.gameId = null;
 		this.state.hasJoinedGame = false;
 		this.state.playerId = null;

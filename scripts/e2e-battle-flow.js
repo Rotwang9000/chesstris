@@ -50,9 +50,11 @@ function connectClient(name) {
 		const timer = setTimeout(
 			() => reject(new Error(`${name}: connect timed out`)), STEP_TIMEOUT_MS
 		);
-		socket.on('player_id', (playerId) => {
+		// set_session follows player_id and carries the session secret
+		// needed to reconnect as this player (e.g. a second tab).
+		socket.on('set_session', ({ playerId, sessionSecret }) => {
 			clearTimeout(timer);
-			resolve({ socket, playerId, name });
+			resolve({ socket, playerId, sessionSecret, name });
 		});
 		socket.on('connect_error', (err) => {
 			clearTimeout(timer);
@@ -316,7 +318,7 @@ async function main() {
 		const socket = io(SERVER_URL, {
 			transports: ['websocket'],
 			reconnection: false,
-			extraHeaders: { cookie: `tetches_player_id=${cHost.playerId}` },
+			extraHeaders: { cookie: `tetches_player_id=${cHost.playerId}; tetches_session=${cHost.sessionSecret}` },
 		});
 		const timer = setTimeout(() => reject(new Error('tab2 connect timed out')), STEP_TIMEOUT_MS);
 		socket.on('player_id', (playerId) => {

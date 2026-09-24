@@ -3,9 +3,10 @@
  *
  * The passphrase NEVER leaves the browser. We derive a stable,
  * high-entropy account key locally (SHA-256 of name+passphrase) and store
- * it in the `tetches_auth_key` cookie; the server adopts that key as the
- * player's identity (resuming the account, or migrating the current guest
- * kingdom on first login) so the SAME kingdom follows them across devices.
+ * it in the `tetches_auth_key` cookie; the server maps that key to the
+ * player's account (resuming it, or migrating the current guest kingdom
+ * on first login) so the SAME kingdom follows them across devices. The
+ * key itself is never used as the public player id.
  * No email, no PII, no third party.
  *
  * (Auth0 passwordless email is planned as a later upgrade for players who
@@ -14,6 +15,7 @@
 
 const AUTH_KEY_COOKIE = 'tetches_auth_key';
 const DEVICE_ID_COOKIE = 'tetches_player_id';
+const SESSION_COOKIE = 'tetches_session';
 const NAME_STORAGE = 'playerName';
 // 32 hex chars = 128 bits of entropy: unguessable, and collision between
 // two distinct credential pairs is negligible. Matches the server's
@@ -114,5 +116,6 @@ export async function loginWithPassphrase(username, passphrase) {
 export function logout() {
 	deleteCookie(AUTH_KEY_COOKIE);
 	deleteCookie(DEVICE_ID_COOKIE);
+	deleteCookie(SESSION_COOKIE);
 	location.reload();
 }
