@@ -17,6 +17,7 @@ const socketIO = require('socket.io');
 
 const persistence = require('./persistence');
 const { parseAllowedOrigins, isOriginAllowed } = require('./security/origins');
+const { isDevelopmentEnv } = require('./security/env');
 const metrics = require('./observability/metrics');
 const logger = require('./observability/logger');
 const sentry = require('./observability/sentry');
@@ -86,7 +87,7 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 	// browser refuses Socket.IO handshakes from origins not in this
 	// list; in development localhost on any port is allowed so the
 	// dev tools work without `ALLOWED_ORIGIN` being set.
-	const isDevelopment = process.env.NODE_ENV !== 'production';
+	const isDevelopment = isDevelopmentEnv();
 	const allowedOrigins = parseAllowedOrigins(process.env.ALLOWED_ORIGIN);
 	const io = socketIO(server, {
 		cors: {

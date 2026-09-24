@@ -7,11 +7,8 @@
  */
 
 const crypto = require('crypto');
+const { isDevelopmentEnv } = require('./env');
 
-function isOpenEnv() {
-	const env = process.env.NODE_ENV;
-	return !env || env === 'development' || env === 'test';
-}
 
 function tokenMatches(provided) {
 	const expected = process.env.ADMIN_TOKEN;
@@ -22,7 +19,7 @@ function tokenMatches(provided) {
 }
 
 function isWorldAdminAllowed(payload) {
-	if (isOpenEnv()) return true;
+	if (isDevelopmentEnv()) return true;
 	return tokenMatches(payload && payload.adminToken);
 }
 

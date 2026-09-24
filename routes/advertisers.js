@@ -15,16 +15,17 @@ const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const sanitizeHtml = require('sanitize-html');
 const { requireWalletSession } = require('./walletAuth');
+const { isDevelopmentEnv } = require('../server/security/env');
 
 const router = express.Router();
 
-// Admin gate for mutating / sensitive endpoints. In production an
+// Admin gate for mutating / sensitive endpoints. On any deployed env
+// (production or staging — see server/security/env.js) an
 // `ADMIN_TOKEN` env var MUST be set, and the caller must supply it via
 // either an `x-admin-token` header or an `adminToken` query parameter.
-// In development the gate is open so local workflows aren't disturbed.
+// In local development the gate is open so workflows aren't disturbed.
 function requireAdmin(req, res, next) {
-	const isProduction = process.env.NODE_ENV === 'production';
-	if (!isProduction) return next();
+	if (isDevelopmentEnv()) return next();
 
 	const expected = process.env.ADMIN_TOKEN;
 	if (!expected) {

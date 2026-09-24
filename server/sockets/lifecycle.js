@@ -7,6 +7,7 @@
 const World = require('../world/World');
 const Sessions = require('../world/Sessions');
 const { isWorldAdminAllowed } = require('../security/adminGate');
+const { isDevelopmentEnv } = require('../security/env');
 
 function registerLifecycleHandlers(socket, ctx) {
 	const {
@@ -22,15 +23,15 @@ function registerLifecycleHandlers(socket, ctx) {
 
 	// ── Dev-only stress spawner ──────────────────────────────────────
 	// Lets a tester pile on AI players to gauge how the renderer copes
-	// (and whether we need distance fading). Guarded to non-production
-	// so it can never be abused on the live server. `{ count }` adds
+	// (and whether we need distance fading). Guarded to development
+	// so it can never be abused on production or staging. `{ count }` adds
 	// that many bots (cycling difficulties) with the duplicate-trim
 	// suspended; `{ cleanup: true }` re-enables the trim and collapses
 	// the roster back to normal.
 	socket.on('dev_add_ai', (data = {}, callback) => {
 		const done = (r) => { if (typeof callback === 'function') callback(r); };
-		if (process.env.NODE_ENV === 'production') {
-			return done({ success: false, error: 'disabled in production' });
+		if (!isDevelopmentEnv()) {
+			return done({ success: false, error: 'disabled outside development' });
 		}
 		try {
 			if (data && data.cleanup) {

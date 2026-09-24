@@ -142,4 +142,43 @@ describe('security middleware', () => {
 		expect(res.headers['content-type'] || '').not.toMatch(/application\/json/);
 		expect(res.text || '').not.toContain('"name": "express"');
 	});
+
+	// Staging is public too: it must get the same gates as production
+	// (it used to be treated as "development" by `!== 'production'`).
+	describe('staging', () => {
+		beforeEach(() => { process.env.NODE_ENV = 'staging'; });
+
+		test('/metrics is hidden from external callers', async () => {
+			const { createApp } = require('../../server/app');
+			const app = createApp({ projectRoot: process.cwd() });
+			await request(app)
+				.get('/metrics')
+				.set('X-Forwarded-For', '203.0.113.7')
+				.expect(404);
+		});
+
+		test('advertiser admin API requires the token', async () => {
+			process.env.ADMIN_TOKEN = 'stage-secret';
+			const { createApp } = require('../../server/app');
+			const app = createApp({ projectRoot: process.cwd() });
+			await request(app).get('/api/advertisers').expect(401);
+			await request(app)
+				.get('/api/advertisers')
+				.set('x-admin-token', 'stage-secret')
+				.expect(200);
+		});
+
+		test('admin panel page requires the token', async () => {
+			process.env.ADMIN_TOKEN = 'stage-secret';
+			const { createApp } = require('../../server/app');
+			const app = createApp({ projectRoot: process.cwd() });
+			await request(app).get('/admin/advertisers').expect(401);
+		});
+
+		test('trust proxy is on, so the rate limiter sees real client IPs', () => {
+			const { createApp } = require('../../server/app');
+			const app = createApp({ projectRoot: process.cwd() });
+			expect(app.get('trust proxy')).toBe(1);
+		});
+	});
 });
