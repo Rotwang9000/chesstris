@@ -10,7 +10,9 @@
 
 	<!-- Icons + PWA manifest -->
 	<link rel="icon" href="/favicon.svg" type="image/svg+xml">
-	<link rel="apple-touch-icon" href="/favicon.svg">
+	<link rel="icon" href="/img/favicon-32x32.png" type="image/png" sizes="32x32">
+	<!-- iOS ignores SVG touch icons — it needs a PNG. -->
+	<link rel="apple-touch-icon" href="/img/apple-touch-icon.png" sizes="180x180">
 	<link rel="manifest" href="/manifest.json">
 
 	<!-- Open Graph (Facebook, Discord, Slack, etc.) -->
@@ -22,12 +24,36 @@
 	<meta property="og:image" content="https://tetches.com/img/og-image.png">
 	<meta property="og:image:width" content="1200">
 	<meta property="og:image:height" content="630">
+	<meta property="og:image:alt" content="Tetches logo with the tagline Chess meets Tetris">
+	<meta property="og:locale" content="en_US">
 
 	<!-- Twitter / X card -->
 	<meta name="twitter:card" content="summary_large_image">
 	<meta name="twitter:title" content="Tetches — Chess meets Tetris">
 	<meta name="twitter:description" content="A free, real-time multiplayer game that fuses chess and Tetris on a dynamically expanding board. Play instantly in your browser.">
 	<meta name="twitter:image" content="https://tetches.com/img/og-image.png">
+	<meta name="twitter:image:alt" content="Tetches logo with the tagline Chess meets Tetris">
+
+	<!-- Structured data: lets search engines show Tetches as a free browser game -->
+	<script type="application/ld+json">
+	{
+		"@context": "https://schema.org",
+		"@type": "VideoGame",
+		"name": "Tetches",
+		"alternateName": "Chess meets Tetris",
+		"url": "https://tetches.com/",
+		"image": "https://tetches.com/img/og-image.png",
+		"description": "A free, real-time multiplayer game that fuses chess and Tetris on a dynamically expanding board. Play instantly in your browser — no download, no sign-up.",
+		"genre": ["Strategy", "Puzzle", "Multiplayer"],
+		"gamePlatform": "Web browser",
+		"applicationCategory": "GameApplication",
+		"operatingSystem": "Any",
+		"playMode": ["MultiPlayer", "SinglePlayer"],
+		"isAccessibleForFree": true,
+		"inLanguage": "en",
+		"offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+	}
+	</script>
 
 	<!-- Libraries -->
 	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
@@ -158,6 +184,7 @@
 			position: fixed;
 			top: 10px;
 			left: 10px;
+			margin: 0;
 			z-index: 100;
 			color: #ffcc00;
 			font-size: 24px;
@@ -165,6 +192,18 @@
 			text-shadow: 0 0 10px rgba(255, 204, 0, 0.5);
 		}
 		
+		.sr-only {
+			position: absolute;
+			width: 1px;
+			height: 1px;
+			padding: 0;
+			margin: -1px;
+			overflow: hidden;
+			clip: rect(0, 0, 0, 0);
+			white-space: nowrap;
+			border: 0;
+		}
+
 		/* Bottom-left utility strip (camera / controls / render mode) */
 		.debug-indicator {
 			position: fixed;
@@ -382,7 +421,17 @@
 </head>
 <body>
 	<!-- Game Title -->
-	<div class="game-title">TETCHES</div>
+	<h1 class="game-title">TETCHES</h1>
+
+	<!-- Crawlable summary: the game itself is a WebGL canvas, which
+	     search engines can't read. Visually hidden but screen-reader
+	     visible, and mirrors what the page actually is. -->
+	<div class="sr-only">
+		<p>Tetches is a free, real-time multiplayer game that fuses chess and Tetris. Drop tetromino blocks to grow your island kingdom, then move your chess pieces across the board you built — capture a rival king and their kingdom becomes yours. Play instantly in your browser — no download, no sign-up — in one persistent shared world, or open a private Battle arena for 2–4 players.</p>
+	</div>
+	<noscript>
+		<p style="color:#ffcc00;padding:60px 20px;font-family:serif;">Tetches is a real-time chess and Tetris game that runs in your browser. Please enable JavaScript to play.</p>
+	</noscript>
 	
 	<!-- Bottom-left utility strip -->
 	<div class="debug-indicator">

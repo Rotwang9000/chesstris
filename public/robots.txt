@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /admin/
+Disallow: /mcp
+Disallow: /metrics
+Disallow: /uploads/
+
+Sitemap: https://tetches.com/sitemap.xml
