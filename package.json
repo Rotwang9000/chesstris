@@ -22,7 +22,7 @@
 		"test:watch": "jest --watch",
 		"test:coverage": "jest --coverage",
 		"test:ci": "jest --ci --forceExit --passWithNoTests --selectProjects server tests/server/",
-		"rebrand:dry-run": "node scripts/rename-tetches-to-tetches.js"
+		"rebrand:dry-run": "node scripts/rename-shaktris-to-tetches.js"
 	},
 	"keywords": [
 		"chess",

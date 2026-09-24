@@ -4,8 +4,8 @@
 > expanding board. Build territory with tetrominoes; capture opponents with
 > chess pieces. Live at **[tetches.com](https://tetches.com)**.
 
-*("Tetches" was already taken — "Schack" is the Swedish word for chess, hence
-**Tetches**.)*
+*(Tetris + chess. The game was called **Shaktris** for a while — "Schack" is
+the Swedish word for chess — before the rebrand to **Tetches**.)*
 
 ---
 
