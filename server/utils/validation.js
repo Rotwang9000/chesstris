@@ -24,7 +24,16 @@ function validatePlayerName(playerName) {
 		}
 	}
 
-	name = name.trim();
+	// Names are rendered to other players, sometimes via innerHTML, so
+	// they must never carry markup: drop control chars and <>&`, and
+	// swap straight quotes for typographic ones (keeps "O'Brien"
+	// readable without being able to break out of an attribute).
+	name = name
+		// eslint-disable-next-line no-control-regex -- stripping them is the point
+		.replace(/[\u0000-\u001f\u007f<>&`]/g, '')
+		.replace(/'/g, '\u2019')
+		.replace(/"/g, '\u201d')
+		.trim();
 	if (!name) return null;
 
 	if (name.length > MAX_PLAYER_NAME_LENGTH) {

@@ -22,7 +22,7 @@ function registerSpectateHandlers(socket, ctx) {
 
 		socket.emit('spectator_update', {
 			playerId: targetPlayerId,
-			gameState: World.getWorld(),
+			gameState: spectatorRegistry.buildPayload(World.getWorld()),
 		});
 
 		console.log(`Player ${playerId} is now spectating ${targetPlayerId}`);

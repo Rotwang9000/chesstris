@@ -24,6 +24,7 @@
  */
 
 import { getGameState } from './gameContext.js';
+import { escapeText } from './uiOverlays.js';
 
 const CARD_ID = 'selected-piece-card';
 
@@ -148,7 +149,7 @@ function renderCard(piece) {
 			"></div>
 			<div style="font-weight:700; font-size:14px; color:#ffcc00;">${label}</div>
 		</div>
-		<div style="font-size:12px; color:#cbb;">${ownerName}</div>
+		<div style="font-size:12px; color:#cbb;">${escapeText(ownerName)}</div>
 		<div style="margin-top:8px; display:grid; grid-template-columns: 1fr auto; gap:2px 8px;">
 			<div>Moves</div><div style="text-align:right; font-variant-numeric: tabular-nums;">${moves} ${moveLabel}</div>
 			<div>Travelled</div><div style="text-align:right; font-variant-numeric: tabular-nums;">${distance} ${cellLabel}</div>

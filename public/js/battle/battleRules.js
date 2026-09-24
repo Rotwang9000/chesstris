@@ -115,7 +115,11 @@ export function isCellVisibleInCurrentView(gameState, x, z) {
 	return !isBattleRegionCell(x, z);
 }
 
-/** Battle-seat player ids follow `battle-<code>-s<n>` (server seatIdFor). */
+/**
+ * Battle-seat player ids follow `battle-<battle id>-s<n>` (server
+ * seatIdFor). Older battles used the invite code as their id, so keying
+ * on `battle.id` covers both.
+ */
 const SEAT_ID_PREFIX = 'battle-';
 
 /**
@@ -130,7 +134,7 @@ export function isPlayerInCurrentView(gameState, playerId) {
 	const battle = getActiveBattle(gameState);
 	if (battle) {
 		if (id === String(gameState?.localPlayerId || '')) return true;
-		const myBattlePrefix = `${SEAT_ID_PREFIX}${String(battle.code || '').toLowerCase()}-`;
+		const myBattlePrefix = `${SEAT_ID_PREFIX}${String(battle.id || battle.code || '').toLowerCase()}-`;
 		return id.startsWith(myBattlePrefix);
 	}
 	return !id.startsWith(SEAT_ID_PREFIX);

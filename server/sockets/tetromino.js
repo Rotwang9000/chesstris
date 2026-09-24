@@ -162,10 +162,17 @@ function registerTetrominoHandlers(socket, ctx) {
 			// at the tail of the cascade instead — see
 			// `LineClearService.runCascade`.
 
+			// Only the validated fields — this rides along in every
+			// game_update, so the raw client payload (which could carry
+			// arbitrary padding) must never be stored.
 			world.lastAction = {
 				type: 'tetromino_placed',
 				playerId,
-				data: { ...data },
+				data: {
+					pieceType,
+					rotation: Number(tetromino.rotation) || 0,
+					position: { x: tetromino.position.x, z: tetromino.position.z },
+				},
 				powerUpClaims: powerUpClaims.map(c => ({
 					orbId: c.orb.id,
 					pieceId: c.piece.id,

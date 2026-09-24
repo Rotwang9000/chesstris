@@ -250,8 +250,18 @@ export function showPromotionRedeemDialog(opts = {}) {
 
 // ── King Battle ─────────────────────────────────────────────────────────────
 
+export function escapeText(value) {
+	return String(value).replace(/[&<>"']/g, (c) => ({
+		'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+	}[c]));
+}
+
 export function showKingBattleOverlay(captorId, captorName, defeatedId, defeatedName, _defeatedColor, inheritedPawnCount) {
 	const gameState = getGameState();
+	// Player names are player-controlled and this goes through innerHTML.
+	captorName = captorName ? escapeText(captorName) : captorName;
+	defeatedName = defeatedName ? escapeText(defeatedName) : defeatedName;
+	inheritedPawnCount = Number(inheritedPawnCount) || 0;
 	const isLocal = captorId === gameState.localPlayerId;
 	const isDefeated = defeatedId === gameState.localPlayerId;
 

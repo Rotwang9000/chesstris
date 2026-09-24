@@ -458,6 +458,25 @@ router.post('/:id/activate', async (req, res) => {
 				message: 'Transaction signature is required',
 			});
 		}
+		// A Solana signature is 64 bytes → 86-88 base58 chars. Anything
+		// else (objects, 64 KB strings) is junk the reviewer would have
+		// to wade through.
+		if (typeof transactionSignature !== 'string'
+			|| !/^[1-9A-HJ-NP-Za-km-z]{64,100}$/.test(transactionSignature)) {
+			return res.status(400).json({
+				success: false,
+				message: 'Invalid transaction signature',
+			});
+		}
+		// One payment can only activate one ad.
+		for (const other of advertisers.values()) {
+			if (other.id !== advertiser.id && other.transactionSignature === transactionSignature) {
+				return res.status(409).json({
+					success: false,
+					message: 'This transaction has already been used for another ad',
+				});
+			}
+		}
 
 		// Paid + awaiting moderator approval. The image bytes get
 		// flushed to a private `advertiser-pending-images/` dir
@@ -997,6 +1016,34 @@ router.get('/:id', requireAdmin, async (req, res) => {
 	}
 });
 
+// Impressions and clicks are reported by clients, so they can't be
+// verified — but they can be bounded. Each (client IP, advertiser) pair
+// may bill at most `limit` events per minute; the excess is accepted
+// (204, so scripts can't tell) but not counted. Without this, one IP
+// inside the 120/min API limit could burn ~480 cells a minute and
+// expire a paid campaign in minutes.
+const BILLING_WINDOW_MS = 60 * 1000;
+const billingCounters = new Map(); // `${kind}|${ip}|${id}` -> { start, count }
+
+function withinBillingLimit(kind, req, advertiserId, limit) {
+	const now = Date.now();
+	const key = `${kind}|${req.ip}|${advertiserId}`;
+	const entry = billingCounters.get(key);
+	if (!entry || now - entry.start >= BILLING_WINDOW_MS) {
+		billingCounters.set(key, { start: now, count: 1 });
+		return true;
+	}
+	entry.count += 1;
+	return entry.count <= limit;
+}
+
+setInterval(() => {
+	const cutoff = Date.now() - BILLING_WINDOW_MS;
+	for (const [key, entry] of billingCounters) {
+		if (entry.start < cutoff) billingCounters.delete(key);
+	}
+}, BILLING_WINDOW_MS).unref();
+
 /**
  * @route POST /api/advertisers/:id/impression
  * @desc Record an impression for an advertiser
@@ -1019,6 +1066,14 @@ router.post('/:id/impression', async (req, res) => {
 		const requestedCount = Number(req.body?.cells || req.query?.cells || 1);
 		const cellWeight = Math.max(1, Math.min(4,
 			Number.isFinite(requestedCount) ? Math.round(requestedCount) : 1));
+
+		// Only live campaigns bill (this used to flip unpaid
+		// pending_review ads to `expired`), and only within the
+		// per-viewer budget.
+		if (advertiser.bidStatus !== 'active'
+			|| !withinBillingLimit('imp', req, advertiser.id, 6)) {
+			return res.status(204).end();
+		}
 
 		advertiser.impressions += 1;
 		advertiser.cellsSponsored += cellWeight;
@@ -1056,6 +1111,11 @@ router.post('/:id/click', async (req, res) => {
 			});
 		}
 		
+		if (advertiser.bidStatus !== 'active'
+			|| !withinBillingLimit('click', req, advertiser.id, 2)) {
+			return res.status(204).end();
+		}
+
 		advertiser.clicks += 1;
 		advertiser.updatedAt = new Date().toISOString();
 		schedulePersist();
@@ -1305,6 +1365,10 @@ module.exports.flushAdvertisersSync = flushAdvertisersSync;
 module.exports.pickAdvertiserForBoat = pickAdvertiserForBoat;
 // Test-only: clear the in-process IP→hits map so suites that run
 // register multiple times don't trip the rate limit on each other.
+module.exports.__resetBillingLimits = function () {
+	billingCounters.clear();
+};
+
 module.exports.__resetRegistrationRateLimit = function () {
 	_registrationHits.clear();
 };

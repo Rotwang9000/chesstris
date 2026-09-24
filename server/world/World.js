@@ -25,6 +25,7 @@
  */
 
 const { BOARD_SETTINGS } = require('../game/Constants');
+const { validatePlayerName } = require('../utils/validation');
 
 // Historical id (matches the legacy persisted world.json so reboots
 // don't need a migration of the id itself).  Underscore, not hyphen.
@@ -448,6 +449,8 @@ function restoreWorldFromSnapshot(snapshot) {
 		if (!Array.isArray(p.capturedBasket)) p.capturedBasket = [];
 		if (!Array.isArray(p.promotionCredits)) p.promotionCredits = [];
 		if (!Array.isArray(p.capturedStyles)) p.capturedStyles = [];
+		// Names saved before validatePlayerName stripped markup.
+		if (typeof p.name === 'string') p.name = validatePlayerName(p.name) || p.name.replace(/[<>&`"']/g, '');
 		// One-shot migration: any player carrying the legacy default
 		// red gets remapped to a deterministic palette colour. Without
 		// this, persistence preserves the bug we just fixed in

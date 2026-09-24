@@ -68,6 +68,9 @@ function tinyPngBuffer() {
 	);
 }
 
+// Well-formed (88-char base58) but fake Solana signature.
+const FAKE_SIG = '5'.repeat(88);
+
 describe('Advertiser routes', () => {
 	afterEach(() => {
 		if (currentModule && typeof currentModule.flushAdvertisersSync === 'function') {
@@ -116,7 +119,7 @@ describe('Advertiser routes', () => {
 		// alone must never put artwork in front of players.
 		const act = await request(app)
 			.post(`/api/advertisers/${id}/activate`)
-			.send({ transactionSignature: 'sig-123' });
+			.send({ transactionSignature: FAKE_SIG });
 		expect(act.status).toBe(200);
 		expect(act.body.advertiser.bidStatus).toBe('pending_review');
 		// Still no PUBLIC image and still not served while in review.
@@ -230,5 +233,58 @@ describe('Advertiser routes', () => {
 			.attach('adImage', tinyPngBuffer(), 'pixel.png');
 		expect(reg.status).toBe(400);
 		expect(reg.body.success).toBe(false);
+	});
+
+	async function registerAndApprove(app, { sig = FAKE_SIG, wallet = 'wallet-b' } = {}) {
+		const reg = await request(app)
+			.post('/api/advertisers')
+			.field('name', 'Bill')
+			.field('email', 'b@b.co')
+			.field('walletAddress', wallet)
+			.field('adText', 'ad')
+			.field('adLink', 'https://bill.example')
+			.field('bidAmount', '0.5')
+			.field('cellCount', '100')
+			.attach('adImage', tinyPngBuffer(), 'pixel.png');
+		const id = reg.body.advertiser.id;
+		const act = await request(app).post(`/api/advertisers/${id}/activate`).send({ transactionSignature: sig });
+		return { id, act };
+	}
+
+	test('activation rejects malformed and reused transaction signatures', async () => {
+		const app = freshApp();
+		const bad = await registerAndApprove(app, { sig: 'not-a-signature' });
+		expect(bad.act.status).toBe(400);
+
+		const first = await registerAndApprove(app);
+		expect(first.act.status).toBe(200);
+		currentModule.__resetRegistrationRateLimit();
+		const replay = await registerAndApprove(app, { wallet: 'wallet-c' });
+		expect(replay.act.status).toBe(409);
+	});
+
+	test('impressions only bill active ads, and at most 6 per viewer per minute', async () => {
+		const app = freshApp();
+		currentModule.__resetBillingLimits();
+		// Own signature: the replay guard spans every stored advertiser.
+		const { id } = await registerAndApprove(app, { sig: '6'.repeat(88) });
+
+		// In review: a flood must not bill it (or expire it).
+		for (let i = 0; i < 10; i++) {
+			await request(app).post(`/api/advertisers/${id}/impression`).send({ cells: 4 });
+		}
+		const status = await request(app).get(`/api/advertisers/${id}/status`);
+		expect(status.body.advertiser.bidStatus).toBe('pending_review');
+
+		await request(app).post(`/api/advertisers/${id}/admin-review`).send({ action: 'approve' });
+		_testWrittenAdImages.add(`${id}.png`);
+		for (let i = 0; i < 10; i++) {
+			expect((await request(app).post(`/api/advertisers/${id}/impression`).send({ cells: 4 })).status).toBe(204);
+		}
+		const list = await request(app).get('/api/advertisers');
+		const adv = list.body.advertisers.find(a => a.id === id);
+		expect(adv.impressions).toBe(6);
+		expect(adv.cellsSponsored).toBe(24);
+		expect(adv.bidStatus).toBe('active');
 	});
 });

@@ -8,7 +8,7 @@
 import * as NetworkManager from './utils/networkManager.js';
 import { highlightPlayerPieces, removePlayerPiecesHighlight } from './pieceHighlightManager.js';
 import { showToastMessage } from './showToastMessage.js';
-import { showPromotionRedeemDialog, showFrozenPawnPromotionDialog } from './uiOverlays.js';
+import { showPromotionRedeemDialog, showFrozenPawnPromotionDialog, escapeText } from './uiOverlays.js';
 import { promptInlineRename } from './renameDialog.js';
 import {
 	startAutoPauseWatcher,
@@ -405,7 +405,7 @@ export function createUnifiedPlayerBar(gameState) {
 		
 		footer.innerHTML = `
 			<div style="font-size: 14px; color: #ffcc00;">You are playing as:</div>
-			<div style="margin-top: 5px; font-weight: bold;">${playerName}</div>
+			<div style="margin-top: 5px; font-weight: bold;">${escapeText(playerName)}</div>
 			<button id="change-player-name" style="margin-top: 10px; padding: 5px; background: #333; color: #ffcc00; border: 1px solid #ffcc00; border-radius: 3px; cursor: pointer; font-size: 12px; width: 100%;">
 				Change Name
 			</button>

@@ -611,10 +611,17 @@ function registerChessHandlers(socket, ctx) {
 				handleCastling(world, piece, originalPosition, targetPosition, gameManager, playerId);
 			}
 
+			// Validated fields only (see tetromino_placed): this is
+			// broadcast in every game_update and persisted.
 			world.lastAction = {
 				type: 'chess_move',
 				playerId,
-				data: { ...data, captured: capturedPiece },
+				data: {
+					pieceId: piece.id,
+					from: { x: originalPosition.x, z: originalPosition.z },
+					to: { x: piece.position.x, z: piece.position.z },
+					captured: capturedPiece,
+				},
 			};
 			player.lastChessMoveAt = Date.now();
 			player.moveCount = (player.moveCount || 0) + 1;

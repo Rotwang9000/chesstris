@@ -5,7 +5,11 @@
 
 const Sessions = require('../world/Sessions');
 
-function createSpectatorRegistry() {
+/**
+ * @param {{ buildPayload?: (world: Object) => Object }} [opts] - turns the
+ *   raw world into the public payload spectators receive.
+ */
+function createSpectatorRegistry({ buildPayload = () => ({}) } = {}) {
 	// spectator playerId -> target playerId
 	const spectators = new Map();
 
@@ -31,7 +35,7 @@ function createSpectatorRegistry() {
 			if (socket) {
 				socket.emit('spectator_update', {
 					playerId: targetPlayerId,
-					gameState,
+					gameState: buildPayload(gameState),
 				});
 			}
 		}
@@ -41,7 +45,7 @@ function createSpectatorRegistry() {
 		spectators.clear();
 	}
 
-	return { watch, stop, isWatching, broadcastUpdate, clearAll };
+	return { watch, stop, isWatching, broadcastUpdate, clearAll, buildPayload };
 }
 
 module.exports = { createSpectatorRegistry };

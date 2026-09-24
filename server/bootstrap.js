@@ -100,6 +100,9 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 			},
 			credentials: true,
 		},
+		// Game messages are a few hundred bytes; the 1 MB default let a
+		// single packet carry megabytes of junk into handlers.
+		maxHttpBufferSize: 64 * 1024,
 		// Trim runaway clients: don't keep a half-open transport
 		// alive forever.
 		pingInterval: 25_000,
@@ -110,7 +113,14 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 
 	// ── Services ──────────────────────────────────────────────────────────
 	const broadcaster = createBroadcaster({ io, persistence });
-	const spectatorRegistry = createSpectatorRegistry();
+	// Spectators get the same whitelisted state everyone else gets —
+	// never the raw world (battle codes, bags, session hashes).
+	const spectatorRegistry = createSpectatorRegistry({
+		buildPayload: (world) => ({
+			state: broadcaster.buildGameStatePayload(world),
+			players: broadcaster.buildPlayersList(world),
+		}),
+	});
 	const activityLog = createActivityLogService({ io, persistence });
 
 	// Expose the activity log to every subsystem reachable through

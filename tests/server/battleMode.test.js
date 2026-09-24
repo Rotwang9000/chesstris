@@ -287,6 +287,22 @@ describe('BattleManager', () => {
 		return created.battle.code;
 	}
 
+	// The registry id is internal and distinct from the shareable code.
+	const idOf = (code) => manager.battleByCode(code).id;
+
+	test('the public battle id and seat ids never reveal the invite code', () => {
+		// Seat ids ride on every piece and the players list, so anyone
+		// could read a code out of them and join a "private" battle.
+		const code = createAndJoin();
+		const battle = manager.battleByCode(code);
+		expect(battle.id).not.toBe(code);
+		expect(battle.id.toLowerCase()).not.toContain(code.toLowerCase());
+		for (const seat of battle.seats) {
+			expect(seat.seatId.toLowerCase()).not.toContain(code.toLowerCase());
+		}
+		expect(manager.getBattle(battle.id)).toBe(battle);
+	});
+
 	test('create → lobby with host in seat 0 and a 6-char code', () => {
 		const result = manager.createBattle({ hostId: 'host1', hostName: 'Hosty', seatCount: 2 });
 		expect(result.success).toBe(true);
@@ -406,13 +422,13 @@ describe('BattleManager', () => {
 
 	test('create/join stamp real players; leave/cancel clear the stamps', () => {
 		const code = createAndJoin();
-		expect(World.getPlayer('host1').activeBattleId).toBe(code);
-		expect(World.getPlayer('guest1').activeBattleId).toBe(code);
+		expect(World.getPlayer('host1').activeBattleId).toBe(idOf(code));
+		expect(World.getPlayer('guest1').activeBattleId).toBe(idOf(code));
 
 		// Guest frees their seat → their stamp clears, host's remains.
 		manager.leaveBattle({ playerId: 'guest1' });
 		expect(World.getPlayer('guest1').activeBattleId).toBeUndefined();
-		expect(World.getPlayer('host1').activeBattleId).toBe(code);
+		expect(World.getPlayer('host1').activeBattleId).toBe(idOf(code));
 
 		// Host cancels → everyone clear.
 		manager.leaveBattle({ playerId: 'host1' });
@@ -433,11 +449,11 @@ describe('BattleManager', () => {
 	test('finish and cleanup clear the stamps', () => {
 		const code = createAndJoin();
 		manager.startBattle({ battleId: code, playerId: 'host1' });
-		expect(World.getPlayer('host1').activeBattleId).toBe(code);
+		expect(World.getPlayer('host1').activeBattleId).toBe(idOf(code));
 
 		manager.leaveBattle({ playerId: 'guest1' });   // forfeit
 		manager.tick();                                 // sweep settles the win
-		expect(manager.getBattle(code).status).toBe('finished');
+		expect(manager.battleByCode(code).status).toBe('finished');
 		expect(World.getPlayer('host1').activeBattleId).toBeUndefined();
 		expect(World.getPlayer('guest1').activeBattleId).toBeUndefined();
 	});
@@ -525,7 +541,7 @@ describe('BattleManager', () => {
 		// Explicit world focus: the real id even while a battle rages.
 		expect(manager.effectivePlayerId('guest1', { focusBattleId: null })).toBe('guest1');
 		// Focused on the battle: its seat.
-		expect(manager.effectivePlayerId('guest1', { focusBattleId: code })).toBe(guestSeat);
+		expect(manager.effectivePlayerId('guest1', { focusBattleId: idOf(code) })).toBe(guestSeat);
 		// Focused on a battle that does not exist: fall back to real id.
 		expect(manager.effectivePlayerId('guest1', { focusBattleId: 'NOPE99' })).toBe('guest1');
 	});
@@ -554,12 +570,13 @@ describe('BattleManager', () => {
 		// its arena on top of A's leftovers — B's cleanup then stripped
 		// cells tagged for A's ring, and A's cleanup nuked B's terrain.
 		const code = createAndJoin();
+		const battleId = idOf(code);
 		const started = manager.startBattle({ battleId: code, playerId: 'host1' });
 		expect(started.battle.centre).toEqual(arenaCentreForSlot(0));
 
 		manager.leaveBattle({ playerId: 'guest1' });   // forfeit
 		manager.tick();                                 // sweep settles the win
-		expect(manager.getBattle(code).status).toBe('finished');
+		expect(manager.battleByCode(code).status).toBe('finished');
 
 		// A new battle starting during the linger window gets slot 1.
 		World.getWorld().players.h2 = { id: 'h2', name: 'H2' };
@@ -574,7 +591,7 @@ describe('BattleManager', () => {
 
 		// Once the finished battle is cleaned up, slot 0 is free again.
 		manager.tick({ now: Date.now() + 10 * 60 * 1000 });
-		expect(manager.getBattle(code)).toBeNull();
+		expect(manager.getBattle(battleId)).toBeNull();
 		World.getWorld().players.h3 = { id: 'h3', name: 'H3' };
 		const third = manager.createBattle({ hostId: 'h3', hostName: 'H3', seatCount: 2 });
 		World.getWorld().players.g3 = { id: 'g3', name: 'G3' };

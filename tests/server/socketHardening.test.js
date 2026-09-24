@@ -70,3 +70,56 @@ describe('isWorldAdminAllowed', () => {
 		expect(isWorldAdminAllowed({ adminToken: '' })).toBe(false);
 	});
 });
+
+describe('validatePlayerName strips markup', () => {
+	const { validatePlayerName } = require('../../server/utils/validation');
+
+	test('tags and entities cannot survive', () => {
+		const name = validatePlayerName('<img src=x onerror=alert(1)>');
+		expect(name).not.toMatch(/[<>]/);
+	});
+
+	test('quotes become typographic, so names stay readable', () => {
+		expect(validatePlayerName("O'Brien")).toBe('O’Brien');
+		expect(validatePlayerName('"Ace"')).toBe('”Ace”');
+	});
+
+	test('control characters are dropped; empty result is rejected', () => {
+		expect(validatePlayerName('Bo\u0000b\u0007')).toBe('Bob');
+		expect(validatePlayerName('<>')).toBeNull();
+	});
+});
+
+describe('king duel responses', () => {
+	const World = require('../../server/world/World');
+	const Sessions = require('../../server/world/Sessions');
+	const { createKingDuelService } = require('../../server/king/duels');
+
+	let service;
+	beforeEach(() => {
+		jest.useFakeTimers();
+		World.resetWorld();
+		Sessions.clearAll();
+		const io = { to: () => ({ emit: () => {} }) };
+		service = createKingDuelService({ io, kingCaptureService: { executeKingCapture: jest.fn() } });
+	});
+	afterEach(() => {
+		service.reset();
+		jest.useRealTimers();
+	});
+
+	test('a stranger cannot answer someone else\'s duel', () => {
+		const duelId = service.startDuel('alice', 'bob');
+		expect(service.recordResponse(duelId, 'mallory', 0, 0)).toEqual({ success: false, error: 'Not in this duel' });
+		expect(service.recordResponse(duelId, 'alice', 0, 0).success).toBe(true);
+	});
+
+	test('in a battle, the seat\'s controller answers for the seat', () => {
+		// Battle duels are between seat ids aliased to their humans.
+		Sessions.setAlias('battle-b1-s0', 'alice');
+		const duelId = service.startDuel('battle-b1-s0', 'battle-b1-s1');
+		expect(service.recordResponse(duelId, 'alice', 1, 2).success).toBe(true);
+		// Filed under the seat, so it counts towards resolving the duel.
+		expect(service.recordResponse(duelId, 'alice', 1, 2)).toEqual({ success: false, error: 'Already responded' });
+	});
+});
