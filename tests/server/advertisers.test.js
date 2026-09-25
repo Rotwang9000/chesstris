@@ -124,8 +124,8 @@ describe('Advertiser routes', () => {
 		// `?force=1` bypasses the random ad-frequency gate so we test
 		// the rotation/eligibility logic deterministically rather than
 		// the "don't smother the world in ads" sampling.
-		const next404 = await request(app).get('/api/advertisers/next?force=1');
-		expect(next404.status).toBe(404);
+		const nextNone = await request(app).get('/api/advertisers/next?force=1');
+		expect(nextNone.status).toBe(204);
 
 		// Pay → enters moderation (NOT live yet). This is the
 		// all-ages content-approval gate the spec requires: payment
@@ -139,7 +139,7 @@ describe('Advertiser routes', () => {
 		const imageFilename = `${id}.png`;
 		expect(fs.existsSync(path.join(ADS_DIR, imageFilename))).toBe(false);
 		const nextDuringReview = await request(app).get('/api/advertisers/next?force=1');
-		expect(nextDuringReview.status).toBe(404);
+		expect(nextDuringReview.status).toBe(204);
 
 		// Moderator approves → now live. (`requireAdmin` is a no-op
 		// outside production, so no token needed in tests.)
