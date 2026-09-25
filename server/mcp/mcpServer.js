@@ -24,10 +24,14 @@ const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
 const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
 const { isInitializeRequest } = require('@modelcontextprotocol/sdk/types.js');
 const { io: ioClient } = require('socket.io-client');
-const { registerExternalComputerPlayer } = require('../../routes/api');
+const rateLimit = require('express-rate-limit');
+const { registerExternalComputerPlayer, releaseExternalApiToken } = require('../../routes/api');
 
 const SESSION_IDLE_MS = 30 * 60 * 1000;
 const SESSION_SWEEP_MS = 60 * 1000;
+// Each session holds an McpServer, a transport and (after the first game
+// tool) a loopback socket + a world identity. Bound them.
+const MAX_SESSIONS = 200;
 const ACK_TIMEOUT_MS = 8000;
 const CONNECT_TIMEOUT_MS = 8000;
 const DEFAULT_STATE_RADIUS = 20;
@@ -141,6 +145,8 @@ function createBridge({ getSelfPort, agentName }) {
 			try { socket.disconnect(); } catch (_e) { /* already down */ }
 			socket = null;
 		}
+		// The token only ever lived in this bridge; nothing can use it now.
+		if (identity) releaseExternalApiToken(identity.playerId);
 	}
 
 	return {
@@ -360,6 +366,23 @@ function createMcpRouter({ getSelfPort }) {
 	}
 
 	const router = express.Router();
+
+	// /mcp sits outside the /api limiter. Tool calls are chatty, so the
+	// general budget is generous; opening sessions is what costs.
+	router.use(rateLimit({
+		windowMs: 60 * 1000,
+		max: 300,
+		standardHeaders: true,
+		legacyHeaders: false,
+	}));
+	const initLimiter = rateLimit({
+		windowMs: 10 * 60 * 1000,
+		max: 10,
+		standardHeaders: true,
+		legacyHeaders: false,
+		message: { jsonrpc: '2.0', error: { code: -32000, message: 'Too many new sessions — try again later' }, id: null },
+	});
+
 	/** @type {Map<string, {transport: any, bridge: any, lastSeen: number}>} */
 	const sessions = new Map();
 
@@ -409,6 +432,21 @@ function createMcpRouter({ getSelfPort }) {
 				});
 				return;
 			}
+
+			if (sessions.size >= MAX_SESSIONS) {
+				res.status(503).json({
+					jsonrpc: '2.0',
+					error: { code: -32000, message: 'Server busy — too many agent sessions' },
+					id: null,
+				});
+				return;
+			}
+			const limited = await new Promise((resolve) => {
+				initLimiter(req, res, () => resolve(false));
+				// The limiter answers (429) itself when over budget.
+				res.on('finish', () => resolve(true));
+			});
+			if (limited) return;
 
 			// New session: register identity lazily via the bridge and
 			// hand the transport a fresh session id.

@@ -3,7 +3,8 @@
  *
  * The client derives a stable `player_<hex>` key from credentials and
  * presents it as the `tetches_auth_key` cookie. `resolvePlayerIdForSocket`
- * must adopt that key as the canonical identity:
+ * maps it to the account's public id (`accountIdForKey` — the key itself
+ * is a credential and must never be broadcast) and must:
  *   - resume an existing account (keeping its kingdom),
  *   - migrate the current guest kingdom onto the account on first login,
  *   - or claim a fresh account when there's nothing to carry over.
@@ -17,6 +18,7 @@ const {
 	resolvePlayerIdForSocket,
 	isWellFormedAuthKey,
 } = require('../../server/sockets/connection');
+const { accountIdForKey, bindNewSecret } = require('../../server/security/playerSession');
 
 function fakeSocket(cookieStr, query = {}) {
 	return {
@@ -38,6 +40,9 @@ const services = {
 const KEY_A = 'player_' + 'a'.repeat(32);
 const KEY_B = 'player_' + 'b'.repeat(32);
 const KEY_C = 'player_' + 'c'.repeat(32);
+const ID_A = accountIdForKey(KEY_A);
+const ID_B = accountIdForKey(KEY_B);
+const ID_C = accountIdForKey(KEY_C);
 
 describe('account login — auth-key adoption', () => {
 	beforeEach(() => {
@@ -50,55 +55,88 @@ describe('account login — auth-key adoption', () => {
 	test('claims a fresh account when there is no record and no guest', () => {
 		const socket = fakeSocket(`tetches_auth_key=${KEY_A}`, { playerName: 'Ada' });
 		const id = resolvePlayerIdForSocket(socket, services);
-		expect(id).toBe(KEY_A);
-		expect(World.getPlayer(KEY_A)).toBeTruthy();
-		expect(World.getPlayer(KEY_A).name).toBe('Ada');
+		expect(id).toBe(ID_A);
+		expect(id).not.toContain(KEY_A);
+		expect(World.getPlayer(ID_A)).toBeTruthy();
+		expect(World.getPlayer(ID_A).name).toBe('Ada');
 		expect(socket.join).toHaveBeenCalled();
 	});
 
 	test('resumes an existing account and keeps its kingdom', () => {
-		World.upsertPlayer(KEY_B, { name: 'Existing' });
+		World.upsertPlayer(ID_B, { name: 'Existing' });
 		const w = World.getWorld();
-		w.homeZones[KEY_B] = { x: 9, z: 9, width: 8, height: 2, player: KEY_B };
-		w.chessPieces.push({ id: 'k', player: KEY_B, type: 'king' });
+		w.homeZones[ID_B] = { x: 9, z: 9, width: 8, height: 2, player: ID_B };
+		w.chessPieces.push({ id: 'k', player: ID_B, type: 'king' });
 
 		const socket = fakeSocket(`tetches_auth_key=${KEY_B}`);
 		const id = resolvePlayerIdForSocket(socket, services);
 
-		expect(id).toBe(KEY_B);
-		expect(World.getPlayer(KEY_B).name).toBe('Existing');
-		expect(w.homeZones[KEY_B]).toBeTruthy();
+		expect(id).toBe(ID_B);
+		expect(World.getPlayer(ID_B).name).toBe('Existing');
+		expect(w.homeZones[ID_B]).toBeTruthy();
 		expect(w.chessPieces).toHaveLength(1);
+	});
+
+	test('moves a legacy account (stored under its raw key) to the derived id', () => {
+		World.upsertPlayer(KEY_B, { name: 'Legacy' });
+		const w = World.getWorld();
+		w.homeZones[KEY_B] = { x: 9, z: 9, width: 8, height: 2, player: KEY_B };
+		w.chessPieces.push({ id: 'k', player: KEY_B, type: 'king' });
+
+		const id = resolvePlayerIdForSocket(fakeSocket(`tetches_auth_key=${KEY_B}`), services);
+
+		expect(id).toBe(ID_B);
+		expect(World.getPlayer(KEY_B)).toBeNull();
+		expect(World.getPlayer(ID_B).name).toBe('Legacy');
+		expect(w.homeZones[ID_B].player).toBe(ID_B);
+		expect(w.chessPieces[0].player).toBe(ID_B);
 	});
 
 	test('migrates the current guest kingdom onto the account on first login', () => {
 		const deviceId = 'd3adb33f-0000-4000-8000-000000000000';
-		World.upsertPlayer(deviceId, { name: 'Guesty' });
+		const guest = World.upsertPlayer(deviceId, { name: 'Guesty' });
+		const secret = bindNewSecret(guest);
 		const w = World.getWorld();
 		w.homeZones[deviceId] = { x: 3, z: 3, width: 8, height: 2, player: deviceId };
 		w.chessPieces.push({ id: 'k1', player: deviceId, type: 'king' });
 		w.board.cells['1,1'] = [{ type: 'tetromino', player: deviceId }];
 
-		const socket = fakeSocket(`tetches_auth_key=${KEY_C}; tetches_player_id=${deviceId}`);
+		const socket = fakeSocket(`tetches_auth_key=${KEY_C}; tetches_player_id=${deviceId}; tetches_session=${secret}`);
 		const id = resolvePlayerIdForSocket(socket, services);
 
-		expect(id).toBe(KEY_C);
+		expect(id).toBe(ID_C);
 		// Guest identity is gone; everything now belongs to the account.
 		expect(World.getPlayer(deviceId)).toBeNull();
-		expect(World.getPlayer(KEY_C)).toBeTruthy();
-		expect(w.homeZones[KEY_C]).toBeTruthy();
-		expect(w.homeZones[KEY_C].player).toBe(KEY_C);
+		expect(World.getPlayer(ID_C)).toBeTruthy();
+		expect(w.homeZones[ID_C]).toBeTruthy();
+		expect(w.homeZones[ID_C].player).toBe(ID_C);
 		expect(w.homeZones[deviceId]).toBeUndefined();
-		expect(w.chessPieces[0].player).toBe(KEY_C);
-		expect(w.board.cells['1,1'][0].player).toBe(KEY_C);
+		expect(w.chessPieces[0].player).toBe(ID_C);
+		expect(w.board.cells['1,1'][0].player).toBe(ID_C);
+	});
+
+	test('a fresh key can NOT absorb someone else\'s guest kingdom without its secret', () => {
+		const victimId = 'b0b0b0b0-0000-4000-8000-000000000000';
+		const victim = World.upsertPlayer(victimId, { name: 'Victim' });
+		bindNewSecret(victim);
+		const w = World.getWorld();
+		w.homeZones[victimId] = { x: 3, z: 3, width: 8, height: 2, player: victimId };
+
+		const socket = fakeSocket(`tetches_auth_key=${KEY_C}; tetches_player_id=${victimId}`);
+		const id = resolvePlayerIdForSocket(socket, services);
+
+		expect(id).toBe(ID_C);
+		expect(World.getPlayer(victimId).name).toBe('Victim');
+		expect(w.homeZones[victimId].player).toBe(victimId);
+		expect(w.homeZones[ID_C]).toBeUndefined();
 	});
 
 	test('logging into an EXISTING account never clobbers it with the guest kingdom', () => {
 		// Account already has a kingdom; a different guest kingdom sits on
 		// this device. Login must resume the account, leaving guest orphaned.
-		World.upsertPlayer(KEY_A, { name: 'Account' });
+		World.upsertPlayer(ID_A, { name: 'Account' });
 		const w = World.getWorld();
-		w.homeZones[KEY_A] = { x: 1, z: 1, width: 8, height: 2, player: KEY_A };
+		w.homeZones[ID_A] = { x: 1, z: 1, width: 8, height: 2, player: ID_A };
 
 		const deviceId = 'cafe0000-0000-4000-8000-000000000000';
 		World.upsertPlayer(deviceId, { name: 'Guesty' });
@@ -107,9 +145,9 @@ describe('account login — auth-key adoption', () => {
 		const socket = fakeSocket(`tetches_auth_key=${KEY_A}; tetches_player_id=${deviceId}`);
 		const id = resolvePlayerIdForSocket(socket, services);
 
-		expect(id).toBe(KEY_A);
-		expect(World.getPlayer(KEY_A).name).toBe('Account');
-		expect(w.homeZones[KEY_A].x).toBe(1); // untouched
+		expect(id).toBe(ID_A);
+		expect(World.getPlayer(ID_A).name).toBe('Account');
+		expect(w.homeZones[ID_A].x).toBe(1); // untouched
 	});
 
 	test('a malformed auth key is ignored (falls through to a fresh identity)', () => {

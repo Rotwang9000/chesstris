@@ -10,7 +10,9 @@
 
 	<!-- Icons + PWA manifest -->
 	<link rel="icon" href="/favicon.svg" type="image/svg+xml">
-	<link rel="apple-touch-icon" href="/favicon.svg">
+	<link rel="icon" href="/img/favicon-32x32.png" type="image/png" sizes="32x32">
+	<!-- iOS ignores SVG touch icons — it needs a PNG. -->
+	<link rel="apple-touch-icon" href="/img/apple-touch-icon.png" sizes="180x180">
 	<link rel="manifest" href="/manifest.json">
 
 	<!-- Open Graph (Facebook, Discord, Slack, etc.) -->
@@ -22,18 +24,46 @@
 	<meta property="og:image" content="https://tetches.com/img/og-image.png">
 	<meta property="og:image:width" content="1200">
 	<meta property="og:image:height" content="630">
+	<meta property="og:image:alt" content="Tetches logo with the tagline Chess meets Tetris">
+	<meta property="og:locale" content="en_US">
 
 	<!-- Twitter / X card -->
 	<meta name="twitter:card" content="summary_large_image">
 	<meta name="twitter:title" content="Tetches — Chess meets Tetris">
 	<meta name="twitter:description" content="A free, real-time multiplayer game that fuses chess and Tetris on a dynamically expanding board. Play instantly in your browser.">
 	<meta name="twitter:image" content="https://tetches.com/img/og-image.png">
+	<meta name="twitter:image:alt" content="Tetches logo with the tagline Chess meets Tetris">
 
-	<!-- Libraries -->
-	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
-	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
-	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
-	<script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.8.1/dist/socket.io.min.js"></script>
+	<!-- Structured data: lets search engines show Tetches as a free browser game -->
+	<script type="application/ld+json">
+	{
+		"@context": "https://schema.org",
+		"@type": "VideoGame",
+		"name": "Tetches",
+		"alternateName": "Chess meets Tetris",
+		"url": "https://tetches.com/",
+		"image": "https://tetches.com/img/og-image.png",
+		"description": "A free, real-time multiplayer game that fuses chess and Tetris on a dynamically expanding board. Play instantly in your browser — no download, no sign-up.",
+		"genre": ["Strategy", "Puzzle", "Multiplayer"],
+		"gamePlatform": "Web browser",
+		"applicationCategory": "GameApplication",
+		"operatingSystem": "Any",
+		"playMode": ["MultiPlayer", "SinglePlayer"],
+		"isAccessibleForFree": true,
+		"inLanguage": "en",
+		"offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+	}
+	</script>
+
+	<!-- Libraries. `defer` keeps document order (THREE → addons →
+	     socket.io → the game entry, which is also deferred) without
+	     blocking first paint. Nothing inline may touch them before
+	     DOMContentLoaded. -->
+	<link rel="preconnect" href="https://cdn.jsdelivr.net">
+	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js" defer></script>
+	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js" defer></script>
+	<script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js" defer></script>
+	<script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.8.1/dist/socket.io.min.js" defer></script>
 	<!-- Auth0 SPA SDK (passwordless email) is deliberately NOT loaded:
 	     the email sign-in flow is feature-flagged off (ENABLE_AUTH_SIGNIN
 	     in createLoadingIndicator.js) and the kingdom-key login needs no
@@ -41,8 +71,10 @@
 	     <script src="https://cdn.auth0.com/js/auth0-spa-js/2.1/auth0-spa-js.production.js"></script>
 	     (auth0Client.js expects it on window.auth0). -->
 	
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&display=swap">
 	<style>
-		@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&display=swap');
 		
 		body, html {
 			margin: 0;
@@ -158,6 +190,7 @@
 			position: fixed;
 			top: 10px;
 			left: 10px;
+			margin: 0;
 			z-index: 100;
 			color: #ffcc00;
 			font-size: 24px;
@@ -165,6 +198,18 @@
 			text-shadow: 0 0 10px rgba(255, 204, 0, 0.5);
 		}
 		
+		.sr-only {
+			position: absolute;
+			width: 1px;
+			height: 1px;
+			padding: 0;
+			margin: -1px;
+			overflow: hidden;
+			clip: rect(0, 0, 0, 0);
+			white-space: nowrap;
+			border: 0;
+		}
+
 		/* Bottom-left utility strip (camera / controls / render mode) */
 		.debug-indicator {
 			position: fixed;
@@ -382,7 +427,17 @@
 </head>
 <body>
 	<!-- Game Title -->
-	<div class="game-title">TETCHES</div>
+	<h1 class="game-title">TETCHES</h1>
+
+	<!-- Crawlable summary: the game itself is a WebGL canvas, which
+	     search engines can't read. Visually hidden but screen-reader
+	     visible, and mirrors what the page actually is. -->
+	<div class="sr-only">
+		<p>Tetches is a free, real-time multiplayer game that fuses chess and Tetris. Drop tetromino blocks to grow your island kingdom, then move your chess pieces across the board you built — capture a rival king and their kingdom becomes yours. Play instantly in your browser — no download, no sign-up — in one persistent shared world, or open a private Battle arena for 2–4 players.</p>
+	</div>
+	<noscript>
+		<p style="color:#ffcc00;padding:60px 20px;font-family:serif;">Tetches is a real-time chess and Tetris game that runs in your browser. Please enable JavaScript to play.</p>
+	</noscript>
 	
 	<!-- Bottom-left utility strip -->
 	<div class="debug-indicator">
@@ -426,13 +481,16 @@
 	
 	<!-- Core game scripts -->
 	<script>
-		// Ensure socket.io is loaded (provided by CDN script above)
-		if (typeof io === 'undefined') {
-			console.error('Socket.io failed to load');
-			document.getElementById('error-message').textContent = 'Socket.io failed to load. Please check your internet connection and refresh the page.';
-			document.getElementById('error-message').style.display = 'block';
-			document.getElementById('loading').style.display = 'none';
-		}
+		// Ensure socket.io is loaded (deferred CDN script above — it has
+		// run by DOMContentLoaded, not yet at this point in parsing).
+		document.addEventListener('DOMContentLoaded', function() {
+			if (typeof io === 'undefined') {
+				console.error('Socket.io failed to load');
+				document.getElementById('error-message').textContent = 'Socket.io failed to load. Please check your internet connection and refresh the page.';
+				document.getElementById('error-message').style.display = 'block';
+				document.getElementById('loading').style.display = 'none';
+			}
+		});
 		
 		// Handle error dismissal
 		document.getElementById('dismiss-error').addEventListener('click', function() {

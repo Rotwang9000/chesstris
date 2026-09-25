@@ -5,7 +5,7 @@
  * period, fully removes them.
  */
 
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID: uuidv4 } = require('crypto');
 
 const World = require('../world/World');
 const Sessions = require('../world/Sessions');
@@ -21,6 +21,14 @@ const { registerDuelHandlers } = require('./duels');
 const { registerStateHandlers } = require('./state');
 const { registerSpectateHandlers } = require('./spectate');
 const { registerLifecycleHandlers } = require('./lifecycle');
+const { attachPacketShape } = require('./packetShape');
+const {
+	SESSION_COOKIE,
+	bindNewSecret,
+	hasSecret,
+	verifySecret,
+	accountIdForKey,
+} = require('../security/playerSession');
 const { registerBattleHandlers } = require('./battle');
 const { attachSocketRateLimit } = require('./rateLimiter');
 // External AI registry. Imported via `module.exports.validateApiToken`
@@ -73,9 +81,14 @@ function createConnectionHandler(services) {
 
 		// Wire-level flood protection (runs before any event handler).
 		attachSocketRateLimit(socket);
+		// Strip junk trailing args so `callback` is a function or undefined.
+		attachPacketShape(socket);
 
 		socket.emit('player_id', playerId);
-		socket.emit('set_session', { playerId });
+		// The session secret is only sent when one was just issued (new
+		// player, or a legacy record binding its first secret).
+		const issued = socket.data && socket.data.issuedSessionSecret;
+		socket.emit('set_session', issued ? { playerId, sessionSecret: issued } : { playerId });
 
 		// Tell the client which build the server is on. Old clients
 		// compare this against the bundle version embedded in their
@@ -231,15 +244,27 @@ function resolvePlayerIdForSocket(socket, services) {
 
 	// Authenticated account path (username+passphrase login). The client
 	// derives a stable, high-entropy key from credentials and presents it
-	// as `tetches_auth_key`; we adopt it as the canonical identity so the
-	// kingdom follows the player across devices/browsers.
+	// as `tetches_auth_key`; the account's public id is derived from it
+	// (accountIdForKey) so the kingdom follows the player across
+	// devices/browsers without the key ever being broadcast.
 	const authKey = cookies[AUTH_KEY_COOKIE];
 	if (authKey && isWellFormedAuthKey(authKey)) {
-		Disconnects.clear(authKey);
-		const account = World.getPlayer(authKey);
+		// The key is the credential, so it must never be the (public,
+		// broadcast) player id. The account lives under a derived id.
+		const accountId = accountIdForKey(authKey);
+		// One-time migration: accounts created before this split were
+		// stored — and broadcast — under the raw key.
+		if (!World.getPlayer(accountId) && World.getPlayer(authKey)
+			&& World.reassignPlayerId(authKey, accountId)) {
+			Disconnects.clear(authKey);
+			console.log(`Account sign-in: moved ${accountId} off its raw-key id`);
+			World.markDirty();
+		}
+		Disconnects.clear(accountId);
+		const account = World.getPlayer(accountId);
 
 		if (account && !account.eliminated) {
-			console.log(`Account sign-in: ${authKey} (socket ${socket.id})`);
+			console.log(`Account sign-in: ${accountId} (socket ${socket.id})`);
 			account.lastActiveAt = Date.now();
 			if (handshakeName
 				&& handshakeName.toLowerCase() !== 'guest'
@@ -248,26 +273,30 @@ function resolvePlayerIdForSocket(socket, services) {
 			}
 			World.markDirty();
 			socket.join(World.getWorldId());
-			return authKey;
+			return accountId;
 		}
 
 		// A stale eliminated account record blocks reuse — clear it so the
 		// key starts from a clean slate.
 		if (account && account.eliminated) {
-			lifecycleService.removePlayerCompletely(authKey);
+			lifecycleService.removePlayerCompletely(accountId);
 		}
 
 		// First sign-in on this key: migrate the player's current guest
 		// kingdom (if any) onto the account so logging in KEEPS progress
 		// rather than starting them over.
 		const deviceId = cookies[PLAYER_ID_COOKIE];
-		if (deviceId && deviceId !== authKey) {
+		if (deviceId && deviceId !== accountId) {
 			const guest = World.getPlayer(deviceId);
+			// Only the guest's owner (holding its session secret) may carry
+			// it into an account — otherwise pairing a fresh key with a
+			// victim's public id would steal their kingdom.
 			if (guest && !guest.isComputer && !guest.eliminated
-				&& World.reassignPlayerId(deviceId, authKey)) {
+				&& verifySecret(guest, cookies[SESSION_COOKIE])
+				&& World.reassignPlayerId(deviceId, accountId)) {
 				Disconnects.clear(deviceId);
-				console.log(`Account sign-in: migrated guest ${deviceId} → ${authKey} (socket ${socket.id})`);
-				const migrated = World.getPlayer(authKey);
+				console.log(`Account sign-in: migrated guest ${deviceId} → ${accountId} (socket ${socket.id})`);
+				const migrated = World.getPlayer(accountId);
 				if (migrated) {
 					migrated.lastActiveAt = Date.now();
 					if (handshakeName
@@ -278,29 +307,38 @@ function resolvePlayerIdForSocket(socket, services) {
 				}
 				World.markDirty();
 				socket.join(World.getWorldId());
-				return authKey;
+				return accountId;
 			}
 		}
 
 		// Brand-new account with no guest kingdom to carry over — create a
-		// fresh record under the key. The join flow assigns a home zone
+		// fresh record under the derived id. The join flow assigns a home zone
 		// exactly as it does for any new player.
-		console.log(`Account sign-in: new account ${authKey} (socket ${socket.id})`);
+		console.log(`Account sign-in: new account ${accountId} (socket ${socket.id})`);
 		const accountName = (handshakeName && handshakeName.toLowerCase() !== 'guest')
 			? handshakeName
-			: `Player_${String(authKey).slice(-6)}`;
-		World.upsertPlayer(authKey, { name: accountName, lastActiveAt: Date.now() });
+			: `Player_${String(accountId).slice(-6)}`;
+		World.upsertPlayer(accountId, { name: accountName, lastActiveAt: Date.now() });
 		socket.join(World.getWorldId());
-		return authKey;
+		return accountId;
 	}
 
 	let playerId = cookies[PLAYER_ID_COOKIE];
-	const existingRecord = playerId ? World.getPlayer(playerId) : null;
+	let existingRecord = playerId ? World.getPlayer(playerId) : null;
+	if (existingRecord && !canReclaimGuest(existingRecord, playerId, cookies[SESSION_COOKIE])) {
+		// Knowing a (public) player id isn't enough to become that player.
+		console.warn(`Refused reclaim of ${playerId} without its session secret (socket ${socket.id})`);
+		existingRecord = null;
+	}
 	const wasEliminated = !!existingRecord?.eliminated;
 
 	if (existingRecord && !wasEliminated) {
 		console.log(`Player reconnecting: ${playerId} (socket ${socket.id})`);
 		Disconnects.clear(playerId);
+		if (!hasSecret(existingRecord)) {
+			// Legacy guest from before session secrets: bind one now.
+			issueSecret(socket, existingRecord);
+		}
 		existingRecord.lastActiveAt = Date.now();
 		if (handshakeName
 			&& handshakeName.toLowerCase() !== 'guest'
@@ -327,11 +365,32 @@ function resolvePlayerIdForSocket(socket, services) {
 	const initialName = (handshakeName && handshakeName.toLowerCase() !== 'guest')
 		? handshakeName
 		: `Player_${freshId.substring(0, 6)}`;
-	World.upsertPlayer(freshId, {
+	const fresh = World.upsertPlayer(freshId, {
 		name: initialName,
 		lastActiveAt: Date.now(),
 	});
+	issueSecret(socket, fresh);
 	return freshId;
+}
+
+// Guest ids minted before session secrets existed (plain uuids). Such a
+// record, with no secret yet, is bound to the first browser that
+// presents it — its owner, in practice, since that browser already
+// holds the id cookie. Nothing else (accounts, bots, battle seats) is
+// ever claimable without a secret.
+const LEGACY_GUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function canReclaimGuest(record, playerId, secret) {
+	if (record.isComputer || record.external) return false;
+	if (hasSecret(record)) return verifySecret(record, secret);
+	return LEGACY_GUEST_ID.test(String(playerId));
+}
+
+function issueSecret(socket, record) {
+	const secret = bindNewSecret(record);
+	World.markDirty();
+	if (!socket.data) socket.data = {};
+	socket.data.issuedSessionSecret = secret;
 }
 
 function handleDisconnect(socket, playerId, services) {

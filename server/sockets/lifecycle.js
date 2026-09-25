@@ -6,6 +6,8 @@
 
 const World = require('../world/World');
 const Sessions = require('../world/Sessions');
+const { isWorldAdminAllowed } = require('../security/adminGate');
+const { isDevelopmentEnv } = require('../security/env');
 
 function registerLifecycleHandlers(socket, ctx) {
 	const {
@@ -16,19 +18,20 @@ function registerLifecycleHandlers(socket, ctx) {
 		aiRunner,
 		spectatorRegistry,
 		pauseService,
+		dormantKingdom,
 	} = ctx;
 
 	// ── Dev-only stress spawner ──────────────────────────────────────
 	// Lets a tester pile on AI players to gauge how the renderer copes
-	// (and whether we need distance fading). Guarded to non-production
-	// so it can never be abused on the live server. `{ count }` adds
+	// (and whether we need distance fading). Guarded to development
+	// so it can never be abused on production or staging. `{ count }` adds
 	// that many bots (cycling difficulties) with the duplicate-trim
 	// suspended; `{ cleanup: true }` re-enables the trim and collapses
 	// the roster back to normal.
 	socket.on('dev_add_ai', (data = {}, callback) => {
 		const done = (r) => { if (typeof callback === 'function') callback(r); };
-		if (process.env.NODE_ENV === 'production') {
-			return done({ success: false, error: 'disabled in production' });
+		if (!isDevelopmentEnv()) {
+			return done({ success: false, error: 'disabled outside development' });
 		}
 		try {
 			if (data && data.cleanup) {
@@ -56,7 +59,13 @@ function registerLifecycleHandlers(socket, ctx) {
 		}
 	});
 
-	socket.on('restart_game', () => {
+	// World-admin only: this wipes every board, piece and home zone for
+	// all players. The client never emits it.
+	socket.on('restart_game', (data) => {
+		if (!isWorldAdminAllowed(data)) {
+			socket.emit('error', { message: 'Not allowed' });
+			return;
+		}
 		try {
 			lifecycleService.restartWorld({ requestedBy: playerId });
 		} catch (error) {
@@ -66,6 +75,10 @@ function registerLifecycleHandlers(socket, ctx) {
 	});
 
 	socket.on('startGame', (options = {}, callback) => {
+		if (!isWorldAdminAllowed(options)) {
+			if (typeof callback === 'function') callback({ success: false, error: 'not_allowed' });
+			return;
+		}
 		try {
 			const world = World.getWorld();
 			if (!world) {
@@ -117,9 +130,14 @@ function registerLifecycleHandlers(socket, ctx) {
 
 	socket.on('exit_game', (_data, callback) => {
 		console.log(`Player ${playerId} explicitly exiting game`);
-		lifecycleService.removePlayerCompletely(playerId);
-		Sessions.unbind(socket.id);
-		if (callback) callback({ success: true });
+		try {
+			lifecycleService.removePlayerCompletely(playerId);
+			Sessions.unbind(socket.id);
+			if (callback) callback({ success: true });
+		} catch (error) {
+			console.error('Error handling exit_game:', error);
+			if (callback) callback({ success: false, error: 'Server error' });
+		}
 	});
 
 	socket.on('pause_player', (_data, callback) => {
@@ -171,6 +189,43 @@ function registerLifecycleHandlers(socket, ctx) {
 			const status = pauseService.getStatus(playerId);
 			if (callback) callback({ success: true, status: status || null });
 		} catch (err) {
+			if (callback) callback({ success: false, error: 'server_error' });
+		}
+	});
+
+	socket.on('restore_kingdom', (data, callback) => {
+		try {
+			if (!dormantKingdom) {
+				if (callback) callback({ success: false, error: 'restore_unavailable' });
+				return;
+			}
+			const mode = data?.mode === 'fresh' ? 'fresh' : 'relocate';
+			const player = World.getPlayer(playerId);
+			if (!player?.stowedKingdom) {
+				if (callback) callback({ success: false, error: 'no_stowed_kingdom' });
+				return;
+			}
+			const result = dormantKingdom.restorePlayer(playerId, mode, player.name);
+			if (!result || !result.success) {
+				if (callback) callback({ success: false, error: result?.error || 'restore_failed' });
+				return;
+			}
+			const worldId = World.getWorldId();
+			socket.join(worldId);
+			broadcaster.emitFullStateTo(socket);
+			broadcaster.broadcastGameUpdate({ forceFullUpdate: true });
+			if (callback) {
+				callback({
+					success: true,
+					mode,
+					relocateFallback: !!result.relocateFallback,
+					relocated: result.relocated || null,
+					homeZone: result.homeZone || null,
+					gameState: broadcaster.buildGameStatePayload(),
+				});
+			}
+		} catch (err) {
+			console.error('Error handling restore_kingdom:', err);
 			if (callback) callback({ success: false, error: 'server_error' });
 		}
 	});

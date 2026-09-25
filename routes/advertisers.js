@@ -12,19 +12,20 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID: uuidv4 } = require('crypto');
 const sanitizeHtml = require('sanitize-html');
 const { requireWalletSession } = require('./walletAuth');
+const { isDevelopmentEnv } = require('../server/security/env');
 
 const router = express.Router();
 
-// Admin gate for mutating / sensitive endpoints. In production an
+// Admin gate for mutating / sensitive endpoints. On any deployed env
+// (production or staging — see server/security/env.js) an
 // `ADMIN_TOKEN` env var MUST be set, and the caller must supply it via
 // either an `x-admin-token` header or an `adminToken` query parameter.
-// In development the gate is open so local workflows aren't disturbed.
+// In local development the gate is open so workflows aren't disturbed.
 function requireAdmin(req, res, next) {
-	const isProduction = process.env.NODE_ENV === 'production';
-	if (!isProduction) return next();
+	if (isDevelopmentEnv()) return next();
 
 	const expected = process.env.ADMIN_TOKEN;
 	if (!expected) {
@@ -259,6 +260,26 @@ function sanitizeText(text) {
 }
 
 /**
+ * Ad links end up in `href` (admin panel) and `window.open` (players),
+ * so only plain web URLs are allowed — never `javascript:` / `data:`.
+ */
+function isHttpUrl(value) {
+	try {
+		const { protocol } = new URL(String(value));
+		return protocol === 'http:' || protocol === 'https:';
+	} catch (_e) {
+		return false;
+	}
+}
+
+function rejectBadLink(res) {
+	return res.status(400).json({
+		success: false,
+		message: 'Ad link must be an http(s) URL',
+	});
+}
+
+/**
  * Write an uploaded image buffer to disk with a safe filename.
  * @returns {string|null} public URL path or null on failure
  */
@@ -319,6 +340,7 @@ router.post('/', registrationRateLimit, upload.single('adImage'), async (req, re
 				message: 'All fields are required',
 			});
 		}
+		if (!isHttpUrl(adLink)) return rejectBadLink(res);
 		if (!req.file) {
 			return res.status(400).json({
 				success: false,
@@ -435,6 +457,25 @@ router.post('/:id/activate', async (req, res) => {
 				success: false,
 				message: 'Transaction signature is required',
 			});
+		}
+		// A Solana signature is 64 bytes → 86-88 base58 chars. Anything
+		// else (objects, 64 KB strings) is junk the reviewer would have
+		// to wade through.
+		if (typeof transactionSignature !== 'string'
+			|| !/^[1-9A-HJ-NP-Za-km-z]{64,100}$/.test(transactionSignature)) {
+			return res.status(400).json({
+				success: false,
+				message: 'Invalid transaction signature',
+			});
+		}
+		// One payment can only activate one ad.
+		for (const other of advertisers.values()) {
+			if (other.id !== advertiser.id && other.transactionSignature === transactionSignature) {
+				return res.status(409).json({
+					success: false,
+					message: 'This transaction has already been used for another ad',
+				});
+			}
 		}
 
 		// Paid + awaiting moderator approval. The image bytes get
@@ -690,6 +731,9 @@ router.post('/:id/revise', requireWalletSession, upload.single('adImage'), (req,
 				message: `Cannot revise an advertiser in status ${advertiser.bidStatus}`,
 			});
 		}
+		if (typeof req.body?.adLink === 'string' && !isHttpUrl(req.body.adLink)) {
+			return rejectBadLink(res);
+		}
 
 		// Replace image if a new file came through. Bytes go to
 		// the private pending dir so they survive PM2 restarts. The
@@ -944,10 +988,11 @@ router.get('/next', async (req, res) => {
 
 /**
  * @route GET /api/advertisers/:id
- * @desc Get advertiser by ID
- * @access Public
+ * @desc Get advertiser by ID (full record: email, wallet, tx signature)
+ * @access Admin — ids are public via /active and /next, so an open
+ *         route would hand every advertiser's email to anyone.
  */
-router.get('/:id', async (req, res) => {
+router.get('/:id', requireAdmin, async (req, res) => {
 	try {
 		const advertiser = advertisers.get(req.params.id);
 		
@@ -971,6 +1016,34 @@ router.get('/:id', async (req, res) => {
 	}
 });
 
+// Impressions and clicks are reported by clients, so they can't be
+// verified — but they can be bounded. Each (client IP, advertiser) pair
+// may bill at most `limit` events per minute; the excess is accepted
+// (204, so scripts can't tell) but not counted. Without this, one IP
+// inside the 120/min API limit could burn ~480 cells a minute and
+// expire a paid campaign in minutes.
+const BILLING_WINDOW_MS = 60 * 1000;
+const billingCounters = new Map(); // `${kind}|${ip}|${id}` -> { start, count }
+
+function withinBillingLimit(kind, req, advertiserId, limit) {
+	const now = Date.now();
+	const key = `${kind}|${req.ip}|${advertiserId}`;
+	const entry = billingCounters.get(key);
+	if (!entry || now - entry.start >= BILLING_WINDOW_MS) {
+		billingCounters.set(key, { start: now, count: 1 });
+		return true;
+	}
+	entry.count += 1;
+	return entry.count <= limit;
+}
+
+setInterval(() => {
+	const cutoff = Date.now() - BILLING_WINDOW_MS;
+	for (const [key, entry] of billingCounters) {
+		if (entry.start < cutoff) billingCounters.delete(key);
+	}
+}, BILLING_WINDOW_MS).unref();
+
 /**
  * @route POST /api/advertisers/:id/impression
  * @desc Record an impression for an advertiser
@@ -993,6 +1066,14 @@ router.post('/:id/impression', async (req, res) => {
 		const requestedCount = Number(req.body?.cells || req.query?.cells || 1);
 		const cellWeight = Math.max(1, Math.min(4,
 			Number.isFinite(requestedCount) ? Math.round(requestedCount) : 1));
+
+		// Only live campaigns bill (this used to flip unpaid
+		// pending_review ads to `expired`), and only within the
+		// per-viewer budget.
+		if (advertiser.bidStatus !== 'active'
+			|| !withinBillingLimit('imp', req, advertiser.id, 6)) {
+			return res.status(204).end();
+		}
 
 		advertiser.impressions += 1;
 		advertiser.cellsSponsored += cellWeight;
@@ -1030,6 +1111,11 @@ router.post('/:id/click', async (req, res) => {
 			});
 		}
 		
+		if (advertiser.bidStatus !== 'active'
+			|| !withinBillingLimit('click', req, advertiser.id, 2)) {
+			return res.status(204).end();
+		}
+
 		advertiser.clicks += 1;
 		advertiser.updatedAt = new Date().toISOString();
 		schedulePersist();
@@ -1064,7 +1150,10 @@ router.put('/:id', requireAdmin, upload.single('adImage'), async (req, res) => {
 		if (req.body.name) advertiser.name = sanitizeText(req.body.name);
 		if (req.body.email) advertiser.email = sanitizeText(req.body.email);
 		if (req.body.adText) advertiser.adText = sanitizeText(req.body.adText);
-		if (req.body.adLink) advertiser.adLink = sanitizeText(req.body.adLink);
+		if (req.body.adLink) {
+			if (!isHttpUrl(req.body.adLink)) return rejectBadLink(res);
+			advertiser.adLink = sanitizeText(req.body.adLink);
+		}
 		if (req.body.bidAmount) advertiser.bidAmount = parseFloat(req.body.bidAmount);
 		if (req.body.cellCount) advertiser.cellCount = parseInt(req.body.cellCount);
 		if (req.body.bidStatus) advertiser.bidStatus = req.body.bidStatus;
@@ -1276,6 +1365,10 @@ module.exports.flushAdvertisersSync = flushAdvertisersSync;
 module.exports.pickAdvertiserForBoat = pickAdvertiserForBoat;
 // Test-only: clear the in-process IP→hits map so suites that run
 // register multiple times don't trip the rate limit on each other.
+module.exports.__resetBillingLimits = function () {
+	billingCounters.clear();
+};
+
 module.exports.__resetRegistrationRateLimit = function () {
 	_registrationHits.clear();
 };

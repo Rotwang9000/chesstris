@@ -17,6 +17,7 @@ const socketIO = require('socket.io');
 
 const persistence = require('./persistence');
 const { parseAllowedOrigins, isOriginAllowed } = require('./security/origins');
+const { isDevelopmentEnv } = require('./security/env');
 const metrics = require('./observability/metrics');
 const logger = require('./observability/logger');
 const sentry = require('./observability/sentry');
@@ -38,6 +39,7 @@ const { createHomeZoneDegradationService } = require('./world/homeZones');
 const { createLifecycleService } = require('./world/lifecycle');
 const { createWorldGravityService, GRAVITY_TICK_MS } = require('./world/gravity');
 const { createGhostPlayerSweepService } = require('./world/ghostPlayerSweep');
+const { createDormantKingdomService } = require('./world/dormantKingdom');
 const { createPauseService } = require('./world/pause');
 const { createBoatManager } = require('./world/boats');
 const advertisersRouter = require('../routes/advertisers');
@@ -55,16 +57,15 @@ const { createAiActions } = require('./ai/actions');
 const { createAiRunner } = require('./ai/runner');
 const { createBattleManager } = require('./battle/BattleManager');
 const { createConnectionHandler } = require('./sockets/connection');
+const { isBattleRegionCell } = require('./battle/geometry');
 
 const { createApp } = require('./app');
 
 const HOME_ZONE_DEGRADATION_CHECK_MS = 30000;
 const WORLD_INTEGRITY_CHECK_MS = 10000;
-// Cells at least this far from the origin belong to the battle-arena
-// grid (BATTLE.ARENA_BASE), not the organic world.
-const BATTLE_REGION_MIN_DISTANCE = 1500;
 const LONE_KING_SWEEP_MS = 15000;
 const GHOST_PLAYER_SWEEP_MS = 20000;
+const DORMANT_KINGDOM_CHECK_MS = 30 * 60 * 1000;
 const POWER_UP_TICK_MS = 45000;
 const METRICS_TICK_MS = 5000;
 
@@ -86,7 +87,7 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 	// browser refuses Socket.IO handshakes from origins not in this
 	// list; in development localhost on any port is allowed so the
 	// dev tools work without `ALLOWED_ORIGIN` being set.
-	const isDevelopment = process.env.NODE_ENV !== 'production';
+	const isDevelopment = isDevelopmentEnv();
 	const allowedOrigins = parseAllowedOrigins(process.env.ALLOWED_ORIGIN);
 	const io = socketIO(server, {
 		cors: {
@@ -99,6 +100,9 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 			},
 			credentials: true,
 		},
+		// Game messages are a few hundred bytes; the 1 MB default let a
+		// single packet carry megabytes of junk into handlers.
+		maxHttpBufferSize: 64 * 1024,
 		// Trim runaway clients: don't keep a half-open transport
 		// alive forever.
 		pingInterval: 25_000,
@@ -109,7 +113,14 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 
 	// ── Services ──────────────────────────────────────────────────────────
 	const broadcaster = createBroadcaster({ io, persistence });
-	const spectatorRegistry = createSpectatorRegistry();
+	// Spectators get the same whitelisted state everyone else gets —
+	// never the raw world (battle codes, bags, session hashes).
+	const spectatorRegistry = createSpectatorRegistry({
+		buildPayload: (world) => ({
+			state: broadcaster.buildGameStatePayload(world),
+			players: broadcaster.buildPlayersList(world),
+		}),
+	});
 	const activityLog = createActivityLogService({ io, persistence });
 
 	// Expose the activity log to every subsystem reachable through
@@ -168,10 +179,9 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 				const x = Number(key.slice(0, idx));
 				const z = Number(key.slice(idx + 1));
 				if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
-				// Battle arenas sit thousands of cells out — they must
-				// not drag the boats (or the framing) off the organic
-				// world.
-				if (Math.hypot(x, z) >= BATTLE_REGION_MIN_DISTANCE) continue;
+				// Battle arenas sit on their own grid — they must not
+				// drag the boats (or the framing) off the organic world.
+				if (isBattleRegionCell(x, z)) continue;
 				if (x < minX) minX = x;
 				if (x > maxX) maxX = x;
 				if (z < minZ) minZ = z;
@@ -199,7 +209,7 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 				const x = Number(key.slice(0, idx));
 				const z = Number(key.slice(idx + 1));
 				if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
-				if (Math.hypot(x, z) >= BATTLE_REGION_MIN_DISTANCE) continue;
+				if (isBattleRegionCell(x, z)) continue;
 				out.push({ x, z });
 			}
 			return out;
@@ -339,6 +349,13 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		activityLog,
 	});
 
+	const dormantKingdom = createDormantKingdomService({
+		gameManager,
+		broadcaster,
+		persistence,
+		integrityService,
+	});
+
 	const battleManager = createBattleManager({
 		gameManager,
 		aiRunner,
@@ -368,6 +385,14 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 	// other player". Has to happen BEFORE ensureRoster so the topped-up
 	// AI roster doesn't get its slots stolen by ghost AI records.
 	ghostPlayerSweep.reapImmediately();
+	try {
+		const dormantBoot = dormantKingdom.stowImmediately();
+		if (dormantBoot.stowed?.length > 0) {
+			console.log(`[Startup] Stowed ${dormantBoot.stowed.length} dormant kingdom(s).`);
+		}
+	} catch (err) {
+		console.warn('[Startup] Dormant-kingdom boot sweep failed:', err.message);
+	}
 	aiRunner.ensureRoster();
 	integrityService.processWorldIntegrityMaintenance({ emitAnimation: false, broadcast: false });
 
@@ -441,6 +466,7 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		boatManager,
 		missingKingSweep,
 		battleManager,
+		dormantKingdom,
 		getBundleVersion: app._getBundleVersion || (() => ''),
 	});
 	io.on('connection', socket => {
@@ -462,6 +488,10 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		setInterval(() => worldGravity.tick(), GRAVITY_TICK_MS),
 		setInterval(() => loneKingSweep.tick(), LONE_KING_SWEEP_MS),
 		setInterval(() => ghostPlayerSweep.tick(), GHOST_PLAYER_SWEEP_MS),
+		setInterval(() => {
+			try { dormantKingdom.tick(); }
+			catch (err) { logger.warn({ err: err.message }, 'dormant kingdom tick failed'); }
+		}, DORMANT_KINGDOM_CHECK_MS),
 		// Continuously trim duplicate AI players (e.g. when respawn
 		// races leave extra "AI Standard" littering the board). Cheap
 		// enough to run at the same cadence as the ghost sweep.

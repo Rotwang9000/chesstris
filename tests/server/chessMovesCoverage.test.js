@@ -569,11 +569,19 @@ describe('performance', () => {
 		}
 		const queen = placePiece(w, { id: 'q', type: 'QUEEN', player: 'p1', x: 0, z: 0 });
 
-		const t0 = process.hrtime.bigint();
-		for (let i = 0; i < 50; i++) {
-			getChessPieceMoveSets(asClientGameState(w), queen);
-		}
-		const elapsedMs = Number(process.hrtime.bigint() - t0) / 1_000_000;
+		const runBatch = () => {
+			const t0 = process.hrtime.bigint();
+			for (let i = 0; i < 50; i++) {
+				getChessPieceMoveSets(asClientGameState(w), queen);
+			}
+			return Number(process.hrtime.bigint() - t0) / 1_000_000;
+		};
+		// Warm the JIT, then take the best of three batches: a cold first
+		// batch or a busy CI box (Jest runs suites in parallel) used to
+		// push a single timing just over budget. A genuine slowdown
+		// (e.g. going quadratic) still blows every batch.
+		runBatch();
+		const elapsedMs = Math.min(runBatch(), runBatch(), runBatch());
 		// 50 generator runs in <50ms = <1ms per call. We're well clear
 		// of the 16ms frame budget here.
 		expect(elapsedMs).toBeLessThan(50);

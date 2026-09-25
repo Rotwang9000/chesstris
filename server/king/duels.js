@@ -64,9 +64,18 @@ function createKingDuelService({ io, kingCaptureService }) {
 		return duelId;
 	}
 
-	function recordResponse(duelId, playerId, placement, guess) {
+	/**
+	 * @param {string} responderId - the socket's REAL player id. In a
+	 *   battle the duellists are seat ids aliased to their controller, so
+	 *   the response is filed under whichever participant resolves to it.
+	 */
+	function recordResponse(duelId, responderId, placement, guess) {
 		const duel = pendingDuels.get(duelId);
 		if (!duel || duel.resolved) return { success: false, error: 'No active duel' };
+
+		const playerId = [duel.player1.id, duel.player2.id]
+			.find(id => String(Sessions.resolveAlias(id)) === String(responderId));
+		if (!playerId) return { success: false, error: 'Not in this duel' };
 
 		if (duel.responses[playerId]) {
 			return { success: false, error: 'Already responded' };
@@ -149,7 +158,8 @@ function createKingDuelService({ io, kingCaptureService }) {
 			`King's Duel round ${duel.round} draw (both=${p1Guessed && p2Guessed}, neither=${!p1Guessed && !p2Guessed})`
 		);
 		io.to(gameId).emit('king_duel_round_result', roundPayload);
-		setTimeout(() => startNewRound(duel, duelId), 2500);
+		// Tracked on the duel so reset() can cancel it too.
+		duel.timeout = setTimeout(() => startNewRound(duel, duelId), 2500);
 	}
 
 	function startNewRound(duel, duelId) {

@@ -20,6 +20,7 @@ import { disposeBoats } from './boatsRenderer.js';
 import { initSaveReminder } from './auth/saveReminder.js';
 import { initBattleMode } from './battle/battleMode.js';
 import { initLiteMode, liteModeRequested } from './liteMode.js';
+import { showKingdomRestoreDialog } from './kingdomRestoreDialog.js';
 
 
 // Global state
@@ -602,6 +603,25 @@ async function joinGameAfterConnection(gameId = null) {
 		// Join game
 		console.log('Joining game:', gameId || 'any available game');
 		const result = await NetworkManager.joinGame(gameId);
+		
+		if (result?.needsKingdomChoice) {
+			hideLoadingScreen();
+			showKingdomRestoreDialog(result.stowedKingdom, {
+				onComplete: (response) => {
+					const state = response.gameState;
+					if (state) {
+						if (state.board && typeof window.updateBoardState === 'function') {
+							window.updateBoardState(state.board);
+						}
+						if (Array.isArray(state.chessPieces)) gameState.chessPieces = state.chessPieces;
+						if (state.homeZones) gameState.homeZones = state.homeZones;
+						if (state.players) gameState.players = state.players;
+					}
+					if (gameState.localPlayerId) gameCore.flyToPlayerKing(gameState.localPlayerId);
+				},
+			});
+			return result;
+		}
 		
 		// Update current game ID for reconnection
 		if (result && result.gameId) {

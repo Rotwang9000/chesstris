@@ -94,6 +94,35 @@ function arenaCentreForSlot(slot) {
 	};
 }
 
+/**
+ * Padding around the arena-grid AABB so ring + keep-out stay classified
+ * as battle region. Distance-from-origin is the WRONG test: the organic
+ * world can (and on tetches.com did) drift thousands of cells from
+ * (0,0), at which point every client hid it as "a remote arena".
+ */
+const BATTLE_REGION_MARGIN =
+	BATTLE.PLAY_RADIUS_LARGE + BATTLE.RING_THICKNESS + BATTLE.KEEP_OUT_MARGIN;
+
+function battleRegionBounds() {
+	const last = arenaCentreForSlot(BATTLE.MAX_ARENAS - 1);
+	return Object.freeze({
+		minX: BATTLE.ARENA_BASE.x - BATTLE_REGION_MARGIN,
+		maxX: last.x + BATTLE_REGION_MARGIN,
+		minZ: BATTLE.ARENA_BASE.z - BATTLE_REGION_MARGIN,
+		maxZ: last.z + BATTLE_REGION_MARGIN,
+	});
+}
+
+const BATTLE_REGION_BOUNDS = battleRegionBounds();
+
+/** True when (x, z) sits inside the battle-arena grid, not merely far from origin. */
+function isBattleRegionCell(x, z) {
+	return x >= BATTLE_REGION_BOUNDS.minX
+		&& x <= BATTLE_REGION_BOUNDS.maxX
+		&& z >= BATTLE_REGION_BOUNDS.minZ
+		&& z <= BATTLE_REGION_BOUNDS.maxZ;
+}
+
 function cellDistance(centre, x, z) {
 	const dx = x - centre.x;
 	const dz = z - centre.z;
@@ -238,6 +267,7 @@ function zoneCells(zone) {
 
 module.exports = {
 	BATTLE,
+	BATTLE_REGION_BOUNDS,
 	arenaCentreForSlot,
 	cellDistance,
 	radialBand,
@@ -245,6 +275,7 @@ module.exports = {
 	ringOuterRadius,
 	isInsidePlayArea,
 	isInsideKeepOut,
+	isBattleRegionCell,
 	ringCells,
 	seatHomeZones,
 	zoneCells,

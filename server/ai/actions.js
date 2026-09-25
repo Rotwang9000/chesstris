@@ -12,6 +12,17 @@ const pieces = require('../game/pieces');
 const { GAME_RULES } = require('../game/Constants');
 // Shared with the human chess handler so AI pawns freeze identically.
 const { markPawnAwaitingPromotion } = require('../game/promotion');
+const {
+	nearestEnemyFocus,
+	manhattan,
+	piecePos,
+	generateComputerStrategy,
+	COMPUTER_DIFFICULTY,
+} = require('./strategy');
+
+const PROMOTABLE_CAPTURE_TYPES = Object.freeze(
+	new Set(['ROOK', 'KNIGHT', 'BISHOP', 'QUEEN'])
+);
 
 const TETROMINO_TYPES = Object.freeze(['I', 'J', 'L', 'O', 'S', 'T', 'Z']);
 
@@ -53,13 +64,21 @@ function createAiActions({
 		const anchors = collectPlacementAnchors(world, computerId);
 		if (anchors.length === 0) return false;
 
+		const strategy = computerPlayer.strategy
+			|| generateComputerStrategy(computerPlayer.difficulty || COMPUTER_DIFFICULTY.MEDIUM);
+		const enemyFocus = nearestEnemyFocus(world, computerId);
+		const explore = Math.max(0, Math.min(1, Number(strategy.explorationRate) || 0.5));
+		const orderedAnchors = orderAnchorsTowardEnemy(anchors, enemyFocus, explore);
+
 		const maxAttempts = 60;
 		const offsetRange = 4;
 
 		for (let attempt = 0; attempt < maxAttempts; attempt++) {
-			const anchor = anchors[Math.floor(Math.random() * anchors.length)];
-			const x = anchor.x + (Math.floor(Math.random() * (offsetRange * 2 + 1)) - offsetRange);
-			const z = anchor.z + (Math.floor(Math.random() * (offsetRange * 2 + 1)) - offsetRange);
+			const window = Math.min(orderedAnchors.length, Math.max(3, Math.ceil(orderedAnchors.length * 0.35)));
+			const anchor = orderedAnchors[Math.floor(Math.random() * window)];
+			const { dx, dz } = placementOffsetTowardEnemy(anchor, enemyFocus, offsetRange, explore);
+			const x = anchor.x + dx;
+			const z = anchor.z + dz;
 
 			const tetromino = {
 				pieceType,
@@ -120,10 +139,10 @@ function createAiActions({
 
 	function collectPlacementAnchors(world, computerId) {
 		const anchors = [];
-		const cells = world.board?.cells;
+		const boardCells = world.board?.cells;
 
-		if (cells) {
-			for (const [key, cellContents] of Object.entries(cells)) {
+		if (boardCells) {
+			for (const [key, cellContents] of Object.entries(boardCells)) {
 				if (!Array.isArray(cellContents) || cellContents.length === 0) continue;
 				const ownsNonHome = cellContents.some(
 					item => item && item.player === computerId && item.type !== 'home'
@@ -142,6 +161,59 @@ function createAiActions({
 		}
 
 		return anchors;
+	}
+
+	/**
+	 * Sort anchors by distance to the nearest enemy; with high
+	 * explorationRate the front of the list is used more often so
+	 * Expert builds a bridge instead of farming its own backyard.
+	 */
+	function orderAnchorsTowardEnemy(anchors, enemyFocus, explore) {
+		if (!enemyFocus?.position || explore < 0.15 || anchors.length < 2) {
+			return anchors.slice();
+		}
+		const scored = anchors.map(a => ({
+			a,
+			d: manhattan(a, enemyFocus.position),
+		}));
+		scored.sort((l, r) => l.d - r.d);
+		// Soft shuffle within the nearest third so bots don't stamp the
+		// same bridge cell forever.
+		const head = Math.max(2, Math.ceil(scored.length / 3));
+		for (let i = head - 1; i > 0; i--) {
+			const j = Math.floor(Math.random() * (i + 1));
+			const tmp = scored[i];
+			scored[i] = scored[j];
+			scored[j] = tmp;
+		}
+		return scored.map(s => s.a);
+	}
+
+	function placementOffsetTowardEnemy(anchor, enemyFocus, offsetRange, explore) {
+		const isotropic = () => ({
+			dx: Math.floor(Math.random() * (offsetRange * 2 + 1)) - offsetRange,
+			dz: Math.floor(Math.random() * (offsetRange * 2 + 1)) - offsetRange,
+		});
+		if (!enemyFocus?.position || Math.random() > explore) return isotropic();
+
+		const sx = Math.sign(enemyFocus.position.x - anchor.x);
+		const sz = Math.sign(enemyFocus.position.z - anchor.z);
+		// Bias one axis toward the enemy; keep some jitter so placement
+		// still finds legal cells.
+		const alongX = sx !== 0 && (sz === 0 || Math.random() < 0.5);
+		if (alongX) {
+			return {
+				dx: sx * (1 + Math.floor(Math.random() * offsetRange)),
+				dz: Math.floor(Math.random() * (offsetRange * 2 + 1)) - offsetRange,
+			};
+		}
+		if (sz !== 0) {
+			return {
+				dx: Math.floor(Math.random() * (offsetRange * 2 + 1)) - offsetRange,
+				dz: sz * (1 + Math.floor(Math.random() * offsetRange)),
+			};
+		}
+		return isotropic();
 	}
 
 	/**
@@ -372,22 +444,38 @@ function createAiActions({
 		}
 		if (captures.length === 0 && quiet.length === 0) return false;
 
-		// Prefer captures (proportional to aggressiveness), otherwise a
-		// random legal quiet move. Shuffle-by-random-pick with removal so
-		// a rejected candidate (e.g. deferred check denied) tries others.
-		const strategy = computerPlayer.strategy || {};
+		// Prefer captures (proportional to aggressiveness). Quiet moves
+		// that close distance to the nearest enemy are ranked ahead of
+		// wandering — Expert used to shuffle quiet moves at random and
+		// never leave its own footprint.
+		const strategy = computerPlayer.strategy
+			|| generateComputerStrategy(computerPlayer.difficulty || COMPUTER_DIFFICULTY.MEDIUM);
+		const enemyFocus = nearestEnemyFocus(world, computerId);
+		const rankedQuiet = rankQuietMovesTowardEnemy(quiet, enemyFocus);
 		const preferCaptures = captures.length > 0
-			&& (quiet.length === 0 || Math.random() < Math.max(0.5, strategy.aggressiveness || 0.5));
-		const pool = preferCaptures ? captures.concat(quiet) : quiet.concat(captures);
+			&& (rankedQuiet.length === 0 || Math.random() < Math.max(0.5, strategy.aggressiveness || 0.5));
+		const pool = preferCaptures
+			? captures.concat(rankedQuiet)
+			: rankedQuiet.concat(captures);
+
+		// Size of the pool's PRIORITY segment — the captures when we're in
+		// capture-preferring mode, the distance-ranked quiet moves
+		// otherwise. The pick jitter below must not reach past it.
+		let priorityCount = preferCaptures ? captures.length : rankedQuiet.length;
 
 		const maxAttempts = Math.min(pool.length, 20);
 		for (let attempt = 0; attempt < maxAttempts; attempt++) {
 			// Take from the front of the ordered pool but with a little
 			// jitter inside the first few entries so bots don't all play
-			// identically.
-			const window = Math.min(pool.length, 4);
+			// identically. The jitter is CLAMPED to the priority segment:
+			// a flat window of 4 across the whole pool meant a lone capture
+			// competing with ranked quiet moves was played only one time in
+			// four, so "aggressiveness 1.0" still walked past free material.
+			const jitter = priorityCount > 0 ? Math.min(priorityCount, 4) : Math.min(pool.length, 4);
+			const window = Math.max(1, jitter);
 			const pick = Math.floor(Math.random() * window);
 			const { piece, target } = pool.splice(pick, 1)[0];
+			if (priorityCount > 0) priorityCount--;
 
 			const moveResult = applyChessMove(world, piece, target.x, target.z, computerId, { checkService });
 			// Deferred-check responses count as "acted" — the check
@@ -461,6 +549,47 @@ function createAiActions({
 		return false;
 	}
 
+	/**
+	 * Prefer quiet moves that reduce Manhattan distance to the enemy
+	 * focus (usually their king). Pieces already closer to the front
+	 * also get a slight bump so rear pawns don't monopolise ticks.
+	 */
+	function rankQuietMovesTowardEnemy(quiet, enemyFocus) {
+		if (!enemyFocus?.position || quiet.length < 2) return quiet.slice();
+
+		const scored = quiet.map(candidate => {
+			const from = piecePos(candidate.piece);
+			const to = candidate.target;
+			if (!from || !to) return { candidate, score: -Infinity };
+			const before = manhattan(from, enemyFocus.position);
+			const after = manhattan(to, enemyFocus.position);
+			const closed = before - after;
+			// Prefer front-line pieces when several moves close equally.
+			const frontBias = -before * 0.01;
+			return { candidate, score: closed + frontBias };
+		});
+		scored.sort((a, b) => b.score - a.score);
+		return scored.map(s => s.candidate);
+	}
+
+	function pushCaptureToBasket(world, captorRecord, capturedPieceSnapshot) {
+		if (!captorRecord || !capturedPieceSnapshot) return;
+		const capturedType = String(capturedPieceSnapshot.type || '').toUpperCase();
+		if (!PROMOTABLE_CAPTURE_TYPES.has(capturedType)) return;
+		if (!Array.isArray(captorRecord.capturedBasket)) {
+			captorRecord.capturedBasket = [];
+		}
+		const originalOwner = capturedPieceSnapshot.player;
+		const ownerRecord = world?.players?.[originalOwner];
+		captorRecord.capturedBasket.push({
+			type: capturedType,
+			originalOwner,
+			originalOwnerName: ownerRecord?.name || originalOwner,
+			originalColor: ownerRecord?.color,
+			capturedAt: Date.now(),
+		});
+	}
+
 	function applyChessMove(world, piece, targetX, targetZ, computerId, { checkService = null } = {}) {
 		const computerPlayer = world.players?.[computerId];
 		const sourceCell = gameManager.boardManager.getCell(world.board, piece.position.x, piece.position.z);
@@ -531,6 +660,9 @@ function createAiActions({
 						player: target.player,
 						position: { x: targetX, z: targetZ },
 					};
+					// Mirror human chess_move: promotable captures go in
+					// the basket so capturedCount / promotion choices work.
+					pushCaptureToBasket(world, computerPlayer, capturedPieceSnapshot);
 					// Route capture through the central helper. Emit a
 					// per-piece `chess_piece_captured` activity event so
 					// the user always sees *where* their piece was

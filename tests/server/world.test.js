@@ -258,14 +258,14 @@ describe('Persistence — load/save round-trip', () => {
 		// migrateLegacyV1 / restoreWorld functions are pure with respect
 		// to the snapshot object.  We exercise them directly.
 		const persistence = require('../../server/persistence');
-		const migrated = require('../../server/persistence').loadWorld.toString().includes('migrateLegacyV1')
-			? null : null;
-		// Use the exported restoreWorld with a manually-built v2 snapshot
-		// (mimicking what loadWorld would have produced).
 		// Since migrateLegacyV1 is internal, we test via the public
 		// path: write a temporary file then load.
-		const dataDir = path.join(__dirname, '..', '..', 'data');
 		const stateFile = persistence.STATE_FILE;
+		// `data/` is gitignored, so a fresh CI checkout has no such
+		// directory and this write died with ENOENT. Nothing has called
+		// into persistence yet at this point (it creates the dir lazily
+		// on its first save), so the test has to make it itself.
+		fs.mkdirSync(path.dirname(stateFile), { recursive: true });
 		const backupBefore = fs.existsSync(stateFile) ? fs.readFileSync(stateFile, 'utf8') : null;
 		try {
 			fs.writeFileSync(stateFile, JSON.stringify(legacy), 'utf8');

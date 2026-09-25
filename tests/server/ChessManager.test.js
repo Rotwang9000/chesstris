@@ -15,6 +15,10 @@ describe('ChessManager', () => {
 		({ boardManager, islandManager, chessManager } = createManagers());
 	});
 
+	afterEach(() => {
+		chessManager.dispose();
+	});
+
 	// ── Piece initialisation ────────────────────────────────────────────────
 
 	describe('initializeChessPieces', () => {

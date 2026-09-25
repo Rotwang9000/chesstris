@@ -4,14 +4,18 @@
  * Arenas are remote regions of the single global world (see
  * `docs/battle-mode-design.md`): a neutral ring of shared cells forms a
  * circular wall (diameter 32), and each participant plays a dedicated
- * **seat** — a fresh player record (`battle-<code>-s<n>`) with a home
+ * **seat** — a fresh player record (`battle-<id>-s<n>`) with a home
  * zone at a fixed position facing the arena centre. A human's main-world
  * kingdom is untouched while they battle; gameplay handlers resolve
  * their acting id through `effectivePlayerId()`.
  *
  * Registry shape (persisted at `world.battles[battleId]`):
  *   {
- *     id, code,           // id === code (6-char shareable key)
+ *     id, code,           // id: internal, public (seat ids, ring cells,
+ *                         //   players list). code: the 6-char invite
+ *                         //   secret — only ever sent to seated players.
+ *                         //   (Battles created before this split have
+ *                         //   id === code and keep working.)
  *     status,             // 'lobby' | 'active' | 'finished'
  *     slot, centre,       // arena grid slot + centre cell
  *     seatCount,          // requested seats (2-4)
@@ -23,6 +27,8 @@
  */
 
 'use strict';
+
+const crypto = require('crypto');
 
 const World = require('../world/World');
 const Sessions = require('../world/Sessions');
@@ -56,8 +62,14 @@ const RING_COLOR = '#8a8a99';
 const SEAT_COLORS = ['#e6e6e6', '#454545', '#4488dd', '#dd8844'];
 const BOT_DIFFICULTY = COMPUTER_DIFFICULTY.MEDIUM;
 
-function seatIdFor(code, index) {
-	return `battle-${String(code).toLowerCase()}-s${index}`;
+function seatIdFor(battleId, index) {
+	return `battle-${String(battleId).toLowerCase()}-s${index}`;
+}
+
+// The id leaks to everyone (every seat's pieces carry it), so it must
+// not be the invite code or any spectator could join a private battle.
+function newBattleId() {
+	return `b${crypto.randomBytes(5).toString('hex')}`;
 }
 
 function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, lifecycleService, io }) {
@@ -79,7 +91,12 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 	}
 
 	function battleByCode(code) {
-		return getBattle(String(code || '').trim().toUpperCase());
+		const wanted = String(code || '').trim().toUpperCase();
+		if (!wanted) return null;
+		for (const battle of Object.values(battles())) {
+			if (battle && String(battle.code).toUpperCase() === wanted) return battle;
+		}
+		return null;
 	}
 
 	/** Every unfinished battle this REAL player controls a seat in. */
@@ -250,10 +267,11 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 		// re-rolling until unique costs nothing.
 		let code = generateGameKey();
 		let guard = 0;
-		while (battles()[code] && guard++ < 20) code = generateGameKey();
+		while (battleByCode(code) && guard++ < 20) code = generateGameKey();
+		const id = newBattleId();
 
 		const battle = {
-			id: code,
+			id,
 			code,
 			status: 'lobby',
 			slot: null,
@@ -266,14 +284,14 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 			finishedAt: null,
 			winnerSeatId: null,
 			seats: [{
-				seatId: seatIdFor(code, 0),
+				seatId: seatIdFor(id, 0),
 				index: 0,
 				controlledBy: String(hostId),
 				isAi: false,
 				name: hostName || 'Player 1',
 			}],
 		};
-		battles()[code] = battle;
+		battles()[id] = battle;
 		stampRealPlayer(hostId, battle.id);
 		World.markDirty();
 		persistence.markDirty();
@@ -314,7 +332,7 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 
 		const index = battle.seats.length;
 		const seat = {
-			seatId: seatIdFor(battle.code, index),
+			seatId: seatIdFor(battle.id, index),
 			index,
 			controlledBy: String(playerId),
 			isAi: false,
@@ -396,7 +414,7 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 		while (battle.seats.length < battle.seatCount) {
 			const index = battle.seats.length;
 			battle.seats.push({
-				seatId: seatIdFor(battle.code, index),
+				seatId: seatIdFor(battle.id, index),
 				index,
 				controlledBy: null,
 				isAi: true,
@@ -514,7 +532,7 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 				console.log(`[Battle] ${battle.code} cancelled by host`);
 			} else {
 				battle.seats = battle.seats.filter(s => s !== seat);
-				battle.seats.forEach((s, i) => { s.index = i; s.seatId = seatIdFor(battle.code, i); });
+				battle.seats.forEach((s, i) => { s.index = i; s.seatId = seatIdFor(battle.id, i); });
 				stampRealPlayer(playerId, null);
 				emitToSeatHumans(battle, 'battle_lobby_update', { battle: publicState(battle) });
 				console.log(`[Battle] ${playerId} left lobby ${battle.code}`);
@@ -600,7 +618,8 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 		if (winnerSeat) {
 			try {
 				io.to(World.getWorldId()).emit('server_toast', {
-					message: `⚔ ${winnerSeat.name} won battle ${battle.code}!`,
+					// World-wide toast: never include the invite code.
+					message: `⚔ ${winnerSeat.name} won a battle!`,
 					tone: 'success',
 				});
 			} catch (_e) { /* best-effort */ }

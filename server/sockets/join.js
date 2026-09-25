@@ -6,6 +6,7 @@
 
 const World = require('../world/World');
 const { validatePlayerName } = require('../utils/validation');
+const { isWorldAdminAllowed } = require('../security/adminGate');
 const funnel = require('../observability/funnel');
 
 function registerJoinHandlers(socket, ctx) {
@@ -18,6 +19,7 @@ function registerJoinHandlers(socket, ctx) {
 		persistence,
 		gameManager,
 		missingKingSweep,
+		dormantKingdom,
 	} = ctx;
 
 	socket.on('join_game', (data, callback) => {
@@ -36,6 +38,27 @@ function registerJoinHandlers(socket, ctx) {
 			}
 
 			const worldId = World.getWorldId();
+			const world = World.getWorld();
+			const hasHomeZone = !!(world?.homeZones?.[playerId]);
+
+			// Kingdom was stowed after a long idle spell — don't spawn a
+			// second kingdom on top. The client must choose relocate vs fresh.
+			if (player.stowedKingdom && !hasHomeZone && dormantKingdom) {
+				socket.join(worldId);
+				const summary = dormantKingdom.stowedSummary(player);
+				if (callback) {
+					callback({
+						success: true,
+						gameId: worldId,
+						playerId,
+						playerName: player.name,
+						needsKingdomChoice: true,
+						stowedKingdom: summary,
+						timestamp: Date.now(),
+					});
+				}
+				return;
+			}
 
 			// Funnel: no home zone yet = this is their first entry into the
 			// world (registerPlayer creates one below). Reconnects skip this.
@@ -117,7 +140,13 @@ function registerJoinHandlers(socket, ctx) {
 		}
 	});
 
+	// World-admin only: it rewrites shared tunables such as maxPlayers
+	// (`{ maxPlayers: 1 }` would lock every new player out).
 	socket.on('create_game', (settings, callback) => {
+		if (!isWorldAdminAllowed(settings)) {
+			if (typeof callback === 'function') callback({ success: false, error: 'not_allowed' });
+			return;
+		}
 		try {
 			const worldId = lifecycleService.applyWorldSettings(settings || {});
 			if (callback) callback({ success: true, gameId: worldId });

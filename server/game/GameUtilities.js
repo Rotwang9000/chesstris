@@ -6,6 +6,7 @@
 const crypto = require('crypto');
 const BoardGenerator = require('../boardGenerator');
 const { BOARD_SETTINGS } = require('./Constants');
+const { isBattleRegionCell } = require('../battle/geometry');
 
 const { HOME_ZONE_WIDTH, HOME_ZONE_HEIGHT } = BOARD_SETTINGS;
 
@@ -86,7 +87,11 @@ function findHomeZonePosition(game) {
 		const p = players[pid];
 		// Battle seats don't count towards the organic-world index —
 		// their zones sit in remote arenas.
-		return !(p && (p.eliminated || p.battleId));
+		if (p && (p.eliminated || p.battleId)) return false;
+		const zone = game.homeZones[pid];
+		if (zone && Number.isFinite(zone.x) && Number.isFinite(zone.z)
+			&& isBattleRegionCell(zone.x, zone.z)) return false;
+		return true;
 	}).length;
 	const playerIndex = livingZoneCount;
 	

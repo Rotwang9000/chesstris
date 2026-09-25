@@ -156,6 +156,10 @@ function buildSnapshot() {
 			// Dropping these on restart would orphan live arena seats.
 			battleId: p.battleId || null,
 			controlledBy: p.controlledBy || null,
+			// Hash of the owner's session secret (server/security/
+			// playerSession.js). Dropping it would make every guest
+			// unreclaimable after a restart.
+			sessionSecretHash: p.sessionSecretHash || null,
 		};
 	}
 

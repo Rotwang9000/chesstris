@@ -109,4 +109,26 @@ describe('calculateHomePosition', () => {
 		const overlapsZ = !(pos.z + newH <= existing.z || pos.z >= existing.z + existing.height);
 		expect(overlapsX && overlapsZ).toBe(false);
 	});
+
+	test('a cluster far from the origin is still the placement anchor', () => {
+		const gameState = {
+			homeZones: { p0: makeZone(7218, 1893, 0) },
+			players: { p0: { id: 'p0' } },
+		};
+		const pos = BoardGenerator.calculateHomePosition(1, gameState, HZ_W, HZ_H);
+		const distance = Math.hypot(pos.x - 7218, pos.z - 1893);
+		expect(distance).toBeLessThanOrEqual(80);
+	});
+
+	test('stale battle-arena home zones do not drag organic placement', () => {
+		const gameState = {
+			homeZones: {
+				p0: makeZone(0, 8, 0),
+				battleGhost: makeZone(2000, 2000, 0),
+			},
+			players: { p0: { id: 'p0' } },
+		};
+		const pos = BoardGenerator.calculateHomePosition(1, gameState, HZ_W, HZ_H);
+		expect(Math.hypot(pos.x, pos.z)).toBeLessThanOrEqual(80);
+	});
 });

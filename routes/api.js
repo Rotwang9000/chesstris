@@ -16,10 +16,11 @@
  */
 
 const express = require('express');
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID: uuidv4 } = require('crypto');
 const crypto = require('crypto');
 
 const World = require('../server/world/World');
+const { validatePlayerName } = require('../server/utils/validation');
 const boardVisualization = require('../server/utils/boardVisualization');
 
 const router = express.Router();
@@ -34,6 +35,12 @@ function generateApiToken() {
 
 function validateApiToken(playerId, token) {
 	return !!token && externalApiTokens[playerId] === token;
+}
+
+/** Forget an external player's token (its MCP session ended). */
+function releaseExternalApiToken(playerId) {
+	delete externalApiTokens[playerId];
+	delete externalComputerPlayers[playerId];
 }
 
 router.get('/', (_req, res) => {
@@ -146,6 +153,7 @@ router.get('/world/visualization', (req, res) => {
  */
 function registerExternalComputerPlayer(name, { apiEndpoint = null, description = null } = {}) {
 	if (!name) throw new Error('Name is required');
+	name = validatePlayerName(name) || 'External AI';
 
 	const playerId = `ext-ai-${uuidv4().substring(0, 8)}`;
 	const apiToken = generateApiToken();
@@ -164,7 +172,7 @@ function registerExternalComputerPlayer(name, { apiEndpoint = null, description 
 	// "unknown" and minted a fresh UUID, throwing the token away.
 	try {
 		World.upsertPlayer(playerId, {
-			name: String(name).slice(0, 32),
+			name,
 			isComputer: true,
 			external: true,
 			lastActiveAt: Date.now(),
@@ -211,3 +219,4 @@ router.get('/computer-players', (_req, res) => {
 module.exports = router;
 module.exports.validateApiToken = validateApiToken;
 module.exports.registerExternalComputerPlayer = registerExternalComputerPlayer;
+module.exports.releaseExternalApiToken = releaseExternalApiToken;

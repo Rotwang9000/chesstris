@@ -15,6 +15,7 @@ import { isCameraRelativeControls } from './controlSettings.js';
 import { translatePosition } from './centreBoardMarker.js';
 import {
 	performRaycast, clearChessSelection, inspectCellAtMouse, tryPriorityChessMoveClick,
+	clearStaleChessSelection, tryDeselectByClickingSelectedPiece,
 } from './chessInteraction.js';
 import { showToastMessage } from './showToastMessage.js';
 import { playSound, initSoundManager } from './audio/soundManager.js';
@@ -83,9 +84,13 @@ export function setupInputHandlers() {
 				if (!gameState.processingMove && tryPriorityChessMoveClick(m)) {
 					return;
 				}
+				clearStaleChessSelection();
 				if (gameState.selectedChessPiece) {
+					// Clicking the selected piece releases it — the only
+					// deselect gesture available without a keyboard.
+					if (tryDeselectByClickingSelectedPiece(m)) return;
 					showToastMessage(
-						'Finish your tetromino drop first, or press Escape to deselect your piece.',
+						'Finish your tetromino drop first, or tap the selected piece (or press Escape) to deselect it.',
 						4000,
 					);
 					return;
@@ -343,7 +348,15 @@ function handleTouchStart(event) {
 	try {
 		event.preventDefault();
 		if (event.touches.length > 0) {
-			if (gameState.turnPhase !== 'chess') return;
+			if (gameState.turnPhase !== 'chess') {
+				// Touch never reaches the document click handler (this
+				// preventDefault suppresses the synthesised click), so the
+				// stale-selection sweep that lives there has to run here
+				// too — otherwise a dangling selection sticks around for
+				// the whole drop on a tablet with no way to clear it.
+				clearStaleChessSelection();
+				return;
+			}
 			const rect = containerElement.getBoundingClientRect();
 			mouse.x = ((event.touches[0].clientX - rect.left) / rect.width) * 2 - 1;
 			mouse.y = -((event.touches[0].clientY - rect.top) / rect.height) * 2 + 1;

@@ -17,6 +17,7 @@ const advertiserRoutes = require('../routes/advertisers');
 const { router: walletAuthRouter } = require('../routes/walletAuth');
 const { mountAuthRoutes } = require('./auth/routes');
 const { parseAllowedOrigins, isOriginAllowed } = require('./security/origins');
+const { isDevelopmentEnv } = require('./security/env');
 const metrics = require('./observability/metrics');
 const funnel = require('./observability/funnel');
 const sentry = require('./observability/sentry');
@@ -81,7 +82,7 @@ function isLoopbackRequest(req) {
 
 function createApp({ projectRoot = process.cwd() } = {}) {
 	const app = express();
-	const isDevelopment = process.env.NODE_ENV !== 'production';
+	const isDevelopment = isDevelopmentEnv();
 	const allowedOrigins = parseAllowedOrigins(process.env.ALLOWED_ORIGIN);
 
 	// trust proxy — we're behind nginx, so X-Forwarded-* is what
@@ -253,9 +254,10 @@ function createApp({ projectRoot = process.cwd() } = {}) {
 		res.sendFile(path.join(projectRoot, 'public', 'advertise.html'));
 	});
 	app.get('/admin/advertisers', (req, res) => {
-		// In production the admin panel is gated behind ADMIN_TOKEN.
+		// Outside local dev (production AND staging) the admin panel is
+		// gated behind ADMIN_TOKEN.
 		// Browser-friendly: token via `?adminToken=…` query string.
-		if (process.env.NODE_ENV === 'production') {
+		if (!isDevelopment) {
 			const expected = process.env.ADMIN_TOKEN;
 			if (!expected) {
 				return res.status(503).send('Admin panel disabled (ADMIN_TOKEN not configured).');
@@ -268,11 +270,23 @@ function createApp({ projectRoot = process.cwd() } = {}) {
 		res.sendFile(path.join(projectRoot, 'public', 'admin', 'advertisers.html'));
 	});
 
-	app.get('*', (req, res, next) => {
-		// Pass HTML SPA routes through the bundle-swap middleware so
-		// they pick up the same script-tag rewrite that `/` does.
-		req.url = '/';
-		return indexSwap.middleware(req, res, next);
+	// Unknown URLs. The client only ever lives at `/` and `/2d` (state
+	// rides in the query string), so nothing here is a real page:
+	//  - unknown API paths get a JSON 404, not the game HTML;
+	//  - a missing file (`/foo.js`, `/robots.txt`-style probes) gets a
+	//    real 404 instead of HTML with a 200, which both confused module
+	//    loaders and showed up to crawlers as duplicate "soft 404" pages;
+	//  - any other path 301s to `/`, keeping the query, so old or
+	//    mistyped links still land in the game.
+	app.all('/api/*', (_req, res) => {
+		res.status(404).json({ success: false, error: 'not_found' });
+	});
+	app.get('*', (req, res) => {
+		if (path.extname(req.path)) {
+			return res.status(404).type('text').send('Not found');
+		}
+		const qs = req.originalUrl.indexOf('?');
+		return res.redirect(301, qs === -1 ? '/' : `/${req.originalUrl.slice(qs)}`);
 	});
 
 	// Sentry's error handler must be the LAST middleware before any

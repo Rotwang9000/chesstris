@@ -595,7 +595,9 @@ function registerChessHandlers(socket, ctx) {
 				);
 			}
 
-			piece.position = targetPosition;
+			// Copy only the coordinates — the client's object could carry
+			// arbitrary extra payload that would be persisted and broadcast.
+			piece.position = { x: targetPosition.x, z: targetPosition.z };
 			piece.hasMoved = true;
 			piece.moveCount = (piece.moveCount || 0) + 1;
 			world.chessPieces[pieceIndex] = piece;
@@ -609,10 +611,17 @@ function registerChessHandlers(socket, ctx) {
 				handleCastling(world, piece, originalPosition, targetPosition, gameManager, playerId);
 			}
 
+			// Validated fields only (see tetromino_placed): this is
+			// broadcast in every game_update and persisted.
 			world.lastAction = {
 				type: 'chess_move',
 				playerId,
-				data: { ...data, captured: capturedPiece },
+				data: {
+					pieceId: piece.id,
+					from: { x: originalPosition.x, z: originalPosition.z },
+					to: { x: piece.position.x, z: piece.position.z },
+					captured: capturedPiece,
+				},
 			};
 			player.lastChessMoveAt = Date.now();
 			player.moveCount = (player.moveCount || 0) + 1;

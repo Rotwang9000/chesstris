@@ -1,6 +1,6 @@
 /**
- * AI difficulty profiles and a couple of cheap heuristics shared by
- * the strategic-action helpers.
+ * AI difficulty profiles and board heuristics shared by the strategic
+ * action helpers and the runner's action picker.
  */
 
 const COMPUTER_DIFFICULTY = Object.freeze({
@@ -21,32 +21,41 @@ const AI_ROSTER_TEMPLATE = Object.freeze([
 	{ label: 'Expert',   difficulty: COMPUTER_DIFFICULTY.HARD,   interval: MIN_COMPUTER_MOVE_INTERVAL_MS[COMPUTER_DIFFICULTY.HARD] },
 ]);
 
+/**
+ * Expert used to farm (buildSpeed 0.8) and never hunt — aggressiveness
+ * only mattered once an enemy was already adjacent (Chebyshev ≤1), so
+ * a "hard" bot could vacuum power-ups for weeks with capturedCount 0.
+ * explorationRate now actually drives placement/chess bias in actions.js.
+ */
 function generateComputerStrategy(difficulty) {
 	switch (difficulty) {
 		case COMPUTER_DIFFICULTY.EASY:
 			return {
-				aggressiveness: 0.2,
+				aggressiveness: 0.25,
 				defensiveness: 0.7,
-				buildSpeed: 0.3,
+				buildSpeed: 0.45,
 				kingProtection: 0.8,
-				explorationRate: 0.4,
+				explorationRate: 0.35,
+				huntRadius: 3,
 			};
 		case COMPUTER_DIFFICULTY.HARD:
 			return {
-				aggressiveness: 0.8,
-				defensiveness: 0.4,
-				buildSpeed: 0.8,
-				kingProtection: 0.6,
-				explorationRate: 0.7,
+				aggressiveness: 0.9,
+				defensiveness: 0.35,
+				buildSpeed: 0.4,
+				kingProtection: 0.55,
+				explorationRate: 0.85,
+				huntRadius: 10,
 			};
 		case COMPUTER_DIFFICULTY.MEDIUM:
 		default:
 			return {
-				aggressiveness: 0.5,
+				aggressiveness: 0.55,
 				defensiveness: 0.5,
 				buildSpeed: 0.5,
 				kingProtection: 0.7,
-				explorationRate: 0.5,
+				explorationRate: 0.55,
+				huntRadius: 6,
 			};
 	}
 }
@@ -54,6 +63,58 @@ function generateComputerStrategy(difficulty) {
 function labelForDifficulty(difficulty) {
 	const entry = AI_ROSTER_TEMPLATE.find(t => t.difficulty === difficulty);
 	return entry ? entry.label : 'Standard';
+}
+
+function chebyshev(a, b) {
+	if (!a || !b) return Infinity;
+	return Math.max(Math.abs(a.x - b.x), Math.abs(a.z - b.z));
+}
+
+function manhattan(a, b) {
+	if (!a || !b) return Infinity;
+	return Math.abs(a.x - b.x) + Math.abs(a.z - b.z);
+}
+
+function piecePos(piece) {
+	if (!piece) return null;
+	const p = piece.position || piece;
+	if (!Number.isFinite(p.x) || !Number.isFinite(p.z)) return null;
+	return { x: p.x, z: p.z };
+}
+
+/** Nearest opposing king (or any opposing piece if no king). */
+function nearestEnemyFocus(world, computerId) {
+	const opponents = (world.chessPieces || []).filter(
+		p => p && String(p.player) !== String(computerId)
+	);
+	if (opponents.length === 0) return null;
+
+	const myPieces = (world.chessPieces || []).filter(
+		p => p && String(p.player) === String(computerId)
+	);
+	const myOrigin = piecePos(myPieces.find(p => String(p.type || '').toUpperCase() === 'KING'))
+		|| piecePos(myPieces[0]);
+	if (!myOrigin) return null;
+
+	const kings = opponents.filter(p => String(p.type || '').toUpperCase() === 'KING');
+	const pool = kings.length > 0 ? kings : opponents;
+	let best = null;
+	let bestDist = Infinity;
+	for (const opp of pool) {
+		const pos = piecePos(opp);
+		if (!pos) continue;
+		const d = manhattan(myOrigin, pos);
+		if (d < bestDist) {
+			bestDist = d;
+			best = { piece: opp, position: pos, distance: d };
+		}
+	}
+	return best;
+}
+
+function strategyFor(world, computerId) {
+	const player = world?.players?.[computerId];
+	return player?.strategy || generateComputerStrategy(COMPUTER_DIFFICULTY.MEDIUM);
 }
 
 // ── Cheap board heuristics ─────────────────────────────────────────────────
@@ -67,13 +128,14 @@ function checkForThreatenedPieces(world, computerId) {
 	const opponentPieces = (world.chessPieces || []).filter(
 		p => p && String(p.player) !== String(computerId)
 	);
+	const radius = Math.max(2, Math.round((strategyFor(world, computerId).huntRadius || 4) / 3));
 	for (const op of opponentPieces) {
-		const opPos = op.position || op;
+		const opPos = piecePos(op);
+		if (!opPos) continue;
 		for (const myP of myPieces) {
-			const myPos = myP.position || myP;
-			const dx = Math.abs(opPos.x - myPos.x);
-			const dz = Math.abs(opPos.z - myPos.z);
-			if (dx <= 2 && dz <= 2) return true;
+			const myPos = piecePos(myP);
+			if (!myPos) continue;
+			if (chebyshev(opPos, myPos) <= radius) return true;
 		}
 	}
 	return false;
@@ -86,7 +148,8 @@ function isKingExposed(world, computerId) {
 	);
 	if (!king) return false;
 
-	const kp = king.position || king;
+	const kp = piecePos(king);
+	if (!kp) return false;
 	const cells = world.board?.cells || {};
 	let neighbours = 0;
 	for (let dx = -1; dx <= 1; dx++) {
@@ -99,6 +162,11 @@ function isKingExposed(world, computerId) {
 	return neighbours < 3;
 }
 
+/**
+ * True when any of our pieces can currently capture, OR an enemy sits
+ * inside the difficulty's hunt radius (so Expert starts chess-marching
+ * long before contact).
+ */
 function hasAttackOpportunity(world, computerId) {
 	const myPieces = (world.chessPieces || []).filter(
 		p => p && String(p.player) === String(computerId)
@@ -108,14 +176,25 @@ function hasAttackOpportunity(world, computerId) {
 	);
 	if (myPieces.length === 0 || opponentPieces.length === 0) return false;
 
+	const radius = Number(strategyFor(world, computerId).huntRadius) || 4;
 	for (const mine of myPieces) {
-		const mp = mine.position || mine;
+		const mp = piecePos(mine);
+		if (!mp) continue;
 		for (const opp of opponentPieces) {
-			const op = opp.position || opp;
-			if (Math.abs(mp.x - op.x) <= 1 && Math.abs(mp.z - op.z) <= 1) return true;
+			const op = piecePos(opp);
+			if (!op) continue;
+			if (chebyshev(mp, op) <= radius) return true;
 		}
 	}
 	return false;
+}
+
+/** True when any enemy kingdom is close enough that bridging is worthwhile. */
+function hasEnemyInTheatre(world, computerId) {
+	const focus = nearestEnemyFocus(world, computerId);
+	if (!focus) return false;
+	const radius = (Number(strategyFor(world, computerId).huntRadius) || 4) * 4;
+	return focus.distance <= Math.max(24, radius);
 }
 
 module.exports = {
@@ -127,4 +206,9 @@ module.exports = {
 	checkForThreatenedPieces,
 	isKingExposed,
 	hasAttackOpportunity,
+	hasEnemyInTheatre,
+	nearestEnemyFocus,
+	chebyshev,
+	manhattan,
+	piecePos,
 };

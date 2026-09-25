@@ -13,10 +13,12 @@
  * the active `setInterval` handles.
  */
 
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID: uuidv4 } = require('crypto');
 
 const World = require('../world/World');
 const { validatePlayerName } = require('../utils/validation');
+const pieces = require('../game/pieces');
+const { AI_MAX_TOTAL_PIECES, AI_MAX_PAWNS } = require('../game/PowerUpManager');
 const {
 	COMPUTER_DIFFICULTY,
 	MIN_COMPUTER_MOVE_INTERVAL_MS,
@@ -26,6 +28,7 @@ const {
 	checkForThreatenedPieces,
 	isKingExposed,
 	hasAttackOpportunity,
+	hasEnemyInTheatre,
 } = require('./strategy');
 
 const TICK_CHECK_MS = 1000;
@@ -194,7 +197,13 @@ function createAiRunner({
 		} else if (isKingExposed(world, computerId) && Math.random() < strategy.kingProtection) {
 			actionType = 'tetromino';
 		} else if (hasAttackOpportunity(world, computerId) && Math.random() < strategy.aggressiveness) {
+			// Enemy inside huntRadius — march pieces (Expert: ≤10 cells).
 			actionType = 'chess';
+		} else if (hasEnemyInTheatre(world, computerId)
+			&& Math.random() < Math.max(0.35, strategy.explorationRate || 0.5)) {
+			// Bridge toward distant kingdoms more often than farm locally.
+			// Mix build + advance so terrain and pieces keep pace.
+			actionType = Math.random() < 0.55 ? 'tetromino' : 'chess';
 		} else {
 			actionType = Math.random() < strategy.buildSpeed ? 'tetromino' : 'chess';
 		}
@@ -413,18 +422,88 @@ function createAiRunner({
 		return removed;
 	}
 
+	/**
+	 * Cull AI armies that ballooned via unrestricted power-up claims
+	 * (Expert once hit 96 pawns). Prefer dropping pieces farthest from
+	 * the king, pawns first, until under the soft caps.
+	 */
+	function trimExcessAiArmies() {
+		const world = World.getWorld();
+		if (!world || !Array.isArray(world.chessPieces)) return 0;
+
+		let removed = 0;
+		const ais = World.listComputerPlayers().filter(ai => !ai.battleId);
+		for (const ai of ais) {
+			const pid = String(ai.id);
+
+			const owned = () => world.chessPieces.filter(p => p && String(p.player) === pid);
+			const king = owned().find(p => String(p.type || '').toUpperCase() === 'KING');
+			const kingPos = king?.position || null;
+			const dist = (piece) => {
+				if (!kingPos || !piece?.position) return 0;
+				return Math.abs(piece.position.x - kingPos.x)
+					+ Math.abs(piece.position.z - kingPos.z);
+			};
+
+			// 1. Cap pawns.
+			const pawns = owned()
+				.filter(p => String(p.type || '').toUpperCase() === 'PAWN')
+				.sort((a, b) => dist(b) - dist(a));
+			while (pawns.length > AI_MAX_PAWNS) {
+				const drop = pawns.shift();
+				if (pieces.removePiece(world, drop.id, { reason: 'ai_army_trim', silent: true })) {
+					removed += 1;
+				}
+			}
+
+			// 2. Cap total army size (never remove the king). Prefer
+			// power-up spawns (`piece-*` ids) and pieces farthest from
+			// the king. Do NOT prefer pawns here — step 1 already capped
+			// them, and wiping the pawn row left bots without a front line.
+			let live = owned();
+			while (live.length > AI_MAX_TOTAL_PIECES) {
+				const candidates = live
+					.filter(p => String(p.type || '').toUpperCase() !== 'KING')
+					.sort((a, b) => {
+						const aPu = String(a.id || '').startsWith('piece-') ? 0 : 1;
+						const bPu = String(b.id || '').startsWith('piece-') ? 0 : 1;
+						if (aPu !== bPu) return aPu - bPu;
+						return dist(b) - dist(a);
+					});
+				const drop = candidates[0];
+				if (!drop) break;
+				if (pieces.removePiece(world, drop.id, { reason: 'ai_army_trim', silent: true })) {
+					removed += 1;
+				}
+				live = owned();
+			}
+		}
+
+		if (removed > 0) {
+			console.log(`[AI] Trimmed ${removed} excess piece(s) from bloated AI armies.`);
+			persistence.markDirty();
+			try { broadcaster.broadcastGameUpdate({ forceFullUpdate: true }); }
+			catch (_e) { /* best-effort */ }
+		}
+		return removed;
+	}
+
 	function ensureRoster() {
 		const world = World.getWorld();
 		if (!world) return;
 
 		// Trim first so the top-up logic below sees a clean count.
 		trimDuplicateAis();
+		trimExcessAiArmies();
 
 		// Battle bot seats belong to their arena, not the world roster —
 		// the BattleManager re-arms their tickers after a restart.
 		const existingAi = World.listComputerPlayers().filter(ai => !ai.battleId);
 		for (const ai of existingAi) {
-			if (!ai.strategy) ai.strategy = generateComputerStrategy(ai.difficulty || 'medium');
+			// Always refresh profiles so live Expert picks up huntRadius /
+			// explorationRate retunes after a deploy (persisted strategy
+			// objects otherwise keep the old farm-heavy numbers).
+			ai.strategy = generateComputerStrategy(ai.difficulty || 'medium');
 			// Stale `pendingRespawn` from before a restart would keep the
 			// AI inert forever. The respawn setTimeout is gone, so reset
 			// it now — `performComputerAction` will respawn properly if

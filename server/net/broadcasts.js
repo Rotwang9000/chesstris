@@ -9,6 +9,7 @@
 
 const World = require('../world/World');
 const Sessions = require('../world/Sessions');
+const { getLatestPlayerActionAt } = require('../utils/cooldowns');
 
 const MAX_BOARD_DELTA_CELLS = 800;
 const ISLAND_DECAY_ANIMATION_MAX_CELLS = 160;
@@ -166,6 +167,17 @@ function createBroadcaster({ io, persistence }) {
 				// walked the full promotion distance and is waiting to
 				// be redeemed against a captured-piece basket entry.
 				promotionCreditCount: credits.length,
+				// Activity for the player bar (replaces the unused score
+				// that always showed "0"). Prefer gameplay timestamps;
+				// fall back to lastActiveAt / joinedAt so reconnects and
+				// brand-new joins still show something honest.
+				lastActionAt: Math.max(
+					getLatestPlayerActionAt(record) || 0,
+					Number(record?.lastActiveAt) || 0,
+					Number(record?.joinedAt) || 0,
+				) || null,
+				moveCount: Number(record?.moveCount) || 0,
+				online: Sessions.isOnline(id),
 			};
 		});
 	}
