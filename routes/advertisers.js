@@ -915,10 +915,9 @@ router.get('/next', async (req, res) => {
 		// advertiser map is small.
 		updateBidRankings();
 		if (bidRanking.length === 0) {
-			return res.status(404).json({
-				success: false,
-				message: 'No active advertisers found',
-			});
+			// "No ad right now", same as the sampling skip above. A 404
+			// here showed up as a console error in every player's browser.
+			return res.status(204).end();
 		}
 
 		// Build the eligible pool (has remaining cells) with weights
@@ -929,10 +928,9 @@ router.get('/next', async (req, res) => {
 		// never enter `bidRanking`.
 		const eligible = bidRanking.filter(entry => entry.remainingCells > 0);
 		if (eligible.length === 0) {
-			return res.status(404).json({
-				success: false,
-				message: 'No advertisers with remaining cells',
-			});
+			// "No ad right now", same as the sampling skip above. A 404
+			// here showed up as a console error in every player's browser.
+			return res.status(204).end();
 		}
 
 		// Anti-repetition: if there's more than one eligible bidder,
