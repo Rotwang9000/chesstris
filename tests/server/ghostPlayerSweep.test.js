@@ -230,4 +230,29 @@ describe('GhostPlayerSweep', () => {
 		expect(world.players.p1).toBeDefined();
 		expect(world.players.p2).toBeDefined();
 	});
+
+	test('stowed (dormant) kingdoms are never reaped, live or at boot', () => {
+		// Stowing lifts every piece off the board, so "0 pieces" is the
+		// expected state — not a ghost.
+		const world = seed({ playerCount: 2 });
+		world.players.p2.stowedKingdom = { stowedAt: 1, cells: [], pieces: [] };
+
+		const lifecycle = makeLifecycle();
+		const sweep = createGhostPlayerSweepService({
+			broadcaster: makeBroadcaster(),
+			persistence: makePersistence(),
+			lifecycleService: lifecycle,
+			aiRunner: makeAiRunner(),
+		});
+		const t0 = 9_000_000;
+		sweep.tick({ now: t0 });
+		sweep.tick({ now: t0 + NO_PIECES_GRACE_MS + 1 });
+		sweep.tick({ now: t0 + NO_PIECES_GRACE_MS + REMOVAL_GRACE_MS + 2 });
+		expect(world.players.p2).toBeDefined();
+		expect(world.players.p2.eliminated).toBeFalsy();
+
+		sweep.reapImmediately();
+		expect(world.players.p2).toBeDefined();
+		expect(lifecycle.removed).not.toContain('p2');
+	});
 });

@@ -160,6 +160,20 @@ function buildSnapshot() {
 			// playerSession.js). Dropping it would make every guest
 			// unreclaimable after a restart.
 			sessionSecretHash: p.sessionSecretHash || null,
+			// Dropping these on a restart: lost every stowed (dormant)
+			// kingdom for good, refilled every king to full lives, and
+			// reset the idle / disconnect / elimination clocks.
+			stowedKingdom: p.stowedKingdom ? JSON.parse(JSON.stringify(p.stowedKingdom)) : null,
+			dormantSince: p.dormantSince || null,
+			kingLives: Number.isFinite(p.kingLives) ? p.kingLives : undefined,
+			joinedAt: p.joinedAt || null,
+			lastDisconnectAt: p.lastDisconnectAt || null,
+			eliminatedAt: p.eliminatedAt || null,
+			// The pause allowance survives; an active pause does not (its
+			// auto-resume timer doesn't survive a restart either).
+			pauseState: p.pauseState && typeof p.pauseState === 'object'
+				? { ...p.pauseState, active: false, pausedAt: 0 }
+				: null,
 		};
 	}
 
@@ -433,6 +447,7 @@ function restoreWorld(snapshot) {
 }
 
 module.exports = {
+	buildSnapshot,
 	loadWorld,
 	restoreWorld,
 	saveWorldSync,
