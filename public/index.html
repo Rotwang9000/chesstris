@@ -233,6 +233,24 @@
 			cursor: pointer;
 			font-family: 'Playfair Display', serif;
 		}
+		/* Phones/tablets: the touch pad owns the bottom of the screen and
+		   used to sit on top of these buttons (⚔ Battle was untappable),
+		   so the strip moves up under the title. */
+		@media (pointer: coarse) {
+			.debug-indicator {
+				bottom: auto;
+				top: 52px;
+			}
+			/* The round mute / activity buttons sat on the pad's drop
+			   button on narrow phones — lift them clear of the pad. */
+			#audio-mute-toggle {
+				bottom: calc(222px + env(safe-area-inset-bottom, 0px)) !important;
+			}
+			#activity-log-toggle {
+				bottom: calc(174px + env(safe-area-inset-bottom, 0px)) !important;
+			}
+		}
+
 		/* Small screens: keep only the essentials down there. The Player
 		   Code lives in the player bar and the touch pad needs the space. */
 		@media (max-width: 700px) {

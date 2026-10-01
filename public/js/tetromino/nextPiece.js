@@ -10,6 +10,7 @@
  */
 
 import { getShape, getColourCss } from './shapes.js';
+import { isTouchPrimary } from '../utils/inputMode.js';
 
 const HUD_ID = 'next-tetromino-display';
 const CANVAS_ID = 'next-tetromino-canvas';
@@ -74,6 +75,15 @@ function createWidget() {
 		'<div><kbd style="background:#222;border:1px solid #555;padding:0 4px;border-radius:3px;">Z</kbd> / <kbd style="background:#222;border:1px solid #555;padding:0 4px;border-radius:3px;">X</kbd> rotate (\u21B7)</div>',
 		'<div><kbd style="background:#222;border:1px solid #555;padding:0 4px;border-radius:3px;">Space</kbd> drop</div>',
 	].join('');
+	// Phones: the on-screen pad already labels its buttons, and screen
+	// space is scarce — skip the keyboard legend and shrink the panel.
+	if (isTouchPrimary()) {
+		controls.style.display = 'none';
+		Object.assign(widget.style, { top: '8px', right: '8px', padding: '6px' });
+		title.style.fontSize = '12px';
+		canvas.style.width = '56px';
+		canvas.style.height = '56px';
+	}
 	widget.appendChild(controls);
 
 	widget.addEventListener('click', onClick);
@@ -149,7 +159,9 @@ export function updateNextPieceHint(gameState) {
 		hint.style.color = '#4CAF50';
 		hint.style.opacity = '1';
 	} else {
-		hint.textContent = 'Playing tetris turn — Z/X to rotate';
+		hint.textContent = isTouchPrimary()
+			? 'Tetris turn — tap \u27F3 to rotate'
+			: 'Playing tetris turn — Z/X to rotate';
 		hint.style.color = '#FFA500';
 		hint.style.opacity = '0.9';
 		showFirstDropRotationHint();
@@ -182,7 +194,12 @@ function showFirstDropRotationHint() {
 
 	const banner = document.createElement('div');
 	banner.id = 'rotation-hint-banner';
-	banner.innerHTML = `
+	const touch = isTouchPrimary();
+	banner.innerHTML = touch ? `
+		<div style="font-weight:bold;color:#ffcc00;margin-bottom:6px;">Tip</div>
+		<div>Tap <b style="color:#ffcc00;">\u27F3</b> to rotate the tetromino while it's falling.</div>
+		<div style="font-size:11px;margin-top:6px;opacity:0.7;">Tap anywhere to dismiss</div>
+	` : `
 		<div style="font-weight:bold;color:#ffcc00;margin-bottom:6px;">Tip</div>
 		<div>Press <kbd style="background:#222;border:1px solid #777;padding:0 4px;border-radius:3px;">Z</kbd>
 			or <kbd style="background:#222;border:1px solid #777;padding:0 4px;border-radius:3px;">X</kbd>
@@ -191,7 +208,8 @@ function showFirstDropRotationHint() {
 	`;
 	Object.assign(banner.style, {
 		position: 'fixed',
-		bottom: '90px',
+		// Above the touch pad on phones, not behind it.
+		bottom: touch ? 'calc(220px + env(safe-area-inset-bottom, 0px))' : '90px',
 		left: '50%',
 		transform: 'translateX(-50%)',
 		background: 'rgba(0, 0, 0, 0.85)',
