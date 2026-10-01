@@ -26,6 +26,7 @@ const path = require('path');
 
 const { BOARD_SETTINGS } = require('./game/Constants');
 const World = require('./world/World');
+const { checksOf } = require('./king/pendingChecks');
 // metrics is a fire-and-forget side-effect; load it lazily so test
 // environments that mock the persistence module don't pull in the
 // Prometheus registry.
@@ -204,9 +205,8 @@ function buildSnapshot() {
 			// Persist any in-flight Check so a restart mid-window doesn't
 			// silently drop it. `checkService.rehydrate()` reschedules the
 			// deadline timer from `deadlineAt` on boot. (Chess-H1)
-			pendingCheck: (world.pendingCheck && typeof world.pendingCheck === 'object')
-				? world.pendingCheck
-				: null,
+			// One open check per defender (king/pendingChecks.js).
+			pendingChecks: checksOf(world),
 			disconnectedSince: (world.disconnectedSince && typeof world.disconnectedSince === 'object')
 				? world.disconnectedSince
 				: {},

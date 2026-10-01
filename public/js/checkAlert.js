@@ -447,23 +447,60 @@ function reconcile(pendingCheck) {
 	}
 }
 
+function selfIdOf(gameState) {
+	return (gameState && (gameState.localPlayerId || gameState.currentPlayer || gameState.playerId)) || null;
+}
+
+/**
+ * The server can hold several checks at once (one per defending king).
+ * Show the one that involves us — as defender first, then attacker.
+ */
+function pickRelevantCheck(checks) {
+	const self = selfIdOf(getGameState());
+	if (!self || !checks) return null;
+	const list = Object.values(checks).filter(Boolean);
+	return list.find(c => String(c.defenderId) === String(self))
+		|| list.find(c => String(c.attackerId) === String(self))
+		|| null;
+}
+
+function involvesSelf(check) {
+	const self = selfIdOf(getGameState());
+	return !!(self && check
+		&& (String(check.defenderId) === String(self) || String(check.attackerId) === String(self)));
+}
+
 export function onCheckGameUpdate(payload) {
 	if (!payload) return;
-	if (payload.pendingCheck !== undefined) {
+	if (payload.pendingChecks !== undefined) {
+		reconcile(pickRelevantCheck(payload.pendingChecks));
+	} else if (payload.pendingCheck !== undefined) {
+		// Older server build.
 		reconcile(payload.pendingCheck);
 	}
 }
 
 export function onCheckStart(payload) {
+	// Someone else's check mustn't replace ours.
+	const current = getGameState()?.pendingCheck;
+	if (current && !involvesSelf(payload)) return;
 	reconcile(payload);
 }
 
-export function onCheckClear() {
+function clearIfOurs(payload) {
+	const current = getGameState()?.pendingCheck;
+	if (!current) return;
+	if (payload && payload.defenderId != null
+		&& String(payload.defenderId) !== String(current.defenderId)) return;
 	reconcile(null);
 }
 
-export function onCheckExpired() {
-	reconcile(null);
+export function onCheckClear(payload) {
+	clearIfOurs(payload);
+}
+
+export function onCheckExpired(payload) {
+	clearIfOurs(payload);
 }
 
 export function isDefenderInCheck() {

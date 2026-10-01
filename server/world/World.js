@@ -154,6 +154,7 @@ function freshWorld(id = GLOBAL_WORLD_ID) {
 		// Most recent globally-broadcast action (small enough to be safely
 		// included in `game_update` deltas).
 		lastAction: null,
+		pendingChecks: {},
 
 		// Active power-up orbs (struggling-player aid pickups). Spawned
 		// by `PowerUpManager` and claimed when a tetromino lands on the
@@ -545,6 +546,11 @@ function restoreWorldFromSnapshot(snapshot) {
 		// History list, capped at capture time; trim older saves too.
 		kingPrison: Array.isArray(snapshot.kingPrison) ? snapshot.kingPrison.slice(-50) : [],
 		pendingKingCaptures: Array.isArray(snapshot.pendingKingCaptures) ? snapshot.pendingKingCaptures : [],
+		// Open checks, one per defender. A legacy single `pendingCheck`
+		// (older saves) is folded in by king/pendingChecks.checksOf().
+		pendingChecks: (snapshot.pendingChecks && typeof snapshot.pendingChecks === 'object')
+			? snapshot.pendingChecks
+			: {},
 		pendingCheck: (snapshot.pendingCheck && typeof snapshot.pendingCheck === 'object')
 			? snapshot.pendingCheck
 			: null,

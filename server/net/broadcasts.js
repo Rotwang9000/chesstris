@@ -8,6 +8,7 @@
  */
 
 const World = require('../world/World');
+const { checksOf, allChecks } = require('../king/pendingChecks');
 const Sessions = require('../world/Sessions');
 const { getLatestPlayerActionAt } = require('../utils/cooldowns');
 
@@ -225,7 +226,10 @@ function createBroadcaster({ io, persistence }) {
 			// Outstanding Check (deferred king capture). Clients use this
 			// to render the warning banner, freeze the defender's
 			// tetromino auto-fall, and lock the attacker piece.
-			pendingCheck: world.pendingCheck || null,
+			// One open check per defender; clients pick the one that
+			// involves them. `pendingCheck` stays for cached old clients.
+			pendingChecks: checksOf(world),
+			pendingCheck: allChecks(world)[0] || null,
 			gameId: world.id,
 		};
 	}
@@ -270,7 +274,10 @@ function createBroadcaster({ io, persistence }) {
 			disconnectedSince: world.disconnectedSince || {},
 			players: playersList,
 			powerUps: Array.isArray(world.powerUps) ? world.powerUps : [],
-			pendingCheck: world.pendingCheck || null,
+			// One open check per defender; clients pick the one that
+			// involves them. `pendingCheck` stays for cached old clients.
+			pendingChecks: checksOf(world),
+			pendingCheck: allChecks(world)[0] || null,
 		});
 	}
 

@@ -16,6 +16,7 @@
 const { randomUUID: uuidv4 } = require('crypto');
 
 const World = require('../world/World');
+const { checkForDefender } = require('../king/pendingChecks');
 const { validatePlayerName } = require('../utils/validation');
 const pieces = require('../game/pieces');
 const { AI_MAX_TOTAL_PIECES, AI_MAX_PAWNS } = require('../game/PowerUpManager');
@@ -126,8 +127,7 @@ function createAiRunner({
 		// other strategic moves are useless if the king is about to
 		// die — and they'd be rejected by the chess handler anyway
 		// (only escape moves are accepted while in check).
-		if (checkService && world.pendingCheck
-			&& String(world.pendingCheck.defenderId) === String(computerId)) {
+		if (checkService && checkForDefender(world, computerId)) {
 			const escaped = aiActions.performCheckEscape(
 				computerId, checkService, kingCaptureService
 			);
