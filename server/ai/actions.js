@@ -7,6 +7,7 @@
  */
 
 const World = require('../world/World');
+const { checkForDefender, checksByAttacker } = require('../king/pendingChecks');
 const cells = require('../game/cells');
 const pieces = require('../game/pieces');
 const { GAME_RULES } = require('../game/Constants');
@@ -234,9 +235,10 @@ function createAiActions({
 		const world = World.getWorld();
 		const computerPlayer = World.getPlayer(computerId);
 		if (!world || !computerPlayer || !checkService) return false;
-		if (!world.pendingCheck || String(world.pendingCheck.defenderId) !== String(computerId)) return false;
+		const check = checkForDefender(world, computerId);
+		if (!check) return false;
 
-		const attackerPieceId = world.pendingCheck.attackerPieceId;
+		const attackerPieceId = check.attackerPieceId;
 		const ownedPieces = (world.chessPieces || []).filter(piece =>
 			piece && piece.player === computerId && piece.position
 			&& Number.isFinite(piece.position.x) && Number.isFinite(piece.position.z)
@@ -309,7 +311,7 @@ function createAiActions({
 			});
 
 			// Defender successfully escaped — clear the pending check.
-			try { checkService.cancelCheck(world, 'ai_escaped'); }
+			try { checkService.cancelCheck(world, 'ai_escaped', computerId); }
 			catch (e) { console.warn('[AI] check cancel failed:', e.message); }
 
 			if (moveResult.capturedPiece && moveResult.capturedPiece.type === 'KING' && kingCaptureService) {
@@ -412,14 +414,13 @@ function createAiActions({
 		// Mirror the human chess handler: the ATTACKER PIECE in a
 		// pending check is locked, but the attacker's OTHER pieces
 		// can still move freely — drop it from the candidate set.
-		const lockedPieceId = (world.pendingCheck
-			&& String(world.pendingCheck.attackerId) === String(computerId))
-			? String(world.pendingCheck.attackerPieceId)
-			: null;
+		// (An attacker can hold several checks at once — one per king.)
+		const lockedPieceIds = new Set(checksByAttacker(world, computerId)
+			.map(c => String(c.attackerPieceId)));
 		const ownedPieces = chessPieces.filter(piece =>
 			piece && piece.player === computerId && piece.position
 			&& Number.isFinite(piece.position.x) && Number.isFinite(piece.position.z)
-			&& (lockedPieceId === null || String(piece.id) !== lockedPieceId)
+			&& !lockedPieceIds.has(String(piece.id))
 			// Frozen pawns awaiting promotion can't move (mirrors the
 			// human handler).
 			&& !piece.awaitingPromotion
@@ -624,8 +625,7 @@ function createAiActions({
 				// defender's grace window (Chess-C2 parity with the human
 				// handler). The AI will simply pick another move.
 				if (target && String(target.type || '').toUpperCase() === 'KING'
-					&& checkService && world.pendingCheck
-					&& String(world.pendingCheck.defenderId) === String(target.player)) {
+					&& checkService && checkForDefender(world, target.player)) {
 					return { success: false };
 				}
 
@@ -633,7 +633,7 @@ function createAiActions({
 				// deferrals on this king, `startCheck` returns null and
 				// the AI's attack falls through to a normal capture.
 				if (target && String(target.type || '').toUpperCase() === 'KING'
-					&& checkService && !world.pendingCheck) {
+					&& checkService) {
 					const started = checkService.startCheck({
 						world,
 						attackerPiece: piece,

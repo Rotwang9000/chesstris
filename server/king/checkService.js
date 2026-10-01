@@ -21,7 +21,7 @@
  *      attacker's move is deferred: the attacker piece stays put,
  *      the king stays put, and the defender has `CHECK_DEADLINE_MS`
  *      to act.
- *   2. While `world.pendingCheck` is set:
+ *   2. While a check is pending against a defender:
  *        • the defender's tetris auto-fall is paused (client reads
  *          the flag from `game_update` payloads);
  *        • the defender's NEXT chess move must be a legal escape
@@ -38,14 +38,21 @@
  *      original attacking piece is teleported to the king's square
  *      so the visual capture lines up with what the defender saw.
  *
- * The service is stateless beyond `world.pendingCheck` and an
- * in-memory deadline timer keyed by world id, so persistence
+ * The service is stateless beyond `world.pendingChecks` (one per
+ * defender — see ./pendingChecks.js) and in-memory deadline timers
+ * keyed by defender id, so persistence
  * snapshots survive process restarts (the deadline is rescheduled
  * from `deadlineAt` on next boot — see `rehydrate`).
  */
 
 const World = require('../world/World');
 const pieces = require('../game/pieces');
+const {
+	checksOf,
+	allChecks,
+	checkForDefender,
+	checkForAttackerPiece,
+} = require('./pendingChecks');
 
 // Time the defender has to escape before the king is auto-captured.
 // Originally 30s but the user found that long enough for a single
@@ -75,14 +82,17 @@ function createCheckService({
 	if (!broadcaster) throw new Error('createCheckService: broadcaster required');
 	if (!kingCaptureService) throw new Error('createCheckService: kingCaptureService required');
 
+	// defenderId -> deadline timer
 	const timers = new Map();
 
 	function startCheck({ world, attackerPiece, kingPiece, queuedMove }) {
 		if (!world || !attackerPiece || !kingPiece) return null;
-		// Only one outstanding check per world. If somebody already
-		// has one against this defender, we leave it alone (the
-		// first attacker is the one who gets the prize).
-		if (world.pendingCheck) return world.pendingCheck;
+		// One outstanding check per DEFENDER. If somebody already has
+		// one against this king, leave it alone (the first attacker is
+		// the one who gets the prize). Checks on other kings are
+		// independent.
+		const existing = checkForDefender(world, kingPiece.player);
+		if (existing) return existing;
 
 		// Anti-spam: a piece that has already burned through its
 		// grace attempts on the defender's king doesn't get to defer
@@ -107,7 +117,7 @@ function createCheckService({
 		// removal) — exactly the lifecycle we want.
 		attackerPiece.checkAttempts = priorAttempts + 1;
 
-		world.pendingCheck = {
+		const check = {
 			defenderId,
 			attackerId,
 			attackerPieceId: attackerPiece.id,
@@ -120,12 +130,13 @@ function createCheckService({
 			attempt: attackerPiece.checkAttempts,
 			maxAttempts: MAX_CHECK_DEFERS_PER_PIECE,
 		};
+		checksOf(world)[String(defenderId)] = check;
 
-		const timer = setTimeout(() => expireCheck(world.id), CHECK_DEADLINE_MS);
-		timers.set(world.id, timer);
+		const timer = setTimeout(() => expireCheck(world.id, defenderId), CHECK_DEADLINE_MS);
+		timers.set(String(defenderId), timer);
 
 		try {
-			io.to(world.id).emit('chess_check', { ...world.pendingCheck });
+			io.to(world.id).emit('chess_check', { ...check });
 		} catch (emitErr) {
 			console.warn('[Check] emit chess_check failed:', emitErr.message);
 		}
@@ -147,21 +158,26 @@ function createCheckService({
 		catch (broadcastErr) { console.warn('[Check] broadcast failed:', broadcastErr.message); }
 
 		console.log(`[Check] ${attackerId} threatens ${defenderId}'s king — ${CHECK_DEADLINE_MS}ms to escape.`);
-		return world.pendingCheck;
+		return check;
 	}
 
-	function cancelCheck(worldOrId, reason = 'escaped') {
+	function clearTimer(defenderId) {
+		const timer = timers.get(String(defenderId));
+		if (timer) clearTimeout(timer);
+		timers.delete(String(defenderId));
+	}
+
+	/**
+	 * @param {string} defenderId - whose check to cancel
+	 */
+	function cancelCheck(worldOrId, reason = 'escaped', defenderId) {
 		const world = typeof worldOrId === 'string'
 			? World.getWorld()
 			: worldOrId;
-		if (!world || !world.pendingCheck) return false;
-		const snapshot = world.pendingCheck;
-		world.pendingCheck = null;
-		const timer = timers.get(world.id);
-		if (timer) {
-			clearTimeout(timer);
-			timers.delete(world.id);
-		}
+		const snapshot = checkForDefender(world, defenderId);
+		if (!world || !snapshot) return false;
+		delete checksOf(world)[String(defenderId)];
+		clearTimer(defenderId);
 		try {
 			io.to(world.id).emit('chess_check_cleared', {
 				defenderId: snapshot.defenderId,
@@ -177,11 +193,11 @@ function createCheckService({
 		return true;
 	}
 
-	function expireCheck(worldId) {
+	function expireCheck(worldId, defenderId) {
 		const world = World.getWorld();
 		if (!world || world.id !== worldId) return;
-		if (!world.pendingCheck) return;
-		const snapshot = world.pendingCheck;
+		const snapshot = checkForDefender(world, defenderId);
+		if (!snapshot) return;
 
 		// Re-validate the threat before auto-capturing. External events
 		// during the window — the attacker being captured / decayed /
@@ -205,8 +221,8 @@ function createCheckService({
 			} catch (_e) { stillThreatens = false; }
 		}
 
-		world.pendingCheck = null;
-		timers.delete(world.id);
+		delete checksOf(world)[String(defenderId)];
+		timers.delete(String(defenderId));
 
 		if (!stillThreatens) {
 			try {
@@ -264,12 +280,11 @@ function createCheckService({
 	}
 
 	function isPlayerInCheck(world, playerId) {
-		return !!(world && world.pendingCheck && String(world.pendingCheck.defenderId) === String(playerId));
+		return !!checkForDefender(world, playerId);
 	}
 
 	function isAttackerInCheck(world, attackerPieceId) {
-		return !!(world && world.pendingCheck
-			&& String(world.pendingCheck.attackerPieceId) === String(attackerPieceId));
+		return !!checkForAttackerPiece(world, attackerPieceId);
 	}
 
 	/**
@@ -281,9 +296,8 @@ function createCheckService({
 	 * @returns {{ ok: boolean, reason?: string, threatenedBy?: Object }}
 	 */
 	function validateEscape({ world, piece, toX, toZ }) {
-		if (!world || !world.pendingCheck) return { ok: true };
-		const check = world.pendingCheck;
-		if (String(piece.player) !== String(check.defenderId)) return { ok: true };
+		const check = piece ? checkForDefender(world, piece.player) : null;
+		if (!check) return { ok: true };
 
 		const pos = piece.position || {};
 		const fromX = pos.x;
@@ -371,23 +385,30 @@ function createCheckService({
 	 * check. Returns `false` if the move should be REJECTED.
 	 */
 	function shouldAllowDefenderMove({ world, piece, toX, toZ }) {
-		if (!world || !world.pendingCheck) return true;
-		if (String(piece.player) !== String(world.pendingCheck.defenderId)) return true;
-		const result = validateEscape({ world, piece, toX, toZ });
-		return result;
+		if (!piece || !checkForDefender(world, piece.player)) return true;
+		return validateEscape({ world, piece, toX, toZ });
 	}
 
 	function rehydrate() {
 		const world = World.getWorld();
-		if (!world || !world.pendingCheck) return;
-		const remaining = world.pendingCheck.deadlineAt - Date.now();
-		if (remaining <= 0) {
-			expireCheck(world.id);
-			return;
+		if (!world) return;
+		for (const check of allChecks(world)) {
+			const defenderId = check.defenderId;
+			const remaining = check.deadlineAt - Date.now();
+			if (remaining <= 0) {
+				expireCheck(world.id, defenderId);
+				continue;
+			}
+			clearTimer(defenderId);
+			timers.set(String(defenderId), setTimeout(() => expireCheck(world.id, defenderId), remaining));
+			console.log(`[Check] rehydrated — ${remaining}ms remaining on ${check.attackerId} → ${defenderId}.`);
 		}
-		const timer = setTimeout(() => expireCheck(world.id), remaining);
-		timers.set(world.id, timer);
-		console.log(`[Check] rehydrated — ${remaining}ms remaining on ${world.pendingCheck.attackerId} → ${world.pendingCheck.defenderId}.`);
+	}
+
+	/** Cancel every timer (world reset / shutdown / tests). */
+	function reset() {
+		for (const timer of timers.values()) clearTimeout(timer);
+		timers.clear();
 	}
 
 	/**
@@ -397,9 +418,9 @@ function createCheckService({
 	 * caller should capture the king directly instead of starting a
 	 * new pending check.
 	 */
-	function canDeferCapture(world, attackerPiece) {
+	function canDeferCapture(world, attackerPiece, defenderId) {
 		if (!world || !attackerPiece) return false;
-		if (world.pendingCheck) return false;
+		if (defenderId != null && checkForDefender(world, defenderId)) return false;
 		const priorAttempts = Number(attackerPiece.checkAttempts) || 0;
 		return priorAttempts < MAX_CHECK_DEFERS_PER_PIECE;
 	}
@@ -414,6 +435,7 @@ function createCheckService({
 		shouldAllowDefenderMove,
 		validateEscape,
 		rehydrate,
+		reset,
 		CHECK_DEADLINE_MS,
 		MAX_CHECK_DEFERS_PER_PIECE,
 	};

@@ -136,6 +136,8 @@ function addStraightLineMoves(gameState, piece, directions, validMoves, pieceInd
 	}
 }
 
+const CASTLE_ROOK_SEARCH = 8;
+
 /**
  * Generate castling destinations for a king.  Mirrors the server's
  * `_validateCastle`: scan each cardinal direction for a friendly,
@@ -160,7 +162,8 @@ function addCastlingMoves(gameState, piece, validMoves, pieceIndex) {
 		let searchZ = currentZ + dir.dz;
 		let foundRook = null;
 
-		for (let i = 0; i < MAX_SLIDE_STEPS; i++) {
+		// Same reach as the server's validateCastle (8 squares).
+		for (let i = 0; i < CASTLE_ROOK_SEARCH; i++) {
 			if (!hasBoardCell(gameState, searchX, searchZ)) {
 				foundRook = null;
 				break;
@@ -178,6 +181,9 @@ function addCastlingMoves(gameState, piece, validMoves, pieceIndex) {
 		}
 
 		if (!foundRook) continue;
+		// Server rule: the rook must be at least three squares away.
+		const rookDistance = Math.abs(searchX - currentX) + Math.abs(searchZ - currentZ);
+		if (rookDistance < 3) continue;
 
 		validMoves.push({
 			x: currentX + dir.dx * 2,

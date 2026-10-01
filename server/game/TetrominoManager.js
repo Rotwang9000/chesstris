@@ -132,6 +132,21 @@ class TetrominoManager {
 						message: `Position (${posX}, ${posZ}) is already occupied`
 					};
 				}
+
+				// Bible §15.3: nobody builds inside an opponent's SAFE home
+				// zone (one that still holds a chess piece). Home markers
+				// don't block otherwise, so this used to slip through and
+				// leave an unclearable enemy foothold in the zone.
+				const enemyHome = cellContents.some(item => item
+					&& item.type === cells.HOME_TYPE
+					&& String(item.player) !== String(playerId));
+				if (enemyHome && this.boardManager.isCellInSafeHomeZone(game, posX, posZ)) {
+					return {
+						valid: false,
+						reason: 'enemy_home',
+						message: `Position (${posX}, ${posZ}) is inside another player's home zone`
+					};
+				}
 			}
 		}
 		

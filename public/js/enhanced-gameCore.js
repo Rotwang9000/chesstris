@@ -62,6 +62,7 @@ import {
 } from './pieceHighlightManager.js';
 import * as animationsModule from './animations.js';
 import { clearChessSelection } from './chessInteraction.js';
+import { isTouchPrimary } from './utils/inputMode.js';
 
 // ── Backward-compatible re-exports ──────────────────────────────────────────
 
@@ -236,11 +237,13 @@ export function initGame(container, options = {}) {
 		const controls = initializeOrbitControls(camera, renderer.domElement);
 		setControls(controls);
 		if (controls) {
-			setTimeout(() => {
+			afterWelcomeClosed(() => {
 				if (typeof showToastMessage === 'function') {
-					showToastMessage("Game controls active. Click and drag to move camera.", 8000);
+					showToastMessage(isTouchPrimary()
+						? 'Drag to look around, pinch to zoom.'
+						: 'Game controls active. Click and drag to move camera.', 8000);
 				}
-			}, 1500);
+			});
 		}
 		hideError();
 
@@ -600,7 +603,9 @@ function initializeGameUI() {
 
 	try {
 		const existing = document.getElementById('controls-hint-overlay');
-		if (!existing) {
+		// Phones: the on-screen pad labels itself, and this strip would
+		// sit right on top of its buttons.
+		if (!existing && !isTouchPrimary()) {
 			const hint = document.createElement('div');
 			hint.id = 'controls-hint-overlay';
 			hint.textContent = 'Controls: Arrow keys = Tetromino, Click = Chess';
@@ -611,10 +616,28 @@ function initializeGameUI() {
 				borderRadius: '6px', fontSize: '12px',
 				zIndex: '10002', pointerEvents: 'none'
 			});
-			document.body.appendChild(hint);
-			setTimeout(() => { hint.style.opacity = '0'; hint.style.transition = 'opacity 1s'; }, 8000);
+			afterWelcomeClosed(() => {
+				document.body.appendChild(hint);
+				setTimeout(() => { hint.style.opacity = '0'; hint.style.transition = 'opacity 1s'; }, 8000);
+			});
 		}
 	} catch (_) { /* non-fatal */ }
+}
+
+/**
+ * Run `fn` once the player is actually playing — in the world or seated
+ * in a battle — and the welcome screen is gone. Control hints used to
+ * fire on a timer during start-up, i.e. on top of the welcome dialog
+ * (worst on phones). Gives up quietly after 10 minutes.
+ */
+function afterWelcomeClosed(fn, delayMs = 1500) {
+	const started = Date.now();
+	const check = () => {
+		const playing = worldEntered || !!(gameState && gameState.activeBattle);
+		if (playing && !document.getElementById('tutorial-message')) return setTimeout(fn, delayMs);
+		if (Date.now() - started < 10 * 60 * 1000) setTimeout(check, 500);
+	};
+	check();
 }
 
 export async function startPlayingGame(gameKey = null) {

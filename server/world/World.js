@@ -154,6 +154,7 @@ function freshWorld(id = GLOBAL_WORLD_ID) {
 		// Most recent globally-broadcast action (small enough to be safely
 		// included in `game_update` deltas).
 		lastAction: null,
+		pendingChecks: {},
 
 		// Active power-up orbs (struggling-player aid pickups). Spawned
 		// by `PowerUpManager` and claimed when a tetromino lands on the
@@ -519,6 +520,20 @@ function restoreWorldFromSnapshot(snapshot) {
 		snapshot.board.centreMarker = { x: 0, z: 0 };
 	}
 
+	// Vertical home zones used to be saved as 8×2 although their cells
+	// are 2×8. Fix the rectangle; a zone already "degraded" under the
+	// wrong one still has stranded home markers, so let degradation run
+	// again (it only touches cells that still carry a marker).
+	let didFixZones = false;
+	for (const zone of Object.values(snapshot.homeZones || {})) {
+		if (!zone || (zone.orientation !== 1 && zone.orientation !== 3)) continue;
+		if (!(zone.width > zone.height)) continue;
+		[zone.width, zone.height] = [zone.height, zone.width];
+		if (zone.isDegraded) zone.isDegraded = false;
+		didFixZones = true;
+	}
+	if (didFixZones) console.log('[World] Corrected vertical home-zone dimensions (8×2 → 2×8).');
+
 	world = {
 		...fresh,
 		...snapshot,
@@ -528,8 +543,14 @@ function restoreWorldFromSnapshot(snapshot) {
 		players,
 		homeZones: snapshot.homeZones || {},
 		currentTurns: snapshot.currentTurns || {},
-		kingPrison: Array.isArray(snapshot.kingPrison) ? snapshot.kingPrison : [],
+		// History list, capped at capture time; trim older saves too.
+		kingPrison: Array.isArray(snapshot.kingPrison) ? snapshot.kingPrison.slice(-50) : [],
 		pendingKingCaptures: Array.isArray(snapshot.pendingKingCaptures) ? snapshot.pendingKingCaptures : [],
+		// Open checks, one per defender. A legacy single `pendingCheck`
+		// (older saves) is folded in by king/pendingChecks.checksOf().
+		pendingChecks: (snapshot.pendingChecks && typeof snapshot.pendingChecks === 'object')
+			? snapshot.pendingChecks
+			: {},
 		pendingCheck: (snapshot.pendingCheck && typeof snapshot.pendingCheck === 'object')
 			? snapshot.pendingCheck
 			: null,
@@ -545,7 +566,7 @@ function restoreWorldFromSnapshot(snapshot) {
 	// the world dirty so the next persistence cycle flushes the
 	// repair to disk. Without this the migration log would run on
 	// every boot until something else happened to dirty the world.
-	dirty = didMigrateColours === true;
+	dirty = didMigrateColours === true || didFixZones;
 }
 
 /**

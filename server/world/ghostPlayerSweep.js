@@ -86,6 +86,10 @@ function createGhostPlayerSweepService({
 			// their real id, and flagging them eliminated would cost
 			// them their identity (and seat) on reconnect.
 			if (player.battleId || player.activeBattleId) continue;
+			// A stowed (dormant) kingdom has no pieces on the board BY
+			// DESIGN — it's waiting for its owner. Reaping it deleted the
+			// stash ~2.5 min after stowing.
+			if (player.stowedKingdom) continue;
 			const pidStr = String(pid);
 			const pieceCount = counts.get(pidStr) || 0;
 			const hasPieces = pieceCount > 0;
@@ -196,6 +200,7 @@ function createGhostPlayerSweepService({
 			// BattleManager sweep; real players holding a seat in a
 			// restored battle must keep their identity.
 			if (player.battleId || player.activeBattleId) continue;
+			if (player.stowedKingdom) continue; // see tick()
 			const pieceCount = counts.get(String(pid)) || 0;
 			if (pieceCount > 0) continue;
 			if (player.pendingRespawn && player.isComputer) continue;

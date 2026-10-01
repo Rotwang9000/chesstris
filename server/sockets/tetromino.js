@@ -3,6 +3,7 @@
  */
 
 const World = require('../world/World');
+const { checkForDefender } = require('../king/pendingChecks');
 const { PLAYER_SETTINGS } = require('../game/Constants');
 const { getCooldownRemainingMs } = require('../utils/cooldowns');
 const funnel = require('../observability/funnel');
@@ -83,8 +84,7 @@ function registerTetrominoHandlers(socket, ctx) {
 			// clock and ignore the threat. The client already pauses the
 			// fall on `pendingCheck`, but enforce it server-side so an
 			// old/modified client can't bypass it. (Chess-H3)
-			if (world && world.pendingCheck
-				&& String(world.pendingCheck.defenderId) === String(playerId)) {
+			if (world && checkForDefender(world, playerId)) {
 				socket.emit('tetrominoFailed', {
 					message: 'Your king is in check — resolve it before building.',
 					reason: 'in_check',

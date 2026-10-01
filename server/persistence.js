@@ -26,6 +26,7 @@ const path = require('path');
 
 const { BOARD_SETTINGS } = require('./game/Constants');
 const World = require('./world/World');
+const { checksOf } = require('./king/pendingChecks');
 // metrics is a fire-and-forget side-effect; load it lazily so test
 // environments that mock the persistence module don't pull in the
 // Prometheus registry.
@@ -160,6 +161,20 @@ function buildSnapshot() {
 			// playerSession.js). Dropping it would make every guest
 			// unreclaimable after a restart.
 			sessionSecretHash: p.sessionSecretHash || null,
+			// Dropping these on a restart: lost every stowed (dormant)
+			// kingdom for good, refilled every king to full lives, and
+			// reset the idle / disconnect / elimination clocks.
+			stowedKingdom: p.stowedKingdom ? JSON.parse(JSON.stringify(p.stowedKingdom)) : null,
+			dormantSince: p.dormantSince || null,
+			kingLives: Number.isFinite(p.kingLives) ? p.kingLives : undefined,
+			joinedAt: p.joinedAt || null,
+			lastDisconnectAt: p.lastDisconnectAt || null,
+			eliminatedAt: p.eliminatedAt || null,
+			// The pause allowance survives; an active pause does not (its
+			// auto-resume timer doesn't survive a restart either).
+			pauseState: p.pauseState && typeof p.pauseState === 'object'
+				? { ...p.pauseState, active: false, pausedAt: 0 }
+				: null,
 		};
 	}
 
@@ -190,9 +205,8 @@ function buildSnapshot() {
 			// Persist any in-flight Check so a restart mid-window doesn't
 			// silently drop it. `checkService.rehydrate()` reschedules the
 			// deadline timer from `deadlineAt` on boot. (Chess-H1)
-			pendingCheck: (world.pendingCheck && typeof world.pendingCheck === 'object')
-				? world.pendingCheck
-				: null,
+			// One open check per defender (king/pendingChecks.js).
+			pendingChecks: checksOf(world),
 			disconnectedSince: (world.disconnectedSince && typeof world.disconnectedSince === 'object')
 				? world.disconnectedSince
 				: {},
@@ -433,6 +447,7 @@ function restoreWorld(snapshot) {
 }
 
 module.exports = {
+	buildSnapshot,
 	loadWorld,
 	restoreWorld,
 	saveWorldSync,

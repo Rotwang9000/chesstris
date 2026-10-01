@@ -9,6 +9,7 @@
  */
 
 const World = require('../world/World');
+const { checkForDefender, checkForAttackerPiece } = require('../king/pendingChecks');
 const { PLAYER_SETTINGS, GAME_RULES } = require('../game/Constants');
 const { getCooldownRemainingMs } = require('../utils/cooldowns');
 const cells = require('../game/cells');
@@ -216,22 +217,22 @@ function registerChessHandlers(socket, ctx) {
 
 			const piece = world.chessPieces[pieceIndex];
 
-			// Check-mode guards. While `world.pendingCheck` is active:
+			// Check-mode guards. While a check is pending (one per
+			// defender — see king/pendingChecks.js):
 			//   • the attacker piece is committed — they can't move
 			//     it elsewhere to wriggle out of the threat;
 			//   • the defender may only make moves that escape
 			//     (validated below via `checkService.validateEscape`);
 			//   • everyone ELSE can play normally.
-			if (checkService && world.pendingCheck) {
-				const check = world.pendingCheck;
-				if (String(piece.id) === String(check.attackerPieceId)) {
+			if (checkService) {
+				if (checkForAttackerPiece(world, piece.id)) {
 					const msg = 'Your piece is committed to the check — wait for the defender to act.';
 					socket.emit('chessFailed', { message: msg, reason: 'attacker_locked' });
 					logRejection(activityLog, world, player, piece, targetPosition, 'attacker_locked', msg);
 					if (callback) callback({ success: false, error: msg, reason: 'attacker_locked' });
 					return;
 				}
-				if (String(playerId) === String(check.defenderId)) {
+				if (checkForDefender(world, playerId)) {
 					const escape = checkService.validateEscape({
 						world, piece, toX: targetPosition.x, toZ: targetPosition.z,
 					});
@@ -420,8 +421,7 @@ function registerChessHandlers(socket, ctx) {
 					// opposing pieces), so the second attacker simply
 					// waits for this window to resolve. (Chess-C2)
 					if (target && String(target.type || '').toUpperCase() === 'KING'
-						&& checkService && world.pendingCheck
-						&& String(world.pendingCheck.defenderId) === String(target.player)) {
+						&& checkService && checkForDefender(world, target.player)) {
 						if (callback) {
 							callback({
 								success: false,
@@ -433,8 +433,7 @@ function registerChessHandlers(socket, ctx) {
 					}
 
 					if (target && String(target.type || '').toUpperCase() === 'KING'
-						&& checkService
-						&& !world.pendingCheck) {
+						&& checkService) {
 						const started = checkService.startCheck({
 							world,
 							attackerPiece: piece,
@@ -718,9 +717,8 @@ function registerChessHandlers(socket, ctx) {
 			// pending check so the attacker's queued capture is voided.
 			// `validateEscape` already confirmed the king is no longer
 			// threatened.
-			if (checkService && world.pendingCheck
-				&& String(world.pendingCheck.defenderId) === String(playerId)) {
-				try { checkService.cancelCheck(world, 'escaped'); }
+			if (checkService && checkForDefender(world, playerId)) {
+				try { checkService.cancelCheck(world, 'escaped', playerId); }
 				catch (e) { console.warn('[Check] cancel after escape failed:', e.message); }
 			}
 

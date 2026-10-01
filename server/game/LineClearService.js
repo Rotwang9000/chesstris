@@ -231,6 +231,13 @@ function createLineClearService({ io, gameManager, broadcaster, integrityService
 			const now = Date.now();
 			if (now - last >= CAP_LOG_COOLDOWN_MS) {
 				_lastCapLogAt.set(playerId, now);
+				// One key per player id ever seen (AI ids churn): drop
+				// entries whose cooldown has long lapsed.
+				if (_lastCapLogAt.size > 200) {
+					for (const [id, at] of _lastCapLogAt) {
+						if (now - at >= CAP_LOG_COOLDOWN_MS) _lastCapLogAt.delete(id);
+					}
+				}
 				console.warn(
 					`[LineClear] Cascade hit hard cap (${MAX_CASCADE_ITERATIONS}) for ${playerId}; ` +
 					`further hits within ${Math.round(CAP_LOG_COOLDOWN_MS / 1000)}s will be silent.`

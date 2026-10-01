@@ -45,8 +45,36 @@ function cellHasNonHomeContent(cell) {
 }
 
 /**
+ * Mirror of the server rule (bible §15.3): a cell carrying another
+ * player's home marker is off-limits while that player's zone is safe,
+ * i.e. still holds one of their chess pieces.
+ */
+function isEnemySafeHomeCell(gameState, x, z) {
+	const cells = gameState?.board?.cells || {};
+	const me = String(gameState?.localPlayerId ?? '');
+	const owners = new Set(getCellItems(cells[`${x},${z}`])
+		.filter(item => item && item.type === 'home' && String(item.player) !== me)
+		.map(item => String(item.player)));
+	for (const owner of owners) {
+		const zone = gameState?.homeZones?.[owner];
+		if (!zone || zone.isDegraded) continue;
+		const w = zone.width || 8;
+		const h = zone.height || 2;
+		for (let hz = zone.z; hz < zone.z + h; hz++) {
+			for (let hx = zone.x; hx < zone.x + w; hx++) {
+				if (getCellItems(cells[`${hx},${hz}`]).some(item => item
+					&& item.type === 'chess' && String(item.player) === owner)) {
+					return true;
+				}
+			}
+		}
+	}
+	return false;
+}
+
+/**
  * Returns `true` when placing `shape` at `(posX, posZ)` would collide
- * with non-home content.
+ * with non-home content, or land inside an opponent's safe home zone.
  */
 export function checkTetrominoCollision(gameState, shape, posX, posZ) {
 	const cells = gameState?.board?.cells;
@@ -56,7 +84,7 @@ export function checkTetrominoCollision(gameState, shape, posX, posZ) {
 		for (let x = 0; x < shape[z].length; x++) {
 			if (shape[z][x] !== 1) continue;
 			const cell = cells[`${posX + x},${posZ + z}`];
-			if (cellHasNonHomeContent(cell)) {
+			if (cellHasNonHomeContent(cell) || isEnemySafeHomeCell(gameState, posX + x, posZ + z)) {
 				if (gameState.debugMode) {
 					console.log(`Collision (non-home) at (${posX + x}, ${posZ + z}) with:`, cell);
 				}
@@ -142,16 +170,13 @@ export function validatePlacementLocally(tetrominoData, gameState) {
 		return false;
 	}
 
-	const isOwnedNonHome = (item) =>
-		(item
-			&& String(item.player) === String(playerId)
-			&& String(item.type) !== 'home')
+	// Same as the server (TetrominoManager): any of the player's own
+	// content — home cells included — counts as adjacent ground on EVERY
+	// placement, not just the first. Counting home cells only on the
+	// first drop showed red ghosts for drops the server then accepted.
+	const isOwnedContent = (item) =>
+		(item && String(item.player) === String(playerId))
 		|| isRingItemUsable(gameState, item);
-
-	const isOwnedHome = (item) =>
-		item
-		&& String(item.player) === String(playerId)
-		&& String(item.type) === 'home';
 
 	let sawAdjacentPlayerContent = false;
 
@@ -169,7 +194,7 @@ export function validatePlacementLocally(tetrominoData, gameState) {
 				const items = getCellItems(cell);
 				if (items.length === 0) continue;
 
-				if (items.some(isOwnedNonHome)) {
+				if (items.some(isOwnedContent)) {
 					sawAdjacentPlayerContent = true;
 					if (isFirstPlacement) return true;
 
@@ -179,7 +204,6 @@ export function validatePlacementLocally(tetrominoData, gameState) {
 					} catch (_) { /* fall through to next adjacency */ }
 				}
 
-				if (isFirstPlacement && items.some(isOwnedHome)) return true;
 			}
 		}
 	}

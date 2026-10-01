@@ -921,12 +921,12 @@ export function setupNetworkEvents(hooks = {}) {
 		try { onCheckStart(payload); }
 		catch (e) { console.warn('checkAlert start failed:', e); }
 	}));
-	NetworkManager.on('chess_check_cleared', safe('chess_check_cleared', () => {
-		try { onCheckClear(); }
+	NetworkManager.on('chess_check_cleared', safe('chess_check_cleared', (payload) => {
+		try { onCheckClear(payload); }
 		catch (e) { console.warn('checkAlert clear failed:', e); }
 	}));
-	NetworkManager.on('chess_check_expired', safe('chess_check_expired', () => {
-		try { onCheckExpired(); }
+	NetworkManager.on('chess_check_expired', safe('chess_check_expired', (payload) => {
+		try { onCheckExpired(payload); }
 		catch (e) { console.warn('checkAlert expired failed:', e); }
 	}));
 	NetworkManager.on('game_update', safe('game_update', (payload) => {

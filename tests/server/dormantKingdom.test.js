@@ -58,6 +58,45 @@ describe('dormantKingdom', () => {
 		expect(world.chessPieces[0].position.x).toBe(41);
 	});
 
+	test('transplant never drops a piece onto foreign ground or another piece', () => {
+		const world = {
+			board: { cells: { '41,40': [{ type: 'tetromino', player: 'enemy' }, { type: 'chess', player: 'enemy', pieceId: 'q' }] } },
+			chessPieces: [{ id: 'q', type: 'QUEEN', player: 'enemy', position: { x: 41, z: 40 } }],
+			homeZones: {},
+			players: { p1: { id: 'p1', color: 0xff0000 } },
+		};
+		const stowed = {
+			homeZone: { x: 0, z: 0, width: 8, height: 2, orientation: 0 },
+			cells: {
+				'1,0': [{ type: 'tetromino', player: 'p1' }],
+				'2,0': [{ type: 'tetromino', player: 'p1' }],
+			},
+			chessPieces: [
+				{ id: 'k1', type: 'KING', player: 'p1', position: { x: 1, z: 0 } },
+				{ id: 'r1', type: 'ROOK', player: 'p1', position: { x: 2, z: 0 }, hasMoved: true, moveCount: 4 },
+			],
+		};
+		transplantStowed(world, 'p1', stowed, { x: 40, z: 40, width: 8, height: 2, orientation: 0 });
+		// (41,40) is enemy ground with the queen on it: the king is not placed there.
+		const atQueen = world.chessPieces.filter(p => p.position.x === 41 && p.position.z === 40);
+		expect(atQueen.map(p => p.id)).toEqual(['q']);
+		// The rook lands, and keeps its history (no fresh castling rights).
+		const rook = world.chessPieces.find(p => p.id === 'r1');
+		expect(rook).toMatchObject({ position: { x: 42, z: 40 }, hasMoved: true, moveCount: 4 });
+	});
+
+	test('the zone keeps the stowed layout\'s orientation and shape', () => {
+		const world = { board: { cells: {} }, chessPieces: [], homeZones: {}, players: { p1: { id: 'p1' } } };
+		const stowed = {
+			// An old stash: vertical zone saved with the pre-fix 8×2 shape.
+			homeZone: { x: 0, z: 0, width: 8, height: 2, orientation: 3 },
+			cells: { '0,0': [{ type: 'home', player: 'p1' }] },
+			chessPieces: [],
+		};
+		transplantStowed(world, 'p1', stowed, { x: 40, z: 40, width: 8, height: 2, orientation: 0 });
+		expect(world.homeZones.p1).toMatchObject({ orientation: 3, width: 2, height: 8 });
+	});
+
 	test('shouldStowPlayer after 24h offline idle', () => {
 		const World = require('../../server/world/World');
 		const Sessions = require('../../server/world/Sessions');

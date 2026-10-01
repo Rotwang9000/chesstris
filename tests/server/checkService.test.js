@@ -39,7 +39,7 @@ function makeWorld() {
 		board: { cells: {} },
 		chessPieces: [attacker, king],
 		players: { atk: { name: 'Atk' }, def: { name: 'Def' } },
-		pendingCheck: null,
+		pendingChecks: {},
 		attacker,
 		king,
 	};
@@ -80,14 +80,14 @@ describe('checkService', () => {
 	test('startCheck sets pendingCheck for the defender', () => {
 		const pending = openCheck();
 		expect(pending).toBeTruthy();
-		expect(world.pendingCheck).toBeTruthy();
-		expect(world.pendingCheck.defenderId).toBe('def');
+		expect(world.pendingChecks.def).toBeTruthy();
+		expect(world.pendingChecks.def.defenderId).toBe('def');
 		expect(service.isPlayerInCheck(world, 'def')).toBe(true);
 	});
 
 	test('expiry removes the defending king then runs the capture (Chess-C1)', () => {
 		openCheck();
-		service.expireCheck('w1');
+		service.expireCheck('w1', 'def');
 
 		// King removed via pieces.removePiece BEFORE capture, so the
 		// capture service never transfers a live king to the captor.
@@ -99,7 +99,7 @@ describe('checkService', () => {
 		expect(opts.kingLifeService).toBeUndefined();
 
 		expect(kingCaptureService.executeKingCapture).toHaveBeenCalledWith('atk', 'def');
-		expect(world.pendingCheck).toBeNull();
+		expect(world.pendingChecks.def).toBeUndefined();
 	});
 
 	// NOTE: the Chess-H2 "threat dissolved during the window" guard
@@ -113,9 +113,9 @@ describe('checkService', () => {
 
 	test('cancelCheck clears the pending check without capturing', () => {
 		openCheck();
-		const cleared = service.cancelCheck(world, 'escaped');
+		const cleared = service.cancelCheck(world, 'escaped', 'def');
 		expect(cleared).toBe(true);
-		expect(world.pendingCheck).toBeNull();
+		expect(world.pendingChecks.def).toBeUndefined();
 		expect(kingCaptureService.executeKingCapture).not.toHaveBeenCalled();
 	});
 
@@ -124,7 +124,7 @@ describe('checkService', () => {
 		for (let i = 0; i < max; i++) {
 			const pending = openCheck();
 			expect(pending).toBeTruthy();
-			service.cancelCheck(world, 'escaped'); // defender escaped each time
+			service.cancelCheck(world, 'escaped', 'def'); // defender escaped each time
 		}
 		// The attacker has now used its grace; startCheck refuses so the
 		// caller falls through to a direct capture.
@@ -133,7 +133,7 @@ describe('checkService', () => {
 		expect(world.attacker.checkAttempts).toBe(max);
 	});
 
-	test('only one outstanding check per world', () => {
+	test('only one outstanding check per defender', () => {
 		openCheck();
 		const second = service.startCheck({
 			world,
@@ -142,6 +142,40 @@ describe('checkService', () => {
 			queuedMove: { captorId: 'atk', defeatedId: 'def', toX: 0, toZ: 3, attackerPieceId: 'a1' },
 		});
 		// Returns the existing pending check rather than starting a new one.
-		expect(second).toBe(world.pendingCheck);
+		expect(second).toBe(world.pendingChecks.def);
+	});
+
+	test('checks on different kings are independent (no instant capture elsewhere)', () => {
+		// Bible §9: a king is never taken on the spot. With a single
+		// world-wide check, any OTHER king attack during it skipped the
+		// grace window.
+		openCheck();
+		const att2 = { id: 'a2', player: 'atk2', type: 'ROOK', position: { x: 9, z: 0 } };
+		const king2 = { id: 'k2', player: 'def2', type: 'KING', position: { x: 9, z: 3 } };
+		world.chessPieces.push(att2, king2);
+		expect(service.canDeferCapture(world, att2, 'def2')).toBe(true);
+		const second = service.startCheck({
+			world, attackerPiece: att2, kingPiece: king2,
+			queuedMove: { captorId: 'atk2', defeatedId: 'def2', toX: 9, toZ: 3 },
+		});
+		expect(second.defenderId).toBe('def2');
+		expect(Object.keys(world.pendingChecks).sort()).toEqual(['def', 'def2']);
+		expect(service.isPlayerInCheck(world, 'def')).toBe(true);
+		expect(service.isPlayerInCheck(world, 'def2')).toBe(true);
+
+		// Resolving one leaves the other running, with its own timer.
+		service.cancelCheck(world, 'escaped', 'def');
+		expect(world.pendingChecks.def2).toBeTruthy();
+		jest.advanceTimersByTime(service.CHECK_DEADLINE_MS + 1);
+		expect(kingCaptureService.executeKingCapture).toHaveBeenCalledWith('atk2', 'def2');
+		expect(kingCaptureService.executeKingCapture).not.toHaveBeenCalledWith('atk', 'def');
+	});
+
+	test('a legacy single pendingCheck from an old save is folded in', () => {
+		world.pendingCheck = { defenderId: 'def', attackerId: 'atk', attackerPieceId: 'a1', kingPieceId: 'k1', deadlineAt: Date.now() + 5000 };
+		delete world.pendingChecks;
+		expect(service.isPlayerInCheck(world, 'def')).toBe(true);
+		expect(world.pendingCheck).toBeNull();
+		expect(world.pendingChecks.def.attackerId).toBe('atk');
 	});
 });
