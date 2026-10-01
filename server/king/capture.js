@@ -155,14 +155,36 @@ function createKingCaptureService({ io, gameManager, broadcaster, activityLog = 
 			});
 		}
 
-		for (const cell of Object.values(world.board.cells)) {
+		// The captor inherits the territory. The loser's home markers
+		// become plain captor ground (as idle-zone degradation does):
+		// re-owning them left 16 'home' cells with no zone record behind
+		// once the loser was reaped, which line clears treat as
+		// permanent gaps.
+		for (const [key, cell] of Object.entries(world.board.cells)) {
 			if (!Array.isArray(cell)) continue;
+			let hadHome = false;
 			for (const item of cell) {
-				if (item && String(item.player) === String(defeatedId)) {
-					item.player = captorId;
-				}
+				if (!item || String(item.player) !== String(defeatedId)) continue;
+				if (item.type === 'home') { hadHome = true; continue; }
+				item.player = captorId;
 			}
+			if (!hadHome) continue;
+			const rest = cell.filter(item => !(item && item.type === 'home'
+				&& String(item.player) === String(defeatedId)));
+			const ownsGround = rest.some(item => item && String(item.player) === String(captorId)
+				&& item.type !== 'chess' && item.type !== 'home');
+			if (!ownsGround) {
+				rest.push({
+					type: 'tetromino',
+					pieceType: 'home_converted',
+					player: captorId,
+					placedAt: Date.now(),
+					fromHomeZone: true,
+				});
+			}
+			world.board.cells[key] = rest;
 		}
+		if (world.homeZones) delete world.homeZones[defeatedId];
 
 		if (!Array.isArray(captorPlayer.capturedStyles)) captorPlayer.capturedStyles = [];
 		captorPlayer.capturedStyles.push({
