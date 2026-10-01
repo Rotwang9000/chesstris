@@ -170,16 +170,13 @@ export function validatePlacementLocally(tetrominoData, gameState) {
 		return false;
 	}
 
-	const isOwnedNonHome = (item) =>
-		(item
-			&& String(item.player) === String(playerId)
-			&& String(item.type) !== 'home')
+	// Same as the server (TetrominoManager): any of the player's own
+	// content — home cells included — counts as adjacent ground on EVERY
+	// placement, not just the first. Counting home cells only on the
+	// first drop showed red ghosts for drops the server then accepted.
+	const isOwnedContent = (item) =>
+		(item && String(item.player) === String(playerId))
 		|| isRingItemUsable(gameState, item);
-
-	const isOwnedHome = (item) =>
-		item
-		&& String(item.player) === String(playerId)
-		&& String(item.type) === 'home';
 
 	let sawAdjacentPlayerContent = false;
 
@@ -197,7 +194,7 @@ export function validatePlacementLocally(tetrominoData, gameState) {
 				const items = getCellItems(cell);
 				if (items.length === 0) continue;
 
-				if (items.some(isOwnedNonHome)) {
+				if (items.some(isOwnedContent)) {
 					sawAdjacentPlayerContent = true;
 					if (isFirstPlacement) return true;
 
@@ -207,7 +204,6 @@ export function validatePlacementLocally(tetrominoData, gameState) {
 					} catch (_) { /* fall through to next adjacency */ }
 				}
 
-				if (isFirstPlacement && items.some(isOwnedHome)) return true;
 			}
 		}
 	}

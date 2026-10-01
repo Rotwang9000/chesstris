@@ -13,6 +13,9 @@ const pieces = require('../game/pieces');
 
 const SUICIDAL_PAWN_STEP_MS = 500;
 
+// Cap on per-capture history lists (world.kingPrison, capturedStyles).
+const MAX_HISTORY = 50;
+
 function createKingCaptureService({ io, gameManager, broadcaster, activityLog = null }) {
 	if (!io) throw new Error('createKingCaptureService: io required');
 	if (!gameManager) throw new Error('createKingCaptureService: gameManager required');
@@ -115,6 +118,12 @@ function createKingCaptureService({ io, gameManager, broadcaster, activityLog = 
 			capturedBy: captorId,
 			capturedAt: Date.now(),
 		});
+		// History only (no client reads it), but it rides in every full
+		// game_update — keep the most recent entries, not every capture
+		// since the world began.
+		if (world.kingPrison.length > MAX_HISTORY) {
+			world.kingPrison.splice(0, world.kingPrison.length - MAX_HISTORY);
+		}
 
 		const inheritedPawnIds = [];
 		for (const piece of world.chessPieces) {
@@ -191,6 +200,9 @@ function createKingCaptureService({ io, gameManager, broadcaster, activityLog = 
 			color: defeatedPlayer.color,
 			name: defeatedPlayer.name,
 		});
+		if (captorPlayer.capturedStyles.length > MAX_HISTORY) {
+			captorPlayer.capturedStyles.splice(0, captorPlayer.capturedStyles.length - MAX_HISTORY);
+		}
 
 		World.markDirty();
 

@@ -542,7 +542,8 @@ function restoreWorldFromSnapshot(snapshot) {
 		players,
 		homeZones: snapshot.homeZones || {},
 		currentTurns: snapshot.currentTurns || {},
-		kingPrison: Array.isArray(snapshot.kingPrison) ? snapshot.kingPrison : [],
+		// History list, capped at capture time; trim older saves too.
+		kingPrison: Array.isArray(snapshot.kingPrison) ? snapshot.kingPrison.slice(-50) : [],
 		pendingKingCaptures: Array.isArray(snapshot.pendingKingCaptures) ? snapshot.pendingKingCaptures : [],
 		pendingCheck: (snapshot.pendingCheck && typeof snapshot.pendingCheck === 'object')
 			? snapshot.pendingCheck
