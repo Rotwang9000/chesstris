@@ -276,6 +276,45 @@ describe('ChessManager', () => {
 	// ── Castling ────────────────────────────────────────────────────────────
 
 	describe('castling', () => {
+		test('cannot "castle" over an adjacent rook onto the piece beyond it', () => {
+			// Repro: unmoved king, own unmoved rook right next to it, enemy
+			// queen two squares out. The empty path loop let the king jump
+			// its rook and capture the queen.
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+			addPlayer(game, 'p2');
+			for (let x = 0; x <= 7; x++) {
+				boardManager.setCell(game.board, x, 0, [{ type: 'home', player: 'p1' }]);
+			}
+			const king = { id: 'K', type: 'KING', player: 'p1', position: { x: 0, z: 0 }, hasMoved: false };
+			const rook = { id: 'R', type: 'ROOK', player: 'p1', position: { x: 1, z: 0 }, hasMoved: false };
+			const queen = { id: 'Q', type: 'QUEEN', player: 'p2', position: { x: 2, z: 0 }, hasMoved: true };
+			game.chessPieces.push(king, rook, queen);
+			for (const p of [king, rook, queen]) {
+				boardManager.addToCellContents(game.board, p.position.x, p.position.z, {
+					type: 'chess', player: p.player, pieceId: p.id, pieceType: p.type.toLowerCase(),
+				});
+			}
+			expect(chessManager.isValidChessMove(game, king, 2, 0)).toBe(false);
+		});
+
+		test('rook two squares away is too close to castle', () => {
+			const game = createGame(boardManager);
+			addPlayer(game, 'p1');
+			for (let x = 0; x <= 7; x++) {
+				boardManager.setCell(game.board, x, 0, [{ type: 'home', player: 'p1' }]);
+			}
+			const king = { id: 'K', type: 'KING', player: 'p1', position: { x: 0, z: 0 }, hasMoved: false };
+			const rook = { id: 'R', type: 'ROOK', player: 'p1', position: { x: 2, z: 0 }, hasMoved: false };
+			game.chessPieces.push(king, rook);
+			for (const p of [king, rook]) {
+				boardManager.addToCellContents(game.board, p.position.x, p.position.z, {
+					type: 'chess', player: p.player, pieceId: p.id, pieceType: p.type.toLowerCase(),
+				});
+			}
+			expect(chessManager.isValidChessMove(game, king, 2, 0)).toBe(false);
+		});
+
 		test('king can castle with unmoved rook', () => {
 			const game = createGame(boardManager);
 			addPlayer(game, 'p1');

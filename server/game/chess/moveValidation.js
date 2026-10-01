@@ -216,6 +216,12 @@ function validateCastle(ctx, game, king, toX, toZ, pieceAt) {
 
 	if (!rook) return { valid: false, error: 'No rook found in that direction for castling' };
 	if (rook.hasMoved) return { valid: false, error: 'Rook has already moved' };
+	// The king lands two squares over and the rook on the square it
+	// crossed, so the rook must be at least three away. Closer, and the
+	// king would jump its own rook (and capture whatever stood beyond,
+	// since nothing below checked the landing square).
+	const rookDistance = Math.abs(rook.position.x - fromX) + Math.abs(rook.position.z - fromZ);
+	if (rookDistance < 3) return { valid: false, error: 'Rook is too close to castle' };
 
 	let checkX = fromX + dx;
 	let checkZ = fromZ + dz;
