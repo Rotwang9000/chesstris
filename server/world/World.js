@@ -519,6 +519,20 @@ function restoreWorldFromSnapshot(snapshot) {
 		snapshot.board.centreMarker = { x: 0, z: 0 };
 	}
 
+	// Vertical home zones used to be saved as 8×2 although their cells
+	// are 2×8. Fix the rectangle; a zone already "degraded" under the
+	// wrong one still has stranded home markers, so let degradation run
+	// again (it only touches cells that still carry a marker).
+	let didFixZones = false;
+	for (const zone of Object.values(snapshot.homeZones || {})) {
+		if (!zone || (zone.orientation !== 1 && zone.orientation !== 3)) continue;
+		if (!(zone.width > zone.height)) continue;
+		[zone.width, zone.height] = [zone.height, zone.width];
+		if (zone.isDegraded) zone.isDegraded = false;
+		didFixZones = true;
+	}
+	if (didFixZones) console.log('[World] Corrected vertical home-zone dimensions (8×2 → 2×8).');
+
 	world = {
 		...fresh,
 		...snapshot,
@@ -545,7 +559,7 @@ function restoreWorldFromSnapshot(snapshot) {
 	// the world dirty so the next persistence cycle flushes the
 	// repair to disk. Without this the migration log would run on
 	// every boot until something else happened to dirty the world.
-	dirty = didMigrateColours === true;
+	dirty = didMigrateColours === true || didFixZones;
 }
 
 /**

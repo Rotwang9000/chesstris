@@ -104,12 +104,16 @@ function findHomeZonePosition(game) {
 		HOME_ZONE_HEIGHT
 	);
 	
-	// Return the home zone with the correct dimensions
+	// Vertical zones (orientation 1 / 3) are laid out 2 wide × 8 deep
+	// (ChessManager.initializeChessPieces), so their rectangle must be
+	// too — degradation, safe-home checks and island protection all
+	// read width/height. boardGenerator already swaps; this didn't.
+	const vertical = homePosition.orientation === 1 || homePosition.orientation === 3;
 	return {
 		x: homePosition.x,
 		z: homePosition.z,
-		width: HOME_ZONE_WIDTH,
-		height: HOME_ZONE_HEIGHT,
+		width: vertical ? HOME_ZONE_HEIGHT : HOME_ZONE_WIDTH,
+		height: vertical ? HOME_ZONE_WIDTH : HOME_ZONE_HEIGHT,
 		orientation: homePosition.orientation
 	};
 }
