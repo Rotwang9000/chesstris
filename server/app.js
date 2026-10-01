@@ -114,13 +114,26 @@ function createApp({ projectRoot = process.cwd() } = {}) {
 	// CORS allowlist — only same-origin in development, only the
 	// configured production hosts in production. Socket.IO has its
 	// own CORS layer (set in bootstrap.js).
+	//
+	// A foreign origin used to raise an Error, which answered every such
+	// request (scanners, link previews) with a 500 and a stack trace in
+	// the log. Now: reads are served without CORS headers (the browser
+	// keeps the response from the foreign page), and anything that could
+	// change state is refused with a 403 — a cross-site form POST is a
+	// "simple" request that never gets a preflight, so this check is
+	// what stops it.
+	app.use((req, res, next) => {
+		const origin = req.get('origin');
+		if (!origin || isOriginAllowed(origin, allowedOrigins, { allowLocalhost: isDevelopment })) {
+			return next();
+		}
+		if (req.method === 'GET' || req.method === 'HEAD') return next();
+		return res.status(403).json({ success: false, error: 'origin_not_allowed' });
+	});
 	app.use(cors({
 		origin(origin, callback) {
 			if (!origin) return callback(null, true);  // curl / server-to-server
-			if (isOriginAllowed(origin, allowedOrigins, { allowLocalhost: isDevelopment })) {
-				return callback(null, true);
-			}
-			return callback(new Error(`Origin not allowed: ${origin}`), false);
+			callback(null, isOriginAllowed(origin, allowedOrigins, { allowLocalhost: isDevelopment }));
 		},
 		credentials: true,
 	}));

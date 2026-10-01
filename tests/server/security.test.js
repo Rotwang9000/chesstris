@@ -68,10 +68,24 @@ describe('security middleware', () => {
 		const res = await request(app)
 			.get('/api/')
 			.set('Origin', 'https://evil.example.com');
-		// CORS rejection returns 500 from the cors middleware
-		// because the callback errors; importantly, the
-		// `access-control-allow-origin` header is *absent*.
+		// Reads are served (no 500 / stack trace for scanners), but
+		// without CORS headers, so a foreign page can't read them.
+		expect(res.status).toBe(200);
 		expect(res.headers['access-control-allow-origin']).toBeUndefined();
+	});
+
+	test('cross-site state-changing requests are refused with 403', async () => {
+		// A cross-site form POST is a "simple" request (no preflight),
+		// so the server itself has to refuse it.
+		const { createApp } = require('../../server/app');
+		const app = createApp({ projectRoot: process.cwd() });
+		const res = await request(app)
+			.post('/api/advertisers')
+			.set('Origin', 'https://evil.example.com')
+			.type('form')
+			.send('name=x');
+		expect(res.status).toBe(403);
+		expect(res.body.error).toBe('origin_not_allowed');
 	});
 
 	test('origins helper agrees with the middleware', () => {
