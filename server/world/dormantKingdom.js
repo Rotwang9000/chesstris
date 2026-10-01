@@ -95,6 +95,8 @@ function transplantStowed(world, playerId, stowed, newHome) {
 
 	let placedCells = 0;
 	let skippedCells = 0;
+	// Destinations that ended up ours — the only cells a piece may land on.
+	const ownedDest = new Set();
 	for (const [key, items] of Object.entries(stowed.cells || {})) {
 		const [xs, zs] = key.split(',');
 		const x = Number(xs) + dx;
@@ -109,8 +111,12 @@ function transplantStowed(world, playerId, stowed, newHome) {
 		if (terrainOnly.length === 0) continue;
 		const existing = world.board.cells[destKey] || [];
 		world.board.cells[destKey] = existing.concat(terrainOnly);
+		ownedDest.add(destKey);
 		placedCells++;
 	}
+	const occupied = new Set((world.chessPieces || [])
+		.filter(p => p && p.position)
+		.map(p => `${p.position.x},${p.position.z}`));
 
 	let placedPieces = 0;
 	for (const piece of stowed.chessPieces || []) {
@@ -119,8 +125,9 @@ function transplantStowed(world, playerId, stowed, newHome) {
 		const nx = pos.x + dx;
 		const nz = pos.z + dz;
 		const destKey = `${nx},${nz}`;
-		const destCell = world.board.cells[destKey];
-		if (!Array.isArray(destCell) || destCell.length === 0) continue;
+		// Only onto ground we just laid (never foreign terrain), and never
+		// onto another piece — this used to stack a piece on an enemy's.
+		if (!ownedDest.has(destKey) || occupied.has(destKey)) continue;
 		const added = pieces.addPiece(world, {
 			id: piece.id,
 			type: piece.type,
@@ -130,10 +137,32 @@ function transplantStowed(world, playerId, stowed, newHome) {
 			color: piece.color,
 			orientation: piece.orientation,
 		});
-		if (added) placedPieces++;
+		if (added) {
+			// addPiece starts every piece fresh; keep its history so a
+			// moved king/rook can't castle again and pawns keep their
+			// double-step / promotion progress.
+			for (const field of ['hasMoved', 'moveCount', 'forwardDistance', 'awaitingPromotion']) {
+				if (piece[field] !== undefined) added[field] = piece[field];
+			}
+			occupied.add(destKey);
+			placedPieces++;
+		}
 	}
 
-	world.homeZones[playerId] = deepClone(newHome);
+	// The transplanted layout keeps its old orientation, so the zone
+	// record must too: shift the old zone by the same offset rather than
+	// adopting the new slot's (possibly rotated) shape.
+	const old = stowed.homeZone;
+	if (old && Number.isFinite(old.x) && Number.isFinite(old.z)) {
+		const zone = { ...deepClone(old), x: old.x + dx, z: old.z + dz, isDegraded: false };
+		// Stashes saved before vertical zones were fixed say 8×2.
+		if ((zone.orientation === 1 || zone.orientation === 3) && zone.width > zone.height) {
+			[zone.width, zone.height] = [zone.height, zone.width];
+		}
+		world.homeZones[playerId] = zone;
+	} else {
+		world.homeZones[playerId] = deepClone(newHome);
+	}
 	return { placedCells, placedPieces, skippedCells };
 }
 
