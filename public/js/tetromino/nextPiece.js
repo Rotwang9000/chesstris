@@ -208,10 +208,15 @@ function showFirstDropRotationHint() {
 	`;
 	Object.assign(banner.style, {
 		position: 'fixed',
-		// Above the touch pad on phones, not behind it.
-		bottom: touch ? 'calc(220px + env(safe-area-inset-bottom, 0px))' : '90px',
+		// Mid-screen: the home view puts the waiting piece above this
+		// and the player's own pieces below it (the bottom sat on the
+		// home row on phones, just above the touch pad).
+		top: '50%',
 		left: '50%',
-		transform: 'translateX(-50%)',
+		transform: 'translate(-50%, -50%)',
+		width: 'max-content',
+		maxWidth: 'min(420px, calc(100vw - 32px))',
+		boxSizing: 'border-box',
 		background: 'rgba(0, 0, 0, 0.85)',
 		color: '#eee',
 		padding: '14px 20px',
@@ -222,7 +227,6 @@ function showFirstDropRotationHint() {
 		zIndex: '11700',
 		boxShadow: '0 0 24px rgba(255, 204, 0, 0.4)',
 		textAlign: 'center',
-		maxWidth: '420px',
 		cursor: 'pointer',
 		animation: 'tetches-fade-in 280ms ease-out',
 	});

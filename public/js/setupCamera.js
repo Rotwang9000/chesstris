@@ -91,6 +91,17 @@ const CAMERA_DEFAULTS = {
 	WARP_FADE_IN_MS: 350,
 	WARP_FADE_OUT_MS: 650,
 	KING_VIEW_DISTANCE: 16,
+	/**
+	 * Aim this many cells ahead of the king, and this high, instead of
+	 * at its feet. Tetrominoes spawn a few cells in front of the king
+	 * at height 10 (tetromino/spawn.js); aimed at the feet, the camera
+	 * pitched down so far that a newcomer's first piece sat above the
+	 * top edge of the screen while its fall waits for their first key.
+	 */
+	KING_VIEW_LOOK_AHEAD: 4,
+	KING_VIEW_LOOK_HEIGHT: 3,
+	/** Furthest the home view backs off on a tall, narrow screen. */
+	KING_VIEW_PORTRAIT_MAX_SCALE: 1.5,
 	FALLBACK_POSITION: { x: 10, y: 25, z: 10 },
 	FALLBACK_TARGET: { x: 0, y: 0, z: 0 }
 };
@@ -238,25 +249,56 @@ export function moveToPlayerZone(camera, controls, gameState, renderer, scene, a
 	const position = translatePosition(boardPosition, gameState, true);
 	if (!position) return false;
 
-	const dist = CAMERA_DEFAULTS.KING_VIEW_DISTANCE;
+	// Portrait phones see only a sliver sideways, so the spawned piece
+	// (up to a few cells left/right of the king) fell outside the view.
+	// Back off on narrow screens; landscape keeps the standard distance.
+	const aspect = Number.isFinite(camera.aspect) && camera.aspect > 0 ? camera.aspect : 1;
+	const portraitPullBack = Math.min(CAMERA_DEFAULTS.KING_VIEW_PORTRAIT_MAX_SCALE, Math.max(1, 0.75 / aspect));
+	const dist = CAMERA_DEFAULTS.KING_VIEW_DISTANCE * portraitPullBack;
 	const height = dist * Math.sin(Math.PI / 4);
 
-	let offsetX = 0;
-	let offsetZ = 0;
+	// The king's forward direction; the camera sits behind it.
+	let forwardX = 0;
+	let forwardZ = 1;
 	switch (orientation) {
-		case 0: offsetZ = -dist; break;
-		case 1: offsetX = -dist; break;
-		case 2: offsetZ = dist; break;
-		case 3: offsetX = dist; break;
-		default: offsetZ = -dist;
+		case 1: forwardX = 1; forwardZ = 0; break;
+		case 2: forwardZ = -1; break;
+		case 3: forwardX = -1; forwardZ = 0; break;
+		default: break;
+	}
+
+	// On our own home view, pan sideways halfway toward a piece that is
+	// still waiting to fall, so the king and the piece both fit (spawns
+	// can sit several cells to the king's side).
+	let panX = 0;
+	let panZ = 0;
+	const tetromino = playerId === gameState.localPlayerId ? gameState.currentTetromino : null;
+	if (tetromino?.position && Array.isArray(tetromino.shape) && tetromino.heightAboveBoard > 0) {
+		const centre = translatePosition({
+			x: tetromino.position.x + ((tetromino.shape[0]?.length || 1) - 1) / 2,
+			z: tetromino.position.z + (tetromino.shape.length - 1) / 2,
+		}, gameState, true);
+		if (centre) {
+			// Right of the king's facing, as in tetromino/spawn.js.
+			const rightX = -forwardZ;
+			const rightZ = forwardX;
+			const lateral = (centre.x - position.x) * rightX + (centre.z - position.z) * rightZ;
+			panX = rightX * lateral / 2;
+			panZ = rightZ * lateral / 2;
+		}
 	}
 
 	const targetPosition = {
-		x: position.x + offsetX,
+		x: position.x - forwardX * dist + panX,
 		y: height,
-		z: position.z + offsetZ
+		z: position.z - forwardZ * dist + panZ
 	};
-	const targetLookAt = { x: position.x, y: 0, z: position.z };
+	const ahead = CAMERA_DEFAULTS.KING_VIEW_LOOK_AHEAD;
+	const targetLookAt = {
+		x: position.x + forwardX * ahead + panX,
+		y: CAMERA_DEFAULTS.KING_VIEW_LOOK_HEIGHT,
+		z: position.z + forwardZ * ahead + panZ
+	};
 
 	if (animate && !forceImmediate) {
 		flyToPosition(camera, controls, targetPosition, targetLookAt, renderer, scene, onComplete);
@@ -269,6 +311,29 @@ export function moveToPlayerZone(camera, controls, gameState, renderer, scene, a
 		if (typeof onComplete === 'function') onComplete();
 	}
 	return true;
+}
+
+/**
+ * Called once the first piece has appeared after a home-view flight.
+ * If any of its blocks fall outside the view, fly the home view again;
+ * now that the piece exists, `moveToPlayerZone` pans toward it.
+ *
+ * @returns {boolean} True if a camera move was issued.
+ */
+export function bringPendingTetrominoIntoView(camera, controls, gameState, renderer, scene) {
+	const group = gameState?.currentTetrominoShapeGroup;
+	if (!camera || !controls || !group?.children?.length) return false;
+	const THREE = getTHREE();
+	camera.updateMatrixWorld();
+	const point = new THREE.Vector3();
+	const margin = 0.9;
+	const inView = group.children.every((block) => {
+		block.getWorldPosition(point);
+		point.project(camera);
+		return point.z < 1 && Math.abs(point.x) <= margin && Math.abs(point.y) <= margin;
+	});
+	if (inView) return false;
+	return moveToPlayerZone(camera, controls, gameState, renderer, scene, true);
 }
 
 /**
