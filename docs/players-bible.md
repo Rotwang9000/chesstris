@@ -183,6 +183,16 @@ exist; otherwise a new tetromino is given.
 Seven standard shapes: **I, O, T, S, Z, J, L** - each with four rotations
 (defined in `Constants.TETROMINO_SHAPES`).
 
+### Dealing
+
+The **server deals every piece** from the player's own 7-bag (one of each
+shape per seven). A player has a **current** piece, the only shape the server
+will accept, and a **next** piece shown in the preview. Each dealt piece
+places once. A placement refused for its position keeps the same piece, so
+it can be tried elsewhere. A piece can be thrown away (dropped in the water,
+or discarded by a bot) to move on to the next, but no faster than every
+250 ms, so fishing for a shape costs as much as doing it by hand.
+
 ### Placement rules
 
 1. **No overlap** - every cell of the piece must land on an empty coordinate.

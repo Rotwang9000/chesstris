@@ -32,7 +32,8 @@ server restarts.
 
 Each player has their own **7-bag**: a shuffled bag containing one of each
 shape is consumed before being refilled and reshuffled. This guarantees fair
-piece distribution (no long droughts of a single shape).
+piece distribution (no long droughts of a single shape). The **server deals**
+from the bag: it only accepts the player's current piece, once.
 
 ### Chess movement
 1. Standard chess movement rules apply.

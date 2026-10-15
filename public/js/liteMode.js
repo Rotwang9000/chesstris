@@ -58,7 +58,6 @@ const pointer = { down: false, panned: false, startX: 0, startY: 0, lastX: 0, la
 
 let selectedPieceId = null;
 let ghost = null;            // { type, rotation }
-let tetrominoBag = [];
 let placementBusy = false;
 let skipChessBtn = null;
 
@@ -84,18 +83,26 @@ function shapeFor(type, rotation) {
 	return m;
 }
 
-function refillBag() {
-	tetrominoBag = Object.keys(TETROMINO_SHAPES);
-	for (let i = tetrominoBag.length - 1; i > 0; i--) {
-		const j = Math.floor(Math.random() * (i + 1));
-		[tetrominoBag[i], tetrominoBag[j]] = [tetrominoBag[j], tetrominoBag[i]];
-	}
+/**
+ * Show the server's deal: `current` is the only piece it will accept.
+ * Keeps the player's rotation if the piece hasn't changed.
+ */
+function adoptPieces(pieces) {
+	if (!pieces || !TETROMINO_SHAPES[pieces.current]) return;
+	if (!ghost || ghost.type !== pieces.current) ghost = { type: pieces.current, rotation: 0 };
+	updateHud();
 }
 
+/**
+ * Ask the server which piece to play now. `request_tetromino` hands
+ * back the current piece, or deals the next if the current is placed.
+ */
 function drawNextGhost() {
-	if (tetrominoBag.length === 0) refillBag();
-	ghost = { type: tetrominoBag.pop(), rotation: 0 };
+	ghost = null;
 	updateHud();
+	NetworkManager.sendMessage('request_tetromino', {})
+		.then((ack) => adoptPieces(ack?.pieces))
+		.catch(() => showToastMessage('Could not get your next piece — try again', { variant: 'alert' }));
 }
 
 // ── Colours ─────────────────────────────────────────────────────────────────
@@ -349,6 +356,7 @@ async function skipChessMove() {
 			showToastMessage(response?.message || response?.error || 'Could not skip chess', { variant: 'alert' });
 			return;
 		}
+		adoptPieces(response?.pieces);
 		enterTetrisPhase();
 		showToastMessage('Chess skipped — place your next piece');
 	} catch (err) {
@@ -376,6 +384,7 @@ async function submitPlacement(x, z) {
 			showToastMessage(result?.message || 'Placement rejected', { variant: 'alert' });
 		}
 	} catch (err) {
+		adoptPieces(err?.details?.pieces || err?.error?.details?.pieces);
 		const message = err?.details?.message || err?.message || 'Placement rejected';
 		showToastMessage(message === 'rate_limited' ? 'Too fast — wait a moment' : message, { variant: 'alert' });
 	} finally {
@@ -739,7 +748,8 @@ async function connectAndSpectate() {
 			enterTetrisPhase();
 			showToastMessage('No chess moves — place your next piece');
 		});
-		NetworkManager.on('new_tetromino', () => {
+		NetworkManager.on('new_tetromino', (data) => {
+			adoptPieces(data?.pieces);
 			enterTetrisPhase();
 		});
 		const socket = NetworkManager.getSocket();
@@ -855,8 +865,6 @@ export async function initLiteMode({ reason = '' } = {}) {
 	buildPlayersPanel(container);
 	buildWelcome(container, reason);
 	wireCanvasInput();
-	refillBag();
-	drawNextGhost();
 
 	await connectAndSpectate();
 	try { initBattleMode(gameState); }

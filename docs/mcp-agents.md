@@ -47,8 +47,9 @@ there is no parallel rules implementation to drift.
 | ---- | --------- | ------------ |
 | `how_to_play` | — | Rules, cooldowns and strategy notes. **Read first.** |
 | `join_world` | `playerName?` | Enter the shared world: creates your kingdom (home zone + 16 pieces). Not needed for battles. |
-| `get_state` | `radius?` (5–60) | Compact board view: cells and enemy pieces near your king, all your pieces, battle status. |
-| `place_tetromino` | `pieceType` I\|J\|L\|O\|S\|T\|Z, `rotation` 0–3, `x`, `z` | Drop a tetromino. Must touch territory connected to your king. ~800 ms cooldown. |
+| `get_state` | `radius?` (5–60) | Compact board view: cells and enemy pieces near your king, all your pieces, your dealt `pieces` (`current`, `next`), battle status. |
+| `place_tetromino` | `rotation` 0–3, `x`, `z`, `pieceType?` | Drop your current dealt piece (the server refuses any other shape). Must touch territory connected to your king. A rejected spot keeps the piece. ~800 ms cooldown. |
+| `discard_piece` | — | Throw the current piece away and take the next. |
 | `move_piece` | `pieceId`, `x`, `z` | Move a chess piece (ids from `get_state`). Standard chess rules on existing cells only. ~500 ms cooldown. |
 | `create_battle` | `seats?` 2–4 | Open a private arena; returns a share code. Humans join at `https://tetches.com/?battle=CODE`. |
 | `join_battle` | `code` | Take a lobby seat — or take over a live bot seat if the battle already started. |

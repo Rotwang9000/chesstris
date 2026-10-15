@@ -37,6 +37,9 @@ jest.mock('../../public/js/tetromino/validation.js', () => ({
 jest.mock('../../public/js/tetromino/nextPiece.js', () => ({
 	updateNextTetrominoDisplay: () => {},
 }));
+jest.mock('../../public/js/tetromino/dealer.js', () => ({
+	takeDealtPiece: () => 'O',
+}));
 
 import { determineInitialTetrominoPosition } from '../../public/js/tetromino/spawn.js';
 

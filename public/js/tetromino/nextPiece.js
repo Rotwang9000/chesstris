@@ -86,8 +86,17 @@ function createWidget() {
 	}
 	widget.appendChild(controls);
 
-	widget.addEventListener('click', onClick);
+	widget.addEventListener('click', (event) => {
+		// A mouse click left keyboard focus here, so every later Space
+		// (hard drop) went to this widget instead of the game. Hand
+		// focus back; keyboard activation (detail === 0) keeps it.
+		if (event.detail > 0) widget.blur();
+		onClick(event);
+	});
 	widget.addEventListener('keydown', (event) => {
+		// Only a chess turn has anything to activate. Otherwise let
+		// Space through to the game as a drop.
+		if (widget.gameState?.turnPhase !== 'chess') return;
 		if (event.key === 'Enter' || event.key === ' ') {
 			event.preventDefault();
 			onClick(event);

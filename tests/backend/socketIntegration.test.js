@@ -140,6 +140,18 @@ describe('socket golden path', () => {
 		const kingX = king.position.x;
 		const kingZ = king.position.z;
 		
+		// The server deals pieces: draw until the current one is an O (a
+		// 7-bag holds one, so this takes at most eight draws).
+		const ask = (event) => new Promise((resolve) => socket.emit(event, {}, resolve));
+		let pieces = (await ask('get_pieces')).pieces;
+		for (let i = 0; i < 8 && pieces.current !== 'O'; i++) {
+			// eslint-disable-next-line no-await-in-loop
+			await new Promise(r => setTimeout(r, 260));
+			// eslint-disable-next-line no-await-in-loop
+			pieces = (await ask('draw_piece')).pieces;
+		}
+		expect(pieces.current).toBe('O');
+
 		// Try placing an O tetromino near the king until the server accepts it
 		const O_SHAPE = [[1, 1], [1, 1]];
 		

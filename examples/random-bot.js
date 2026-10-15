@@ -153,10 +153,10 @@ async function placeTetromino(socket, tetromino, state, ourId) {
 }
 
 /**
- * Request a fresh tetromino from the server and try to place it.
- * The browser uses a client-side 7-bag for this; external bots can
- * either replicate that bag or, like this example, ask the server
- * for the next piece via `request_tetromino` each time.
+ * Ask the server for the piece to play and try to place it. The server
+ * deals every tetromino from a 7-bag and refuses any other shape;
+ * `request_tetromino` returns the current piece, or deals the next one
+ * once the current is placed. A rejected spot keeps the same piece.
  */
 async function requestAndPlaceTetromino(socket, state, ourId) {
 	try {
@@ -165,7 +165,10 @@ async function requestAndPlaceTetromino(socket, state, ourId) {
 			console.log('[move] no tetromino issued — waiting');
 			return false;
 		}
-		return await placeTetromino(socket, resp.tetromino, state, ourId);
+		const placed = await placeTetromino(socket, resp.tetromino, state, ourId);
+		// Nowhere to put it: throw it away so the next turn gets a new one.
+		if (!placed) await emitWithAck(socket, 'draw_piece', {}).catch(() => {});
+		return placed;
 	} catch (err) {
 		console.log(`[move] request_tetromino failed — ${err.message}`);
 		return false;

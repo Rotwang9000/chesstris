@@ -17,6 +17,7 @@ import { validatePlacementLocally } from './validation.js';
 import { cleanupCurrentTetromino, cleanupGhostPiece } from './rendering.js';
 import { armSkipDropTimer } from '../skipChessButton.js';
 import { markKingdomProgress } from '../auth/saveReminder.js';
+import { applyServerPieces } from './dealer.js';
 
 let _onPlacementFailure = null;
 
@@ -68,9 +69,23 @@ async function ensureConnectedAndSend(serverData) {
 	}
 
 	try {
-		return await NetworkManager.submitTetrominoPlacement(serverData);
+		const response = await NetworkManager.submitTetrominoPlacement(serverData);
+		// Every placement ack carries the server's deal; the piece we
+		// just sent is used either way.
+		applyServerPieces(gameStateSingleton, response?.pieces, { used: true });
+		return response;
 	} catch (error) {
 		console.error('Error submitting tetromino placement:', error);
+		const ack = error?.details || error?.error?.details;
+		applyServerPieces(gameStateSingleton, ack?.pieces, { used: true });
+		if (ack?.reason === 'wrong_piece') {
+			return {
+				success: false,
+				reason: 'wrong_piece',
+				message: 'Piece was out of sync with the server. Here is your next one.',
+				error,
+			};
+		}
 
 		if (error && error.reason === 'rate_limited') {
 			return {

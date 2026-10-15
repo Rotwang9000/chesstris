@@ -109,6 +109,20 @@ function registerTetrominoHandlers(socket, ctx) {
 				return;
 			}
 
+			// The server deals every piece (TetrominoManager.dealtPieces).
+			// A client may place only the piece it was dealt, and only once;
+			// it used to be free to send any shape, every time.
+			const dealt = gameManager.tetrominoManager.dealtPieces(world, playerId);
+			if (dealt && (dealt.placed || String(pieceType).toUpperCase() !== dealt.current)) {
+				const pieces = gameManager.tetrominoManager.piecesView(world, playerId);
+				const message = dealt.placed
+					? 'That piece is already placed. Draw your next one.'
+					: `Your current piece is ${dealt.current}.`;
+				socket.emit('tetrominoFailed', { message, reason: 'wrong_piece', pieces });
+				if (callback) callback({ success: false, error: 'wrong_piece', reason: 'wrong_piece', message, pieces });
+				return;
+			}
+
 			tetromino.shape = gameManager.tetrominoManager.getTetrisPieceShape(pieceType, tetromino.rotation);
 
 			const validation = gameManager.tetrominoManager.validateTetrominoPlacement(
@@ -143,13 +157,19 @@ function registerTetrominoHandlers(socket, ctx) {
 					}
 				}
 				socket.emit('tetrominoFailed', { message: validation.message || 'Invalid placement position', reason });
-				if (callback) callback({ success: false, error: 'invalid_placement', reason, message: validation.message });
+				if (callback) {
+					callback({
+						success: false, error: 'invalid_placement', reason, message: validation.message,
+						pieces: gameManager.tetrominoManager.piecesView(world, playerId),
+					});
+				}
 				return;
 			}
 
 			const placedCells = gameManager.tetrominoManager.placeTetromino(
 				world, tetromino, tetromino.position.x, tetromino.position.z, playerId
 			);
+			if (dealt) dealt.placed = true;
 
 			// Claim any power-up orbs sitting on the cells we just
 			// covered. The orb's piece spawns under the captor on the
@@ -211,6 +231,7 @@ function registerTetrominoHandlers(socket, ctx) {
 					success: true,
 					boardState: world.board,
 					placedCells,
+					pieces: gameManager.tetrominoManager.piecesView(world, playerId),
 					powerUpClaims: powerUpClaims.map(c => ({
 						orbId: c.orb.id,
 						pieceId: c.piece.id,
@@ -246,9 +267,10 @@ function registerTetrominoHandlers(socket, ctx) {
 						message: 'No valid chess moves available',
 					});
 
-					const newTetromino = gameManager.tetrominoManager.generateTetrominos(world, playerId)[0];
+					const newTetromino = gameManager.tetrominoManager.freshTetromino(world, playerId);
 					socket.emit('new_tetromino', {
 						tetromino: newTetromino,
+						pieces: gameManager.tetrominoManager.piecesView(world, playerId),
 						message: 'Skipping chess phase - no valid moves',
 					});
 				}
@@ -291,14 +313,14 @@ function registerTetrominoHandlers(socket, ctx) {
 			}
 
 			const world = World.getWorld();
-			const tetrominos = gameManager.tetrominoManager.generateTetrominos(world, playerId);
-			if (!tetrominos || tetrominos.length === 0) {
-				console.error(`Failed to generate tetrominos for player ${playerId}`);
+			// The dealt piece, moving on only if the current one is placed.
+			const newTetromino = gameManager.tetrominoManager.freshTetromino(world, playerId);
+			if (!newTetromino) {
+				console.error(`Failed to deal a tetromino for player ${playerId}`);
 				if (callback) callback({ success: false, error: 'Failed to generate tetrominos' });
 				return;
 			}
 
-			const newTetromino = tetrominos[0];
 			if (!world.currentTurns) world.currentTurns = {};
 			if (!world.currentTurns[playerId]) {
 				world.currentTurns[playerId] = {
@@ -312,10 +334,50 @@ function registerTetrominoHandlers(socket, ctx) {
 			World.markDirty();
 
 			socket.emit('turn_update', world.currentTurns[playerId]);
-			if (callback) callback({ success: true, tetromino: newTetromino });
+			if (callback) {
+				callback({
+					success: true,
+					tetromino: newTetromino,
+					pieces: gameManager.tetrominoManager.piecesView(world, playerId),
+				});
+			}
 		} catch (error) {
 			console.error(`Error generating tetromino for player ${playerId}:`, error);
 			if (callback) callback({ success: false, error: `Server error: ${error.message}` });
+		}
+	});
+
+	// The client's current piece is gone (placed, dissolved or dropped in
+	// the water) and it wants the next. `pieces` is always the server's
+	// truth; a draw that comes too fast leaves the deal unchanged.
+	socket.on('draw_piece', (...args) => {
+		const playerId = actingPlayerId();
+		const callback = typeof args[args.length - 1] === 'function' ? args[args.length - 1] : null;
+		try {
+			const world = World.getWorld();
+			if (!World.getPlayer(playerId)) {
+				if (callback) callback({ success: false, error: 'Not registered' });
+				return;
+			}
+			gameManager.tetrominoManager.drawPiece(world, playerId);
+			if (callback) callback({ success: true, pieces: gameManager.tetrominoManager.piecesView(world, playerId) });
+		} catch (error) {
+			console.error(`Error drawing a piece for player ${playerId}:`, error);
+			if (callback) callback({ success: false, error: 'Server error' });
+		}
+	});
+
+	// Read the deal without changing it (join, reconnect, battle seat).
+	socket.on('get_pieces', (...args) => {
+		const playerId = actingPlayerId();
+		const callback = typeof args[args.length - 1] === 'function' ? args[args.length - 1] : null;
+		if (!callback) return;
+		try {
+			const pieces = gameManager.tetrominoManager.piecesView(World.getWorld(), playerId);
+			callback(pieces ? { success: true, pieces } : { success: false, error: 'Not registered' });
+		} catch (error) {
+			console.error(`Error reading pieces for player ${playerId}:`, error);
+			callback({ success: false, error: 'Server error' });
 		}
 	});
 }
