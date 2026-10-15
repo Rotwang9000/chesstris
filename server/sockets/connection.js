@@ -358,10 +358,10 @@ function resolvePlayerIdForSocket(socket, services) {
 
 	const freshId = uuidv4();
 	console.log(`New player connected: ${freshId} (socket ${socket.id})`);
-	// Funnel: a fresh identity means a device we have never seen before.
-	// (Account sign-ins above don't count — that human was already counted
-	// when they first arrived as a guest.)
-	funnel.recordNewVisitor();
+	// Funnel: only a device with no player cookie at all is new to us.
+	// Eliminated players refreshing, or guests whose record was swept,
+	// already arrived once. (Account sign-ins above don't count either.)
+	if (!playerId) funnel.recordNewVisitor(socket.handshake.headers['user-agent']);
 	const initialName = (handshakeName && handshakeName.toLowerCase() !== 'guest')
 		? handshakeName
 		: `Player_${freshId.substring(0, 6)}`;

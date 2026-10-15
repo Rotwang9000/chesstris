@@ -48,6 +48,7 @@ describe('visitor funnel', () => {
 			newVisitors: 1,
 			worldJoins: 1,
 			firstPlacements: 1,
+			battleJoins: 0,
 		});
 		expect(snapshot.days).toHaveLength(1);
 		expect(snapshot.days[0].pageViews).toBe(2);
@@ -101,5 +102,33 @@ describe('visitor funnel', () => {
 		expect(snapshot.days).toHaveLength(2);
 		// Newest (today) first.
 		expect(snapshot.days[0].date > snapshot.days[1].date).toBe(true);
+	});
+
+	test('filters crawlers that run JS from new visitors', () => {
+		funnel.recordNewVisitor('Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)');
+		funnel.recordNewVisitor('Mozilla/5.0 (Linux; Android 14) Chrome/125.0 Mobile');
+		funnel.recordNewVisitor();
+		expect(funnel.getSnapshot().totals.newVisitors).toBe(2);
+	});
+
+	test('counts each battle joiner once', () => {
+		funnel.recordBattleJoin('p1');
+		funnel.recordBattleJoin('p1');
+		funnel.recordBattleJoin('p2');
+		expect(funnel.getSnapshot().totals.battleJoins).toBe(2);
+	});
+
+	test('backfills new stages into an older funnel file', () => {
+		fs.writeFileSync(funnel.FUNNEL_FILE, JSON.stringify({
+			version: 1,
+			since: '2026-07-01T00:00:00.000Z',
+			totals: { pageViews: 5, newVisitors: 2, worldJoins: 1, firstPlacements: 1 },
+			daily: {},
+		}));
+		funnel._resetForTests();
+		funnel.recordBattleJoin('p1');
+		expect(funnel.getSnapshot().totals).toEqual({
+			pageViews: 5, newVisitors: 2, worldJoins: 1, firstPlacements: 1, battleJoins: 1,
+		});
 	});
 });
