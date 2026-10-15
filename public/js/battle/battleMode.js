@@ -143,6 +143,8 @@ function adoptSeat(battle, { announce = true } = {}) {
 	// seat's fresh home zone.
 	gameStateRef._hasPlacedTetromino = false;
 	gameStateRef.turnPhase = 'tetris';
+	// The seat has its own deal; the next spawn fetches it.
+	gameStateRef.dealtPieces = null;
 	emitFocus(battle.id);
 	// Battle-only players never ran the world-entry start-up — spin the
 	// gameplay systems up now (no world join; the seat IS the identity).
@@ -161,6 +163,7 @@ function adoptSeat(battle, { announce = true } = {}) {
 function releaseSeat({ silent = false } = {}) {
 	if (!gameStateRef) return;
 	gameStateRef.activeBattle = null;
+	gameStateRef.dealtPieces = null;
 	syncBattleUrl(null);
 	emitFocus(null);
 	if (savedRealPlayerId) {

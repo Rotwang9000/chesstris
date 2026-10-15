@@ -20,6 +20,7 @@ function setupBoard() {
 	World.upsertPlayer('p2', { color: 2 });
 	const world = World.getWorld();
 	world.players.p1.lastTetrominoPlacement = 1;
+	world.players.p1.dealt = { current: 'O', next: 'T', placed: false, drawnAt: 0 };
 	// p1's king stands on its own cell at (-1, 0).
 	world.board.cells['-1,0'] = [
 		{ type: 'tetromino', player: 'p1' },

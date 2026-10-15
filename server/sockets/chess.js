@@ -1127,14 +1127,11 @@ function registerChessHandlers(socket, ctx) {
 				return;
 			}
 
-			// Issue a fresh tetromino so the player can keep playing.
-			const tetrominos = gameManager.tetrominoManager.generateTetrominos(world, playerId);
-			if (!tetrominos || tetrominos.length === 0) {
-				if (callback) callback({ success: false, error: 'Failed to generate tetromino' });
-				return;
-			}
-
-			const next = tetrominos[0];
+			// Hand over the dealt piece to play now (the next one if the
+			// current was placed) so the player can keep building.
+			gameManager.tetrominoManager.freshPiece(world, playerId);
+			const next = gameManager.tetrominoManager.currentTetromino(world, playerId);
+			const pieces = gameManager.tetrominoManager.piecesView(world, playerId);
 			if (!world.currentTurns) world.currentTurns = {};
 			world.currentTurns[playerId] = {
 				playerId,
@@ -1153,11 +1150,12 @@ function registerChessHandlers(socket, ctx) {
 
 			socket.emit('new_tetromino', {
 				tetromino: next,
+				pieces,
 				message: 'Chess move skipped',
 			});
 			socket.emit('chess_move_skipped', { playerId });
 
-			if (callback) callback({ success: true, tetromino: next });
+			if (callback) callback({ success: true, tetromino: next, pieces });
 			broadcaster.broadcastGameUpdate();
 		} catch (error) {
 			console.error('Error skipping chess move:', error);

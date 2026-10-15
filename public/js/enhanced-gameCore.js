@@ -31,6 +31,7 @@ import { setupNetworkEvents as installNetworkEvents } from './enhanced-gameCore/
 import { showWebglUnavailableOverlay } from './enhanced-gameCore/webglOverlay.js';
 import { createLabeledAxisHelpers } from './enhanced-gameCore/axisHelpers.js';
 import { showGameOverPulseOverlay } from './enhanced-gameCore/gameOverOverlay.js';
+import { syncDealtPieces } from './tetromino/dealer.js';
 import { initializeOrbitControls } from './enhanced-gameCore/orbitControls.js';
 
 // ── Existing dependencies ───────────────────────────────────────────────────
@@ -695,6 +696,9 @@ export async function startPlayingGame(gameKey = null) {
 		updateBoardVisuals();
 		updateGameStatusDisplay(gameState);
 
+		// Fetch the server's deal while the camera flies in; the first
+		// piece spawns when it lands.
+		syncDealtPieces(gameState);
 		resetCameraForGameplay(renderer, camera, controls, gameState, scene, true, false, () => {
 			gameState.turnPhase = 'tetris';
 			resetTetrisLastFallTime();

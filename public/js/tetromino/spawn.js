@@ -10,7 +10,7 @@
 import { boardFunctions } from '../boardFunctions.js';
 import { fetchNextSponsor } from '../../utils/sponsors.js';
 import { getShape } from './shapes.js';
-import { rollBagForward } from './bag.js';
+import { takeDealtPiece } from './dealer.js';
 import { isValidTetrominoPosition, isTetrominoAdjacentToExistingCells } from './validation.js';
 import { updateNextTetrominoDisplay } from './nextPiece.js';
 
@@ -172,13 +172,15 @@ export function initializeNewTetromino(gameState, type) {
 }
 
 /**
- * Roll the bag forward, update the HUD preview, and spawn the new
+ * Take the next dealt piece, update the HUD preview, and spawn the new
  * "current" tetromino on `gameState`.  Returns the new piece (or
  * `null` if no spawn location is available).
  */
 export function initializeNextTetromino(gameState) {
-	const currentType = rollBagForward(gameState);
-	updateNextTetrominoDisplay(gameState.nextTetromino, gameState);
+	// The server deals pieces; see dealer.js.
+	const currentType = takeDealtPiece(gameState);
+	// While a draw is in flight the preview is unknown; the ack fills it.
+	if (gameState.dealtPieces?.next) updateNextTetrominoDisplay(gameState.nextTetromino, gameState);
 	console.log(`Initializing new tetromino of type ${currentType}. Next tetromino will be ${gameState.nextTetromino}`);
 	return initializeNewTetromino(gameState, currentType);
 }

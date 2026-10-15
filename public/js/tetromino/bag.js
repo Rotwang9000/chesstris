@@ -1,9 +1,10 @@
 /**
  * 7-bag tetromino randomisation (client side).
  *
- * Mirrors the same scheme used on the server (`server/game/TetrominoManager.js`).
- * Each player keeps a personal bag of the seven piece types; pieces are
- * drawn without replacement, then the bag is refilled and reshuffled.
+ * The server deals the real pieces (see dealer.js). This local bag only
+ * stands in until the first deal arrives, e.g. while offline.
+ * Pieces are drawn without replacement, then the bag is refilled and
+ * reshuffled.
  *
  * The bag and the "next" piece live on `gameState` itself so they
  * survive renders without any module-level state of our own.
@@ -34,20 +35,6 @@ export function drawFromBag(gameState) {
 		gameState.tetrominoBag = createShuffledTetrominoBag();
 	}
 	return next;
-}
-
-/**
- * Advance the bag: returns the type of the new "current" tetromino
- * after rolling the existing `nextTetromino` into the active slot and
- * drawing a new look-ahead piece.
- */
-export function rollBagForward(gameState) {
-	if (!gameState.nextTetromino) {
-		gameState.nextTetromino = drawFromBag(gameState);
-	}
-	const currentType = gameState.nextTetromino;
-	gameState.nextTetromino = drawFromBag(gameState);
-	return currentType;
 }
 
 export { TETROMINO_TYPES };

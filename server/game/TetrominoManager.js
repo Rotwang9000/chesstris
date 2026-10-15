@@ -10,6 +10,9 @@ const { log } = require('./GameUtilities');
 const cells = require('./cells');
 const battleRules = require('../battle/rules');
 
+/** Fastest a player may throw away an unplaced piece and draw another. */
+const DRAW_MIN_INTERVAL_MS = 250;
+
 /**
  * Fisher-Yates shuffle in place. Pure utility, but tests can mock
  * `Math.random` when they need deterministic bags.
@@ -55,6 +58,79 @@ class TetrominoManager {
 		}
 
 		return player.tetrominoBag.shift();
+	}
+
+	/**
+	 * The pieces dealt to a player. `current` is the only type they may
+	 * place and `next` is the preview; both come from their 7-bag, so no
+	 * client chooses its own shapes. `placed` marks `current` as used.
+	 * Kept on the player record in memory only: after a restart a fresh
+	 * deal costs a client at most one out-of-sync piece.
+	 *
+	 * @returns {{current: string, next: string, placed: boolean, drawnAt: number}|null}
+	 */
+	dealtPieces(game, playerId) {
+		const player = game?.players?.[playerId];
+		if (!player) return null;
+		const dealt = player.dealt;
+		if (!dealt || !TETROMINO_TYPES.includes(dealt.current) || !TETROMINO_TYPES.includes(dealt.next)) {
+			player.dealt = {
+				current: this.drawFromBag(game, playerId),
+				next: this.drawFromBag(game, playerId),
+				placed: false,
+				drawnAt: 0,
+			};
+		}
+		return player.dealt;
+	}
+
+	/** Client-facing view of the deal: `{ current, next, placed }`. */
+	piecesView(game, playerId) {
+		const dealt = this.dealtPieces(game, playerId);
+		return dealt ? { current: dealt.current, next: dealt.next, placed: !!dealt.placed } : null;
+	}
+
+	/**
+	 * Move on to the next piece. Throwing an unplaced piece away is
+	 * legal (players drop pieces into the water), but not faster than
+	 * DRAW_MIN_INTERVAL_MS, roughly a human mashing drop. That keeps
+	 * fishing for a particular shape no cheaper than doing it by hand.
+	 */
+	drawPiece(game, playerId, now = Date.now()) {
+		const dealt = this.dealtPieces(game, playerId);
+		if (!dealt) return null;
+		if (!dealt.placed && now - dealt.drawnAt < DRAW_MIN_INTERVAL_MS) return dealt;
+		dealt.current = dealt.next;
+		dealt.next = this.drawFromBag(game, playerId);
+		dealt.placed = false;
+		dealt.drawnAt = now;
+		return dealt;
+	}
+
+	/** The piece to play now: the current one, or the next if it's been placed. */
+	freshPiece(game, playerId, now = Date.now()) {
+		const dealt = this.dealtPieces(game, playerId);
+		if (!dealt) return null;
+		return dealt.placed ? this.drawPiece(game, playerId, now) : dealt;
+	}
+
+	/** `{ id, pieceType, rotation, shape }` for the player's fresh piece. */
+	freshTetromino(game, playerId) {
+		this.freshPiece(game, playerId);
+		return this.currentTetromino(game, playerId);
+	}
+
+	/** `{ id, pieceType, rotation, shape }` for the player's current dealt piece. */
+	currentTetromino(game, playerId) {
+		const dealt = this.dealtPieces(game, playerId);
+		if (!dealt) return this.generateTetrominos(game, playerId, 1)[0];
+		return {
+			id: `${playerId}-tetromino-${Date.now()}`,
+			pieceType: dealt.current,
+			type: dealt.current,
+			rotation: 0,
+			shape: this.getTetrisPieceShape(dealt.current, 0),
+		};
 	}
 	
 	/**
@@ -443,4 +519,4 @@ class TetrominoManager {
 	}
 }
 
-module.exports = TetrominoManager; 
+module.exports = TetrominoManager; module.exports.DRAW_MIN_INTERVAL_MS = DRAW_MIN_INTERVAL_MS;

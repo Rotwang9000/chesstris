@@ -42,6 +42,7 @@ shared, persistent board. You are a real player: drop tetrominoes to grow terrai
 chess pieces across it. Capture enemy kings; protect your own.
 
 Typical flow: how_to_play → join_world → loop(get_state → place_tetromino / move_piece).
+The server deals your tetrominoes: get_state.pieces.current is the only shape you may place.
 For a private fight: create_battle (share the code) or join_battle, then start_battle.
 Placement must touch terrain connected to your king. Cooldowns: ~800ms between tetromino
 placements, ~500ms between chess moves — pace your calls.`;
@@ -51,6 +52,10 @@ const HOW_TO_PLAY = `TETCHES — RULES FOR AGENTS
 World: one shared persistent board (id global_game). Everyone plays simultaneously — no turns
 between players. Your personal cycle alternates: place a tetromino, then optionally move a
 chess piece, repeat.
+
+Pieces: the server deals your tetrominoes from a 7-bag (one of each shape per seven).
+get_state shows pieces.current (the only shape you may place) and pieces.next. A rejected
+placement keeps the same piece so you can try another spot; discard_piece throws it away.
 
 Terrain: the board only exists where tetrominoes have been placed (plus home zones). A
 tetromino placement must (a) not overlap pieces, (b) touch at least one cell that is connected
@@ -181,9 +186,11 @@ function summariseCell(contents) {
  * A raw full-state payload can be hundreds of KB — this stays small.
  */
 async function buildCompactState(bridge, radius) {
-	const [stateAck, battleAck] = await Promise.all([
+	const [stateAck, battleAck, piecesAck] = await Promise.all([
 		bridge.emitAck('get_game_state', {}),
 		bridge.emitAck('battle_state', {}),
+		// The piece to play now (the next one if the current is placed).
+		bridge.emitAck('request_tetromino', {}),
 	]);
 	if (!stateAck || stateAck.success === false) {
 		return { success: false, error: stateAck?.error || 'get_game_state failed' };
@@ -234,6 +241,7 @@ async function buildCompactState(bridge, radius) {
 		inWorld: myPieces.length > 0,
 		centre,
 		radius,
+		pieces: piecesAck?.pieces ? { current: piecesAck.pieces.current, next: piecesAck.pieces.next } : null,
 		myPieces: myPieces.map(p => ({ id: p.id, type: p.type, position: p.position })),
 		enemyPiecesNearby,
 		cells: clipped,
@@ -291,19 +299,30 @@ function buildMcpServer(bridge) {
 	}, async ({ radius }) => jsonResult(await buildCompactState(bridge, radius || DEFAULT_STATE_RADIUS)));
 
 	server.registerTool('place_tetromino', {
-		description: 'Place a tetromino at (x, z). Must not overlap pieces and must touch territory connected to your king. ~800ms cooldown.',
+		description: 'Place your current dealt tetromino (get_state.pieces.current) at (x, z). Must not overlap pieces and must touch territory connected to your king. A rejected spot keeps the piece. ~800ms cooldown.',
 		inputSchema: {
-			pieceType: z.enum(['I', 'J', 'L', 'O', 'S', 'T', 'Z']).describe('Tetromino shape'),
+			pieceType: z.enum(['I', 'J', 'L', 'O', 'S', 'T', 'Z']).optional()
+				.describe('Your current piece; defaults to it. Any other shape is refused.'),
 			rotation: z.number().int().min(0).max(3).describe('Rotation step (0-3)'),
 			x: z.number().int().describe('Anchor cell x'),
 			z: z.number().int().describe('Anchor cell z'),
 		},
 	}, async ({ pieceType, rotation, x, z: zz }) => {
+		let type = pieceType;
+		if (!type) {
+			const dealt = await bridge.emitAck('request_tetromino', {});
+			type = dealt?.pieces?.current;
+		}
 		const ack = await bridge.emitAck('tetromino_placed', {
-			tetromino: { pieceType, type: pieceType, rotation, position: { x, z: zz } },
+			tetromino: { pieceType: type, type, rotation, position: { x, z: zz } },
 		});
 		return jsonResult(ack);
 	});
+
+	server.registerTool('discard_piece', {
+		description: 'Throw away your current tetromino and take the next one, for a piece that fits nowhere useful.',
+		inputSchema: {},
+	}, async () => jsonResult(await bridge.emitAck('draw_piece', {})));
 
 	server.registerTool('move_piece', {
 		description: 'Move one of your chess pieces (by id from get_state) to (x, z). Standard chess rules, existing cells only. ~500ms cooldown.',

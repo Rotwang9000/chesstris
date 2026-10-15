@@ -146,6 +146,8 @@ describe('server/sockets/tetromino — rotated placement uses client rotation in
 		// placement — first-placement is special-cased and won't
 		// exercise the rotated-cell connectivity path we care about.
 		world.players['p1'].lastTetrominoPlacement = { x: 0, z: 0 };
+		// The server deals pieces; these tests place a J.
+		world.players['p1'].dealt = { current: 'J', next: 'O', placed: false, drawnAt: 0 };
 	});
 
 	test('server uses TETROMINO_SHAPES[type][rotation] when client sends rotation', () => {

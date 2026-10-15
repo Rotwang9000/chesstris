@@ -307,6 +307,21 @@ function createApp({ projectRoot = process.cwd() } = {}) {
 	// before the SDK gets a look.
 	sentry.wireSentryErrorHandler(app);
 
+	// Client mistakes from the body parsers (body over the 64kb limit,
+	// malformed JSON) used to fall through to Express's default handler,
+	// which answers with an HTML page and writes a full stack trace to
+	// err.log for every request. Answer in JSON with one log line.
+	app.use((err, req, res, next) => {
+		const status = Number(err?.status || err?.statusCode);
+		if (!err?.expose || !(status >= 400 && status < 500)) return next(err);
+		const code = err.type === 'entity.too.large' ? 'payload_too_large'
+			: err.type === 'entity.parse.failed' ? 'invalid_json'
+				: 'bad_request';
+		console.warn(`[HTTP] ${status} ${code}: ${req.method} ${req.path}`);
+		if (res.headersSent) return next(err);
+		return res.status(status).json({ success: false, error: code });
+	});
+
 	return app;
 }
 

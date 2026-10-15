@@ -58,6 +58,7 @@ import {
 } from '../uiOverlays.js';
 import { playSound } from '../audio/soundManager.js';
 import { mountMuteButton } from '../audio/muteButton.js';
+import { applyServerPieces, syncDealtPieces } from '../tetromino/dealer.js';
 
 // `king_detonation` and `island_decay` cap how many simultaneous
 // particle animations we'll spawn so a 100×100 detonation doesn't pin
@@ -652,9 +653,11 @@ function handleNewTetromino(payload, { renderCurrentTetromino }) {
 		cancelSkipChessTimer();
 		cancelSkipDropTimer();
 		gameState.processingMove = false;
-		const tetrominoType = tetromino.type || tetromino.pieceType;
+		// The server dealt this piece; spawn exactly that and adopt its deal.
+		const tetrominoType = payload.pieces?.current || tetromino.type || tetromino.pieceType;
 		const newTetromino = tetrominoModule.initializeNewTetromino(gameState, tetrominoType);
 		gameState.currentTetromino = newTetromino || tetrominoModule.initializeNextTetromino(gameState);
+		if (newTetromino) applyServerPieces(gameState, payload.pieces, { used: true });
 		gameState.turnPhase = 'tetris';
 		if (typeof renderCurrentTetromino === 'function') renderCurrentTetromino();
 		updateGameStatusDisplay(gameState);
@@ -1197,7 +1200,9 @@ export function setupNetworkEvents(hooks = {}) {
 		} else {
 			showToastMessage('Reconnected!', 2000);
 			if (gameState.localPlayerId && typeof NetworkManager.joinGame === 'function') {
-				NetworkManager.joinGame().catch(() => {});
+				NetworkManager.joinGame()
+					.then(() => syncDealtPieces(gameState))
+					.catch(() => {});
 			}
 		}
 		// Fetch activity log snapshot every (re)connect so a returning

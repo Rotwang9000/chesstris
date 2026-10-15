@@ -197,6 +197,9 @@ tool) skip `join_game` and only listen for broadcast events.
 |-------------------------|---------|-------|
 | `get_game_state`        | `{ options?: { aoi?: { centerX, centerZ, radius } } }` | Ack returns `{ success, gameId, state, players, timestamp }`. `state` is the full canonical payload (cells, chess pieces, home zones, islands, current turns, power-ups, turn phase). |
 | `request_game_state`    | `{ playerId }` | Legacy alias; calls `emitFullStateTo`. |
+| `request_tetromino`     | `{}` | Ack `{ success, tetromino, pieces }`: your current dealt piece, or the next one if the current is already placed. Call it before each placement. |
+| `draw_piece`            | `{}` | Throw the current piece away and take the next. Ack `{ success, pieces }`. Ignored (deal unchanged) if repeated within 250 ms of the last draw. |
+| `get_pieces`            | `{}` | Read the deal without changing it: ack `{ success, pieces: { current, next, placed } }`. |
 
 | Event (server → client) | Payload sketch |
 |-------------------------|----------------|
@@ -204,10 +207,14 @@ tool) skip `join_game` and only listen for broadcast events.
 | `set_session`           | `{ playerId }` |
 | `game_state`            | Full canonical snapshot. Sent in response to `get_game_state`. |
 | `game_update`           | Either a full update (when `fullUpdate: true`) or a delta with `boardChanges` / `removedCells` / `lastAction`. Broadcast on every state-affecting event. |
-| `new_tetromino`         | `{ tetromino: { pieceType, type, rotation, position, shape? } }` — fires when it's your tetromino phase. |
+| `new_tetromino`         | `{ tetromino: { pieceType, type, rotation, shape }, pieces: { current, next, placed } }` — fires when it's your tetromino phase; `tetromino` is your dealt piece. |
 | `turn_update`           | `{ phase: 'tetris' \| 'chess', currentPlayer }` |
 
 ### 3.4 Tetromino placement
+
+The server deals your pieces from a 7-bag and accepts only your current one
+(`pieces.current` from `request_tetromino`), once. Any other shape is refused
+with `reason: 'wrong_piece'`.
 
 ```js
 socket.emit('tetromino_placed', {
@@ -223,11 +230,14 @@ socket.emit('tetromino_placed', {
   // ack.placedCells — list of {x,z} that were stamped onto the board
   // ack.powerUpClaims — orbs that were converted by this placement
   // ack.retryAfterMs — present on `rate_limited` rejections
+  // ack.pieces — your deal afterwards: { current, next, placed }
 });
 ```
 
 * Cooldown: **800 ms** between placements per player.
 * Placement must touch a cell connected back to your king.
+* A position rejection keeps the same piece; try another spot, or
+  `draw_piece` to give up on it.
 * On failure the server also emits a `tetrominoFailed` event so any
   other listener (e.g. a debug feed) can react.
 
