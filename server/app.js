@@ -311,7 +311,6 @@ function createApp({ projectRoot = process.cwd() } = {}) {
 	// malformed JSON) used to fall through to Express's default handler,
 	// which answers with an HTML page and writes a full stack trace to
 	// err.log for every request. Answer in JSON with one log line.
-	// eslint-disable-next-line no-unused-vars -- Express needs the 4-arg signature
 	app.use((err, req, res, next) => {
 		const status = Number(err?.status || err?.statusCode);
 		if (!err?.expose || !(status >= 400 && status < 500)) return next(err);
