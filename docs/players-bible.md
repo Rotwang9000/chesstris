@@ -86,6 +86,8 @@ in the player sidebar. While paused:
 - Their cells are skipped by the line-clear scan (treated as gaps,
   same as degraded-home cells).
 - Their chess pieces refuse capture.
+- Their cells keep their owner: an opponent's piece may move onto one,
+  but the cell does not change hands.
 - Their home zone does not degrade.
 
 Limits per session (`server/world/pause.js`):

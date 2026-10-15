@@ -684,11 +684,12 @@ class ChessManager {
 			if (!item || !item.player) continue;
 			if (String(item.player) === String(newOwner)) continue;
 			if (item.type === cells.HOME_TYPE) continue;
+			if (cells.isPausedOwner(game.players, item.player)) continue;
 			affectedOwners.add(String(item.player));
 		}
 
 		const playerColor = game.players[newOwner]?.color;
-		cells.transferOwnership(cell, newOwner, playerColor);
+		cells.transferOwnership(cell, newOwner, playerColor, game.players);
 
 		for (const prevOwner of affectedOwners) {
 			log(`Cell (${x},${z}) ownership transferred from ${prevOwner} to ${newOwner}`);

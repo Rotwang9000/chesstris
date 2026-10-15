@@ -7,6 +7,7 @@
  */
 
 const World = require('../world/World');
+const funnel = require('../observability/funnel');
 
 function registerBattleHandlers(socket, ctx) {
 	const { playerId, battleManager } = ctx;
@@ -25,6 +26,7 @@ function registerBattleHandlers(socket, ctx) {
 				seatCount: Number(data?.seatCount) || 2,
 				botDifficulty: data?.botDifficulty,
 			});
+			if (result?.success && !player.isComputer) funnel.recordBattleJoin(playerId);
 			if (typeof callback === 'function') callback(result);
 		} catch (err) {
 			console.error('[Battle] battle_create failed:', err);
@@ -44,6 +46,7 @@ function registerBattleHandlers(socket, ctx) {
 				playerId,
 				playerName: player.name || 'Player',
 			});
+			if (result?.success && !player.isComputer) funnel.recordBattleJoin(playerId);
 			if (typeof callback === 'function') callback(result);
 		} catch (err) {
 			console.error('[Battle] battle_join failed:', err);

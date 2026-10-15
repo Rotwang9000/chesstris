@@ -48,7 +48,7 @@ import {
 	updateGameStatusDisplay,
 	showTutorialMessage
 } from './createLoadingIndicator.js';
-import { resetCameraForGameplay, moveToPlayerZone, setCameraToOverview as setCameraToOverviewExtracted, flyToPosition } from './setupCamera.js';
+import { resetCameraForGameplay, moveToPlayerZone, bringPendingTetrominoIntoView, setCameraToOverview as setCameraToOverviewExtracted, flyToPosition } from './setupCamera.js';
 import { initCameraControlsHelp } from './cameraControlsHelp.js';
 import { setChessPiecesGroup as setWingsChessGroup } from './wingAnimations.js';
 import { preserveCentreMarker, translatePosition } from './centreBoardMarker.js';
@@ -706,6 +706,8 @@ export async function startPlayingGame(gameKey = null) {
 			if (gameState.currentTetromino) {
 				gameState.currentTetromino.heightAboveBoard = gameState.TETROMINO_START_HEIGHT;
 				renderCurrentTetromino();
+				// Its fall waits for the first key, so it must be on screen.
+				bringPendingTetrominoIntoView(camera, controls, gameState, renderer, scene);
 			}
 		});
 		return true;

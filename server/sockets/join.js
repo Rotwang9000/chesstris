@@ -30,6 +30,22 @@ function registerJoinHandlers(socket, ctx) {
 				return;
 			}
 
+			// An eliminated player starts over by refreshing, which mints a
+			// fresh identity (connection.js). Re-joining on the same socket
+			// used to respawn them in place with kingLives 0 and their old
+			// basket and score.
+			if (player.eliminated) {
+				if (callback) {
+					callback({
+						success: false,
+						error: 'eliminated',
+						reason: 'eliminated',
+						message: 'Your kingdom has fallen. Refresh the page to start a new one.',
+					});
+				}
+				return;
+			}
+
 			const requestedName = validatePlayerName(data?.playerName);
 			// `'Guest'` is the client's connection placeholder — never let it
 			// stomp a name the player already chose.

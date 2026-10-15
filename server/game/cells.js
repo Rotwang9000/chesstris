@@ -310,15 +310,28 @@ function gravityAnchor(items) {
 }
 
 /**
+ * True if `ownerId` is a paused player in `players`. A paused player's
+ * footprint is frozen (bible §Pause / resume): pieces may stand on
+ * their cells, but the cells stay theirs.
+ */
+function isPausedOwner(players, ownerId) {
+	if (!players || ownerId == null) return false;
+	const record = players[String(ownerId)];
+	return !!(record && record.paused === true);
+}
+
+/**
  * Transfer ownership of every non-home item in this cell to `newOwner`.
  * Mutates the items in place (each item is a plain object that's part
- * of the cell array). Home markers are left untouched.
+ * of the cell array). Home markers are left untouched, and so are items
+ * owned by a paused player when `players` is given.
  *
  * @param {Array} items
  * @param {string} newOwner
  * @param {number} [newColor] Optional new color to stamp on transferred items.
+ * @param {Object} [players] World players map, to skip paused owners.
  */
-function transferOwnership(items, newOwner, newColor) {
+function transferOwnership(items, newOwner, newColor, players) {
 	const arr = asArray(items);
 	for (const item of arr) {
 		if (!item) continue;
@@ -326,6 +339,7 @@ function transferOwnership(items, newOwner, newColor) {
 		if (item.type === CENTRE_TYPE) continue;
 		if (isBattleRingItem(item)) continue; // ring is forever neutral
 		if (String(item.player) === String(newOwner)) continue;
+		if (isPausedOwner(players, item.player)) continue;
 		item.player = newOwner;
 		if (newColor !== undefined) item.color = newColor;
 	}
@@ -375,6 +389,7 @@ module.exports = {
 
 	gravityAnchor,
 	transferOwnership,
+	isPausedOwner,
 	stripClearable,
 	stripForLineClear,
 	stripAllChessMarkers,

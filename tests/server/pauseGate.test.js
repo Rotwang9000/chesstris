@@ -162,3 +162,56 @@ describe('paused players cannot act', () => {
 		expect(failed.payload).toMatchObject({ reason: 'eliminated' });
 	});
 });
+
+describe('a paused player\'s cells are frozen', () => {
+	test('an opponent may stand on a paused player\'s cell but does not take it', () => {
+		const GameManager = require(path.join('..', '..', 'server', 'game', 'GameManager'));
+		World.resetWorld({ id: 'global_game' });
+		World.upsertPlayer('p1', { color: 1 });
+		World.upsertPlayer('p2', { color: 2, paused: true });
+		const world = World.getWorld();
+		world.board.cells['0,0'] = [
+			{ type: 'tetromino', player: 'p1' },
+			{ type: 'chess', player: 'p1', pieceId: 'r1', pieceType: 'rook' },
+		];
+		world.chessPieces.push({ id: 'r1', type: 'ROOK', player: 'p1', position: { x: 0, z: 0 } });
+		world.board.cells['1,0'] = [{ type: 'tetromino', player: 'p2' }];
+		world.board.cells['2,0'] = [{ type: 'tetromino', player: 'p2' }];
+
+		const socket = makeFakeSocket('p1');
+		registerChessHandlers(socket, {
+			...makeMinimalCtx('p1', socket),
+			gameManager: new GameManager(),
+			activityLog: null,
+		});
+		let ack = null;
+		socket.trigger('chess_move', { pieceId: 'r1', targetPosition: { x: 2, z: 0 } }, (r) => { ack = r; });
+
+		expect(ack).toMatchObject({ success: true });
+		const cell = world.board.cells['2,0'];
+		expect(cell.find(i => i.type === 'tetromino')).toMatchObject({ player: 'p2' });
+		expect(cell.find(i => i.type === 'chess')).toMatchObject({ player: 'p1', pieceId: 'r1' });
+	});
+});
+
+describe('a paused player cannot detonate or promote', () => {
+	beforeEach(() => {
+		World.resetWorld({ id: 'global_game' });
+		World.upsertPlayer('p1', { color: 0xff0000, paused: true });
+		World.getWorld().chessPieces.push({ id: 'p1-P', type: 'PAWN', player: 'p1', position: { x: 0, z: 0 }, forwardDistance: 99 });
+	});
+
+	test.each([
+		['detonate_pawn', { pieceId: 'p1-P' }],
+		['promote_pawn', { pieceId: 'p1-P' }],
+		['redeem_promotion', { capturedType: 'QUEEN' }],
+		['deploy_promotion', { pawnId: 'p1-P', capturedType: 'QUEEN' }],
+	])('%s is refused with reason=paused', (event, data) => {
+		const socket = makeFakeSocket('p1');
+		registerChessHandlers(socket, makeMinimalCtx('p1', socket));
+		let ack = null;
+		socket.trigger(event, data, (r) => { ack = r; });
+		expect(ack).toMatchObject({ success: false, reason: 'paused' });
+		expect(World.getWorld().chessPieces.find(p => p.id === 'p1-P')).toMatchObject({ type: 'PAWN' });
+	});
+});

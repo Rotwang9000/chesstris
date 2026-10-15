@@ -8,6 +8,9 @@
  *   • worldJoins      — players who entered the world for the first time
  *                       (home zone created)
  *   • firstPlacements — players who placed their first-ever tetromino
+ *   • battleJoins     — players who created or joined a battle lobby
+ *                       (the welcome screen's other door; once per
+ *                       player per server run)
  *
  * Counts are kept as lifetime totals plus per-day buckets (UTC dates,
  * pruned after DAILY_RETENTION_DAYS). Persisted to `funnel.json` in the
@@ -31,7 +34,7 @@ const FUNNEL_FILE = path.join(DATA_DIR, 'funnel.json');
 
 const SAVE_THROTTLE_MS = 5000;
 const DAILY_RETENTION_DAYS = 60;
-const STAGES = Object.freeze(['pageViews', 'newVisitors', 'worldJoins', 'firstPlacements']);
+const STAGES = Object.freeze(['pageViews', 'newVisitors', 'worldJoins', 'firstPlacements', 'battleJoins']);
 
 // Filters the crawlers that would otherwise dominate pageViews. Real
 // browsers sail through; a headless UA is counted (that's what our own
@@ -41,6 +44,14 @@ const BOT_UA_PATTERN = /bot|crawl|spider|slurp|curl|wget|python-requests|httpcli
 
 let state = null;
 let saveTimer = null;
+// Players already counted in battleJoins this run. In memory only: a
+// restart may count someone twice, which is fine for analytics and
+// keeps ids out of funnel.json.
+const battleJoiners = new Set();
+
+function isBotUserAgent(userAgent) {
+	return !!userAgent && BOT_UA_PATTERN.test(String(userAgent));
+}
 
 function emptyState() {
 	const totals = {};
@@ -122,12 +133,16 @@ function record(stage) {
  * @param {string} [userAgent] - used only to skip crawlers, never stored
  */
 function recordPageView(userAgent) {
-	if (userAgent && BOT_UA_PATTERN.test(String(userAgent))) return;
+	if (isBotUserAgent(userAgent)) return;
 	record('pageViews');
 }
 
-/** A brand-new player identity was minted on socket connect. */
-function recordNewVisitor() {
+/**
+ * A brand-new player identity was minted on socket connect.
+ * @param {string} [userAgent] - used only to skip crawlers that run JS
+ */
+function recordNewVisitor(userAgent) {
+	if (isBotUserAgent(userAgent)) return;
 	record('newVisitors');
 }
 
@@ -139,6 +154,17 @@ function recordWorldJoin() {
 /** A player placed their first-ever tetromino. */
 function recordFirstPlacement() {
 	record('firstPlacements');
+}
+
+/**
+ * A player created or joined a battle lobby.
+ * @param {string} playerId - dedupe key, never persisted
+ */
+function recordBattleJoin(playerId) {
+	const key = String(playerId);
+	if (battleJoiners.has(key)) return;
+	battleJoiners.add(key);
+	record('battleJoins');
 }
 
 /**
@@ -169,6 +195,7 @@ function _resetForTests() {
 		saveTimer = null;
 	}
 	state = null;
+	battleJoiners.clear();
 }
 
 module.exports = {
@@ -176,6 +203,7 @@ module.exports = {
 	recordNewVisitor,
 	recordWorldJoin,
 	recordFirstPlacement,
+	recordBattleJoin,
 	getSnapshot,
 	saveNow,
 	STAGES,

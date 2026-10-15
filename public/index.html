@@ -441,6 +441,15 @@
 			color: #00aa30 !important;
 			font-family: 'Courier New', monospace !important;
 		}
+		/* The welcome modal is the only thing a newcomer should see. These
+		   float above its backdrop (z 1000) and used to sit on top of the
+		   PLAY NOW / BATTLE buttons on phones. */
+		body:has(#tutorial-message) #audio-mute-toggle,
+		body:has(#tutorial-message) #activity-log-toggle,
+		body:has(#tutorial-message) #player-bar-tab,
+		body:has(#tutorial-message) #unified-player-bar {
+			visibility: hidden;
+		}
 	</style>
 </head>
 <body>

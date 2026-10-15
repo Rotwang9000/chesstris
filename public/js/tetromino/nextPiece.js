@@ -155,9 +155,10 @@ export function updateNextPieceHint(gameState) {
 	if (!hint) return;
 
 	if (gameState && gameState.turnPhase === 'chess') {
-		hint.textContent = 'Click to start tetris turn';
+		hint.textContent = isTouchPrimary() ? 'Tap to start tetris turn' : 'Click to start tetris turn';
 		hint.style.color = '#4CAF50';
 		hint.style.opacity = '1';
+		showFirstChessTurnHint();
 	} else {
 		hint.textContent = isTouchPrimary()
 			? 'Tetris turn — tap \u27F3 to rotate'
@@ -179,39 +180,64 @@ export function updateNextPieceHint(gameState) {
 }
 
 const FIRST_DROP_HINT_KEY = 'tetches_seen_rotation_hint_v1';
-let firstDropHintShown = false;
+const FIRST_CHESS_HINT_KEY = 'tetches_seen_chess_turn_hint_v1';
+const KBD_STYLE = 'background:#222;border:1px solid #777;padding:0 4px;border-radius:3px;';
+const tipsShown = new Set();
+let dismissActiveTip = null;
+
 function showFirstDropRotationHint() {
-	if (firstDropHintShown) return;
+	const touch = isTouchPrimary();
+	showOneTimeTip(FIRST_DROP_HINT_KEY, touch
+		? 'Tap <b style="color:#ffcc00;">\u27F3</b> to rotate the tetromino while it\'s falling.'
+		: `Press <kbd style="${KBD_STYLE}">Z</kbd> or <kbd style="${KBD_STYLE}">X</kbd> to rotate the tetromino while it's falling.`,
+	['z', 'Z', 'x', 'X', 'r', 'R', 'q', 'Q', 'e', 'E']);
+}
+
+// After the first drop the game silently switches to chess; nothing
+// told a newcomer they were now expected to move a piece, or how to
+// skip back to building.
+function showFirstChessTurnHint() {
+	const touch = isTouchPrimary();
+	const verb = touch ? 'Tap' : 'Click';
+	showOneTimeTip(FIRST_CHESS_HINT_KEY,
+		`<b style="color:#ffcc00;">Chess turn.</b> ${verb} one of your pieces, then a highlighted square to move it.<br>`
+		+ `Nothing worth moving? ${verb} <b style="color:#ffcc00;">NEXT PIECE</b> to skip to your next block.`);
+}
+
+/**
+ * Show a tip once per device (localStorage key), or once per page load
+ * if storage is blocked. A newer tip replaces one still on screen.
+ * Dismissed by any click, Escape, one of `dismissKeys`, or after 10 s.
+ */
+function showOneTimeTip(storageKey, messageHtml, dismissKeys = []) {
+	if (tipsShown.has(storageKey)) return;
+	tipsShown.add(storageKey);
 	try {
-		if (window.localStorage && window.localStorage.getItem(FIRST_DROP_HINT_KEY)) {
-			firstDropHintShown = true;
-			return;
-		}
+		if (window.localStorage && window.localStorage.getItem(storageKey)) return;
 	} catch (_) {
 		// localStorage might be blocked; just show it once per page load.
 	}
-	firstDropHintShown = true;
+	if (dismissActiveTip) dismissActiveTip();
 
 	const banner = document.createElement('div');
-	banner.id = 'rotation-hint-banner';
+	banner.className = 'one-time-tip';
 	const touch = isTouchPrimary();
-	banner.innerHTML = touch ? `
+	banner.innerHTML = `
 		<div style="font-weight:bold;color:#ffcc00;margin-bottom:6px;">Tip</div>
-		<div>Tap <b style="color:#ffcc00;">\u27F3</b> to rotate the tetromino while it's falling.</div>
-		<div style="font-size:11px;margin-top:6px;opacity:0.7;">Tap anywhere to dismiss</div>
-	` : `
-		<div style="font-weight:bold;color:#ffcc00;margin-bottom:6px;">Tip</div>
-		<div>Press <kbd style="background:#222;border:1px solid #777;padding:0 4px;border-radius:3px;">Z</kbd>
-			or <kbd style="background:#222;border:1px solid #777;padding:0 4px;border-radius:3px;">X</kbd>
-			to rotate the tetromino while it's falling.</div>
-		<div style="font-size:11px;margin-top:6px;opacity:0.7;">Click anywhere to dismiss</div>
+		<div>${messageHtml}</div>
+		<div style="font-size:11px;margin-top:6px;opacity:0.7;">${touch ? 'Tap' : 'Click'} anywhere to dismiss</div>
 	`;
 	Object.assign(banner.style, {
 		position: 'fixed',
-		// Above the touch pad on phones, not behind it.
-		bottom: touch ? 'calc(220px + env(safe-area-inset-bottom, 0px))' : '90px',
+		// Mid-screen: the home view puts the waiting piece above this
+		// and the player's own pieces below it (the bottom sat on the
+		// home row on phones, just above the touch pad).
+		top: '50%',
 		left: '50%',
-		transform: 'translateX(-50%)',
+		transform: 'translate(-50%, -50%)',
+		width: 'max-content',
+		maxWidth: 'min(420px, calc(100vw - 32px))',
+		boxSizing: 'border-box',
 		background: 'rgba(0, 0, 0, 0.85)',
 		color: '#eee',
 		padding: '14px 20px',
@@ -222,12 +248,14 @@ function showFirstDropRotationHint() {
 		zIndex: '11700',
 		boxShadow: '0 0 24px rgba(255, 204, 0, 0.4)',
 		textAlign: 'center',
-		maxWidth: '420px',
 		cursor: 'pointer',
 		animation: 'tetches-fade-in 280ms ease-out',
 	});
+	let timer = null;
 	const dismiss = () => {
-		try { if (window.localStorage) window.localStorage.setItem(FIRST_DROP_HINT_KEY, '1'); } catch (_) {}
+		if (dismissActiveTip === dismiss) dismissActiveTip = null;
+		clearTimeout(timer);
+		try { if (window.localStorage) window.localStorage.setItem(storageKey, '1'); } catch (_) {}
 		banner.style.transition = 'opacity 250ms ease';
 		banner.style.opacity = '0';
 		setTimeout(() => banner.remove(), 260);
@@ -235,14 +263,13 @@ function showFirstDropRotationHint() {
 		document.removeEventListener('click', dismiss, true);
 	};
 	const onKey = (e) => {
-		if (['z', 'Z', 'x', 'X', 'r', 'R', 'q', 'Q', 'e', 'E', 'Escape'].includes(e.key)) dismiss();
+		if (e.key === 'Escape' || dismissKeys.includes(e.key)) dismiss();
 	};
-	banner.addEventListener('click', dismiss);
 	document.addEventListener('keydown', onKey, true);
 	document.addEventListener('click', dismiss, true);
 	document.body.appendChild(banner);
-
-	setTimeout(() => { if (banner.parentNode) dismiss(); }, 10000);
+	dismissActiveTip = dismiss;
+	timer = setTimeout(dismiss, 10000);
 }
 
 function flashWaitMessage(text) {

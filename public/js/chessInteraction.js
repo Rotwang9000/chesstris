@@ -216,6 +216,17 @@ export function tryPriorityChessMoveClick(mouse) {
 	if (boardGroup) {
 		const boardHits = raycaster.intersectObjects([boardGroup], true);
 		for (let i = 0; i < boardHits.length; i++) {
+			// Most cells are instanced; map the instance back to {x,z}
+			// the same way performRaycast does.
+			const hitObj = boardHits[i].object;
+			if (hitObj?.userData?.type === 'instancedCells' && boardHits[i].instanceId != null) {
+				const pos = hitObj.userData.cellAt?.[boardHits[i].instanceId];
+				if (pos && gameState.validMoves.some(m => m && Number(m.x) === Number(pos.x) && Number(m.z) === Number(pos.z))) {
+					moveChessPieceToCell(pos.x, pos.z);
+					return true;
+				}
+				continue;
+			}
 			let parentObj = boardHits[i].object;
 			const scene = getScene();
 			while (parentObj.parent
@@ -572,6 +583,13 @@ export function selectChessPiece(piece) {
 
 	const pieceType = String(piece.userData.pieceType || piece.userData.type || '').toUpperCase();
 	const isOwn = String(piece.userData.player) === String(gameState.currentPlayer);
+	// Selecting a boxed-in piece used to do nothing visible at all.
+	if (isOwn && (!Array.isArray(gameState.validMoves) || gameState.validMoves.length === 0)) {
+		const movable = movablePieceNames(gameState, piece.userData.player);
+		showToastMessage(movable
+			? `This piece has nowhere to go yet. Try your ${movable}.`
+			: 'This piece has nowhere to go yet. Pieces only move onto board cells, so build in front of it.', 4000);
+	}
 	const isLastPieceKing = (
 		pieceType === 'KING' &&
 		isOwn &&
@@ -580,6 +598,33 @@ export function selectChessPiece(piece) {
 	if ((pieceType === 'PAWN' && isOwn) || isLastPieceKing) {
 		showDetonateButton(piece);
 	}
+}
+
+/**
+ * Names of the player's piece types that have at least one move, e.g.
+ * "knight" or "knight or rook"; null when nothing can move.
+ */
+function movablePieceNames(gameState, playerId) {
+	const names = new Set();
+	for (const p of gameState.chessPieces || []) {
+		if (!p || String(p.player) !== String(playerId) || !p.position) continue;
+		const type = String(p.type || '').toUpperCase();
+		if (!type || names.has(type)) continue;
+		try {
+			const moves = boardFunctions.getChessPieceMoveSets(gameState, {
+				id: p.id,
+				type,
+				player: p.player,
+				position: { x: p.position.x, z: p.position.z },
+				hasMoved: !!p.hasMoved,
+				orientation: Number.isFinite(p.orientation) ? p.orientation : 0,
+			});
+			if (Array.isArray(moves) && moves.length > 0) names.add(type);
+		} catch (_e) { /* best-effort hint */ }
+	}
+	if (names.size === 0) return null;
+	const list = [...names].slice(0, 3).map(t => t.toLowerCase());
+	return list.length === 1 ? list[0] : `${list.slice(0, -1).join(', ')} or ${list[list.length - 1]}`;
 }
 
 export function showValidMoves(piece) {
@@ -648,6 +693,12 @@ export function highlightValidMoves(validMoves) {
 				color: captureColour, transparent: true, opacity: 0.9,
 				side: THREE.DoubleSide, depthTest: false, depthWrite: false,
 			}),
+			// Invisible full-cell click target. The ring has a hole in
+			// the middle, exactly where people click, and the board
+			// fallback in tryPriorityChessMoveClick can't resolve
+			// instanced cells, so a click in the hole did nothing.
+			hitGeo: new THREE.PlaneGeometry(1, 1),
+			hitMat: new THREE.MeshBasicMaterial({ visible: false, side: THREE.DoubleSide }),
 		};
 	}
 	const hlCache = window[cacheKey];
@@ -668,6 +719,7 @@ export function highlightValidMoves(validMoves) {
 		highlight.position.set(absPos.x, 0.46, absPos.z);
 
 		highlight.userData = { moveTarget: true, x: move.x, z: move.z, isCapture };
+		highlight.add(new THREE.Mesh(hlCache.hitGeo, hlCache.hitMat));
 
 		if (window.TWEEN) {
 			const scaleData = { value: 1.0 };
