@@ -124,6 +124,19 @@ function resolveRedeemSpawnCell(world, playerId, credit) {
 	return { ...fallback, fallback: true };
 }
 
+/**
+ * Why this player can't act right now, or null. Mirrors the gates on
+ * chess_move: eliminated players are out, and paused players are
+ * protected, so letting them act would make pause an invulnerability
+ * shield.
+ */
+function inactiveReason(player) {
+	if (!player) return null;
+	if (player.eliminated) return { reason: 'eliminated', error: 'Player is eliminated' };
+	if (player.paused) return { reason: 'paused', error: 'You are paused — press Resume to play.' };
+	return null;
+}
+
 function registerChessHandlers(socket, ctx) {
 	const {
 		playerId: boundPlayerId,
@@ -554,11 +567,12 @@ function registerChessHandlers(socket, ctx) {
 			const previousOwners = new Set();
 			for (const item of targetCellContents) {
 				if (item && item.type !== 'home' && item.player != null
-					&& String(item.player) !== String(playerId)) {
+					&& String(item.player) !== String(playerId)
+					&& !cells.isPausedOwner(world.players, item.player)) {
 					previousOwners.add(String(item.player));
 				}
 			}
-			cells.transferOwnership(targetCellContents, playerId, playerColor);
+			cells.transferOwnership(targetCellContents, playerId, playerColor, world.players);
 			targetCellContents.push({ ...chessPieceObj, position: targetPosition, player: playerId });
 			gameManager.boardManager.setCell(world.board, targetPosition.x, targetPosition.z, targetCellContents);
 
@@ -741,6 +755,11 @@ function registerChessHandlers(socket, ctx) {
 		const playerId = actingPlayerId();
 		try {
 			const world = World.getWorld();
+			const blocked = inactiveReason(World.getPlayer(playerId));
+			if (blocked) {
+				if (callback) callback({ success: false, ...blocked });
+				return;
+			}
 			const { pieceId } = data || {};
 			const piece = (world.chessPieces || []).find(
 				p => p && p.id === pieceId && p.player === playerId && p.type === 'PAWN'
@@ -782,8 +801,9 @@ function registerChessHandlers(socket, ctx) {
 				if (callback) callback({ success: false, error: 'Not registered' });
 				return;
 			}
-			if (player.eliminated) {
-				if (callback) callback({ success: false, error: 'Player is eliminated' });
+			const blocked = inactiveReason(player);
+			if (blocked) {
+				if (callback) callback({ success: false, ...blocked });
 				return;
 			}
 
@@ -927,8 +947,9 @@ function registerChessHandlers(socket, ctx) {
 				if (callback) callback({ success: false, error: 'Not registered' });
 				return;
 			}
-			if (player.eliminated) {
-				if (callback) callback({ success: false, error: 'Player is eliminated' });
+			const blocked = inactiveReason(player);
+			if (blocked) {
+				if (callback) callback({ success: false, ...blocked });
 				return;
 			}
 
@@ -1148,6 +1169,11 @@ function registerChessHandlers(socket, ctx) {
 		const playerId = actingPlayerId();
 		try {
 			const world = World.getWorld();
+			const blocked = inactiveReason(World.getPlayer(playerId));
+			if (blocked) {
+				if (callback) callback({ success: false, ...blocked });
+				return;
+			}
 			const { pieceId } = data || {};
 
 			const piece = (world.chessPieces || []).find(p =>

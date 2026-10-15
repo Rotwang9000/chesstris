@@ -126,6 +126,16 @@ describe('cells helper', () => {
 			cells.transferOwnership(items, 'p2', 0x123456);
 			expect(items[0]).toEqual({ type: 'boardCentre' });
 		});
+		test('leaves a paused player\'s items alone when given the players map', () => {
+			const items = [
+				{ type: 'tetromino', player: 'paused' },
+				{ type: 'tetromino', player: 'active' },
+			];
+			const players = { paused: { paused: true }, active: { paused: false } };
+			cells.transferOwnership(items, 'p2', 0x123456, players);
+			expect(items[0]).toEqual({ type: 'tetromino', player: 'paused' });
+			expect(items[1]).toEqual({ type: 'tetromino', player: 'p2', color: 0x123456 });
+		});
 	});
 
 	describe('awaiting-promotion (frozen pawn)', () => {

@@ -711,11 +711,12 @@ function createAiActions({
 		const aiPreviousOwners = new Set();
 		for (const item of targetCellContents) {
 			if (item && item.type !== 'home' && item.player != null
-				&& String(item.player) !== String(computerId)) {
+				&& String(item.player) !== String(computerId)
+				&& !cells.isPausedOwner(world.players, item.player)) {
 				aiPreviousOwners.add(String(item.player));
 			}
 		}
-		cells.transferOwnership(targetCellContents, computerId, aiColor);
+		cells.transferOwnership(targetCellContents, computerId, aiColor, world.players);
 		targetCellContents.push({
 			...chessPieceObj,
 			position: { x: targetX, z: targetZ },
