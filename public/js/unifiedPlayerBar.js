@@ -505,13 +505,27 @@ export function createUnifiedPlayerBar(gameState) {
 	// on wide screens. On phones the expanded bar collided with the welcome
 	// modal and touch controls, so there it stays tucked away behind its
 	// pull tab until asked for.
+	// While the welcome modal is up the peek would only clutter it (and
+	// be gone before the player looks), so wait for the modal to close.
 	if (window.innerWidth >= WIDE_SCREEN_MIN_PX) {
-		showPlayerBar();
-		setTimeout(() => {
-			if (isBarVisible) {
-				hidePlayerBar();
-			}
-		}, INTRO_PEEK_DURATION_MS);
+		const peek = () => {
+			showPlayerBar();
+			setTimeout(() => {
+				if (isBarVisible) {
+					hidePlayerBar();
+				}
+			}, INTRO_PEEK_DURATION_MS);
+		};
+		if (document.getElementById('tutorial-message') && typeof MutationObserver === 'function') {
+			const observer = new MutationObserver(() => {
+				if (document.getElementById('tutorial-message')) return;
+				observer.disconnect();
+				peek();
+			});
+			observer.observe(document.body, { childList: true });
+		} else {
+			peek();
+		}
 	}
 	
 	console.log("Unified player bar created and attached to DOM");
