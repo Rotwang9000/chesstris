@@ -583,10 +583,12 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 
 	// Build the scrollable content. The 8-bit hero carries the title;
 	// everything long-form hides behind the "How to play" toggle so the
-	// first screen is one picture, one line, one button.
+	// first screen is one picture, one line, one button. The picture is
+	// capped by viewport height: at full width on a 768px-tall laptop it
+	// pushed the one line and the toggle out of sight.
 	scrollContent.innerHTML = `
 		<img src="/img/welcome-hero.png" alt="Tetches — chess pieces and falling tetromino blocks"
-			style="width: 100%; box-sizing: border-box; display: block; border-radius: 8px; image-rendering: pixelated; margin: 0 0 12px 0; border: 1px solid rgba(255, 204, 0, 0.35);">
+			style="width: auto; max-width: 100%; max-height: 32vh; box-sizing: border-box; display: block; border-radius: 8px; image-rendering: pixelated; margin: 0 auto 12px auto; border: 1px solid rgba(255, 204, 0, 0.35);">
 		<p style="margin: 0 0 14px 0; font-size: 15px; opacity: 0.9;">
 			Chess meets Tetris in one huge shared world.<br>
 			<span style="opacity: 0.75; font-size: 13px;">Drop blocks to grow your kingdom, then march your pieces out to capture kings.</span>
