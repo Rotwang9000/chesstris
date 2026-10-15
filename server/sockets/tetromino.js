@@ -76,6 +76,16 @@ function registerTetrominoHandlers(socket, ctx) {
 				return;
 			}
 
+			// Cell keys are built as `${x + j},${z + i}`, so a string "0"
+			// made "00,0": a second key for square (0,0) that slipped past
+			// the occupied and safe-zone checks and overlaid enemy cells.
+			const position = tetromino.position;
+			if (!position || !Number.isInteger(position.x) || !Number.isInteger(position.z)) {
+				socket.emit('tetrominoFailed', { message: 'Invalid tetromino position' });
+				if (callback) callback({ success: false, error: 'Invalid tetromino position' });
+				return;
+			}
+
 			const world = World.getWorld();
 
 			// No building while your king is in check. The defender's
