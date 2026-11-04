@@ -39,4 +39,10 @@ describe('body-parser client errors', () => {
 			.expect(400);
 		expect(res.body).toEqual({ success: false, error: 'invalid_json' });
 	});
+
+	test('a malformed URL escape gets a JSON 400, not a stack trace', async () => {
+		const res = await request(app).get('/%c0').expect(400);
+		expect(res.body).toEqual({ success: false, error: 'bad_request' });
+		expect(warn).toHaveBeenCalledWith(expect.stringContaining('400 bad_request: GET /%c0'));
+	});
 });

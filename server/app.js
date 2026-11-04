@@ -313,11 +313,15 @@ function createApp({ projectRoot = process.cwd() } = {}) {
 	// err.log for every request. Answer in JSON with one log line.
 	app.use((err, req, res, next) => {
 		const status = Number(err?.status || err?.statusCode);
-		if (!err?.expose || !(status >= 400 && status < 500)) return next(err);
+		// Malformed URL escapes from scanners (`/%c0`) arrive as a 400
+		// URIError without `expose`; they're the same kind of noise.
+		const clientError = err?.expose || err instanceof URIError;
+		if (!clientError || !(status >= 400 && status < 500)) return next(err);
 		const code = err.type === 'entity.too.large' ? 'payload_too_large'
 			: err.type === 'entity.parse.failed' ? 'invalid_json'
 				: 'bad_request';
-		console.warn(`[HTTP] ${status} ${code}: ${req.method} ${req.path}`);
+		// req.path would re-throw on a bad escape; log the raw URL instead.
+		console.warn(`[HTTP] ${status} ${code}: ${req.method} ${String(req.originalUrl).slice(0, 120)}`);
 		if (res.headersSent) return next(err);
 		return res.status(status).json({ success: false, error: code });
 	});
