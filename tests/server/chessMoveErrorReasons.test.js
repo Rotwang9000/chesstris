@@ -75,7 +75,7 @@ function makeBroadcasterStub() {
 	return {
 		_calls: calls,
 		broadcastGameUpdate(opts) { calls.push({ method: 'broadcastGameUpdate', opts }); },
-		emitFullStateTo() {},
+		emitFullStateTo(socket) { calls.push({ method: 'emitFullStateTo', socket }); },
 		emitIslandDecayAnimation() {},
 		emitToPlayer() {},
 	};
@@ -189,10 +189,12 @@ describe('server/sockets/chess — rejection reasons', () => {
 		expect(failEmit.payload.attempted).toEqual({ x: 0, z: 10 });
 
 		// The server should have pushed a fresh snapshot so the client
-		// can drop the stale highlight that pointed at the missing cell.
+		// can drop the stale highlight that pointed at the missing cell —
+		// to that client only, not as a full broadcast to everyone.
+		expect(broadcaster._calls.find(c => c.method === 'emitFullStateTo' && c.socket === socket)).toBeDefined();
 		expect(broadcaster._calls.find(c =>
 			c.method === 'broadcastGameUpdate' && c.opts?.forceFullUpdate === true
-		)).toBeDefined();
+		)).toBeUndefined();
 	});
 
 	test('bad_geometry reason when target exists but move is geometrically wrong', () => {
@@ -223,7 +225,8 @@ describe('server/sockets/chess — rejection reasons', () => {
 		// client snapshot is still authoritative — the user just
 		// clicked the wrong square.
 		const refreshCall = broadcaster._calls.find(c =>
-			c.method === 'broadcastGameUpdate' && c.opts?.forceFullUpdate === true
+			c.method === 'emitFullStateTo'
+			|| (c.method === 'broadcastGameUpdate' && c.opts?.forceFullUpdate === true)
 		);
 		expect(refreshCall).toBeUndefined();
 	});

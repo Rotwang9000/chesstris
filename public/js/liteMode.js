@@ -25,6 +25,7 @@ import { isCellVisibleInCurrentView } from './battle/battleRules.js';
 import { getPlayerColor } from './boardFunctions/colours.js';
 import { TETROMINO_SHAPES } from './tetromino/shapes.js';
 import { showKingdomRestoreDialog } from './kingdomRestoreDialog.js';
+import { expandPieceDelta, expandPlayerDelta, expandDisconnectedDelta } from './utils/pieceDelta.js';
 
 const LITE = Object.freeze({
 	CELL_PX: 26,          // pixels per cell at zoom 1
@@ -316,6 +317,9 @@ function applyGameUpdate(data) {
 			delete gameState.board.cells[`${removed.x},${removed.z}`];
 		}
 	}
+	expandPieceDelta(data, gameState.chessPieces);
+	expandPlayerDelta(data, gameState.players);
+	expandDisconnectedDelta(data, gameState.disconnectedSince);
 	if (Array.isArray(data.chessPieces)) gameState.chessPieces = data.chessPieces;
 	if (data.homeZones) gameState.homeZones = data.homeZones;
 	if (data.players) gameState.players = normalisePlayers(data.players);

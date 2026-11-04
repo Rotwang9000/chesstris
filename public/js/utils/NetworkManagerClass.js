@@ -10,6 +10,7 @@
  * is now focused on the lifecycle (connect / join / leave / actions).
  */
 import { attachSimpleForwards } from './network/socketEventBridge.js';
+import { CLIENT_PROTO } from './pieceDelta.js';
 import * as eventBus from './network/eventBus.js';
 
 // socket.io-client is loaded globally by the CDN <script> in index.html.
@@ -187,7 +188,9 @@ export default class NetworkManager {
 					reconnection: false, // We'll handle reconnection manually
 					timeout: CONNECTION_TIMEOUT_MS,
 					query: {
-						playerName: playerName
+						playerName: playerName,
+						// We merge piece deltas (see utils/pieceDelta.js).
+						proto: CLIENT_PROTO,
 					}
 				});
 				

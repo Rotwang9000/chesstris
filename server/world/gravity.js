@@ -228,7 +228,9 @@ function createWorldGravityService({ boardManager, broadcaster, persistence } = 
 		boardManager.recalculateBoardBoundaries(world.board);
 		World.markDirty();
 		persistence.markDirty();
-		broadcaster.broadcastGameUpdate({ forceFullUpdate: true });
+		// A normal delta: it diffs the whole board, so shifted cells are
+		// covered (and it falls back to a full update past 800 cells).
+		broadcaster.broadcastGameUpdate();
 	}
 
 	return { tick, GRAVITY_TICK_MS, GRAVITY_TRIGGER_DISTANCE };

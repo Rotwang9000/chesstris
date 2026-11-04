@@ -59,6 +59,7 @@ import {
 import { playSound } from '../audio/soundManager.js';
 import { mountMuteButton } from '../audio/muteButton.js';
 import { applyServerPieces, syncDealtPieces } from '../tetromino/dealer.js';
+import { expandPieceDelta, expandPlayerDelta, expandDisconnectedDelta } from '../utils/pieceDelta.js';
 
 // `king_detonation` and `island_decay` cap how many simultaneous
 // particle animations we'll spawn so a 100×100 detonation doesn't pin
@@ -842,6 +843,9 @@ export function setupNetworkEvents(hooks = {}) {
 	NetworkManager.on('game_update', (payload) => {
 		const state = payload?.state || payload;
 		if (!state || typeof state !== 'object') return;
+		expandPieceDelta(state, gameState.chessPieces);
+		expandPlayerDelta(state, gameState.players);
+		expandDisconnectedDelta(state, gameState.disconnectedSince);
 
 		if (Array.isArray(state.players)) {
 			state.players = normalisePlayersArrayToMap(state.players);

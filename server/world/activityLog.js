@@ -16,6 +16,7 @@
  */
 
 const World = require('./World');
+const Sessions = require('./Sessions');
 
 const DEFAULT_MAX_EVENTS = 200;
 
@@ -30,7 +31,15 @@ function ensureBuffer(world, max) {
 function createActivityLogService({ io, persistence, maxEvents = DEFAULT_MAX_EVENTS } = {}) {
 	if (!io) throw new Error('createActivityLogService: io required');
 
-	function record(type, payload) {
+	/**
+	 * @param {{ personal?: boolean }} [options] - personal events (a
+	 *   player's own failed moves) go only to that player's sockets and
+	 *   stay out of the shared backlog. Broadcast to everyone, they were
+	 *   ~37 messages a second per client with 40 players and pushed the
+	 *   real events out of the 200-event backlog. If the player has no
+	 *   socket of their own (a battle seat), it's shared as before.
+	 */
+	function record(type, payload, { personal = false } = {}) {
 		const world = World.getWorld();
 		if (!world) return null;
 		const buffer = ensureBuffer(world, maxEvents);
@@ -42,6 +51,13 @@ function createActivityLogService({ io, persistence, maxEvents = DEFAULT_MAX_EVE
 			type: String(type || 'unknown'),
 			payload: payload || {},
 		};
+		if (personal && payload?.playerId != null) {
+			try {
+				if (Sessions.emitToPlayerSockets(payload.playerId, 'activity_event', event) > 0) return event;
+			} catch (error) {
+				console.warn('[ActivityLog] Failed to emit personal activity_event:', error.message);
+			}
+		}
 		buffer.push(event);
 		if (buffer.length > maxEvents) buffer.shift();
 		try {
@@ -82,7 +98,7 @@ function createActivityLogService({ io, persistence, maxEvents = DEFAULT_MAX_EVE
 	function recordTetrominoDissolved({ playerId, playerName, x, z, pieceType, reason }) {
 		return record('tetromino_dissolved', {
 			playerId, playerName, x, z, pieceType, reason: reason || 'no_path_to_king',
-		});
+		}, { personal: true });
 	}
 
 	function recordChessMove({ playerId, playerName, pieceType, from, to, captured }) {
@@ -107,7 +123,7 @@ function createActivityLogService({ io, persistence, maxEvents = DEFAULT_MAX_EVE
 			to: to || null,
 			reason: reason || 'invalid_move',
 			message: message || null,
-		});
+		}, { personal: true });
 	}
 
 	function recordRowsCleared({ playerId, playerName, rows, cols, cellCount }) {

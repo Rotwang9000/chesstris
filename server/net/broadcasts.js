@@ -13,6 +13,20 @@ const Sessions = require('../world/Sessions');
 const { getLatestPlayerActionAt } = require('../utils/cooldowns');
 
 const MAX_BOARD_DELTA_CELLS = 800;
+/** Beyond this many changed pieces a delta just carries the full list. */
+const MAX_PIECE_DELTA = 200;
+
+/**
+ * Clients say at connect (`query.proto === '2'`) that they can merge
+ * piece deltas. Every socket joins one of these rooms so each kind of
+ * client gets one shared, once-encoded broadcast. Older clients (cached
+ * tabs, external bots) keep getting the full `chessPieces` list.
+ */
+const PROTO_ROOMS = Object.freeze({ legacy: 'proto:1', pieceDeltas: 'proto:2' });
+
+function protoRoomFor(socket) {
+	return socket?.handshake?.query?.proto === '2' ? PROTO_ROOMS.pieceDeltas : PROTO_ROOMS.legacy;
+}
 const ISLAND_DECAY_ANIMATION_MAX_CELLS = 160;
 
 function createBroadcaster({ io, persistence }) {
@@ -23,6 +37,15 @@ function createBroadcaster({ io, persistence }) {
 	// ever has one entry, but keeping it keyed keeps future multi-world
 	// support trivial.
 	const boardDeltaCache = new Map();
+	// Per world: id -> JSON as last broadcast, for pieces and for player
+	// summaries. Every update used to resend all of both (~240 bytes a
+	// piece, 170KB with 700 pieces; ~170 bytes a player) when usually one
+	// player had acted and one or two pieces had moved.
+	const pieceDeltaCache = new Map();
+	const playerDeltaCache = new Map();
+	// Same for disconnectedSince (per-cell island-decay timers, keyed
+	// `player:x,z`): ~10KB of every update in a busy world.
+	const disconnectedDeltaCache = new Map();
 
 	function parseBoardKey(key) {
 		const [xStr, zStr] = String(key).split(',');
@@ -90,6 +113,51 @@ function createBroadcaster({ io, persistence }) {
 			removedCells: fullUpdate ? [] : removedCells,
 			boardBounds,
 		};
+	}
+
+	/**
+	 * Items that changed or appeared since the last broadcast, and ids
+	 * that vanished. Applied as upserts and deletes, so a client whose
+	 * baseline is a little newer or older than the cache still converges.
+	 * Returns null (send the full list) on the first call or past `max`.
+	 */
+	function computeKeyedDelta(cache, worldId, items, max) {
+		const prev = cache.get(worldId);
+		const next = new Map();
+		for (const item of Array.isArray(items) ? items : []) {
+			if (item && item.id != null) next.set(String(item.id), JSON.stringify(item));
+		}
+		cache.set(worldId, next);
+		if (!prev) return null;
+		const changes = [];
+		for (const [id, json] of next) {
+			if (prev.get(id) !== json) changes.push(JSON.parse(json));
+		}
+		const removedIds = [];
+		for (const id of prev.keys()) {
+			if (!next.has(id)) removedIds.push(id);
+		}
+		if (changes.length + removedIds.length > max) return null;
+		return { changes, removedIds };
+	}
+
+	/**
+	 * Changed and removed keys of a plain object map since the last
+	 * broadcast; null on the first call (send it whole).
+	 */
+	function computeMapDelta(cache, worldId, map) {
+		const prev = cache.get(worldId);
+		const next = new Map();
+		for (const [key, value] of Object.entries(map || {})) next.set(key, JSON.stringify(value));
+		cache.set(worldId, next);
+		if (!prev) return null;
+		const changes = {};
+		let count = 0;
+		for (const [key, json] of next) {
+			if (prev.get(key) !== json) { changes[key] = JSON.parse(json); count++; }
+		}
+		const removed = [...prev.keys()].filter(key => !next.has(key));
+		return { changes, removed, count: count + removed.length };
 	}
 
 	/**
@@ -250,6 +318,10 @@ function createBroadcaster({ io, persistence }) {
 		const fullPayload = buildGameStatePayload(world);
 
 		const delta = computeBoardDelta(worldId, world.board);
+		const pieceDelta = computeKeyedDelta(pieceDeltaCache, worldId, world.chessPieces, MAX_PIECE_DELTA);
+		const playerDelta = computeKeyedDelta(playerDeltaCache, worldId, playersList, MAX_PIECE_DELTA);
+		const disconnectedSince = world.disconnectedSince || {};
+		const disconnectedDelta = computeMapDelta(disconnectedDeltaCache, worldId, disconnectedSince);
 		const useFull = forceFullUpdate || delta.fullUpdate;
 
 		if (useFull) {
@@ -263,21 +335,38 @@ function createBroadcaster({ io, persistence }) {
 			return;
 		}
 
-		io.to(worldId).emit('game_update', {
+		const shared = {
 			timestamp,
 			fullUpdate: false,
 			boardChanges: delta.boardChanges,
 			removedCells: delta.removedCells,
 			boardBounds: delta.boardBounds,
-			chessPieces: world.chessPieces,
 			lastAction: world.lastAction,
-			disconnectedSince: world.disconnectedSince || {},
-			players: playersList,
 			powerUps: Array.isArray(world.powerUps) ? world.powerUps : [],
 			// One open check per defender; clients pick the one that
 			// involves them. `pendingCheck` stays for cached old clients.
 			pendingChecks: checksOf(world),
 			pendingCheck: allChecks(world)[0] || null,
+		};
+		io.to(worldId).except(PROTO_ROOMS.pieceDeltas).emit('game_update', {
+			...shared,
+			chessPieces: world.chessPieces,
+			players: playersList,
+			disconnectedSince,
+		});
+		io.to(worldId).except(PROTO_ROOMS.legacy).emit('game_update', {
+			...shared,
+			...(pieceDelta
+				? { pieceChanges: pieceDelta.changes, removedPieceIds: pieceDelta.removedIds }
+				: { chessPieces: world.chessPieces }),
+			...(playerDelta
+				? { playerChanges: playerDelta.changes, removedPlayerIds: playerDelta.removedIds }
+				: { players: playersList }),
+			...(!disconnectedDelta
+				? { disconnectedSince }
+				: disconnectedDelta.count > 0
+					? { disconnectedChanges: disconnectedDelta.changes, disconnectedRemoved: disconnectedDelta.removed }
+					: {}),
 		});
 	}
 
@@ -358,6 +447,9 @@ function createBroadcaster({ io, persistence }) {
 
 	function clearDeltaCache(worldId = World.getWorldId()) {
 		boardDeltaCache.delete(worldId);
+		pieceDeltaCache.delete(worldId);
+		playerDeltaCache.delete(worldId);
+		disconnectedDeltaCache.delete(worldId);
 	}
 
 	return {
@@ -377,6 +469,9 @@ function createBroadcaster({ io, persistence }) {
 
 module.exports = {
 	createBroadcaster,
+	protoRoomFor,
+	PROTO_ROOMS,
+	MAX_PIECE_DELTA,
 	MAX_BOARD_DELTA_CELLS,
 	ISLAND_DECAY_ANIMATION_MAX_CELLS,
 };
