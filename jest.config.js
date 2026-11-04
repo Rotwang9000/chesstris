@@ -2,6 +2,13 @@
  * Jest configuration for Tetches project
  */
 
+// sanitize-html 2.17.6+ depends on htmlparser2 12 and friends, which are
+// ESM-only. Node itself require()s them fine (Node 22.12+ / 20.19+), but
+// Jest's module loader doesn't, so Babel transforms just these packages.
+// Projects don't inherit top-level options, hence a shared constant.
+const ESM_ONLY_DEPS = ['htmlparser2', 'entities', 'domelementtype', 'domhandler', 'domutils', 'dom-serializer'];
+const transformIgnorePatterns = [`/node_modules/(?!(${ESM_ONLY_DEPS.join('|')})/)`];
+
 module.exports = {
 	// Indicates whether each individual test should be reported during the run
 	verbose: true,
@@ -86,6 +93,7 @@ module.exports = {
 	projects: [
 		{
 			displayName: 'security',
+			transformIgnorePatterns,
 			testMatch: [
 				'<rootDir>/tests/security/**/*.test.js'
 			],
@@ -93,6 +101,7 @@ module.exports = {
 		},
 		{
 			displayName: 'server',
+			transformIgnorePatterns,
 			testMatch: [
 				'<rootDir>/tests/server/**/*.test.js'
 			],
@@ -100,6 +109,7 @@ module.exports = {
 		},
 		{
 			displayName: 'default',
+			transformIgnorePatterns,
 			// NOTE: most of tests/gameplay/** and two tests/backend/** files
 			// are *legacy standalone scripts* (they use `assert` + a
 			// `runTests()` driver and call `process.exit`, or mock modules
