@@ -184,9 +184,28 @@ function readRegisteredBotCredentials(socket, cookies) {
 	return { playerId, apiToken };
 }
 
+/**
+ * The identity cookies, or, when none arrived, the same two values from
+ * the socket.io `auth` payload. Inside a portal's iframe (CrazyGames,
+ * itch.io) tetches.com cookies are third-party and Safari drops them;
+ * the client then sends what it keeps in localStorage. `auth` travels
+ * in the CONNECT packet, not the URL, so it stays out of access logs.
+ * The session secret is verified exactly as for a cookie.
+ */
+function identityCookies(socket) {
+	const cookies = parseCookies(socket.handshake.headers.cookie);
+	const auth = socket.handshake.auth || {};
+	const usable = (v) => typeof v === 'string' && v.length > 0 && v.length <= 200;
+	if (!cookies[PLAYER_ID_COOKIE] && usable(auth.playerId)) {
+		cookies[PLAYER_ID_COOKIE] = auth.playerId;
+		if (!cookies[SESSION_COOKIE] && usable(auth.session)) cookies[SESSION_COOKIE] = auth.session;
+	}
+	return cookies;
+}
+
 function resolvePlayerIdForSocket(socket, services) {
 	const { lifecycleService } = services;
-	const cookies = parseCookies(socket.handshake.headers.cookie);
+	const cookies = identityCookies(socket);
 	const handshakeName = handshakePlayerName(socket);
 
 	// Registered external-AI path: if the bot presents the playerId

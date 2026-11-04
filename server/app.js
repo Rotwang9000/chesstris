@@ -32,6 +32,23 @@ const { createMcpRouter } = require('./mcp/mcpServer');
  * connect-src has to include the wss:// upgrades and any WS origin
  * the same host serves from.
  */
+/**
+ * Sites allowed to show the game in an iframe: CrazyGames (web and its
+ * app's capacitor:// shell, per its sitelock docs) and itch.io, whose
+ * game pages frame an uploaded page on its file hosts (itch.zone,
+ * hwcdn.net) that frames us. frame-ancestors checks every ancestor, so
+ * each layer must be listed. Everywhere else stays unframeable.
+ */
+const PORTAL_FRAME_ANCESTORS = Object.freeze([
+	'https://crazygames.com',
+	'https://*.crazygames.com',
+	'capacitor://*.crazygames.com',
+	'https://itch.io',
+	'https://*.itch.io',
+	'https://*.itch.zone',
+	'https://*.hwcdn.net',
+]);
+
 function buildCSPDirectives() {
 	return {
 		defaultSrc: ["'self'"],
@@ -60,7 +77,8 @@ function buildCSPDirectives() {
 		frameSrc: ["'self'", 'https://*.auth0.com'],
 		// Block plugins; no <object> / <embed>.
 		objectSrc: ["'none'"],
-		frameAncestors: ["'self'"],
+		// Game portals that embed us in an iframe (see PORTAL_FRAME_ANCESTORS).
+		frameAncestors: ["'self'", ...PORTAL_FRAME_ANCESTORS],
 		baseUri: ["'self'"],
 		formAction: ["'self'"],
 	};
@@ -103,6 +121,10 @@ function createApp({ projectRoot = process.cwd() } = {}) {
 		// Cross-Origin-Embedder-Policy: 'require-corp' breaks
 		// jsdelivr loads. Disable it; the rest of helmet is fine.
 		crossOriginEmbedderPolicy: false,
+		// X-Frame-Options can only say SAMEORIGIN, which would block the
+		// game portals; CSP frame-ancestors (above) supersedes it in every
+		// current browser and lists exactly who may frame us.
+		frameguard: false,
 	}));
 
 	// Agent discovery (Gopher-over-HTTPS at /.well-known/agent.gopher).
@@ -313,11 +335,15 @@ function createApp({ projectRoot = process.cwd() } = {}) {
 	// err.log for every request. Answer in JSON with one log line.
 	app.use((err, req, res, next) => {
 		const status = Number(err?.status || err?.statusCode);
-		if (!err?.expose || !(status >= 400 && status < 500)) return next(err);
+		// Malformed URL escapes from scanners (`/%c0`) arrive as a 400
+		// URIError without `expose`; they're the same kind of noise.
+		const clientError = err?.expose || err instanceof URIError;
+		if (!clientError || !(status >= 400 && status < 500)) return next(err);
 		const code = err.type === 'entity.too.large' ? 'payload_too_large'
 			: err.type === 'entity.parse.failed' ? 'invalid_json'
 				: 'bad_request';
-		console.warn(`[HTTP] ${status} ${code}: ${req.method} ${req.path}`);
+		// req.path would re-throw on a bad escape; log the raw URL instead.
+		console.warn(`[HTTP] ${status} ${code}: ${req.method} ${String(req.originalUrl).slice(0, 120)}`);
 		if (res.headersSent) return next(err);
 		return res.status(status).json({ success: false, error: code });
 	});

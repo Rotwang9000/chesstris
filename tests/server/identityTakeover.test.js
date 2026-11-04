@@ -92,3 +92,42 @@ describe('guest identity requires the session secret', () => {
 		expect(connect(`tetches_auth_key=${accountId}`).id).not.toBe(accountId);
 	});
 });
+
+describe('identity from the socket.io auth payload (portal iframes)', () => {
+	beforeEach(() => {
+		World.resetWorld();
+		Sessions.clearAll();
+		Disconnects.clearAll();
+	});
+
+	function connectWithAuth(auth, cookieStr = '') {
+		const socket = fakeSocket(cookieStr);
+		socket.handshake.auth = auth;
+		return resolvePlayerIdForSocket(socket, services);
+	}
+
+	test('the owner reconnects with id + secret in auth when cookies are blocked', () => {
+		const first = connect('');
+		expect(connectWithAuth({ playerId: first.id, session: first.secret })).toBe(first.id);
+	});
+
+	test('auth with only the public id, or a wrong secret, gets a fresh identity', () => {
+		const victim = connect('');
+		expect(connectWithAuth({ playerId: victim.id })).not.toBe(victim.id);
+		expect(connectWithAuth({ playerId: victim.id, session: '0'.repeat(64) })).not.toBe(victim.id);
+		expect(World.getPlayer(victim.id)).toBeTruthy();
+	});
+
+	test('a cookie identity wins over auth', () => {
+		const a = connect('');
+		const b = connect('');
+		const id = connectWithAuth({ playerId: b.id, session: b.secret }, `tetches_player_id=${a.id}; tetches_session=${a.secret}`);
+		expect(id).toBe(a.id);
+	});
+
+	test('non-string or oversized auth values are ignored', () => {
+		const first = connect('');
+		expect(connectWithAuth({ playerId: { id: first.id }, session: first.secret })).not.toBe(first.id);
+		expect(connectWithAuth({ playerId: 'x'.repeat(500), session: first.secret })).not.toBe(first.id);
+	});
+});

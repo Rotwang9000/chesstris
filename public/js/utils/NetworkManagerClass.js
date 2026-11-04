@@ -10,6 +10,8 @@
  * is now focused on the lifecycle (connect / join / leave / actions).
  */
 import { attachSimpleForwards } from './network/socketEventBridge.js';
+import { CLIENT_PROTO } from './pieceDelta.js';
+import { identityCookieAttributes, rememberEmbeddedIdentity, embeddedIdentityAuth, forgetEmbeddedIdentity } from '../portal.js';
 import * as eventBus from './network/eventBus.js';
 
 // socket.io-client is loaded globally by the CDN <script> in index.html.
@@ -187,8 +189,13 @@ export default class NetworkManager {
 					reconnection: false, // We'll handle reconnection manually
 					timeout: CONNECTION_TIMEOUT_MS,
 					query: {
-						playerName: playerName
-					}
+						playerName: playerName,
+						// We merge piece deltas (see utils/pieceDelta.js).
+						proto: CLIENT_PROTO,
+					},
+					// In a portal's iframe our cookies may be blocked; the
+					// identity kept in localStorage rides here instead.
+					auth: embeddedIdentityAuth()
 				});
 				
 				// Register core socket listeners immediately (before connect) to avoid missing early events
@@ -205,13 +212,14 @@ export default class NetworkManager {
 
 			socket.on('set_session', (data) => {
 				if (data && data.playerId) {
-					const secure = location.protocol === 'https:' ? ';Secure' : '';
-					document.cookie = `tetches_player_id=${data.playerId};path=/;max-age=${60 * 60 * 24 * 30};SameSite=Lax${secure}`;
+					const attrs = identityCookieAttributes();
+					document.cookie = `tetches_player_id=${data.playerId};path=/;max-age=${60 * 60 * 24 * 30}${attrs}`;
 					// The player id is public; this secret is what proves the
 					// kingdom is ours on reconnect. Only sent when issued.
 					if (data.sessionSecret) {
-						document.cookie = `tetches_session=${data.sessionSecret};path=/;max-age=${60 * 60 * 24 * 365};SameSite=Lax${secure}`;
+						document.cookie = `tetches_session=${data.sessionSecret};path=/;max-age=${60 * 60 * 24 * 365}${attrs}`;
 					}
+					rememberEmbeddedIdentity(data.playerId, data.sessionSecret);
 					console.log('NetworkManager: Session cookie set for', data.playerId);
 				}
 			});
@@ -675,8 +683,11 @@ export default class NetworkManager {
 	}
 
 	_clearSession() {
-		document.cookie = 'tetches_player_id=;path=/;max-age=0';
-		document.cookie = 'tetches_session=;path=/;max-age=0';
+		// A partitioned cookie is only removed with matching attributes.
+		const attrs = identityCookieAttributes();
+		document.cookie = `tetches_player_id=;path=/;max-age=0${attrs}`;
+		document.cookie = `tetches_session=;path=/;max-age=0${attrs}`;
+		forgetEmbeddedIdentity();
 		this.state.gameId = null;
 		this.state.hasJoinedGame = false;
 		this.state.playerId = null;

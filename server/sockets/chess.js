@@ -219,8 +219,9 @@ function registerChessHandlers(socket, ctx) {
 				// still think it exists (last sync was stale). Re-broadcast
 				// so the user's board updates immediately, and tell them
 				// the piece is no longer available rather than the cryptic
-				// 'not found'.
-				broadcaster.broadcastGameUpdate({ forceFullUpdate: true });
+				// 'not found'. Only this client is behind, so only it gets
+				// the full state (a full broadcast cost everyone ~400KB).
+				broadcaster.emitFullStateTo(socket);
 				const msg = 'Piece no longer on the board (board was out of sync — refreshed)';
 				socket.emit('chessFailed', { message: msg, reason: 'piece_gone', pieceId });
 				logRejection(activityLog, world, player, null, targetPosition, 'piece_gone', msg);
@@ -291,7 +292,8 @@ function registerChessHandlers(socket, ctx) {
 					`Self-healing before failing the move.`
 				);
 				integrityService.runIslandIntegrityPass({ emitAnimation: false });
-				broadcaster.broadcastGameUpdate({ forceFullUpdate: true });
+				broadcaster.broadcastGameUpdate();
+				broadcaster.emitFullStateTo(socket);
 				const stillThere = world.chessPieces.find(p => p && p.id === pieceId);
 				const msg = stillThere
 					? 'Your piece had drifted off the board — its square has been restored. Please try again.'
@@ -327,7 +329,7 @@ function registerChessHandlers(socket, ctx) {
 				// proactively push the latest board so the user's next
 				// click is against the real state, not the cached one.
 				if (!destExists) {
-					broadcaster.broadcastGameUpdate({ forceFullUpdate: true });
+					broadcaster.emitFullStateTo(socket);
 				}
 				if (callback) callback({ success: false, error: msg, reason });
 				return;
@@ -356,7 +358,8 @@ function registerChessHandlers(socket, ctx) {
 						`${foreignChess.player}'s ${foreignChess.pieceType || '?'} — refusing.`
 					);
 					integrityService.runIslandIntegrityPass({ emitAnimation: false });
-					broadcaster.broadcastGameUpdate({ forceFullUpdate: true });
+					broadcaster.broadcastGameUpdate();
+					broadcaster.emitFullStateTo(socket);
 					const msg = 'That piece is no longer on that square — board refreshed.';
 					socket.emit('chessFailed', { message: msg, reason: 'desync_repaired' });
 					logRejection(activityLog, world, player, piece, targetPosition, 'desync_repaired', msg);

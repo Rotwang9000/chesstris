@@ -32,7 +32,7 @@ const Sessions = require('./world/Sessions');
 const Disconnects = require('./world/Disconnects');
 
 const { GameManager } = require('./game');
-const { createBroadcaster } = require('./net/broadcasts');
+const { createBroadcaster, protoRoomFor } = require('./net/broadcasts');
 const { createSpectatorRegistry } = require('./net/spectators');
 const { createIntegrityService } = require('./world/integrity');
 const { createHomeZoneDegradationService } = require('./world/homeZones');
@@ -470,6 +470,8 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 		getBundleVersion: app._getBundleVersion || (() => ''),
 	});
 	io.on('connection', socket => {
+		// Which kind of game_update this socket can take (piece deltas or not).
+		socket.join(protoRoomFor(socket));
 		metrics.setSocketCount(io.engine.clientsCount);
 		socket.on('disconnect', () => metrics.setSocketCount(io.engine.clientsCount));
 		handleConnection(socket);

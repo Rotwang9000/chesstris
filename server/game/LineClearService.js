@@ -214,16 +214,21 @@ function createLineClearService({ io, gameManager, broadcaster, integrityService
 			iterations++;
 		}
 
-		// Always run a final integrity pass after the cascade settles —
-		// even if no rows cleared — so a placement that creates a
-		// genuine orphan island still gets decayed, but only AFTER
-		// gravity has had a chance to put cells back. This is the order
-		// the user asked for: "the clearing due to not connected needs
-		// to happen after the clearing due to 8 together".
-		try {
-			integrityService.runIslandIntegrityPass({ emitAnimation: iterations > 0 });
-		} catch (integrityErr) {
-			console.warn('[LineClear] final integrity pass failed:', integrityErr.message);
+		// After a cascade that cleared lines, run the integrity pass —
+		// only AFTER gravity has had a chance to put cells back. This is
+		// the order the user asked for: "the clearing due to not
+		// connected needs to happen after the clearing due to 8
+		// together". With nothing cleared, a placement (validated as
+		// connected to its king) can't have orphaned anything; the rare
+		// edge case is picked up by the 10 s world maintenance pass.
+		// Running it after every placement was ~17% of server CPU under
+		// a 40-player load test.
+		if (iterations > 0) {
+			try {
+				integrityService.runIslandIntegrityPass({ emitAnimation: true });
+			} catch (integrityErr) {
+				console.warn('[LineClear] final integrity pass failed:', integrityErr.message);
+			}
 		}
 
 		if (iterations >= MAX_CASCADE_ITERATIONS) {
