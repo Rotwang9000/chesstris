@@ -5,6 +5,8 @@
  * tracking impressions and clicks, and managing the bidding system.
  */
 
+import { isPortal } from '../js/portal.js';
+
 // Sponsor cache to avoid excessive API calls. We DELIBERATELY use a
 // short cache (700 ms — long enough to share a sponsor across the
 // near-simultaneous calls a single placement triggers, short enough
@@ -38,6 +40,8 @@ const sponsorCache = {
  * @returns {Promise<Object|null>} Sponsor data or null if not available
  */
 export async function fetchNextSponsor() {
+	// Portals allow only their own ads.
+	if (isPortal()) return null;
 	// Check cache first
 	const cached = sponsorCache.get();
 	if (cached) {

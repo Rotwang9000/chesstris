@@ -2,6 +2,19 @@
 <html lang="en">
 <head>
 	<meta charset="UTF-8">
+	<script>
+		// Portal mode (see js/portal.js). Set before first paint so UI a
+		// portal forbids (our ads, logins, links out) never flashes up.
+		// Remembered for the tab, so a reload inside the frame keeps it.
+		(function () {
+			try {
+				var p = new URLSearchParams(location.search).get('portal');
+				if (p) sessionStorage.setItem('tetches_portal', p);
+				else p = sessionStorage.getItem('tetches_portal');
+				if (p === 'crazygames' || p === 'itch') document.documentElement.dataset.portal = p;
+			} catch (e) { /* storage blocked: query string only */ }
+		})();
+	</script>
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
 	<title>Tetches — Chess meets Tetris, live multiplayer</title>
 	<meta name="description" content="Tetches is a free, real-time multiplayer game that fuses chess and Tetris on a dynamically expanding board. Play instantly in your browser — no download, no sign-up.">
@@ -449,6 +462,14 @@
 		body:has(#tutorial-message) #player-bar-tab,
 		body:has(#tutorial-message) #unified-player-bar {
 			visibility: hidden;
+		}
+		/* Portal mode: portals allow only their own ads and logins, and no
+		   links out to a playable copy of the game. */
+		[data-portal] .advertise-link,
+		[data-portal] #sponsor-ad,
+		[data-portal] #sidebar-login,
+		[data-portal] div:has(> #welcome-login-link) {
+			display: none !important;
 		}
 	</style>
 </head>

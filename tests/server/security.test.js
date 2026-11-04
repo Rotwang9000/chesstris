@@ -47,9 +47,29 @@ describe('security middleware', () => {
 		const app = createApp({ projectRoot: process.cwd() });
 		const res = await request(app).get('/api/').expect(200);
 		expect(res.headers['x-content-type-options']).toBe('nosniff');
-		expect(res.headers['x-frame-options']).toBe('SAMEORIGIN');
 		expect(res.headers['strict-transport-security']).toBeDefined();
 		expect(res.headers['content-security-policy']).toBeDefined();
+	});
+
+	test('only our own pages and the game portals may frame the game', async () => {
+		const { createApp } = require('../../server/app');
+		const app = createApp({ projectRoot: process.cwd() });
+		const res = await request(app).get('/api/').expect(200);
+		const ancestors = res.headers['content-security-policy']
+			.split(';').map(d => d.trim()).find(d => d.startsWith('frame-ancestors'));
+		expect(ancestors.split(/\s+/).slice(1).sort()).toEqual([
+			"'self'",
+			'capacitor://*.crazygames.com',
+			'https://*.crazygames.com',
+			'https://*.hwcdn.net',
+			'https://*.itch.io',
+			'https://*.itch.zone',
+			'https://crazygames.com',
+			'https://itch.io',
+		]);
+		// X-Frame-Options can only say SAMEORIGIN, which would block the
+		// portals; frame-ancestors supersedes it.
+		expect(res.headers['x-frame-options']).toBeUndefined();
 	});
 
 	test('CORS allowlist accepts production origin', async () => {

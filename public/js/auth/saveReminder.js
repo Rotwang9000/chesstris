@@ -17,6 +17,7 @@
 
 import { isLoggedIn } from './kingdomKey.js';
 import { showLoginDialog } from './loginDialog.js';
+import { isPortal } from '../portal.js';
 
 // Give the browser time to actually unload before concluding "stayed".
 const STAYED_ON_PAGE_DELAY_MS = 1500;
@@ -37,7 +38,9 @@ export function markKingdomProgress() {
 
 /** Install the beforeunload listener (idempotent). */
 export function initSaveReminder() {
-	if (reminderArmed) return;
+	// Portals forbid external logins, and a "leave page?" prompt inside
+	// their frame is the last thing they want.
+	if (reminderArmed || isPortal()) return;
 	reminderArmed = true;
 
 	window.addEventListener('beforeunload', (event) => {

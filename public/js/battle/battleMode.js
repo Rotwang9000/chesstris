@@ -16,6 +16,7 @@
 
 import { getSocket, getPlayerId, getGameId, on as onNetworkEvent, ensureConnected } from '../utils/networkManager.js';
 import { showToastMessage } from '../showToastMessage.js';
+import { isPortal } from '../portal.js';
 
 const DIALOG_ID = 'tetches-battle-dialog';
 const CAMERA_FLY_DELAY_MS = 1200;  // let the battle board arrive first
@@ -656,14 +657,18 @@ function renderLobby(card, battle) {
 	card.appendChild(codeLine);
 
 	const copyRow = el('div', { display: 'flex', gap: '8px', justifyContent: 'center', marginBottom: '14px' });
-	const copyBtn = themedButton('📋 Copy invite link');
+	// On a portal, a link to tetches.com would send players off it
+	// (against portal rules); share the code, which works from the
+	// Battle button anywhere the game runs.
+	const portal = isPortal();
+	const copyBtn = themedButton(portal ? '📋 Copy battle code' : '📋 Copy invite link');
 	copyBtn.addEventListener('click', () => {
-		const link = inviteLinkFor(battle.code);
+		const link = portal ? battle.code : inviteLinkFor(battle.code);
 		try {
 			navigator.clipboard.writeText(link);
-			showToastMessage('Invite link copied', { variant: 'success' });
+			showToastMessage(portal ? 'Battle code copied' : 'Invite link copied', { variant: 'success' });
 		} catch (_e) {
-			window.prompt('Copy this invite link:', link);
+			window.prompt(portal ? 'Copy this battle code:' : 'Copy this invite link:', link);
 		}
 	});
 	copyRow.appendChild(copyBtn);
