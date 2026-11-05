@@ -80,6 +80,7 @@ const SIMPLE_FORWARD_EVENTS = Object.freeze([
 	'battle_lobby_update',
 	'battle_started',
 	'battle_finished',
+	'battle_seat_out',
 	'battle_cancelled',
 	// World-wide announcement toasts (e.g. battle winners).
 	'server_toast',

@@ -400,6 +400,100 @@ describe('BattleManager', () => {
 		expect(world.chessPieces.some(p => String(p.player).startsWith('battle-'))).toBe(false);
 	});
 
+	// ── End-of-battle results ──────────────────────────────────────────
+
+	function removeKing(seatId) {
+		const world = World.getWorld();
+		world.chessPieces = world.chessPieces.filter(
+			p => !(String(p.player) === seatId && String(p.type).toUpperCase() === 'KING')
+		);
+	}
+
+	test('battle_finished carries ranked results with per-seat stats', () => {
+		const emitted = [];
+		const spy = jest.spyOn(Sessions, 'emitToPlayerSockets')
+			.mockImplementation((playerId, event, payload) => emitted.push({ playerId, event, payload }));
+		try {
+			const code = createAndJoin();
+			const started = manager.startBattle({ battleId: code, playerId: 'host1' });
+			const [seat0, seat1] = started.battle.seats.map(s => s.seatId);
+			World.getPlayer(seat0).moveCount = 14;
+			World.getPlayer(seat0).captureCount = 3;
+
+			manager.leaveBattle({ playerId: 'guest1' });
+			manager.tick();
+
+			const finished = emitted.filter(e => e.event === 'battle_finished');
+			// Both humans hear it, with the same results.
+			expect(finished.map(e => e.playerId).sort()).toEqual(['guest1', 'host1']);
+			const { results } = finished[0].payload;
+			expect(results.durationMs).toBeGreaterThanOrEqual(0);
+			expect(results.standings.map(r => [r.seatId, r.place])).toEqual([[seat0, 1], [seat1, 2]]);
+			expect(results.standings[0]).toMatchObject({ alive: true, moves: 14, captures: 3 });
+			expect(results.standings[0].piecesLeft).toBeGreaterThan(0);
+			expect(results.standings[1]).toMatchObject({ alive: false, forfeited: true, knockedOutBy: null });
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	test('standings rank knocked-out seats by how long they lasted', () => {
+		const emitted = [];
+		const spy = jest.spyOn(Sessions, 'emitToPlayerSockets')
+			.mockImplementation((playerId, event, payload) => emitted.push({ playerId, event, payload }));
+		try {
+			const created = manager.createBattle({ hostId: 'host1', hostName: 'Hosty', seatCount: 3 });
+			manager.joinBattle({ code: created.battle.code, playerId: 'guest1', playerName: 'Guesty' });
+			const started = manager.startBattle({ battleId: created.battle.id, playerId: 'host1' });
+			const [hostSeat, guestSeat, botSeat] = started.battle.seats.map(s => s.seatId);
+
+			// The bot falls first, then the host — while the guest fights on.
+			const world = World.getWorld();
+			world.kingPrison = [{ originalOwner: botSeat, capturedBy: guestSeat, capturedAt: Date.now() }];
+			removeKing(botSeat);
+			manager.tick({ now: Date.now() });
+			// Bots get no card.
+			expect(emitted.filter(e => e.event === 'battle_seat_out')).toHaveLength(0);
+
+			removeKing(hostSeat);
+			manager.tick({ now: Date.now() + 1000 });
+			// Two seats down to one: the battle finishes instead.
+			const finished = emitted.find(e => e.event === 'battle_finished');
+			expect(finished).toBeTruthy();
+			const places = Object.fromEntries(finished.payload.results.standings.map(r => [r.seatId, r]));
+			expect(places[guestSeat].place).toBe(1);
+			// Host lasted longer than the bot, so ranks above it.
+			expect(places[hostSeat].place).toBe(2);
+			expect(places[botSeat]).toMatchObject({ place: 3, knockedOutBy: 'Guesty' });
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	test('battle_seat_out fires for a human out while two others fight on', () => {
+		const emitted = [];
+		const spy = jest.spyOn(Sessions, 'emitToPlayerSockets')
+			.mockImplementation((playerId, event, payload) => emitted.push({ playerId, event, payload }));
+		try {
+			const created = manager.createBattle({ hostId: 'host1', hostName: 'Hosty', seatCount: 3 });
+			const started = manager.startBattle({ battleId: created.battle.id, playerId: 'host1' });
+			const hostSeat = started.battle.seats[0].seatId;
+
+			removeKing(hostSeat);
+			manager.tick();
+			manager.tick(); // already stamped — no second card
+
+			const out = emitted.filter(e => e.event === 'battle_seat_out');
+			expect(out).toHaveLength(1);
+			expect(out[0].playerId).toBe('host1');
+			const mine = out[0].payload.results.standings.find(r => r.seatId === hostSeat);
+			expect(mine).toMatchObject({ alive: false, place: 3 });
+			expect(manager.getBattle(created.battle.id).status).toBe('active');
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
 	test('lobby host leave cancels; guest leave frees the seat', () => {
 		const code = createAndJoin();
 		expect(manager.leaveBattle({ playerId: 'guest1' }).success).toBe(true);
@@ -668,5 +762,29 @@ describe('BattleManager', () => {
 		manager.tick({ now: t0 + 95000 });
 		expect(World.getPlayer(botSeat).minMoveInterval).toBe(18000);
 		expect(battle.paceSamples.length).toBeGreaterThan(1);
+	});
+});
+
+// ── Capture tally ───────────────────────────────────────────────────────────
+
+describe('capture tally', () => {
+	const pieces = require('../../server/game/pieces');
+
+	test('removePiece counts a capture for the captor only', () => {
+		World.resetWorld();
+		const world = World.getWorld();
+		world.players.a = { id: 'a', name: 'A' };
+		world.players.b = { id: 'b', name: 'B' };
+		world.chessPieces.push(
+			{ id: 'p1', player: 'b', type: 'PAWN', position: { x: 1, z: 1 } },
+			{ id: 'p2', player: 'b', type: 'PAWN', position: { x: 2, z: 1 } },
+		);
+		pieces.removePiece(world, 'p1', {
+			reason: pieces.REMOVAL_REASONS.CAPTURED, capturedBy: { playerId: 'a' }, silent: true,
+		});
+		// Not a capture: no tally.
+		pieces.removePiece(world, 'p2', { reason: pieces.REMOVAL_REASONS.NO_SUPPORTING_CELL, silent: true });
+		expect(world.players.a.captureCount).toBe(1);
+		expect(world.players.b.captureCount).toBeUndefined();
 	});
 });
