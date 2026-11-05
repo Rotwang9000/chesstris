@@ -194,6 +194,14 @@ function removePiece(world, pieceOrId, ctx = {}) {
 	stripChessMarker(world, piece);
 	world.chessPieces.splice(idx, 1);
 
+	// Per-player capture tally (battle results). Every capture path —
+	// human, bot, king capture — funnels through here.
+	const captorId = ctx.capturedBy?.playerId;
+	if (reason === REMOVAL_REASONS.CAPTURED && captorId && world.players?.[captorId]) {
+		const captor = world.players[captorId];
+		captor.captureCount = (Number(captor.captureCount) || 0) + 1;
+	}
+
 	if (!ctx.silent && ctx.activityLog) {
 		try {
 			emitRemovalEvent(world, ctx.activityLog, piece, { ...ctx, reason });

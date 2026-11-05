@@ -17,6 +17,8 @@
 import { getSocket, getPlayerId, getGameId, on as onNetworkEvent, ensureConnected } from '../utils/networkManager.js';
 import { showToastMessage } from '../showToastMessage.js';
 import { isPortal } from '../portal.js';
+import { playSound } from '../audio/soundManager.js';
+import { showBattleResults, closeBattleResults } from './battleResults.js';
 
 const DIALOG_ID = 'tetches-battle-dialog';
 const CAMERA_FLY_DELAY_MS = 1200;  // let the battle board arrive first
@@ -37,6 +39,9 @@ let savedRealPlayerId = null;
 let battleModeWired = false;
 /** Latest `publicState` list of every battle this player holds a seat in. */
 let myBattles = [];
+// Battles this player was in that have finished (their world-wide
+// winner toast is redundant here).
+const finishedBattleIds = new Set();
 
 /** The battle code carried in the page URL (invite link), or null. */
 export function inviteCodeFromUrl() {
@@ -191,6 +196,73 @@ function switchViewTo(battle) {
 	}
 	adoptSeat(battle, { announce: false });
 	showToastMessage(`⚔ Switched to battle ${battle.code}`, { duration: 3000 });
+}
+
+/**
+ * After a battle: fly to the player's kingdom, or (battle-only players,
+ * who have none) bring the welcome screen back.
+ */
+function goHomeAfterBattle(realId) {
+	if (gameStateRef?.activeBattle) releaseSeat({ silent: true });
+	if (hasEnteredWorld()) {
+		if (realId) flyToSeat(realId);
+	} else {
+		returnToWelcomeIfHomeless();
+	}
+}
+
+/**
+ * Same table again: a new battle with the same size and bot pace.
+ * Against bots only it starts straight away; with friends it opens the
+ * new lobby so the code can be shared again.
+ */
+async function rematch(battle) {
+	const realId = String(getPlayerId() || '');
+	const friends = (battle.seats || []).filter(s => !s.isAi && String(s.controlledBy) !== realId);
+	const seatCount = battle.seatCount || (battle.seats || []).length || 2;
+	const created = await createBattle(seatCount, battle.botDifficulty || 'auto');
+	if (!created.success) {
+		showToastMessage(created.error || 'Could not start a rematch', { variant: 'alert' });
+		return;
+	}
+	await fetchBattleState();
+	closeBattleResults();
+	if (friends.length > 0) {
+		await showBattleDialog();
+		showToastMessage('New battle ready: share the code with your friends', { duration: 6000 });
+		return;
+	}
+	const started = await startBattle(created.battle.id);
+	if (!started.success) {
+		showToastMessage(started.error || 'Could not start the rematch', { variant: 'alert' });
+		await showBattleDialog();
+		return;
+	}
+	// The battle_started push adopts the seat too; adoptSeat is idempotent.
+	if (started.battle?.status === 'active') adoptSeat(started.battle);
+}
+
+/** The end-of-battle card for the battle being watched. */
+function showEndScene(battle, results, seat, { realId } = {}) {
+	const { outcome } = showBattleResults({
+		battle,
+		results,
+		mySeatId: seat?.seatId,
+		actions: [
+			{ label: '⚔ Rematch', primary: true, onClick: () => rematch(battle) },
+			{
+				label: hasEnteredWorld() ? '🏰 Back to my kingdom' : 'Done',
+				onClick: () => {
+					closeBattleResults();
+					goHomeAfterBattle(realId);
+				},
+			},
+		],
+	});
+	// Defeat already played the king's fall with the capture.
+	if (outcome === 'victory') {
+		try { playSound('promotion'); } catch (_e) { /* sound is best-effort */ }
+	}
 }
 
 // ── Socket plumbing ─────────────────────────────────────────────────────────
@@ -828,22 +900,54 @@ export function initBattleMode(gameState) {
 	onNetworkEvent('battle_finished', (data) => {
 		const battle = data?.battle;
 		if (!battle) return;
+		finishedBattleIds.add(battle.id);
 		myBattles = myBattles.filter(b => b.id !== battle.id);
 		if (gameStateRef) gameStateRef.myBattles = myBattles;
 		const seat = mySeat(battle);
 		const won = !!(seat && battle.winnerSeatId === seat.seatId);
-		showToastMessage(
-			won
-				? `👑 Victory! You won battle ${battle.code}!`
-				: `⚔ Battle ${battle.code} over — you were defeated.`,
-			{ variant: won ? 'success' : 'alert', duration: 8000 }
-		);
-		// Only the battle being WATCHED sends the camera home — a
-		// background battle ending must not interrupt the current fight.
-		if (gameStateRef?.activeBattle?.id === battle.id) {
-			releaseSeat();
-			setTimeout(returnToWelcomeIfHomeless, 2500);
+		// A background battle ending must not interrupt the current
+		// fight (or the world) — just a toast.
+		if (gameStateRef?.activeBattle?.id !== battle.id) {
+			showToastMessage(
+				won
+					? `👑 Victory! You won battle ${battle.code}!`
+					: `⚔ Battle ${battle.code} over — you were defeated.`,
+				{ variant: won ? 'success' : 'alert', duration: 8000 }
+			);
+			return;
 		}
+		// The watched battle: identity goes home now, but the camera
+		// stays on the arena behind the results card until the player
+		// picks what's next.
+		const realId = savedRealPlayerId || getPlayerId();
+		releaseSeat({ silent: true });
+		showEndScene(battle, data.results, seat, { realId });
+	});
+
+	// Knocked out of a 3-4 seat battle that carries on: the results so
+	// far, with the choice to keep watching or go.
+	onNetworkEvent('battle_seat_out', (data) => {
+		const battle = data?.battle;
+		if (!battle || gameStateRef?.activeBattle?.id !== battle.id) return;
+		const seat = mySeat(battle);
+		try { playSound('kingFall'); } catch (_e) { /* sound is best-effort */ }
+		showBattleResults({
+			battle,
+			results: data.results,
+			mySeatId: seat?.seatId,
+			mode: 'out',
+			actions: [
+				{ label: '👁 Keep watching', primary: true, onClick: () => closeBattleResults() },
+				{
+					label: hasEnteredWorld() ? '🏰 Back to my kingdom' : 'Leave battle',
+					onClick: async () => {
+						closeBattleResults();
+						await leaveBattle(battle.id);
+						goHomeAfterBattle(savedRealPlayerId || getPlayerId());
+					},
+				},
+			],
+		});
 	});
 
 	onNetworkEvent('battle_cancelled', (data) => {
@@ -873,6 +977,8 @@ export function initBattleMode(gameState) {
 
 	// World-wide announcements (battle winners etc.).
 	onNetworkEvent('server_toast', (data) => {
+		// The battle's own players already have its results card.
+		if (data?.battleId && finishedBattleIds.has(data.battleId)) return;
 		if (data?.message) {
 			showToastMessage(data.message, {
 				variant: data.tone === 'success' ? 'success' : 'info',

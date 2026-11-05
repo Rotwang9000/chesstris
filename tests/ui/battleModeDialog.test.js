@@ -31,6 +31,10 @@ jest.mock('../../public/js/showToastMessage.js', () => ({
 	showToastMessage: jest.fn(),
 }));
 
+jest.mock('../../public/js/audio/soundManager.js', () => ({
+	playSound: jest.fn(),
+}));
+
 function emitServerEvent(eventType, payload) {
 	for (const handler of mockListeners[eventType] || []) handler(payload);
 }
@@ -166,37 +170,134 @@ describe('battleMode client', () => {
 		expect(window.gameCore.startBattleSession).toHaveBeenCalledTimes(1);
 	});
 
-	test('battle_finished returns a battle-only player to the welcome overview', () => {
-		jest.useFakeTimers();
+	function finishedResults(winnerSeatId) {
+		const loser = winnerSeatId === 'battle-code99-s0' ? 'battle-code99-s1' : 'battle-code99-s0';
+		const name = id => (id === 'battle-code99-s0' ? 'Hosty' : 'Bot 2');
+		return {
+			durationMs: 272000,
+			standings: [
+				{ seatId: winnerSeatId, name: name(winnerSeatId), isAi: winnerSeatId.endsWith('s1'),
+					alive: true, moves: 31, captures: 6, piecesLeft: 12, place: 1 },
+				{ seatId: loser, name: name(loser), isAi: loser.endsWith('s1'), alive: false,
+					knockedOutBy: name(winnerSeatId), moves: 27, captures: 2, piecesLeft: 0, place: 2 },
+			],
+		};
+	}
+
+	const resultsCard = () => document.getElementById('tetches-battle-results');
+	const cardButton = (text) => [...resultsCard().querySelectorAll('button')]
+		.find(btn => btn.textContent.includes(text));
+
+	test('battle_finished shows the victory card with standings; Done returns a battle-only player to the welcome overview', () => {
 		emitServerEvent('battle_started', { battle: activeBattle() });
 		emitServerEvent('battle_finished', {
 			battle: activeBattle({ status: 'finished', winnerSeatId: 'battle-code99-s0' }),
+			results: finishedResults('battle-code99-s0'),
 		});
 
-		// Identity restored to the real player…
+		// Identity restored to the real player straight away…
 		expect(gameState.activeBattle).toBeNull();
 		expect(gameState.localPlayerId).toBe(mockPlayerId);
-		expect(showToastMessage).toHaveBeenCalledWith(
-			expect.stringContaining('Victory'), expect.anything()
-		);
-		// …and (not having entered the world) the welcome screen returns.
-		jest.advanceTimersByTime(3000);
+		// …and the end scene is up: headline, duration, standings.
+		const card = resultsCard();
+		expect(card).toBeTruthy();
+		expect(card.dataset.outcome).toBe('victory');
+		expect(card.textContent).toContain('Victory!');
+		expect(card.textContent).toContain('4m 32s');
+		expect(card.textContent).toContain('Hosty (you)');
+		expect(card.textContent).toContain('Out \u2014 Hosty');
+		// The welcome screen waits for the player's choice.
+		expect(window.gameCore.showWelcomeOverview).not.toHaveBeenCalled();
+
+		cardButton('Done').click();
+		expect(resultsCard()).toBeNull();
 		expect(window.gameCore.showWelcomeOverview).toHaveBeenCalled();
 		// No flight to a kingdom that does not exist.
 		expect(window.gameCore.flyToPlayerKing).not.toHaveBeenCalledWith(mockPlayerId);
 	});
 
-	test('battle_finished flies a world player home instead of showing the modal', () => {
+	test('battle_finished defeat: a world player flies home from the card', () => {
 		jest.useFakeTimers();
 		window.gameCore.isWorldEntered.mockReturnValue(true);
 		emitServerEvent('battle_started', { battle: activeBattle() });
 		emitServerEvent('battle_finished', {
 			battle: activeBattle({ status: 'finished', winnerSeatId: 'battle-code99-s1' }),
+			results: finishedResults('battle-code99-s1'),
 		});
 
 		expect(gameState.localPlayerId).toBe(mockPlayerId);
+		expect(resultsCard().dataset.outcome).toBe('defeat');
+		expect(resultsCard().textContent).toContain('You placed 2nd');
+		window.gameCore.flyToPlayerKing.mockClear();
+
+		cardButton('Back to my kingdom').click();
 		jest.advanceTimersByTime(5000);
+		expect(window.gameCore.flyToPlayerKing).toHaveBeenCalledWith(mockPlayerId);
 		expect(window.gameCore.showWelcomeOverview).not.toHaveBeenCalled();
+	});
+
+	test('a background battle finishing only toasts', () => {
+		emitServerEvent('battle_finished', {
+			battle: activeBattle({ status: 'finished', winnerSeatId: 'battle-code99-s0' }),
+			results: finishedResults('battle-code99-s0'),
+		});
+		expect(resultsCard()).toBeNull();
+		expect(showToastMessage).toHaveBeenCalledWith(
+			expect.stringContaining('Victory'), expect.anything()
+		);
+	});
+
+	test('rematch against bots creates and starts a same-size battle', async () => {
+		emitServerEvent('battle_started', { battle: activeBattle() });
+		emitServerEvent('battle_finished', {
+			battle: activeBattle({ status: 'finished', winnerSeatId: 'battle-code99-s0', botDifficulty: 'hard' }),
+			results: finishedResults('battle-code99-s0'),
+		});
+		const rematchBattle = activeBattle({ id: 'NEXT01', code: 'NEXT01' });
+		socketResponses.battle_create = { success: true, battle: lobbyBattle({ id: 'NEXT01', code: 'NEXT01' }) };
+		socketResponses.battle_start = { success: true, battle: rematchBattle };
+
+		cardButton('Rematch').click();
+		await new Promise(resolve => setTimeout(resolve, 0));
+
+		expect(mockSocket.emit).toHaveBeenCalledWith(
+			'battle_create', { seatCount: 2, botDifficulty: 'hard' }, expect.any(Function)
+		);
+		expect(mockSocket.emit).toHaveBeenCalledWith(
+			'battle_start', { battleId: 'NEXT01' }, expect.any(Function)
+		);
+		expect(resultsCard()).toBeNull();
+		expect(gameState.activeBattle?.id).toBe('NEXT01');
+	});
+
+	test('battle_seat_out shows the knocked-out card; Keep watching stays in the arena', () => {
+		const three = activeBattle({
+			seatCount: 3,
+			seats: [
+				...activeBattle().seats,
+				{ seatId: 'battle-code99-s2', index: 2, isAi: true, name: 'Bot 3', controlledBy: null },
+			],
+		});
+		emitServerEvent('battle_started', { battle: three });
+		emitServerEvent('battle_seat_out', {
+			battle: three,
+			results: {
+				durationMs: 90000,
+				standings: [
+					{ seatId: 'battle-code99-s1', name: 'Bot 2', isAi: true, alive: true, place: 1 },
+					{ seatId: 'battle-code99-s2', name: 'Bot 3', isAi: true, alive: true, place: 2 },
+					{ seatId: 'battle-code99-s0', name: 'Hosty', alive: false, knockedOutBy: 'Bot 3', place: 3 },
+				],
+			},
+		});
+
+		expect(resultsCard().dataset.outcome).toBe('out');
+		expect(resultsCard().textContent).toContain('Your king fell by Bot 3');
+		expect(resultsCard().textContent).toContain('You placed 3rd');
+
+		cardButton('Keep watching').click();
+		expect(resultsCard()).toBeNull();
+		expect(gameState.activeBattle?.id).toBe('CODE99');
 	});
 
 	test('battle_cancelled while homeless returns to the welcome overview', () => {

@@ -547,6 +547,7 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 			if (record && !record.eliminated) {
 				record.eliminated = true;
 				record.eliminatedAt = Date.now();
+				seat.forfeited = true;
 				World.markDirty();
 				console.log(`[Battle] ${playerId} forfeited seat ${seat.seatId} in ${battle.code}`);
 			}
@@ -603,13 +604,83 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 		);
 	}
 
+	/**
+	 * Stamp `outAt` on every seat that has just died, so the standings
+	 * can rank seats by how long they lasted. Returns the newly-out seats.
+	 */
+	function stampKnockouts(battle, now) {
+		const out = [];
+		for (const seat of battle.seats) {
+			if (seat.outAt || seatIsAlive(seat)) continue;
+			const record = World.getPlayer(seat.seatId);
+			seat.outAt = Number(record?.eliminatedAt) || now;
+			out.push(seat);
+		}
+		return out;
+	}
+
+	/** Name of whoever captured this seat's king, if anyone did. */
+	function knockedOutBy(battle, seat) {
+		const prison = World.getWorld().kingPrison;
+		if (!Array.isArray(prison)) return null;
+		const entry = prison.slice().reverse()
+			.find(e => e && String(e.originalOwner) === String(seat.seatId));
+		if (!entry) return null;
+		const captor = battle.seats.find(s => String(s.seatId) === String(entry.capturedBy));
+		return captor ? captor.name : (World.getPlayer(entry.capturedBy)?.name || null);
+	}
+
+	/**
+	 * Standings for the end-of-battle scene: survivors first (most pieces
+	 * left), then the knocked-out seats, latest out first.
+	 */
+	function battleResults(battle, now = Date.now()) {
+		const world = World.getWorld();
+		const piecesLeft = {};
+		for (const p of world.chessPieces || []) {
+			if (p) piecesLeft[p.player] = (piecesLeft[p.player] || 0) + 1;
+		}
+		const rows = battle.seats.map(seat => {
+			const record = World.getPlayer(seat.seatId);
+			const alive = !seat.outAt && seatIsAlive(seat);
+			return {
+				seatId: seat.seatId,
+				name: seat.name,
+				isAi: !!seat.isAi,
+				controlledBy: seat.isAi ? null : (seat.controlledBy || null),
+				alive,
+				outAt: seat.outAt || null,
+				forfeited: !!seat.forfeited,
+				knockedOutBy: alive || seat.forfeited ? null : knockedOutBy(battle, seat),
+				moves: Number(record?.moveCount) || 0,
+				captures: Number(record?.captureCount) || 0,
+				piecesLeft: piecesLeft[seat.seatId] || 0,
+			};
+		});
+		rows.sort((a, b) => {
+			if (a.seatId === battle.winnerSeatId) return -1;
+			if (b.seatId === battle.winnerSeatId) return 1;
+			if (a.alive !== b.alive) return a.alive ? -1 : 1;
+			if (a.alive) return b.piecesLeft - a.piecesLeft;
+			return (b.outAt || 0) - (a.outAt || 0);
+		});
+		rows.forEach((row, i) => { row.place = i + 1; });
+		const startedAt = battle.startedAt || battle.createdAt;
+		return {
+			durationMs: Math.max(0, (battle.finishedAt || now) - startedAt),
+			standings: rows,
+		};
+	}
+
 	function finishBattle(battle, { reason }) {
+		const now = Date.now();
+		stampKnockouts(battle, now);
 		const alive = battle.seats.filter(seatIsAlive);
 		battle.status = 'finished';
-		battle.finishedAt = Date.now();
+		battle.finishedAt = now;
 		battle.winnerSeatId = alive.length === 1 ? alive[0].seatId : null;
 
-		const payload = { battle: publicState(battle), reason };
+		const payload = { battle: publicState(battle), reason, results: battleResults(battle, now) };
 		emitToSeatHumans(battle, 'battle_finished', payload);
 		clearAllSeatStamps(battle);
 
@@ -621,6 +692,8 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 					// World-wide toast: never include the invite code.
 					message: `⚔ ${winnerSeat.name} won a battle!`,
 					tone: 'success',
+					// Lets the battle's own players skip it (they have the results card).
+					battleId: battle.id,
 				});
 			} catch (_e) { /* best-effort */ }
 		}
@@ -683,6 +756,17 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 
 			if (battle.status === 'active') {
 				const alive = battle.seats.filter(seatIsAlive);
+				if (alive.length > 1) {
+					// Knocked out while the fight goes on (3-4 seat
+					// battles): tell that human where they placed.
+					for (const seat of stampKnockouts(battle, now)) {
+						if (seat.isAi || seat.forfeited || !seat.controlledBy) continue;
+						Sessions.emitToPlayerSockets(seat.controlledBy, 'battle_seat_out', {
+							battle: publicState(battle),
+							results: battleResults(battle, now),
+						});
+					}
+				}
 				if (alive.length <= 1) {
 					finishBattle(battle, { reason: 'elimination' });
 				} else if (now - (battle.startedAt || battle.createdAt) > ACTIVE_TIMEOUT_MS) {

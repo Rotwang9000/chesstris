@@ -147,6 +147,7 @@ function buildSnapshot() {
 			lastChessMoveAt: p.lastChessMoveAt || 0,
 			lastActiveAt: p.lastActiveAt || 0,
 			moveCount: Number.isFinite(p.moveCount) ? p.moveCount : 0,
+			captureCount: Number.isFinite(p.captureCount) ? p.captureCount : 0,
 			tetrominoBag: Array.isArray(p.tetrominoBag) ? p.tetrominoBag : [],
 			availableTetrominos: Array.isArray(p.availableTetrominos) ? p.availableTetrominos : [],
 			difficulty: p.difficulty || null,
