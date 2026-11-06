@@ -19,12 +19,20 @@ import { showToastMessage } from '../showToastMessage.js';
 import { isPortal } from '../portal.js';
 import { playSound } from '../audio/soundManager.js';
 import { showBattleResults, closeBattleResults } from './battleResults.js';
+import { withClockOffset } from './battleRules.js';
+import { startSeaOverlay, stopSeaOverlay } from './seaOverlay.js';
 
 const DIALOG_ID = 'tetches-battle-dialog';
 const CAMERA_FLY_DELAY_MS = 1200;  // let the battle board arrive first
 const CAMERA_FLY_RETRY_MS = 900;   // board updates land asynchronously
 const CAMERA_FLY_MAX_TRIES = 6;
 const BATTLE_CODE_PATTERN = /^[A-Za-z0-9]{4,8}$/;
+
+/** How a battle ends: the sea closes in, or fight to the last king. */
+const MODE_OPTIONS = [
+	{ value: 'quick', label: 'Quick: the sea rises (~7 min)' },
+	{ value: 'classic', label: 'Classic: no time limit' },
+];
 
 /** Bot difficulty choices offered at battle creation. */
 const BOT_DIFFICULTY_OPTIONS = [
@@ -50,6 +58,18 @@ export function inviteCodeFromUrl() {
 		return (code && BATTLE_CODE_PATTERN.test(code)) ? code.toUpperCase() : null;
 	} catch (_e) {
 		return null;
+	}
+}
+
+/**
+ * Battle-first entry (`?play=battle`, used by the "Tetches: Battle"
+ * portal page): the welcome screen leads with battles, not the world.
+ */
+export function isBattleFirstEntry() {
+	try {
+		return new URLSearchParams(window.location.search).get('play') === 'battle';
+	} catch (_e) {
+		return false;
 	}
 }
 
@@ -141,6 +161,8 @@ function adoptSeat(battle, { announce = true } = {}) {
 		code: battle.code,
 		centre: battle.centre,
 		playRadius: battle.playRadius,
+		mode: battle.mode || 'classic',
+		sea: withClockOffset(battle.sea),
 	};
 	gameStateRef.localPlayerId = seat.seatId;
 	gameStateRef.myPlayerId = seat.seatId;
@@ -159,8 +181,13 @@ function adoptSeat(battle, { announce = true } = {}) {
 	try { window.gameCore?.startBattleSession?.(); }
 	catch (err) { console.warn('startBattleSession failed:', err); }
 	syncBattleUrl(battle.code);
+	if (battle.sea) startSeaOverlay();
+	else stopSeaOverlay();
 	if (announce) {
-		showToastMessage(`⚔ Battle ${battle.code} — fight!`, { variant: 'success', duration: 5000 });
+		showToastMessage(battle.sea
+			? '⚔ Fight! The sea rises soon: keep your king off the flashing cells.'
+			: `⚔ Battle ${battle.code} — fight!`,
+		{ variant: 'success', duration: battle.sea ? 7000 : 5000 });
 	}
 	flyToSeat(seat.seatId);
 }
@@ -170,6 +197,7 @@ function releaseSeat({ silent = false } = {}) {
 	if (!gameStateRef) return;
 	gameStateRef.activeBattle = null;
 	gameStateRef.dealtPieces = null;
+	stopSeaOverlay();
 	syncBattleUrl(null);
 	emitFocus(null);
 	if (savedRealPlayerId) {
@@ -220,7 +248,7 @@ async function rematch(battle) {
 	const realId = String(getPlayerId() || '');
 	const friends = (battle.seats || []).filter(s => !s.isAi && String(s.controlledBy) !== realId);
 	const seatCount = battle.seatCount || (battle.seats || []).length || 2;
-	const created = await createBattle(seatCount, battle.botDifficulty || 'auto');
+	const created = await createBattle(seatCount, battle.botDifficulty || 'auto', battle.mode || 'quick');
 	if (!created.success) {
 		showToastMessage(created.error || 'Could not start a rematch', { variant: 'alert' });
 		return;
@@ -287,12 +315,22 @@ function emitBattle(event, data = {}) {
 	});
 }
 
-export function createBattle(seatCount, botDifficulty = 'auto') {
-	return emitBattle('battle_create', { seatCount, botDifficulty });
+export function createBattle(seatCount, botDifficulty = 'auto', mode = 'quick') {
+	return emitBattle('battle_create', { seatCount, botDifficulty, mode });
 }
 
 export function joinBattle(code) {
 	return emitBattle('battle_join', { code });
+}
+
+/** Pair with whoever else is looking (a bot steps in after a short wait). */
+export function quickMatch() {
+	return emitBattle('battle_quickmatch');
+}
+
+/** How many players are looking for / playing quick battles right now. */
+export function quickMatchInfo() {
+	return emitBattle('battle_quickmatch_info');
 }
 
 export function startBattle(battleId = null) {
@@ -342,6 +380,7 @@ function inviteLinkFor(code) {
 
 function closeBattleDialog() {
 	stopLobbyPoll();
+	stopMatchCountdown();
 	const existing = document.getElementById(DIALOG_ID);
 	if (existing) {
 		try { document.body.removeChild(existing); } catch (_e) { /* gone */ }
@@ -462,6 +501,7 @@ export async function showBattleDialog(options = {}) {
 }
 
 function renderDialogContent(card, battle, options = {}) {
+	stopMatchCountdown();
 	card.innerHTML = '';
 	delete card.dataset.lobbyCode;
 
@@ -595,8 +635,46 @@ function orDivider() {
 }
 
 function renderCreateJoin(card, options = {}) {
+	// ── Quick match ──────────────────────────────────────────────
+	card.appendChild(sectionLabel('PLAY SOMEONE NOW'));
+	const matchBtn = themedButton('⚡ Quick match', { primary: true });
+	matchBtn.style.width = '100%';
+	matchBtn.style.fontSize = '17px';
+	matchBtn.addEventListener('click', async () => {
+		matchBtn.disabled = true;
+		matchBtn.textContent = 'Finding a game…';
+		const result = await quickMatch();
+		matchBtn.disabled = false;
+		matchBtn.textContent = '⚡ Quick match';
+		if (!result.success) {
+			showToastMessage(result.error || 'Could not find a game', { variant: 'alert' });
+			return;
+		}
+		await fetchBattleState();
+		if (result.battle?.status === 'active') {
+			closeBattleDialog();
+			adoptSeat(result.battle);
+		} else {
+			renderDialogContent(card, result.battle);
+		}
+	});
+	card.appendChild(matchBtn);
+	const matchInfo = el('div', { fontSize: '11px', color: '#998', marginTop: '6px', marginBottom: '4px' },
+		'1 v 1 against another player. If nobody turns up in 20 seconds, a bot takes the seat.');
+	card.appendChild(matchInfo);
+	quickMatchInfo().then((info) => {
+		if (!info?.success) return;
+		const others = info.looking > 0
+			? `${info.looking} player${info.looking === 1 ? '' : 's'} looking now`
+			: 'Nobody else looking right now';
+		const playing = info.playing > 0 ? ` · ${info.playing} in battles` : '';
+		matchInfo.textContent = `${others}${playing}. A bot steps in after ${Math.round((info.waitMs || 20000) / 1000)}s.`;
+	}).catch(() => { /* the default line stands */ });
+
+	card.appendChild(orDivider());
+
 	const help = el('p', { margin: '0 0 16px 0', fontSize: '12px', color: '#ccc', lineHeight: '1.5' },
-		'A private arena for 2-4 players, far away from the shared world. Bots fill any seat a friend doesn\u2019t take.');
+		'Or set up a private arena for 2-4 players. Bots fill any seat a friend doesn\u2019t take.');
 	card.appendChild(help);
 
 	// ── Host a battle ────────────────────────────────────────────
@@ -628,12 +706,22 @@ function renderCreateJoin(card, options = {}) {
 	createRow.appendChild(diffSelect);
 	card.appendChild(createRow);
 
+	const modeSelect = el('select', { ...selectStyles, width: '100%', marginTop: '8px', boxSizing: 'border-box' });
+	for (const { value, label } of MODE_OPTIONS) {
+		const opt = document.createElement('option');
+		opt.value = value;
+		opt.textContent = label;
+		modeSelect.appendChild(opt);
+	}
+	modeSelect.title = 'Quick: the sea sweeps round the arena and swallows it; the last king above water wins.';
+	card.appendChild(modeSelect);
+
 	const createBtn = themedButton('Create battle', { primary: true });
 	createBtn.style.width = '100%';
 	createBtn.style.marginTop = '8px';
 	createBtn.addEventListener('click', async () => {
 		createBtn.disabled = true;
-		const result = await createBattle(Number(seatSelect.value), diffSelect.value);
+		const result = await createBattle(Number(seatSelect.value), diffSelect.value, modeSelect.value);
 		createBtn.disabled = false;
 		if (result.success) {
 			await fetchBattleState();
@@ -700,7 +788,65 @@ function renderCreateJoin(card, options = {}) {
 	if (options.prefillCode) codeInput.focus();
 }
 
+// ── Quick match: waiting for an opponent ────────────────────────────────────
+
+let matchCountdownTimer = null;
+
+function stopMatchCountdown() {
+	if (matchCountdownTimer) {
+		clearInterval(matchCountdownTimer);
+		matchCountdownTimer = null;
+	}
+}
+
+function renderMatchmaking(card, battle) {
+	card.appendChild(sectionLabel('QUICK MATCH'));
+	card.appendChild(el('div', { fontSize: '20px', textAlign: 'center', margin: '10px 0 6px' },
+		'Looking for an opponent…'));
+	const countdown = el('div', { fontSize: '13px', color: '#ccc', textAlign: 'center', marginBottom: '6px' });
+	card.appendChild(countdown);
+	card.appendChild(el('div', { fontSize: '12px', color: '#8bf', textAlign: 'center', marginBottom: '16px' },
+		'🌊 Quick battle: the sea swallows the arena, round and round. Last king above water wins.'));
+
+	const deadline = Date.now() + (Number(battle.startsInMs) || 0);
+	const tick = () => {
+		const secs = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+		countdown.textContent = secs > 0
+			? `A bot takes the other seat in ${secs}s if nobody turns up.`
+			: 'Starting…';
+	};
+	tick();
+	stopMatchCountdown();
+	matchCountdownTimer = setInterval(tick, 500);
+
+	const row = el('div', { display: 'flex', gap: '8px', justifyContent: 'space-between' });
+	const cancelBtn = themedButton('✕ Cancel', { danger: true });
+	cancelBtn.addEventListener('click', async () => {
+		await leaveBattle(battle.id);
+		await fetchBattleState();
+		closeBattleDialog();
+		syncBattleUrl(null);
+		returnToWelcomeIfHomeless();
+	});
+	const botNowBtn = themedButton('▶ Play a bot now', { primary: true });
+	botNowBtn.addEventListener('click', async () => {
+		botNowBtn.disabled = true;
+		const result = await startBattle(battle.id);
+		if (!result.success) {
+			botNowBtn.disabled = false;
+			showToastMessage(result.error || 'Could not start', { variant: 'alert' });
+		}
+	});
+	row.appendChild(cancelBtn);
+	row.appendChild(botNowBtn);
+	card.appendChild(row);
+}
+
 function renderLobby(card, battle) {
+	if (battle.isPublic) {
+		renderMatchmaking(card, battle);
+		return;
+	}
 	const realId = String(getPlayerId() || '');
 	const isHost = String(battle.hostId) === realId;
 	const humanSeats = battle.seats.length;
@@ -770,6 +916,11 @@ function renderLobby(card, battle) {
 				? '🤖 Bots pace themselves to the players\u2019 speed'
 				: `🤖 ${diffChoice.label}`));
 	}
+
+	card.appendChild(el('div', { fontSize: '12px', color: '#8bf', marginBottom: '8px' },
+		battle.mode === 'classic'
+			? '♾ Classic: fight until one king is left'
+			: '🌊 Quick: the sea swallows the arena, round and round. Last king above water wins'));
 
 	const note = el('div', { fontSize: '12px', color: '#ccc', marginBottom: '12px', lineHeight: '1.5' });
 	if (!isHost) {

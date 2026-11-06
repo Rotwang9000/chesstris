@@ -19,10 +19,15 @@
  *     status,             // 'lobby' | 'active' | 'finished'
  *     slot, centre,       // arena grid slot + centre cell
  *     seatCount,          // requested seats (2-4)
+ *     mode,               // 'quick' (the sea rises) | 'classic'
+ *     isPublic,           // a Quick-match lobby anyone looking can join
+ *     autoStartAt,        // quick match: bots fill the seats at this time
+ *     seaSunkUntil,       // quick: sink times up to here are applied
  *     hostId,             // real player id of the creator
  *     createdAt, startedAt, finishedAt,
  *     winnerSeatId,
- *     seats: [{ seatId, index, controlledBy, isAi, name }],
+ *     seats: [{ seatId, index, controlledBy, isAi, name,
+ *               outAt, forfeited, drowned, leftBy, offlineSince }],
  *   }
  */
 
@@ -51,11 +56,28 @@ const {
 	pushPaceSample,
 	adaptiveBotIntervalMs,
 } = require('./pacing');
+const {
+	BATTLE_MODES,
+	SEA,
+	normaliseBattleMode,
+	hasSea,
+	seaStartMs,
+	seaEndMs,
+	cellsSinkingBetween,
+	publicSea,
+} = require('./sea');
+const pieces = require('../game/pieces');
 
 const LOBBY_TIMEOUT_MS = 15 * 60 * 1000;   // Unstarted battles evaporate.
 const ACTIVE_TIMEOUT_MS = 2 * 60 * 60 * 1000; // Hard cap on battle length.
 const FINISHED_LINGER_MS = 60 * 1000;      // Leave the result on show, then clean.
 const SWEEP_INTERVAL_MS = 5 * 1000;        // Elimination poll + timeouts.
+const OFFLINE_HANDOVER_MS = 60 * 1000;     // Gone this long → a bot takes the seat.
+const QUICKMATCH_WAIT_MS = 20 * 1000;      // Nobody turns up in this long → a bot.
+const QUICKMATCH_SEATS = 2;
+// Safety net: the sea takes every cell, but a king's final detonation
+// is animated, so allow it to land before forcing a result.
+const SEA_END_GRACE_MS = 30 * 1000;
 
 const RING_COLOR = '#8a8a99';
 // High-contrast fixed seat colours (N, S, W, E).
@@ -178,6 +200,12 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 			playRadius: battle.playRadius || playRadiusForSeats(battle.seatCount || 2),
 			seatCount: battle.seatCount,
 			botDifficulty: battle.botDifficulty || 'auto',
+			mode: battle.mode || BATTLE_MODES.CLASSIC,
+			sea: publicSea(battle),
+			isPublic: !!battle.isPublic,
+			startsInMs: battle.isPublic && battle.status === 'lobby'
+				? Math.max(0, (battle.autoStartAt || 0) - Date.now())
+				: null,
 			hostId: battle.hostId,
 			createdAt: battle.createdAt,
 			startedAt: battle.startedAt || null,
@@ -247,7 +275,7 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 	 * Create a battle lobby. The host takes seat 0.
 	 * @returns {{success: boolean, error?: string, battle?: Object}}
 	 */
-	function createBattle({ hostId, hostName, seatCount = 2, botDifficulty = 'auto' }) {
+	function createBattle({ hostId, hostName, seatCount = 2, botDifficulty = 'auto', mode = BATTLE_MODES.QUICK }) {
 		const seats = Number(seatCount);
 		if (!Number.isInteger(seats) || seats < BATTLE.MIN_SEATS || seats > BATTLE.MAX_SEATS) {
 			return { success: false, error: `Seat count must be ${BATTLE.MIN_SEATS}-${BATTLE.MAX_SEATS}` };
@@ -278,6 +306,7 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 			centre: null,
 			seatCount: seats,
 			botDifficulty: normaliseBotDifficulty(botDifficulty),
+			mode: normaliseBattleMode(mode),
 			hostId: String(hostId),
 			createdAt: Date.now(),
 			startedAt: null,
@@ -296,7 +325,7 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 		World.markDirty();
 		persistence.markDirty();
 
-		console.log(`[Battle] ${hostId} created battle ${code} (${seats} seats)`);
+		console.log(`[Battle] ${hostId} created battle ${code} (${seats} seats, ${battle.mode})`);
 		return { success: true, battle: publicState(battle) };
 	}
 
@@ -352,11 +381,13 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 	 * Mid-battle join: hand a live bot seat (pieces and all) to a human.
 	 */
 	function takeOverBotSeat({ battle, playerId, playerName }) {
-		const seat = battle.seats.find(s => {
+		const liveBots = battle.seats.filter(s => {
 			if (!s.isAi) return false;
 			const record = World.getPlayer(s.seatId);
 			return record && !record.eliminated;
 		});
+		// Back after a dropped connection: reclaim your own army first.
+		const seat = liveBots.find(s => String(s.leftBy || '') === String(playerId)) || liveBots[0];
 		if (!seat) {
 			return { success: false, error: 'No bot seat left to take over — battle is all humans' };
 		}
@@ -364,6 +395,8 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 		aiRunner.stopAiPlayer(seat.seatId);
 		seat.isAi = false;
 		seat.controlledBy = String(playerId);
+		delete seat.leftBy;
+		delete seat.offlineSince;
 		if (playerName) seat.name = playerName;
 
 		const record = World.getPlayer(seat.seatId);
@@ -392,6 +425,78 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 
 		console.log(`[Battle] ${playerId} took over bot seat ${seat.seatId} in ${battle.code}`);
 		return { success: true, battle: publicState(battle), seatId: seat.seatId, tookOverBot: true };
+	}
+
+	// ── Quick match ──────────────────────────────────────────────────────
+
+	/**
+	 * Find this player a game now: join the oldest open public lobby
+	 * (starting it the moment it's full), or open one that bots fill
+	 * after QUICKMATCH_WAIT_MS if nobody else turns up.
+	 */
+	function quickMatch({ playerId, playerName }) {
+		for (const battle of battlesForPlayer(playerId)) {
+			if (battle.isPublic && battle.status === 'lobby') {
+				return { success: true, battle: publicState(battle), seatId: seatFor(battle, playerId).seatId };
+			}
+		}
+
+		const open = Object.values(battles())
+			.filter(b => b && b.isPublic && b.status === 'lobby' && b.seats.length < b.seatCount
+				&& !seatFor(b, playerId))
+			.sort((a, b) => a.createdAt - b.createdAt)[0];
+		if (open) {
+			const joined = joinBattle({ code: open.code, playerId, playerName });
+			if (!joined.success) return joined;
+			if (open.seats.length >= open.seatCount) {
+				const started = startBattle({ battleId: open.id, playerId: open.hostId });
+				if (!started.success) return started;
+				return { ...joined, battle: started.battle };
+			}
+			return { ...joined, battle: publicState(open) };
+		}
+
+		const created = createBattle({
+			hostId: playerId, hostName: playerName, seatCount: QUICKMATCH_SEATS,
+			botDifficulty: BOT_PACE.AUTO, mode: BATTLE_MODES.QUICK,
+		});
+		if (!created.success) return created;
+		const battle = getBattle(created.battle.id);
+		battle.isPublic = true;
+		battle.autoStartAt = Date.now() + QUICKMATCH_WAIT_MS;
+		World.markDirty();
+		persistence.markDirty();
+		console.log(`[Battle] ${playerId} is looking for a quick match (${battle.code})`);
+		return { success: true, battle: publicState(battle), seatId: battle.seats[0].seatId };
+	}
+
+	/** How busy Quick match is, for the battle menu. */
+	function quickMatchInfo() {
+		let looking = 0;
+		let playing = 0;
+		for (const battle of Object.values(battles())) {
+			if (!battle) continue;
+			const humans = battle.seats.filter(s => !s.isAi && s.controlledBy && Sessions.isOnline(s.controlledBy)).length;
+			if (battle.isPublic && battle.status === 'lobby') looking += humans;
+			else if (battle.status === 'active') playing += humans;
+		}
+		return { looking, playing, waitMs: QUICKMATCH_WAIT_MS };
+	}
+
+	/** A public lobby whose wait is over: start it with bots, or drop it if nobody's there. */
+	function settleQuickMatchLobby(battle, now) {
+		if (!battle.isPublic || now < (battle.autoStartAt || Infinity)) return;
+		const anyoneHere = battle.seats.some(s => !s.isAi && s.controlledBy && Sessions.isOnline(s.controlledBy));
+		if (!anyoneHere) {
+			delete battles()[battle.id];
+			clearAllSeatStamps(battle);
+			World.markDirty();
+			persistence.markDirty();
+			console.log(`[Battle] quick match ${battle.code} dropped (nobody waiting)`);
+			return;
+		}
+		const started = startBattle({ battleId: battle.id, playerId: battle.hostId });
+		if (!started.success) console.warn(`[Battle] quick match ${battle.code} failed to start: ${started.error}`);
 	}
 
 	/**
@@ -428,6 +533,8 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 		buildArena(battle);
 		battle.status = 'active';
 		battle.startedAt = Date.now();
+		// Sinking covers (since, now], so start just before the first cell.
+		if (hasSea(battle)) battle.seaSunkUntil = seaStartMs(battle) - 1;
 
 		World.markDirty();
 		persistence.markDirty();
@@ -438,7 +545,7 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 		console.log(
 			`[Battle] ${battle.code} started at (${battle.centre.x}, ${battle.centre.z}) `
 			+ `with ${battle.seats.filter(s => !s.isAi).length} human(s), `
-			+ `${battle.seats.filter(s => s.isAi).length} bot(s)`
+			+ `${battle.seats.filter(s => s.isAi).length} bot(s), ${battle.mode}`
 		);
 		return { success: true, battle: publicState(battle) };
 	}
@@ -591,6 +698,142 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 		}
 	}
 
+	// ── The rising sea (Quick battles) ───────────────────────────────────
+
+	/**
+	 * Sink one arena cell: everything standing on it goes into the water
+	 * and the cell is deleted. A king caught by the sea is out for good —
+	 * no spare lives — and goes off in the usual final detonation.
+	 */
+	function sinkCell(battle, x, z, sinkAt) {
+		const world = World.getWorld();
+		const key = `${x},${z}`;
+		const kingLifeService = gameManager.kingLifeService || null;
+		const standing = (world.chessPieces || []).filter(p =>
+			p && p.position && p.position.x === x && p.position.z === z);
+		for (const piece of standing) {
+			const isKing = String(piece.type || '').toUpperCase() === 'KING';
+			const record = World.getPlayer(piece.player);
+			if (isKing && record && !record.eliminated) {
+				record.kingLives = 1;
+				const seat = battle.seats.find(st => String(st.seatId) === String(piece.player));
+				if (seat) {
+					seat.drowned = true;
+					// The exact moment it went under — the last king to sink
+					// wins even if several go within one sweep.
+					if (!seat.outAt) seat.outAt = Math.round(sinkAt);
+				}
+				emitToSeatHumans(battle, 'server_toast', {
+					message: `🌊 The sea took ${seat ? `${seat.name}'s` : 'a'} king!`,
+					tone: 'info',
+				});
+			}
+			pieces.removePiece(world, piece, {
+				reason: pieces.REMOVAL_REASONS.FELL_TO_WATER,
+				kingLifeService,
+				note: 'the sea rose',
+			});
+		}
+		if (world.board.cells[key]) {
+			delete world.board.cells[key];
+			return true;
+		}
+		return standing.length > 0;
+	}
+
+	/**
+	 * Sink every cell whose time has come since the last pass. Sink times
+	 * are a pure function of the clock, so a pass after a restart (or a
+	 * stalled timer) simply catches up.
+	 */
+	function seaTick({ now = Date.now() } = {}) {
+		let changed = false;
+		for (const battle of Object.values(battles())) {
+			// Quick-match lobbies start on the second, not the 5 s sweep.
+			if (battle && battle.status === 'lobby' && battle.isPublic) {
+				settleQuickMatchLobby(battle, now);
+				continue;
+			}
+			if (!battle || battle.status !== 'active' || !hasSea(battle)) continue;
+			const since = Number.isFinite(battle.seaSunkUntil) ? battle.seaSunkUntil : seaStartMs(battle) - 1;
+			if (now <= since) continue;
+			for (const { x, z, t } of cellsSinkingBetween(battle, since, now)) {
+				if (sinkCell(battle, x, z, t)) changed = true;
+			}
+			battle.seaSunkUntil = now;
+		}
+		if (changed) {
+			World.markDirty();
+			persistence.markDirty();
+			broadcaster.broadcastGameUpdate();
+		}
+		return changed;
+	}
+
+	// ── Dropped connections ──────────────────────────────────────────────
+
+	/**
+	 * A human gone too long hands their army to a bot so the battle goes
+	 * on. Coming back with the code reclaims the same seat.
+	 */
+	function handSeatToBot(battle, seat) {
+		const realId = seat.controlledBy;
+		const record = World.getPlayer(seat.seatId);
+		const chosen = normaliseBotDifficulty(battle.botDifficulty);
+		const profile = chosen === BOT_PACE.AUTO ? BOT_DIFFICULTY : chosen;
+		seat.isAi = true;
+		seat.leftBy = realId;
+		seat.controlledBy = null;
+		delete seat.offlineSince;
+		Sessions.clearAlias(seat.seatId);
+		if (record) {
+			record.isComputer = true;
+			record.controlledBy = null;
+			record.connected = false;
+			record.difficulty = profile;
+			record.minMoveInterval = chosen === BOT_PACE.AUTO
+				? BOT_PACE.DEFAULT_INTERVAL_MS
+				: (MIN_COMPUTER_MOVE_INTERVAL_MS[profile] || 10000);
+			record.strategy = generateComputerStrategy(profile);
+			record.lastMoveTime = 0;
+		}
+		aiRunner.startAiPlayer(seat.seatId);
+		if (realId) stampRealPlayer(realId, null);
+		emitToSeatHumans(battle, 'server_toast', {
+			message: `📡 ${seat.name} lost connection — a bot has taken over their army`,
+			tone: 'info',
+		});
+		World.markDirty();
+		persistence.markDirty();
+		console.log(`[Battle] ${realId} offline — bot took over ${seat.seatId} in ${battle.code}`);
+	}
+
+	/** Watch living human seats for dropped connections. */
+	function checkConnections(battle, now) {
+		for (const seat of battle.seats) {
+			if (seat.isAi || !seat.controlledBy || !seatIsAlive(seat)) continue;
+			if (Sessions.isOnline(seat.controlledBy)) {
+				delete seat.offlineSince;
+				continue;
+			}
+			if (!seat.offlineSince) {
+				seat.offlineSince = now;
+			} else if (now - seat.offlineSince > OFFLINE_HANDOVER_MS) {
+				handSeatToBot(battle, seat);
+			}
+		}
+	}
+
+	/**
+	 * Nobody left to play or watch: every human seat is a bot now, or
+	 * its player is offline (a living seat gets the handover minute).
+	 */
+	function isAbandoned(battle, now) {
+		return !battle.seats.some(seat => !seat.isAi && seat.controlledBy && (
+			Sessions.isOnline(seat.controlledBy)
+			|| (seat.offlineSince && now - seat.offlineSince <= OFFLINE_HANDOVER_MS)));
+	}
+
 	function seatIsAlive(seat) {
 		const world = World.getWorld();
 		const record = World.getPlayer(seat.seatId);
@@ -626,7 +869,7 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 		const entry = prison.slice().reverse()
 			.find(e => e && String(e.originalOwner) === String(seat.seatId));
 		if (!entry) return null;
-		const captor = battle.seats.find(s => String(s.seatId) === String(entry.capturedBy));
+		const captor = battle.seats.find(st => String(st.seatId) === String(entry.capturedBy));
 		return captor ? captor.name : (World.getPlayer(entry.capturedBy)?.name || null);
 	}
 
@@ -651,7 +894,8 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 				alive,
 				outAt: seat.outAt || null,
 				forfeited: !!seat.forfeited,
-				knockedOutBy: alive || seat.forfeited ? null : knockedOutBy(battle, seat),
+				knockedOutBy: alive || seat.forfeited ? null
+					: (seat.drowned ? 'the sea' : knockedOutBy(battle, seat)),
 				moves: Number(record?.moveCount) || 0,
 				captures: Number(record?.captureCount) || 0,
 				piecesLeft: piecesLeft[seat.seatId] || 0,
@@ -672,15 +916,29 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 		};
 	}
 
+	/**
+	 * The sweep runs every few seconds, so the last kings can drown
+	 * within one pass. The one that went under last still wins — unless
+	 * they truly went together.
+	 */
+	function lastKingAboveWater(battle, alive) {
+		if (alive.length > 0) return null;
+		const byLastOut = battle.seats.filter(seat => seat.outAt)
+			.sort((a, b) => b.outAt - a.outAt);
+		const [last, next] = byLastOut;
+		if (!last || !last.drowned) return null;
+		return !next || last.outAt > next.outAt ? last.seatId : null;
+	}
+
 	function finishBattle(battle, { reason }) {
 		const now = Date.now();
 		stampKnockouts(battle, now);
 		const alive = battle.seats.filter(seatIsAlive);
 		battle.status = 'finished';
 		battle.finishedAt = now;
-		battle.winnerSeatId = alive.length === 1 ? alive[0].seatId : null;
+		battle.winnerSeatId = alive.length === 1 ? alive[0].seatId : lastKingAboveWater(battle, alive);
 
-		const payload = { battle: publicState(battle), reason, results: battleResults(battle, now) };
+		const payload = { battle: publicState(battle), reason, results: { ...battleResults(battle, now), reason } };
 		emitToSeatHumans(battle, 'battle_finished', payload);
 		clearAllSeatStamps(battle);
 
@@ -741,6 +999,10 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 			if (!battle) continue;
 
 			if (battle.status === 'lobby') {
+				if (battle.isPublic) {
+					settleQuickMatchLobby(battle, now);
+					continue;
+				}
 				if (now - battle.createdAt > LOBBY_TIMEOUT_MS) {
 					emitToSeatHumans(battle, 'battle_cancelled', { battleId: battle.id, reason: 'timeout' });
 					// Delete before clearing stamps (stamp fallback scans
@@ -755,6 +1017,7 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 			}
 
 			if (battle.status === 'active') {
+				checkConnections(battle, now);
 				const alive = battle.seats.filter(seatIsAlive);
 				if (alive.length > 1) {
 					// Knocked out while the fight goes on (3-4 seat
@@ -769,6 +1032,10 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 				}
 				if (alive.length <= 1) {
 					finishBattle(battle, { reason: 'elimination' });
+				} else if (isAbandoned(battle, now)) {
+					finishBattle(battle, { reason: 'abandoned' });
+				} else if (hasSea(battle) && now > seaEndMs(battle) + SEA_END_GRACE_MS) {
+					finishBattle(battle, { reason: 'sea' });
 				} else if (now - (battle.startedAt || battle.createdAt) > ACTIVE_TIMEOUT_MS) {
 					finishBattle(battle, { reason: 'timeout' });
 				} else {
@@ -828,6 +1095,8 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 	return {
 		createBattle,
 		joinBattle,
+		quickMatch,
+		quickMatchInfo,
 		startBattle,
 		leaveBattle,
 		effectivePlayerId,
@@ -837,8 +1106,10 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 		getBattle,
 		publicState,
 		tick,
+		seaTick,
 		init,
 		SWEEP_INTERVAL_MS,
+		SEA_TICK_MS: SEA.TICK_MS,
 	};
 }
 

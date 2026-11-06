@@ -271,11 +271,16 @@ describe('BattleManager', () => {
 	beforeEach(() => {
 		World.resetWorld();
 		Sessions.clearAll();
+		// Humans count as connected unless a test says otherwise (a seat
+		// whose player is offline is handed to a bot after a minute).
+		jest.spyOn(Sessions, 'isOnline').mockReturnValue(true);
 		const world = World.getWorld();
 		world.players.host1 = { id: 'host1', name: 'Hosty' };
 		world.players.guest1 = { id: 'guest1', name: 'Guesty' };
 		manager = buildManager();
 	});
+
+	afterEach(() => jest.restoreAllMocks());
 
 	function createAndJoin() {
 		const created = manager.createBattle({ hostId: 'host1', hostName: 'Hosty', seatCount: 2 });

@@ -85,30 +85,36 @@ function ordinal(n) {
  * Pick the headline for this viewer.
  * @returns {{ outcome: 'victory'|'defeat'|'draw'|'out', title, subtitle }}
  */
+/** Server name for a king lost to the rising sea (results.knockedOutBy). */
+const SEA_NAME = 'the sea';
+
 export function describeOutcome({ battle, results, mySeatId, mode = 'finished' }) {
 	const standings = results?.standings || [];
 	const mine = standings.find(r => r.seatId === mySeatId) || null;
 	const place = mine?.place || null;
 
+	const placed = place ? `You placed ${ordinal(place)}.` : '';
+	const drowned = mine?.knockedOutBy === SEA_NAME;
 	if (mode === 'out') {
-		const by = mine?.knockedOutBy ? ` by ${mine.knockedOutBy}` : '';
-		return {
-			outcome: 'out',
-			title: 'Knocked out',
-			subtitle: `Your king fell${by}. ${place ? `You placed ${ordinal(place)}.` : ''}`.trim(),
-		};
+		const how = drowned ? 'The sea took your king.'
+			: `Your king fell${mine?.knockedOutBy ? ` by ${mine.knockedOutBy}` : ''}.`;
+		return { outcome: 'out', title: 'Knocked out', subtitle: `${how} ${placed}`.trim() };
 	}
 	if (battle?.winnerSeatId && battle.winnerSeatId === mySeatId) {
-		return { outcome: 'victory', title: 'Victory!', subtitle: 'Last king standing.' };
+		return { outcome: 'victory', title: 'Victory!', subtitle: battle.mode === 'quick' ? 'Last king above water.' : 'Last king standing.' };
 	}
 	if (!battle?.winnerSeatId) {
-		return { outcome: 'draw', title: 'Time’s up', subtitle: 'No single king left standing, so the table goes by pieces left.' };
+		if (results?.reason === 'timeout') {
+			return { outcome: 'draw', title: 'Time’s up', subtitle: 'No single king left standing, so the table goes by pieces left.' };
+		}
+		return { outcome: 'draw', title: 'Swept away', subtitle: 'The last kings went under together. It’s a draw.' };
 	}
 	const winner = standings.find(r => r.seatId === battle.winnerSeatId);
+	const how = drowned ? 'The sea took your king.' : '';
 	return {
 		outcome: 'defeat',
 		title: 'Defeated',
-		subtitle: `${winner ? `${winner.name} took the arena.` : ''} ${place ? `You placed ${ordinal(place)}.` : ''}`.trim(),
+		subtitle: `${how} ${winner ? `${winner.name} took the arena.` : ''} ${placed}`.replace(/\s+/g, ' ').trim(),
 	};
 }
 
@@ -116,6 +122,7 @@ function statusText(row, winnerSeatId) {
 	if (row.seatId === winnerSeatId) return '👑 Winner';
 	if (row.alive) return 'Still standing';
 	if (row.forfeited) return 'Left the battle';
+	if (row.knockedOutBy === SEA_NAME) return 'Out — 🌊 the sea';
 	if (row.knockedOutBy) return `Out — ${row.knockedOutBy}`;
 	return 'Out';
 }
