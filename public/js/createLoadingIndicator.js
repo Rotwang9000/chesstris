@@ -6,6 +6,7 @@ import { showLoginDialog } from './auth/loginDialog.js';
 import { isLoggedIn as isKingdomLoggedIn, getLoggedInName as getKingdomName } from './auth/kingdomKey.js';
 import { enterBattleFlow, isBattleFirstEntry } from './battle/battleMode.js';
 import { isOffline } from './offline/offlineMode.js';
+import { isInstalledApp, canReachServer, onlineUrl, offlineUrl } from './offline/appShell.js';
 import { getSocket } from './utils/networkManager.js';
 
 /**
@@ -697,11 +698,28 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 			: 'Private 2-4 player arena — share a code, or fight the bots.'}
 		</div>
 	`;
+	// Offline ⇄ online. Offline (the installed app's default) offers
+	// online play once a quick check finds the server; the app's online
+	// mode links back to offline play.
+	const onlineButtonHtml = `
+		<button id="welcome-online-btn" class="tutorial-btn" disabled style="font-size: 14px; padding: 10px 16px;">
+			🌐 PLAY ONLINE
+		</button>
+		<div id="welcome-online-note" style="font-size: 11px; opacity: 0.7; text-align: center; margin-top: -4px;">
+			Checking your connection…
+		</div>
+	`;
+	const offlineLinkHtml = `
+		<div style="font-size: 12px; text-align: center; opacity: 0.85;">
+			<a href="${offlineUrl()}" id="welcome-offline-link" style="color: #ffcc00; text-decoration: underline;">🤖 Battle the computer offline</a>
+		</div>
+	`;
 	buttonHTML += `
 		<input type="text" id="welcome-player-name" class="game-key-input"
 			placeholder="Your name (optional)" maxlength="20" value="${escapedName}"
 			autocomplete="nickname" style="text-align: center;">
-		${offline ? battleButtonHtml : battleLeads ? battleButtonHtml + playButtonHtml : playButtonHtml + battleButtonHtml}
+		${offline ? battleButtonHtml + onlineButtonHtml : battleLeads ? battleButtonHtml + playButtonHtml : playButtonHtml + battleButtonHtml}
+		${!offline && isInstalledApp() ? offlineLinkHtml : ''}
 	`;
 
 	// Account link: prominent but unmistakably optional (guests enter with
@@ -763,6 +781,23 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 
 	// Add the element to the document
 	document.body.appendChild(tutorialElement);
+
+	const welcomeOnlineBtn = tutorialElement.querySelector('#welcome-online-btn');
+	if (welcomeOnlineBtn) {
+		const note = tutorialElement.querySelector('#welcome-online-note');
+		canReachServer().then((reachable) => {
+			welcomeOnlineBtn.disabled = !reachable;
+			if (note) {
+				note.textContent = reachable
+					? 'Quick match, play friends, or build a kingdom in the shared world.'
+					: 'You\u2019re offline. Online play needs a connection.';
+			}
+		});
+		welcomeOnlineBtn.addEventListener('click', () => {
+			saveTypedPlayerName();
+			window.location.href = onlineUrl();
+		});
+	}
 
 	// Set up button event handlers
 	const newGameBtn = tutorialElement.querySelector('#new-game-btn');

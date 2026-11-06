@@ -23,10 +23,15 @@ export function isOffline() {
  * sea speed-up for local playtests: `?offline=1&seaScale=0.2`).
  */
 export function offlineEngineUrl() {
-	const base = window.__TETCHES_OFFLINE_ENGINE__ || 'dist/offline-engine.js';
+	const base = window.__TETCHES_OFFLINE_ENGINE__ || '/dist/offline-engine.js';
+	const params = new URLSearchParams();
+	// Pinned to the page's build, so a cached engine always matches the
+	// cached page that loads it (the app works from the cache offline).
+	if (window.__BUNDLE_VERSION__) params.set('v', window.__BUNDLE_VERSION__);
 	try {
 		const seaScale = new URLSearchParams(window.location.search).get('seaScale');
-		if (seaScale) return `${base}?seaScale=${encodeURIComponent(seaScale)}`;
+		if (seaScale) params.set('seaScale', seaScale);
 	} catch (_e) { /* no knobs */ }
-	return base;
+	const query = params.toString();
+	return query ? `${base}?${query}` : base;
 }

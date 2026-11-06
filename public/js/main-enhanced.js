@@ -21,6 +21,7 @@ import { initSaveReminder } from './auth/saveReminder.js';
 import { initBattleMode } from './battle/battleMode.js';
 import { initLiteMode, liteModeRequested } from './liteMode.js';
 import { showKingdomRestoreDialog } from './kingdomRestoreDialog.js';
+import { initAppShell } from './offline/appShell.js';
 
 
 // Global state
@@ -194,6 +195,10 @@ async function init() {
 	// Guests who played get a gentle "save your kingdom?" prompt when
 	// leaving (no-op for logged-in players; armed by the first placement).
 	initSaveReminder();
+
+	// The installable app: offline support (service worker) when installed
+	// or in offline mode.
+	initAppShell();
 	
 	try {
 		// Run diagnostics first to catch any issues

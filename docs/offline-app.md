@@ -10,6 +10,34 @@ opponents, no server and no network. It's the basis for the Android/iOS app.
 - As a self-contained folder: `npm run build:app` writes `app/www/` (about 4.4 MB),
   which runs from any static file server with no internet.
 
+## Installing from the website
+
+tetches.com is installable ("Add to Home screen" or "Install app"):
+
+- **Opening offline:** the manifest's `start_url` is `/?offline=1&app=1`, so the
+  installed app opens in offline mode.
+- **Going online:** the welcome screen offers **🌐 PLAY ONLINE** once a quick
+  `/api/health` check (2.5 s at most) finds the server. Otherwise it reads
+  "You're offline".
+- **Coming back:** in the app's online mode, the welcome screen links back to
+  offline play.
+- **Shortcuts:** long-pressing the app icon offers both modes.
+
+`public/sw.js` keeps the app working with no connection. It's registered only
+for the installed app, offline mode, or while an install is in progress
+(`public/js/offline/appShell.js`), never for the ordinary website or inside a
+portal's frame. Its caching rules:
+
+| Request | Handling |
+|---|---|
+| The game's files | Network first, so you always get the latest deploy online; the cached copy offline |
+| three.js and the font from the CDNs | Cache first |
+| socket.io, the API, admin and ads | Never touched |
+
+After loading, the page asks the worker to cache everything it loaded, plus
+the offline engine. The engine's URL carries the build version, so a cached
+page and its cached engine always match.
+
 ## How it works
 
 The game's own server code runs in a Web Worker inside the page:
