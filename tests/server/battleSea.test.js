@@ -120,6 +120,18 @@ describe('bots and the sea', () => {
 		expect(out.escapes.map(c => c.piece.type)).toEqual(['KING', 'PAWN']);
 	});
 
+	test('an escaping king heads for the ground the sea reaches last', () => {
+		const king = piece('KING', doomedCell);
+		const nearEdge = { x: CENTRE.x, z: CENTRE.z - outer + 6 };  // safe for now, sinks soon
+		const inward = { x: CENTRE.x, z: CENTRE.z - 3 };            // sinks much later
+		const quiet = [
+			{ piece: king, target: nearEdge },
+			{ piece: king, target: inward },
+		];
+		const out = triageForSea(battle, [], quiet, { now, moveIntervalMs: 5000 });
+		expect(out.escapes[0].target).toBe(inward);
+	});
+
 	test('classic battles leave the candidates alone', () => {
 		const quiet = [{ piece: piece('PAWN', safeCell), target: doomedCell }];
 		const out = triageForSea(quickBattle({ mode: 'classic' }), [], quiet, { now });

@@ -7,8 +7,10 @@
 	"scripts": {
 		"start": "node server.js",
 		"dev": "nodemon server.js",
-		"build": "npm run build:client",
+		"build": "npm run build:client && npm run build:offline",
 		"build:client": "node scripts/build-client.js",
+		"build:offline": "node scripts/build-offline.js",
+		"build:app": "node scripts/build-app.js",
 		"build:client:watch": "node scripts/build-client.js --watch",
 		"lint": "eslint .",
 		"lint:fix": "eslint . --fix",
@@ -59,6 +61,7 @@
 		"@babel/plugin-transform-modules-commonjs": "^7.26.3",
 		"@babel/preset-env": "^7.26.9",
 		"@eslint/js": "^10.0.1",
+		"@fontsource/playfair-display": "^5.3.0",
 		"babel-jest": "^29.7.0",
 		"esbuild": "^0.28.0",
 		"eslint": "^10.4.0",
@@ -69,7 +72,8 @@
 		"nodemon": "^3.0.1",
 		"playwright-core": "^1.61.1",
 		"source-map": "^0.7.6",
-		"supertest": "^7.0.0"
+		"supertest": "^7.0.0",
+		"three": "^0.132.2"
 	},
 	"engines": {
 		"node": ">=18.0.0"

@@ -72,7 +72,10 @@ function buildCSPDirectives() {
 		imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
 		// Socket.IO upgrade target (wss://tetches.com / ws://localhost:*)
 		// plus the Auth0 tenant API for token/session calls.
-		connectSrc: ["'self'", 'ws:', 'wss:', 'https://*.auth0.com'],
+		// The service worker (public/sw.js) keeps copies of three.js and
+		// the font for the offline app, so it fetches from their CDNs.
+		connectSrc: ["'self'", 'ws:', 'wss:', 'https://*.auth0.com',
+			'https://cdn.jsdelivr.net', 'https://fonts.googleapis.com', 'https://fonts.gstatic.com'],
 		// Auth0 uses a hidden iframe for silent token renewal.
 		frameSrc: ["'self'", 'https://*.auth0.com'],
 		// Block plugins; no <object> / <embed>.

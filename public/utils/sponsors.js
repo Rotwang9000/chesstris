@@ -6,6 +6,10 @@
  */
 
 import { isPortal } from '../js/portal.js';
+import { isOffline } from '../js/offline/offlineMode.js';
+
+// Portals allow only their own ads; offline there's no ad server.
+const noAds = () => isPortal() || isOffline();
 
 // Sponsor cache to avoid excessive API calls. We DELIBERATELY use a
 // short cache (700 ms — long enough to share a sponsor across the
@@ -40,8 +44,7 @@ const sponsorCache = {
  * @returns {Promise<Object|null>} Sponsor data or null if not available
  */
 export async function fetchNextSponsor() {
-	// Portals allow only their own ads.
-	if (isPortal()) return null;
+	if (noAds()) return null;
 	// Check cache first
 	const cached = sponsorCache.get();
 	if (cached) {
@@ -151,6 +154,7 @@ export async function recordImpression(sponsorId, cells = 1) {
  */
 const _activeCache = { list: null, fetchedAt: 0, ms: 30000 };
 export async function fetchActiveSponsors() {
+	if (isOffline()) return [];
 	if (_activeCache.list && (Date.now() - _activeCache.fetchedAt) < _activeCache.ms) {
 		return _activeCache.list;
 	}

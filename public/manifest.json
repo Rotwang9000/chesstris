@@ -1,7 +1,8 @@
 {
+	"id": "/",
 	"short_name": "Tetches",
 	"name": "Tetches — Chess meets Tetris",
-	"description": "A free, real-time multiplayer game that fuses chess and Tetris on a dynamically expanding board.",
+	"description": "Chess meets Tetris: build the board with falling blocks, then fight on it. Battle the computer offline, or play live online.",
 	"icons": [
 		{
 			"src": "/favicon.svg",
@@ -22,7 +23,7 @@
 			"purpose": "any"
 		}
 	],
-	"start_url": "/",
+	"start_url": "/?offline=1&app=1",
 	"display": "standalone",
 	"theme_color": "#ffcc00",
 	"background_color": "#121212",
@@ -30,5 +31,19 @@
 	"categories": [
 		"games",
 		"entertainment"
+	],
+	"shortcuts": [
+		{
+			"name": "Battle the computer",
+			"short_name": "Offline",
+			"description": "Play bots on this device, no connection needed",
+			"url": "/?offline=1&app=1"
+		},
+		{
+			"name": "Play online",
+			"short_name": "Online",
+			"description": "Quick match, friends and the shared world",
+			"url": "/?play=battle&app=1"
+		}
 	]
 }

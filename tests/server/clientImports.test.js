@@ -115,10 +115,11 @@ describe('Client-side ES module imports', () => {
 		expect(content).not.toMatch(/from\s+['"]\/node_modules\//);
 	});
 
-	test('NetworkManagerClass.js references socket.io io() function', () => {
+	test('NetworkManagerClass.js connects with the global socket.io io()', () => {
 		const file = path.join(PUBLIC_JS_DIR, 'utils', 'NetworkManagerClass.js');
 		const content = fs.readFileSync(file, 'utf8');
-		expect(content).toMatch(/\bio\s*\(/);
+		expect(content).toMatch(/return window\.io;/);
+		expect(content).toMatch(/getSocketIO\(\)\(socketUrl,/);
 	});
 });
 

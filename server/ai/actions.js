@@ -56,10 +56,13 @@ function triageForSea(battle, captures, quiet, { now = Date.now(), moveIntervalM
 	const horizon = now + Math.max(SEA.WARNING_MS * 2, moveIntervalMs * 1.5);
 	const doomed = (x, z) => sinkAtMs(battle, x, z) <= horizon;
 	const safeTarget = c => !doomed(c.target.x, c.target.z);
+	// Most valuable piece first; for each piece, the ground the sea
+	// reaches LAST (usually inward), or the next lap catches it again.
+	const value = c => SEA_RESCUE_ORDER[String(c.piece.type).toUpperCase()] || 0;
 	const escapes = captures.concat(quiet)
 		.filter(c => safeTarget(c) && doomed(c.piece.position.x, c.piece.position.z))
-		.sort((a, b) => (SEA_RESCUE_ORDER[String(b.piece.type).toUpperCase()] || 0)
-			- (SEA_RESCUE_ORDER[String(a.piece.type).toUpperCase()] || 0));
+		.sort((a, b) => (value(b) - value(a))
+			|| (sinkAtMs(battle, b.target.x, b.target.z) - sinkAtMs(battle, a.target.x, a.target.z)));
 	const safeCaptures = captures.filter(safeTarget);
 	const safeQuiet = quiet.filter(safeTarget);
 	if (safeCaptures.length + safeQuiet.length === 0) return { captures, quiet, escapes };
