@@ -1,19 +1,22 @@
 /**
  * The rising sea — what makes a Quick battle end.
  *
- * After a short calm, the sea sweeps round the arena like a clock hand
- * at a constant angular speed, one lap every `LAP_MS`, spiralling
- * inward one band per lap. It starts on the outer edge of the ring
- * wall and finishes at the centre cell, so every cell has a fixed
- * moment it sinks — a pure function of the battle's start time and
- * the cell's position. Whatever stands on a cell when it sinks
- * (blocks, chess pieces, a king) is lost to the water. The last king
- * above water wins.
+ * After a short calm, ONE sea block sets off from the outer edge of the
+ * ring wall and glides cell by cell along a spiral — round each band
+ * clockwise from north, then the next band in — at a steady pace
+ * (`CELL_MS` per cell) until it reaches the centre. Every cell it
+ * reaches dissolves into the sea, with whatever stands on it (blocks,
+ * chess pieces, a king). The last king above water wins.
+ *
+ * Each cell's sink time is a pure function of the battle's start time
+ * and the cell's place on the spiral, so the server, the client's
+ * warnings and the bots all agree.
  *
  * Classic battles have no sea (`sinkAtMs` returns Infinity).
  *
  * The client mirrors these formulas (public/js/battle/battleRules.js)
- * to flash the cells about to go and to reject doomed placements.
+ * to draw the sea block, flash the cells about to go and refuse doomed
+ * placements.
  */
 
 'use strict';
@@ -31,12 +34,13 @@ const TIME_SCALE = (() => {
 const SEA = Object.freeze({
 	/** Calm before the sea starts moving. */
 	CALM_MS: Math.round(40 * 1000 * TIME_SCALE),
-	/** One full turn of the hand = one band lost. */
-	LAP_MS: Math.round(22 * 1000 * TIME_SCALE),
+	/** The sea block's pace: one cell every CELL_MS. */
+	CELL_MS: Math.round(400 * TIME_SCALE),
 	/** Cells due to sink within this window flash a warning. */
 	WARNING_MS: 5 * 1000,
-	/** How often the server sinks the cells that are due. */
-	TICK_MS: 1000,
+	/** How often the server sinks the cells that are due (under CELL_MS,
+	 * so cells go one at a time). */
+	TICK_MS: 200,
 });
 
 /** Coerce an untrusted client value to a battle mode (default quick). */
@@ -64,14 +68,9 @@ function seaStartMs(battle) {
 	return battle.startedAt + SEA.CALM_MS;
 }
 
-/** When the last cell (the centre) is gone. */
-function seaEndMs(battle) {
-	return seaStartMs(battle) + (outerBand(battle) + 1) * SEA.LAP_MS;
-}
-
 /**
- * Position of a cell round the hand's sweep, in [0, 1). The hand starts
- * pointing north (−z) and turns clockwise as seen from above.
+ * Position of a cell round its band, in [0, 1): north (−z) first, then
+ * clockwise as seen from above.
  */
 function sweepFraction(centre, x, z) {
 	const dx = x - centre.x;
@@ -82,14 +81,43 @@ function sweepFraction(centre, x, z) {
 }
 
 /**
+ * The sea block's path for an arena reaching out to `outerBand`: every
+ * offset from the centre, outermost band first, each band clockwise
+ * from north. Same for every arena of that size, so it's cached.
+ */
+const spirals = new Map();
+function spiralFor(outer) {
+	if (spirals.has(outer)) return spirals.get(outer);
+	const origin = { x: 0, z: 0 };
+	const cells = [];
+	for (let dx = -outer; dx <= outer; dx++) {
+		for (let dz = -outer; dz <= outer; dz++) {
+			const band = radialBand(origin, dx, dz);
+			if (band > outer) continue;
+			cells.push({ dx, dz, band, turn: sweepFraction(origin, dx, dz), dist: Math.hypot(dx, dz) });
+		}
+	}
+	cells.sort((a, b) => (b.band - a.band) || (a.turn - b.turn) || (b.dist - a.dist) || (a.dx - b.dx) || (a.dz - b.dz));
+	const index = new Map(cells.map((c, i) => [`${c.dx},${c.dz}`, i]));
+	const spiral = { cells, index };
+	spirals.set(outer, spiral);
+	return spiral;
+}
+
+/** When the sea block has eaten the last cell (the centre). */
+function seaEndMs(battle) {
+	return seaStartMs(battle) + spiralFor(outerBand(battle)).cells.length * SEA.CELL_MS;
+}
+
+/**
  * The moment (epoch ms) the cell at (x, z) sinks, or Infinity if it
- * never will (Classic, or not yet started).
+ * never will (Classic, or not yet started). Cells beyond the ring wall
+ * count as sea from the start.
  */
 function sinkAtMs(battle, x, z) {
 	if (!hasSea(battle) || !battle.centre) return Infinity;
-	const lap = (outerBand(battle) - radialBand(battle.centre, x, z))
-		+ sweepFraction(battle.centre, x, z);
-	return seaStartMs(battle) + lap * SEA.LAP_MS;
+	const i = spiralFor(outerBand(battle)).index.get(`${x - battle.centre.x},${z - battle.centre.z}`);
+	return seaStartMs(battle) + (i === undefined ? 0 : i * SEA.CELL_MS);
 }
 
 /** Has the cell at (x, z) already gone under? */
@@ -97,24 +125,19 @@ function isSunk(battle, x, z, now = Date.now()) {
 	return sinkAtMs(battle, x, z) <= now;
 }
 
-/**
- * Every arena coordinate whose sink time is in (since, until]. Scans
- * the arena's bounding square — ~1,400 coordinates for the largest
- * arena, cheap at one pass a second.
- */
+/** Every arena coordinate whose sink time is in (since, until], in order. */
 function cellsSinkingBetween(battle, since, until) {
 	const out = [];
-	if (!hasSea(battle) || !battle.centre) return out;
-	const r = outerBand(battle);
-	const { x: cx, z: cz } = battle.centre;
-	for (let x = cx - r; x <= cx + r; x++) {
-		for (let z = cz - r; z <= cz + r; z++) {
-			if (radialBand(battle.centre, x, z) > r) continue;
-			const t = sinkAtMs(battle, x, z);
-			if (t > since && t <= until) out.push({ x, z, t });
-		}
+	if (!hasSea(battle) || !battle.centre || !(until > since)) return out;
+	const { cells } = spiralFor(outerBand(battle));
+	const start = seaStartMs(battle);
+	const first = Math.max(0, Math.floor((since - start) / SEA.CELL_MS) + 1);
+	const last = Math.min(cells.length - 1, Math.floor((until - start) / SEA.CELL_MS));
+	for (let i = first; i <= last; i++) {
+		const t = start + i * SEA.CELL_MS;
+		if (t <= since || t > until) continue;
+		out.push({ x: battle.centre.x + cells[i].dx, z: battle.centre.z + cells[i].dz, t });
 	}
-	out.sort((a, b) => a.t - b.t);
 	return out;
 }
 
@@ -124,7 +147,7 @@ function publicSea(battle, now = Date.now()) {
 	return {
 		startsAt: seaStartMs(battle),
 		endsAt: seaEndMs(battle),
-		lapMs: SEA.LAP_MS,
+		cellMs: SEA.CELL_MS,
 		warningMs: SEA.WARNING_MS,
 		outerBand: outerBand(battle),
 		serverNow: now,

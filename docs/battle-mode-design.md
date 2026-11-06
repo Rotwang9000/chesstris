@@ -230,20 +230,25 @@ Battles now come in two modes, chosen at creation (`mode` on
 `battle_create`; default `quick`):
 
 - **Classic**: as above, until one king is left (2 h cap).
-- **Quick**: after a 40 s calm the sea sweeps round the arena like a
-  clock hand, one lap every 22 s, spiralling inward one band per lap
-  from the ring's outer edge to the centre (~7 min for a 1v1). Every
-  cell's sink moment is a pure function of the battle start and its
-  position (`server/battle/sea.js`, mirrored in
+- **Quick**: after a 40 s calm, one sea block sets off from the ring
+  wall's outer edge and glides cell by cell along a spiral to the
+  centre. It goes round each band clockwise from north, then moves one
+  band in, at a steady 0.4 s per cell: about 6½ min for a 1v1 (861
+  cells) and 8 min for 3–4 seats. Each cell it reaches dissolves.
+  Every cell's sink moment is a pure function of the battle start and
+  its place on the spiral (`server/battle/sea.js`, mirrored in
   `public/js/battle/battleRules.js`), so a restart just catches up.
-  `seaTick` (1 s) deletes due cells; pieces on them fall in, and a king
-  caught by the sea is out for good (lives forced to 1 → the usual
-  final detonation). The last king above water wins; kings that sink
-  within one sweep are ranked by their exact sink time.
+  `seaTick` (every 200 ms, so cells go one at a time) deletes due cells.
+  Pieces on them fall in, and a king caught by the sea is out for good
+  (lives forced to 1 → the usual final detonation). The last king above
+  water wins; kings that sink close together are ranked by their exact
+  sink time.
   Placements on sunk ground are refused (`sunk_by_sea`). Bots drop
   moves onto cells about to sink and rescue endangered pieces, king
-  first (`triageForSea` in `server/ai/actions.js`). The client flashes
-  the cells due in the next 5 s, draws the sea's edge on the water and
+  first, heading for the ground the sea reaches last (`triageForSea` in
+  `server/ai/actions.js`). The client draws the sea block gliding along
+  its path, splashes where it swallows ground, flashes the ground it
+  will reach in the next 5 s, draws the sea's edge on the water and
   shows a countdown (`public/js/battle/seaOverlay.js`).
   `BATTLE_SEA_TIME_SCALE` (0–1] speeds the sea up for local playtests.
 

@@ -98,7 +98,7 @@ export function serverNow(battle, now = Date.now()) {
 	return now + (Number(battle?.sea?.clockOffset) || 0);
 }
 
-/** Position round the hand's sweep in [0, 1): north, clockwise. */
+/** Position round a band in [0, 1): north, then clockwise. */
 export function sweepFraction(centre, x, z) {
 	const dx = x - centre.x;
 	const dz = z - centre.z;
@@ -107,12 +107,61 @@ export function sweepFraction(centre, x, z) {
 	return turn < 0 ? turn + 1 : turn;
 }
 
+/**
+ * The sea block's path: every offset from the centre, outermost band
+ * first, each band clockwise from north (same order as the server).
+ */
+const spirals = new Map();
+export function seaSpiral(outer) {
+	if (spirals.has(outer)) return spirals.get(outer);
+	const origin = { x: 0, z: 0 };
+	const cells = [];
+	for (let dx = -outer; dx <= outer; dx++) {
+		for (let dz = -outer; dz <= outer; dz++) {
+			const band = radialBand(origin, dx, dz);
+			if (band > outer) continue;
+			cells.push({ dx, dz, band, turn: sweepFraction(origin, dx, dz), dist: Math.hypot(dx, dz) });
+		}
+	}
+	cells.sort((a, b) => (b.band - a.band) || (a.turn - b.turn) || (b.dist - a.dist) || (a.dx - b.dx) || (a.dz - b.dz));
+	const index = new Map(cells.map((c, i) => [`${c.dx},${c.dz}`, i]));
+	const spiral = { cells, index };
+	spirals.set(outer, spiral);
+	return spiral;
+}
+
 /** When (server epoch ms) the cell at (x, z) sinks; Infinity without a sea. */
 export function seaSinkAt(battle, x, z) {
 	const sea = battle?.sea;
-	if (!sea || !battle.centre) return Infinity;
-	const lap = (sea.outerBand - radialBand(battle.centre, x, z)) + sweepFraction(battle.centre, x, z);
-	return sea.startsAt + lap * sea.lapMs;
+	if (!sea || !battle.centre || !sea.cellMs) return Infinity;
+	const i = seaSpiral(sea.outerBand).index.get(`${x - battle.centre.x},${z - battle.centre.z}`);
+	return sea.startsAt + (i === undefined ? 0 : i * sea.cellMs);
+}
+
+/**
+ * Where the sea block is at server time `now`: the spiral cell it's on
+ * (`index`, `x`, `z`), the next one, and how far it has glided between
+ * them (0..1). Null before it sets off or after it has finished.
+ */
+export function seaBlockAt(battle, now) {
+	const sea = battle?.sea;
+	if (!sea || !battle.centre || !sea.cellMs) return null;
+	const { cells } = seaSpiral(sea.outerBand);
+	const progress = (now - sea.startsAt) / sea.cellMs;
+	if (progress < 0 || progress >= cells.length) return null;
+	const index = Math.floor(progress);
+	const here = cells[index];
+	const next = cells[Math.min(index + 1, cells.length - 1)];
+	return {
+		index,
+		glide: progress - index,
+		band: here.band,
+		turn: here.turn,
+		x: battle.centre.x + here.dx,
+		z: battle.centre.z + here.dz,
+		nextX: battle.centre.x + next.dx,
+		nextZ: battle.centre.z + next.dz,
+	};
 }
 
 /**
@@ -122,17 +171,16 @@ export function seaSinkAt(battle, x, z) {
 export function cellsSinkingBetween(battle, from, until) {
 	const sea = battle?.sea;
 	const out = [];
-	if (!sea || !battle.centre) return out;
-	const r = sea.outerBand;
-	const { x: cx, z: cz } = battle.centre;
-	for (let x = cx - r; x <= cx + r; x++) {
-		for (let z = cz - r; z <= cz + r; z++) {
-			if (radialBand(battle.centre, x, z) > r) continue;
-			const t = seaSinkAt(battle, x, z);
-			if (t > from && t <= until) out.push({ x, z, t });
-		}
+	if (!sea || !battle.centre || !sea.cellMs || !(until > from)) return out;
+	const { cells } = seaSpiral(sea.outerBand);
+	const first = Math.max(0, Math.floor((from - sea.startsAt) / sea.cellMs) + 1);
+	const last = Math.min(cells.length - 1, Math.floor((until - sea.startsAt) / sea.cellMs));
+	for (let i = first; i <= last; i++) {
+		const t = sea.startsAt + i * sea.cellMs;
+		if (t <= from || t > until) continue;
+		out.push({ x: battle.centre.x + cells[i].dx, z: battle.centre.z + cells[i].dz, t });
 	}
-	return out.sort((a, b) => a.t - b.t);
+	return out;
 }
 
 /** Does this coordinate belong to the remote battle-arena grid? */
