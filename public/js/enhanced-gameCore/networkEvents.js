@@ -520,7 +520,9 @@ function handleKingDetonation(payload, { showGameOverPulseOverlay }) {
 			}, layerIdx * effectiveInterval);
 		});
 
-		if (isLocalDetonation && typeof showGameOverPulseOverlay === 'function') {
+		// Battles have their own "you're out" card and results scene; the
+		// world's GAME OVER would sit on top of them.
+		if (isLocalDetonation && !gameState.activeBattle && typeof showGameOverPulseOverlay === 'function') {
 			const totalDuration = sortedDistances.length * effectiveInterval;
 			setTimeout(() => showGameOverPulseOverlay('GAME OVER'), totalDuration + 180);
 		}

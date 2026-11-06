@@ -13,14 +13,18 @@ import { attachSimpleForwards } from './network/socketEventBridge.js';
 import { CLIENT_PROTO } from './pieceDelta.js';
 import { identityCookieAttributes, rememberEmbeddedIdentity, embeddedIdentityAuth, forgetEmbeddedIdentity } from '../portal.js';
 import * as eventBus from './network/eventBus.js';
+import { isOffline } from '../offline/offlineMode.js';
+import { createLocalSocket } from '../offline/localSocket.js';
 
 // socket.io-client is loaded globally by the CDN <script> in index.html.
 // Using the global avoids fragile /node_modules/ imports that break behind nginx.
+// Offline, the game's server runs on the device and a local socket
+// stands in (the app ships without socket.io).
 function getSocketIO() {
+	if (isOffline()) return createLocalSocket;
 	if (typeof window !== 'undefined' && window.io) return window.io;
 	throw new Error('Socket.IO client not loaded — check CDN script tag in index.html');
 }
-const io = getSocketIO();
 
 // Configuration Constants
 const CONNECTION_TIMEOUT_MS = 10000; // 10 seconds
@@ -185,7 +189,7 @@ export default class NetworkManager {
 				console.log(`NetworkManager: Connecting to server at ${socketUrl}`);
 				
 				// Create new socket connection
-				const socket = io(socketUrl, {
+				const socket = getSocketIO()(socketUrl, {
 					reconnection: false, // We'll handle reconnection manually
 					timeout: CONNECTION_TIMEOUT_MS,
 					query: {

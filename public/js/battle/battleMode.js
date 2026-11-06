@@ -21,6 +21,7 @@ import { playSound } from '../audio/soundManager.js';
 import { showBattleResults, closeBattleResults } from './battleResults.js';
 import { withClockOffset } from './battleRules.js';
 import { startSeaOverlay, stopSeaOverlay } from './seaOverlay.js';
+import { isOffline } from '../offline/offlineMode.js';
 
 const DIALOG_ID = 'tetches-battle-dialog';
 const CAMERA_FLY_DELAY_MS = 1200;  // let the battle board arrive first
@@ -66,6 +67,7 @@ export function inviteCodeFromUrl() {
  * portal page): the welcome screen leads with battles, not the world.
  */
 export function isBattleFirstEntry() {
+	if (isOffline()) return true;
 	try {
 		return new URLSearchParams(window.location.search).get('play') === 'battle';
 	} catch (_e) {
@@ -80,6 +82,7 @@ export function isBattleFirstEntry() {
  * for players who have one.
  */
 function syncBattleUrl(code) {
+	if (isOffline()) return;
 	try {
 		const url = new URL(window.location);
 		if (code) {
@@ -634,7 +637,104 @@ function orDivider() {
 	return wrap;
 }
 
+const OFFLINE_PREFS_KEY = 'tetches_offline_battle_prefs';
+
+function loadOfflinePrefs() {
+	try {
+		return JSON.parse(localStorage.getItem(OFFLINE_PREFS_KEY) || 'null') || {};
+	} catch (_e) {
+		return {};
+	}
+}
+
+function saveOfflinePrefs(prefs) {
+	try { localStorage.setItem(OFFLINE_PREFS_KEY, JSON.stringify(prefs)); } catch (_e) { /* storage blocked */ }
+}
+
+/** A labelled row of toggle buttons; returns a getter for the choice. */
+function choiceRow(card, label, choices, initial) {
+	card.appendChild(sectionLabel(label));
+	const row = el('div', { display: 'flex', gap: '6px', marginBottom: '12px' });
+	let value = choices.some(c => c.value === initial) ? initial : choices[0].value;
+	const buttons = choices.map(({ value: v, label: text, title }) => {
+		const btn = themedButton(text);
+		Object.assign(btn.style, { flex: '1', padding: '9px 4px', minWidth: '0' });
+		if (title) btn.title = title;
+		btn.dataset.value = v;
+		btn.addEventListener('click', () => {
+			value = v;
+			paint();
+		});
+		row.appendChild(btn);
+		return btn;
+	});
+	function paint() {
+		for (const btn of buttons) {
+			const on = btn.dataset.value === value;
+			btn.style.backgroundColor = on ? '#ffcc00' : '#333';
+			btn.style.color = on ? '#000' : '#ffcc00';
+			btn.style.fontWeight = on ? 'bold' : 'normal';
+			btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+		}
+	}
+	paint();
+	card.appendChild(row);
+	return () => value;
+}
+
+/**
+ * Offline (no server): battles against the computer only, started
+ * straight away — no lobby, codes or matchmaking.
+ */
+function renderOfflineSetup(card) {
+	const prefs = loadOfflinePrefs();
+	card.appendChild(el('p', { margin: '0 0 14px 0', fontSize: '12px', color: '#ccc', lineHeight: '1.5' },
+		'Play the computer. Drop blocks to build ground, march your pieces across it and take the enemy king.'));
+
+	const seats = choiceRow(card, 'OPPONENTS', [
+		{ value: '2', label: '1 bot' },
+		{ value: '3', label: '2 bots' },
+		{ value: '4', label: '3 bots' },
+	], String(prefs.seatCount || 2));
+	const difficulty = choiceRow(card, 'DIFFICULTY', [
+		{ value: 'easy', label: 'Easy' },
+		{ value: 'medium', label: 'Medium' },
+		{ value: 'hard', label: 'Hard' },
+		{ value: 'auto', label: 'Auto', title: 'Bots pace themselves to your speed' },
+	], prefs.botDifficulty || 'medium');
+	const mode = choiceRow(card, 'GAME', [
+		{ value: 'quick', label: '🌊 Quick', title: 'The sea rises: about 7 minutes' },
+		{ value: 'classic', label: '♟ Classic', title: 'No time limit' },
+	], prefs.mode || 'quick');
+
+	const playBtn = themedButton('⚔ Play', { primary: true });
+	Object.assign(playBtn.style, { width: '100%', fontSize: '18px', padding: '12px 16px', marginTop: '4px' });
+	playBtn.addEventListener('click', async () => {
+		const choice = { seatCount: Number(seats()), botDifficulty: difficulty(), mode: mode() };
+		saveOfflinePrefs(choice);
+		playBtn.disabled = true;
+		playBtn.textContent = 'Setting up…';
+		const created = await createBattle(choice.seatCount, choice.botDifficulty, choice.mode);
+		const started = created.success ? await startBattle(created.battle.id) : created;
+		if (!started.success) {
+			playBtn.disabled = false;
+			playBtn.textContent = '⚔ Play';
+			showToastMessage(started.error || 'Could not start the battle', { variant: 'alert' });
+			return;
+		}
+		// `battle_started` adopts the seat and closes this dialog.
+		await fetchBattleState();
+	});
+	card.appendChild(playBtn);
+	card.appendChild(el('div', { fontSize: '11px', color: '#998', marginTop: '8px' },
+		'Quick: the sea sweeps the arena away, last king above water wins. Classic: fight to the last king.'));
+}
+
 function renderCreateJoin(card, options = {}) {
+	if (isOffline()) {
+		renderOfflineSetup(card);
+		return;
+	}
 	// ── Quick match ──────────────────────────────────────────────
 	card.appendChild(sectionLabel('PLAY SOMEONE NOW'));
 	const matchBtn = themedButton('⚡ Quick match', { primary: true });

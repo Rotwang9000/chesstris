@@ -13,6 +13,14 @@
 				else p = sessionStorage.getItem('tetches_portal');
 				if (p === 'crazygames' || p === 'itch') document.documentElement.dataset.portal = p;
 			} catch (e) { /* storage blocked: query string only */ }
+			// Offline mode (see js/offline/offlineMode.js): the phone app
+			// sets the flag itself; `?offline=1` turns it on in a browser.
+			try {
+				if (window.__TETCHES_OFFLINE__ === true
+					|| new URLSearchParams(location.search).get('offline') === '1') {
+					document.documentElement.dataset.offline = '1';
+				}
+			} catch (e) { /* no URL params */ }
 		})();
 	</script>
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -471,6 +479,14 @@
 		[data-portal] div:has(> #welcome-login-link) {
 			display: none !important;
 		}
+		/* Offline mode: battles against the computer on this device — no
+		   shared world, accounts, codes to copy or advertising. */
+		[data-offline] .advertise-link,
+		[data-offline] #sponsor-ad,
+		[data-offline] #sidebar-game-id,
+		[data-offline] #session-warning {
+			display: none !important;
+		}
 	</style>
 </head>
 <body>
@@ -532,7 +548,8 @@
 		// Ensure socket.io is loaded (deferred CDN script above — it has
 		// run by DOMContentLoaded, not yet at this point in parsing).
 		document.addEventListener('DOMContentLoaded', function() {
-			if (typeof io === 'undefined') {
+			// Offline (the phone app) runs without socket.io.
+			if (typeof io === 'undefined' && !document.documentElement.dataset.offline) {
 				console.error('Socket.io failed to load');
 				document.getElementById('error-message').textContent = 'Socket.io failed to load. Please check your internet connection and refresh the page.';
 				document.getElementById('error-message').style.display = 'block';

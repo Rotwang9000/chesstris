@@ -29,6 +29,7 @@ module.exports = [
 			'dist/**',
 			'build/**',
 			'public/**',
+			'app/www/**',
 			'tests/security/**',
 			'tests/ui/**',
 			'tests/core/**',
@@ -80,6 +81,35 @@ module.exports = [
 			'no-useless-assignment': 'warn',
 			'no-undef': 'error',
 		},
+	},
+	{
+		// The offline engine: server code bundled for a Web Worker, plus
+		// browser shims for Node-only modules (see scripts/build-offline.js).
+		files: ['offline/**/*.js'],
+		languageOptions: {
+			ecmaVersion: 2022,
+			sourceType: 'commonjs',
+			globals: {
+				...globals.browser,
+				...globals.worker,
+				...globals.node,
+			},
+		},
+		rules: {
+			'no-unused-vars': ['warn', {
+				argsIgnorePattern: '^_',
+				varsIgnorePattern: '^_',
+				caughtErrorsIgnorePattern: '^_',
+			}],
+			'no-var': 'error',
+			'prefer-const': ['warn', { destructuring: 'all' }],
+			'no-undef': 'error',
+		},
+	},
+	{
+		// esbuild `inject` module: ESM by necessity.
+		files: ['offline/shims/globals.js'],
+		languageOptions: { sourceType: 'module' },
 	},
 	{
 		// ESM tooling scripts (`.mjs`). Same ruleset as the CommonJS

@@ -47,6 +47,8 @@ mkdir -p "${DEPLOY_DIR}/logs"
 # the unbundled dev modules.
 echo "--- Building client bundle ---"
 npm run build:client
+# The offline engine (public/dist/offline-engine.js) powers ?offline=1.
+npm run build:offline
 
 # Sync files. Excludes dev-only artefacts AND live runtime state that the
 # running server owns — the persisted world (`/data/`), the advertiser

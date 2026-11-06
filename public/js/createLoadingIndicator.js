@@ -5,6 +5,7 @@ import { loginWithEmail, handleAuthRedirect, isSignedIn } from './auth/auth0Clie
 import { showLoginDialog } from './auth/loginDialog.js';
 import { isLoggedIn as isKingdomLoggedIn, getLoggedInName as getKingdomName } from './auth/kingdomKey.js';
 import { enterBattleFlow, isBattleFirstEntry } from './battle/battleMode.js';
+import { isOffline } from './offline/offlineMode.js';
 import { getSocket } from './utils/networkManager.js';
 
 /**
@@ -587,6 +588,8 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 	// capped by viewport height: at full width on a 768px-tall laptop it
 	// pushed the one line and the toggle out of sight.
 	const battleFirst = isBattleFirstEntry();
+	// Offline (phone app / no server): battles against the computer only.
+	const offline = isOffline();
 	scrollContent.innerHTML = `
 		<img src="/img/welcome-hero.png" alt="Tetches — chess pieces and falling tetromino blocks"
 			style="width: auto; max-width: 100%; max-height: 32vh; box-sizing: border-box; display: block; border-radius: 8px; image-rendering: pixelated; margin: 0 auto 12px auto; border: 1px solid rgba(255, 204, 0, 0.35);">
@@ -654,7 +657,7 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 	// Invite links (/?battle=CODE) surface on the battle button so the
 	// invitee knows exactly what to click.
 	let inviteBattleCode = null;
-	try {
+	if (!offline) try {
 		const inviteParam = new URLSearchParams(window.location.search).get('battle');
 		if (inviteParam && /^[A-Za-z0-9]{4,8}$/.test(inviteParam)) {
 			inviteBattleCode = inviteParam.toUpperCase();
@@ -687,8 +690,10 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 		<div style="font-size: 11px; opacity: 0.7; text-align: center; margin-top: -4px;">
 			${inviteBattleCode
 		? 'You have been invited to a private battle — click to take your seat.'
-		: battleFirst
-			? 'Quick match, play the computer, or invite a friend. About 7 minutes a game.'
+		: offline
+			? 'Play the computer. About 7 minutes a game.'
+			: battleFirst
+				? 'Quick match, play the computer, or invite a friend. About 7 minutes a game.'
 			: 'Private 2-4 player arena — share a code, or fight the bots.'}
 		</div>
 	`;
@@ -696,14 +701,16 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 		<input type="text" id="welcome-player-name" class="game-key-input"
 			placeholder="Your name (optional)" maxlength="20" value="${escapedName}"
 			autocomplete="nickname" style="text-align: center;">
-		${battleLeads ? battleButtonHtml + playButtonHtml : playButtonHtml + battleButtonHtml}
+		${offline ? battleButtonHtml : battleLeads ? battleButtonHtml + playButtonHtml : playButtonHtml + battleButtonHtml}
 	`;
 
 	// Account link: prominent but unmistakably optional (guests enter with
 	// the big button above; this only adds cross-device persistence).
 	let kingdomName = null;
 	try { kingdomName = isKingdomLoggedIn() ? getKingdomName() : null; } catch (_e) { /* cookie access */ }
-	if (kingdomName) {
+	if (offline) {
+		// No accounts offline: nothing leaves the device.
+	} else if (kingdomName) {
 		buttonHTML += `
 			<div style="font-size: 12px; text-align: center; color: #88dd88;">
 				✓ Logged in as <strong>${kingdomName.replace(/[<>&]/g, '')}</strong> — your kingdom follows you across devices.
