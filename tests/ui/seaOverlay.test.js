@@ -6,7 +6,7 @@
  * cells and placement predictions would disagree with the server.
  */
 
-import { seaSinkAt, cellsSinkingBetween, isCellInsideOwnArena, withClockOffset, serverNow } from '../../public/js/battle/battleRules.js';
+import { seaSinkAt, cellsSinkingBetween, isCellInsideOwnArena, withClockOffset, serverNow, seaBlockAt } from '../../public/js/battle/battleRules.js';
 import { seaHudText } from '../../public/js/battle/seaOverlay.js';
 
 const serverSea = require('../../server/battle/sea');
@@ -37,6 +37,18 @@ describe('rising sea — client mirror', () => {
 		}
 		expect(cellsSinkingBetween(client, 0, Infinity).length)
 			.toBe(serverSea.cellsSinkingBetween(battle, 0, Infinity).length);
+	});
+
+	test('the sea block is on the cell sinking now, gliding to the next', () => {
+		const battle = serverBattle();
+		const client = clientBattle(battle);
+		const order = serverSea.cellsSinkingBetween(battle, 0, Infinity);
+		const t = order[10].t + serverSea.SEA.CELL_MS / 2;
+		const at = seaBlockAt(client, t);
+		expect(at).toMatchObject({ index: 10, x: order[10].x, z: order[10].z, nextX: order[11].x, nextZ: order[11].z });
+		expect(at.glide).toBeCloseTo(0.5, 6);
+		expect(seaBlockAt(client, client.sea.startsAt - 1)).toBeNull();
+		expect(seaBlockAt(client, client.sea.endsAt)).toBeNull();
 	});
 
 	test('no sea, no sinking', () => {

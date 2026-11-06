@@ -40,7 +40,7 @@ describe('sea timing', () => {
 		expect(sea.publicSea(quickBattle({ mode: 'classic' }))).toBeNull();
 	});
 
-	test('the hand starts north on the outer ring edge after the calm', () => {
+	test('the sea block starts north on the outer ring edge after the calm', () => {
 		const battle = quickBattle();
 		const outer = ringOuterRadius(BATTLE.PLAY_RADIUS);
 		expect(sea.outerBand(battle)).toBe(outer);
@@ -50,20 +50,32 @@ describe('sea timing', () => {
 		expect(sea.cellsSinkingBetween(battle, 0, battle.startedAt + sea.SEA.CALM_MS - 1)).toEqual([]);
 	});
 
-	test('it sweeps clockwise at a constant speed, one band per lap', () => {
+	test('it eats one cell at a time at a steady pace, spiralling clockwise and inward', () => {
 		const battle = quickBattle();
 		const start = sea.seaStartMs(battle);
 		const outer = sea.outerBand(battle);
-		const lap = sea.SEA.LAP_MS;
-		// East is a quarter turn after north, south half, west three quarters.
-		expect(sea.sinkAtMs(battle, CENTRE.x + outer, CENTRE.z)).toBeCloseTo(start + lap / 4, 6);
-		expect(sea.sinkAtMs(battle, CENTRE.x, CENTRE.z + outer)).toBeCloseTo(start + lap / 2, 6);
-		expect(sea.sinkAtMs(battle, CENTRE.x - outer, CENTRE.z)).toBeCloseTo(start + 3 * lap / 4, 6);
-		// One band in, same bearing: exactly one lap later.
-		expect(sea.sinkAtMs(battle, CENTRE.x, CENTRE.z - outer + 1)).toBeCloseTo(start + lap, 6);
-		// The centre is last, and the sea is done one lap after its band starts.
-		expect(sea.sinkAtMs(battle, CENTRE.x, CENTRE.z)).toBe(start + outer * lap);
-		expect(sea.seaEndMs(battle)).toBe(start + (outer + 1) * lap);
+		const all = sea.cellsSinkingBetween(battle, 0, Infinity);
+		// Exactly one cell per CELL_MS, no two at once.
+		all.forEach((c, i) => expect(c.t).toBe(start + i * sea.SEA.CELL_MS));
+		// Neighbours along the path: the outer band goes clockwise from north…
+		const at = (x, z) => sea.sinkAtMs(battle, x, z);
+		const n = at(CENTRE.x, CENTRE.z - outer);
+		const e = at(CENTRE.x + outer, CENTRE.z);
+		const sth = at(CENTRE.x, CENTRE.z + outer);
+		const w = at(CENTRE.x - outer, CENTRE.z);
+		expect(n).toBeLessThan(e);
+		expect(e).toBeLessThan(sth);
+		expect(sth).toBeLessThan(w);
+		// …and every cell of a band goes before any cell further in.
+		const bandOf = c => radialBand(CENTRE, c.x, c.z);
+		for (let i = 1; i < all.length; i++) expect(bandOf(all[i])).toBeLessThanOrEqual(bandOf(all[i - 1]));
+		// The centre is last.
+		expect(all[all.length - 1]).toMatchObject({ x: CENTRE.x, z: CENTRE.z });
+		expect(sea.seaEndMs(battle)).toBe(start + all.length * sea.SEA.CELL_MS);
+	});
+
+	test('the server sinks at most one cell per tick', () => {
+		expect(sea.SEA.TICK_MS).toBeLessThan(sea.SEA.CELL_MS);
 	});
 
 	test('every arena cell sinks exactly once, in time order, and a 1v1 lasts ~7 minutes', () => {
@@ -196,7 +208,7 @@ describe('BattleManager — quick battles', () => {
 		const pub = startOneVsOne();
 		expect(pub.mode).toBe('quick');
 		expect(pub.sea.startsAt).toBe(pub.startedAt + sea.SEA.CALM_MS);
-		expect(pub.sea.lapMs).toBe(sea.SEA.LAP_MS);
+		expect(pub.sea.cellMs).toBe(sea.SEA.CELL_MS);
 		expect(startOneVsOne('classic').sea).toBeNull();
 	});
 
@@ -213,8 +225,8 @@ describe('BattleManager — quick battles', () => {
 		expect(manager.seaTick({ now: sea.seaStartMs(battle) - 1 })).toBe(false);
 		expect(cells[north]).toBeDefined();
 
-		// A third of a lap in: north has gone, south hasn't yet.
-		manager.seaTick({ now: sea.seaStartMs(battle) + sea.SEA.LAP_MS / 3 });
+		// A few cells in: north has gone, south hasn't yet.
+		manager.seaTick({ now: sea.seaStartMs(battle) + 3 * sea.SEA.CELL_MS });
 		expect(cells[north]).toBeUndefined();
 		expect(cells[south]).toBeDefined();
 	});
