@@ -25,6 +25,7 @@ function registerBattleHandlers(socket, ctx) {
 				hostName: player.name || 'Player 1',
 				seatCount: Number(data?.seatCount) || 2,
 				botDifficulty: data?.botDifficulty,
+				mode: data?.mode,
 			});
 			if (result?.success && !player.isComputer) funnel.recordBattleJoin(playerId);
 			if (typeof callback === 'function') callback(result);
@@ -70,6 +71,32 @@ function registerBattleHandlers(socket, ctx) {
 			if (typeof callback === 'function') callback(result);
 		} catch (err) {
 			console.error('[Battle] battle_start failed:', err);
+			if (typeof callback === 'function') callback({ success: false, error: 'Server error' });
+		}
+	});
+
+	// Quick match: pair with whoever else is looking, or a bot after a wait.
+	socket.on('battle_quickmatch', (data, callback) => {
+		try {
+			const player = World.getPlayer(playerId);
+			if (!player) {
+				if (typeof callback === 'function') callback({ success: false, error: 'Not registered' });
+				return;
+			}
+			const result = battleManager.quickMatch({ playerId, playerName: player.name || 'Player' });
+			if (result?.success && !player.isComputer) funnel.recordBattleJoin(playerId);
+			if (typeof callback === 'function') callback(result);
+		} catch (err) {
+			console.error('[Battle] battle_quickmatch failed:', err);
+			if (typeof callback === 'function') callback({ success: false, error: 'Server error' });
+		}
+	});
+
+	socket.on('battle_quickmatch_info', (data, callback) => {
+		try {
+			if (typeof callback === 'function') callback({ success: true, ...battleManager.quickMatchInfo() });
+		} catch (err) {
+			console.error('[Battle] battle_quickmatch_info failed:', err);
 			if (typeof callback === 'function') callback({ success: false, error: 'Server error' });
 		}
 	});

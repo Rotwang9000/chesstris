@@ -4,7 +4,7 @@ import gameState from './utils/gameState.js';
 import { loginWithEmail, handleAuthRedirect, isSignedIn } from './auth/auth0Client.js';
 import { showLoginDialog } from './auth/loginDialog.js';
 import { isLoggedIn as isKingdomLoggedIn, getLoggedInName as getKingdomName } from './auth/kingdomKey.js';
-import { enterBattleFlow } from './battle/battleMode.js';
+import { enterBattleFlow, isBattleFirstEntry } from './battle/battleMode.js';
 import { getSocket } from './utils/networkManager.js';
 
 /**
@@ -586,12 +586,16 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 	// first screen is one picture, one line, one button. The picture is
 	// capped by viewport height: at full width on a 768px-tall laptop it
 	// pushed the one line and the toggle out of sight.
+	const battleFirst = isBattleFirstEntry();
 	scrollContent.innerHTML = `
 		<img src="/img/welcome-hero.png" alt="Tetches — chess pieces and falling tetromino blocks"
 			style="width: auto; max-width: 100%; max-height: 32vh; box-sizing: border-box; display: block; border-radius: 8px; image-rendering: pixelated; margin: 0 auto 12px auto; border: 1px solid rgba(255, 204, 0, 0.35);">
 		<p style="margin: 0 0 14px 0; font-size: 15px; opacity: 0.9;">
-			Chess meets Tetris in one huge shared world.<br>
-			<span style="opacity: 0.75; font-size: 13px;">Drop blocks to grow your kingdom, then march your pieces out to capture kings.</span>
+			${battleFirst
+		? `Chess meets Tetris, head to head.<br>
+			<span style="opacity: 0.75; font-size: 13px;">Drop blocks to build ground, march your pieces across it and take the enemy king before the sea takes yours.</span>`
+		: `Chess meets Tetris in one huge shared world.<br>
+			<span style="opacity: 0.75; font-size: 13px;">Drop blocks to grow your kingdom, then march your pieces out to capture kings.</span>`}
 		</p>
 
 		<button id="howto-toggle" aria-expanded="false"
@@ -661,32 +665,38 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 	// headline action: the battle button renders first, biggest, and
 	// Enter in the name field triggers it. PLAY NOW drops to a quiet
 	// secondary option.
-	const newGameIsPrimary = !(ENABLE_WORLD_KEY && previousGameKey) && !inviteBattleCode;
+	// Battle-first pages (?play=battle) lead with battles the same way.
+	const battleLeads = !!inviteBattleCode || battleFirst;
+	const newGameIsPrimary = !(ENABLE_WORLD_KEY && previousGameKey) && !battleLeads;
 	const playButtonHtml = `
-		<button id="new-game-btn" class="tutorial-btn ${newGameIsPrimary ? 'primary' : ''}" ${inviteBattleCode ? 'style="font-size: 14px; padding: 10px 16px;"' : ''}>
-			✦ PLAY NOW
+		<button id="new-game-btn" class="tutorial-btn ${newGameIsPrimary ? 'primary' : ''}" ${battleLeads ? 'style="font-size: 14px; padding: 10px 16px;"' : ''}>
+			${battleFirst && !inviteBattleCode ? '🌍 EXPLORE THE WORLD' : '✦ PLAY NOW'}
 		</button>
-		<div style="font-size: ${inviteBattleCode ? '11px' : '12px'}; opacity: 0.8; text-align: center; margin-top: -2px;">
+		<div style="font-size: ${battleLeads ? '11px' : '12px'}; opacity: 0.8; text-align: center; margin-top: -2px;">
 			${inviteBattleCode
 		? 'Or skip the battle and enter the shared world instead.'
-		: 'Jump straight in — no sign-up needed, your spot is remembered on this device.'}
+		: battleFirst
+			? 'Or build a kingdom in the big shared world, where everyone plays at once.'
+			: 'Jump straight in — no sign-up needed, your spot is remembered on this device.'}
 		</div>
 	`;
 	const battleButtonHtml = `
-		<button id="welcome-battle-btn" class="tutorial-btn ${inviteBattleCode ? 'primary' : ''}" style="${inviteBattleCode ? '' : 'font-size: 14px; padding: 10px 16px;'}">
-			${inviteBattleCode ? `⚔ JOIN BATTLE ${inviteBattleCode}` : '⚔ BATTLE A FRIEND'}
+		<button id="welcome-battle-btn" class="tutorial-btn ${battleLeads ? 'primary' : ''}" style="${battleLeads ? '' : 'font-size: 14px; padding: 10px 16px;'}">
+			${inviteBattleCode ? `⚔ JOIN BATTLE ${inviteBattleCode}` : battleFirst ? '⚔ BATTLE' : '⚔ BATTLE A FRIEND'}
 		</button>
 		<div style="font-size: 11px; opacity: 0.7; text-align: center; margin-top: -4px;">
 			${inviteBattleCode
 		? 'You have been invited to a private battle — click to take your seat.'
-		: 'Private 2-4 player arena — share a code, or fight the bots.'}
+		: battleFirst
+			? 'Quick match, play the computer, or invite a friend. About 7 minutes a game.'
+			: 'Private 2-4 player arena — share a code, or fight the bots.'}
 		</div>
 	`;
 	buttonHTML += `
 		<input type="text" id="welcome-player-name" class="game-key-input"
 			placeholder="Your name (optional)" maxlength="20" value="${escapedName}"
 			autocomplete="nickname" style="text-align: center;">
-		${inviteBattleCode ? battleButtonHtml + playButtonHtml : playButtonHtml + battleButtonHtml}
+		${battleLeads ? battleButtonHtml + playButtonHtml : playButtonHtml + battleButtonHtml}
 	`;
 
 	// Account link: prominent but unmistakably optional (guests enter with
@@ -791,7 +801,7 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 		welcomeNameInput.addEventListener('keydown', (event) => {
 			if (event.key !== 'Enter') return;
 			event.preventDefault();
-			const primaryBtn = inviteBattleCode
+			const primaryBtn = battleLeads
 				? tutorialElement.querySelector('#welcome-battle-btn')
 				: newGameBtn;
 			if (primaryBtn) primaryBtn.click();

@@ -19,6 +19,7 @@
 
 const cells = require('../game/cells');
 const { isInsidePlayArea, isInsideKeepOut } = require('./geometry');
+const { isSunk } = require('./sea');
 
 /** The battle this player is seated in (via their player record), or null. */
 function seatBattleId(game, playerId) {
@@ -49,7 +50,7 @@ function ringItemUsableBy(game, item, playerId) {
  *
  *  • A seated player must keep every cell of the shape inside their
  *    arena's play area (the ring is the wall — you cannot build on or
- *    beyond it).
+ *    beyond it), and off cells the sea has already taken.
  *  • Everyone else must stay out of every live arena's keep-out circle.
  *
  * @param {Object} game
@@ -67,6 +68,13 @@ function validateArenaBounds(game, playerId, shapeCells) {
 					valid: false,
 					reason: 'outside_arena',
 					message: 'You cannot build outside the battle arena',
+				};
+			}
+			if (isSunk(battle, cell.x, cell.z)) {
+				return {
+					valid: false,
+					reason: 'sunk_by_sea',
+					message: 'The sea has taken that ground',
 				};
 			}
 		}

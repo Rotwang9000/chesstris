@@ -223,3 +223,41 @@ tests in `tests/server/battleMode.test.js`. Changes made while building:
 - Client camera: overview framing filters by region (arena vs organic)
   rather than pointing at the arena centre; `flyToPlayerKing` retries
   while the freshly built arena board is still streaming in.
+
+## Quick battles, the rising sea and Quick match (November 2026)
+
+Battles now come in two modes, chosen at creation (`mode` on
+`battle_create`; default `quick`):
+
+- **Classic**: as above, until one king is left (2 h cap).
+- **Quick**: after a 40 s calm the sea sweeps round the arena like a
+  clock hand, one lap every 22 s, spiralling inward one band per lap
+  from the ring's outer edge to the centre (~7 min for a 1v1). Every
+  cell's sink moment is a pure function of the battle start and its
+  position (`server/battle/sea.js`, mirrored in
+  `public/js/battle/battleRules.js`), so a restart just catches up.
+  `seaTick` (1 s) deletes due cells; pieces on them fall in, and a king
+  caught by the sea is out for good (lives forced to 1 → the usual
+  final detonation). The last king above water wins; kings that sink
+  within one sweep are ranked by their exact sink time.
+  Placements on sunk ground are refused (`sunk_by_sea`). Bots drop
+  moves onto cells about to sink and rescue endangered pieces, king
+  first (`triageForSea` in `server/ai/actions.js`). The client flashes
+  the cells due in the next 5 s, draws the sea's edge on the water and
+  shows a countdown (`public/js/battle/seaOverlay.js`).
+  `BATTLE_SEA_TIME_SCALE` (0–1] speeds the sea up for local playtests.
+
+Dropped connections: a living human seat whose player has no socket
+for 60 s is handed to a bot (`leftBy` remembers who); rejoining with
+the code reclaims that same seat. A battle with no connected human
+left ends as `abandoned`.
+
+**Quick match** (`battle_quickmatch`): joins the oldest open public
+1v1 lobby, starting it the moment it fills, or opens one that bots
+fill after 20 s (dropped instead if its player has gone).
+`battle_quickmatch_info` reports how many are looking and playing.
+Private lobbies are never matched with strangers.
+
+`?play=battle` makes the welcome screen lead with battles (the
+"Tetches: Battle" itch page frames `?portal=itch&play=battle`;
+`portal/itch-battle/index.html`).

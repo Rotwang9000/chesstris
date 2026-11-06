@@ -513,6 +513,10 @@ function bootstrap({ projectRoot = process.cwd() } = {}) {
 			catch (err) { logger.warn({ err: err.message }, 'battle sweep tick failed'); }
 		}, battleManager.SWEEP_INTERVAL_MS),
 		setInterval(() => {
+			try { battleManager.seaTick(); }
+			catch (err) { logger.warn({ err: err.message }, 'battle sea tick failed'); }
+		}, battleManager.SEA_TICK_MS),
+		setInterval(() => {
 			try { metrics.refreshWorldGauges(World.getWorld()); }
 			catch (err) { logger.warn({ err: err.message }, 'metrics tick failed'); }
 		}, METRICS_TICK_MS),

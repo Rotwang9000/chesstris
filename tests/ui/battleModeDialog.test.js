@@ -250,7 +250,7 @@ describe('battleMode client', () => {
 	test('rematch against bots creates and starts a same-size battle', async () => {
 		emitServerEvent('battle_started', { battle: activeBattle() });
 		emitServerEvent('battle_finished', {
-			battle: activeBattle({ status: 'finished', winnerSeatId: 'battle-code99-s0', botDifficulty: 'hard' }),
+			battle: activeBattle({ status: 'finished', winnerSeatId: 'battle-code99-s0', botDifficulty: 'hard', mode: 'classic' }),
 			results: finishedResults('battle-code99-s0'),
 		});
 		const rematchBattle = activeBattle({ id: 'NEXT01', code: 'NEXT01' });
@@ -261,7 +261,7 @@ describe('battleMode client', () => {
 		await new Promise(resolve => setTimeout(resolve, 0));
 
 		expect(mockSocket.emit).toHaveBeenCalledWith(
-			'battle_create', { seatCount: 2, botDifficulty: 'hard' }, expect.any(Function)
+			'battle_create', { seatCount: 2, botDifficulty: 'hard', mode: 'classic' }, expect.any(Function)
 		);
 		expect(mockSocket.emit).toHaveBeenCalledWith(
 			'battle_start', { battleId: 'NEXT01' }, expect.any(Function)
@@ -397,7 +397,7 @@ describe('battleMode client', () => {
 			'battle_focus', { battleId: null });
 	});
 
-	test('a create dialog offers bot difficulty and sends it to the server', async () => {
+	test('a create dialog offers bot difficulty and battle mode and sends them', async () => {
 		socketResponses.battle_create = (data) => ({
 			success: true,
 			battle: lobbyBattle({ botDifficulty: data.botDifficulty }),
@@ -405,12 +405,16 @@ describe('battleMode client', () => {
 		await battleMode.showBattleDialog();
 		const dialog = document.getElementById('tetches-battle-dialog');
 		const selects = [...dialog.querySelectorAll('select')];
-		expect(selects).toHaveLength(2);
-		const diffSelect = selects[1];
+		expect(selects).toHaveLength(3);
+		const [, diffSelect, modeSelect] = selects;
 		expect([...diffSelect.options].map(o => o.value))
 			.toEqual(['auto', 'easy', 'medium', 'hard']);
+		// Quick (the rising sea) is the default; Classic is the opt-out.
+		expect([...modeSelect.options].map(o => o.value)).toEqual(['quick', 'classic']);
+		expect(modeSelect.value).toBe('quick');
 
 		diffSelect.value = 'hard';
+		modeSelect.value = 'classic';
 		const createBtn = [...dialog.querySelectorAll('button')]
 			.find(b => b.textContent === 'Create battle');
 		createBtn.click();
@@ -419,7 +423,7 @@ describe('battleMode client', () => {
 
 		expect(mockSocket.emit).toHaveBeenCalledWith(
 			'battle_create',
-			expect.objectContaining({ seatCount: 2, botDifficulty: 'hard' }),
+			expect.objectContaining({ seatCount: 2, botDifficulty: 'hard', mode: 'classic' }),
 			expect.any(Function)
 		);
 	});

@@ -13,6 +13,8 @@ const pieces = require('../game/pieces');
 const { GAME_RULES } = require('../game/Constants');
 // Shared with the human chess handler so AI pawns freeze identically.
 const { markPawnAwaitingPromotion } = require('../game/promotion');
+const { activeBattleForSeat } = require('../battle/rules');
+const { SEA, hasSea, sinkAtMs } = require('../battle/sea');
 const {
 	nearestEnemyFocus,
 	manhattan,
@@ -39,6 +41,30 @@ const KNIGHT_OFFSETS = Object.freeze([
 	[1, -2], [2, -1], [-1, -2], [-2, -1],
 ]);
 const ORTHOGONAL_DIRS = Object.freeze([[1, 0], [-1, 0], [0, 1], [0, -1]]);
+/** What a bot most wants to save from the sea. */
+const SEA_RESCUE_ORDER = Object.freeze({ KING: 100, QUEEN: 9, ROOK: 5, BISHOP: 3, KNIGHT: 3, PAWN: 1 });
+
+/**
+ * Quick battles: sort a bot's candidate moves against the rising sea.
+ * A cell is "doomed" if it sinks before the bot is likely to move
+ * again. Moves onto doomed cells are dropped (unless nothing else is
+ * left), and moves that carry a piece off a doomed cell come back as
+ * `escapes`, most valuable piece first — the king above all.
+ */
+function triageForSea(battle, captures, quiet, { now = Date.now(), moveIntervalMs = 10000 } = {}) {
+	if (!hasSea(battle)) return { captures, quiet, escapes: [] };
+	const horizon = now + Math.max(SEA.WARNING_MS * 2, moveIntervalMs * 1.5);
+	const doomed = (x, z) => sinkAtMs(battle, x, z) <= horizon;
+	const safeTarget = c => !doomed(c.target.x, c.target.z);
+	const escapes = captures.concat(quiet)
+		.filter(c => safeTarget(c) && doomed(c.piece.position.x, c.piece.position.z))
+		.sort((a, b) => (SEA_RESCUE_ORDER[String(b.piece.type).toUpperCase()] || 0)
+			- (SEA_RESCUE_ORDER[String(a.piece.type).toUpperCase()] || 0));
+	const safeCaptures = captures.filter(safeTarget);
+	const safeQuiet = quiet.filter(safeTarget);
+	if (safeCaptures.length + safeQuiet.length === 0) return { captures, quiet, escapes };
+	return { captures: safeCaptures, quiet: safeQuiet, escapes };
+}
 const DIAGONAL_DIRS = Object.freeze([[1, 1], [1, -1], [-1, 1], [-1, -1]]);
 
 function createAiActions({
@@ -431,8 +457,8 @@ function createAiActions({
 		const pieceAt = (x, z) => (world.chessPieces || []).find(p =>
 			p && p.position && p.position.x === x && p.position.z === z
 		);
-		const captures = [];
-		const quiet = [];
+		let captures = [];
+		let quiet = [];
 		for (const piece of ownedPieces) {
 			for (const target of enumerateMovesForPiece(world, piece)) {
 				const victim = pieceAt(target.x, target.z);
@@ -445,6 +471,11 @@ function createAiActions({
 		}
 		if (captures.length === 0 && quiet.length === 0) return false;
 
+		const sea = triageForSea(activeBattleForSeat(world, computerId), captures, quiet, {
+			moveIntervalMs: Number(computerPlayer.minMoveInterval) || 10000,
+		});
+		({ captures, quiet } = sea);
+
 		// Prefer captures (proportional to aggressiveness). Quiet moves
 		// that close distance to the nearest enemy are ranked ahead of
 		// wandering — Expert used to shuffle quiet moves at random and
@@ -455,7 +486,7 @@ function createAiActions({
 		const rankedQuiet = rankQuietMovesTowardEnemy(quiet, enemyFocus);
 		const preferCaptures = captures.length > 0
 			&& (rankedQuiet.length === 0 || Math.random() < Math.max(0.5, strategy.aggressiveness || 0.5));
-		const pool = preferCaptures
+		let pool = preferCaptures
 			? captures.concat(rankedQuiet)
 			: rankedQuiet.concat(captures);
 
@@ -463,6 +494,17 @@ function createAiActions({
 		// capture-preferring mode, the distance-ranked quiet moves
 		// otherwise. The pick jitter below must not reach past it.
 		let priorityCount = preferCaptures ? captures.length : rankedQuiet.length;
+
+		// Fleeing the sea beats everything: the most valuable endangered
+		// piece's escapes go first (a doomed king saves itself before
+		// anything else moves).
+		if (sea.escapes.length > 0) {
+			const topValue = SEA_RESCUE_ORDER[String(sea.escapes[0].piece.type).toUpperCase()] || 0;
+			const urgent = sea.escapes.filter(c =>
+				(SEA_RESCUE_ORDER[String(c.piece.type).toUpperCase()] || 0) === topValue);
+			pool = urgent.concat(pool.filter(c => !urgent.includes(c)));
+			priorityCount = urgent.length;
+		}
 
 		const maxAttempts = Math.min(pool.length, 20);
 		for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -817,4 +859,4 @@ function createAiActions({
 	};
 }
 
-module.exports = { createAiActions };
+module.exports = { createAiActions, triageForSea };

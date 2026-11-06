@@ -66,14 +66,73 @@ export function isRingItemUsable(gameState, item) {
 /**
  * Arena-bounds prediction for a placement cell. True when the local
  * player is not in a battle, or the cell is inside their arena's play
- * area.
+ * area and the sea hasn't taken it.
  */
 export function isCellInsideOwnArena(gameState, x, z) {
 	const battle = getActiveBattle(gameState);
 	if (!battle || !battle.centre) return true;
-	const dx = x - battle.centre.x;
-	const dz = z - battle.centre.z;
-	return Math.round(Math.sqrt(dx * dx + dz * dz)) <= battlePlayRadius(battle);
+	if (radialBand(battle.centre, x, z) > battlePlayRadius(battle)) return false;
+	return seaSinkAt(battle, x, z) > serverNow(battle);
+}
+
+// ── The rising sea (Quick battles) — mirrors server/battle/sea.js ──────────
+
+function radialBand(centre, x, z) {
+	const dx = x - centre.x;
+	const dz = z - centre.z;
+	return Math.round(Math.sqrt(dx * dx + dz * dz));
+}
+
+/**
+ * Remember how far the server clock is from ours when a battle object
+ * arrives, so sink times (server epoch ms) line up locally.
+ */
+export function withClockOffset(sea, now = Date.now()) {
+	if (!sea) return null;
+	const offset = Number.isFinite(sea.serverNow) ? sea.serverNow - now : 0;
+	return { ...sea, clockOffset: offset };
+}
+
+/** The server's clock, as best we know it. */
+export function serverNow(battle, now = Date.now()) {
+	return now + (Number(battle?.sea?.clockOffset) || 0);
+}
+
+/** Position round the hand's sweep in [0, 1): north, clockwise. */
+export function sweepFraction(centre, x, z) {
+	const dx = x - centre.x;
+	const dz = z - centre.z;
+	if (dx === 0 && dz === 0) return 0;
+	const turn = Math.atan2(dx, -dz) / (2 * Math.PI);
+	return turn < 0 ? turn + 1 : turn;
+}
+
+/** When (server epoch ms) the cell at (x, z) sinks; Infinity without a sea. */
+export function seaSinkAt(battle, x, z) {
+	const sea = battle?.sea;
+	if (!sea || !battle.centre) return Infinity;
+	const lap = (sea.outerBand - radialBand(battle.centre, x, z)) + sweepFraction(battle.centre, x, z);
+	return sea.startsAt + lap * sea.lapMs;
+}
+
+/**
+ * Cells due to sink in (from, until] (server ms), soonest first — the
+ * ones to flash a warning on.
+ */
+export function cellsSinkingBetween(battle, from, until) {
+	const sea = battle?.sea;
+	const out = [];
+	if (!sea || !battle.centre) return out;
+	const r = sea.outerBand;
+	const { x: cx, z: cz } = battle.centre;
+	for (let x = cx - r; x <= cx + r; x++) {
+		for (let z = cz - r; z <= cz + r; z++) {
+			if (radialBand(battle.centre, x, z) > r) continue;
+			const t = seaSinkAt(battle, x, z);
+			if (t > from && t <= until) out.push({ x, z, t });
+		}
+	}
+	return out.sort((a, b) => a.t - b.t);
 }
 
 /** Does this coordinate belong to the remote battle-arena grid? */
