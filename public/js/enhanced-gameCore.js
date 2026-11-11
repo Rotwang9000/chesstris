@@ -611,7 +611,10 @@ function initializeGameUI() {
 			hint.id = 'controls-hint-overlay';
 			hint.textContent = 'Controls: Arrow keys = Tetromino, Click = Chess';
 			Object.assign(hint.style, {
-				position: 'fixed', bottom: '10px', left: '10px',
+				// Centred above the bottom toast — at bottom-left it sat
+				// right on top of the Reset Camera / Mode buttons.
+				position: 'fixed', bottom: '84px', left: '50%',
+				transform: 'translateX(-50%)', whiteSpace: 'nowrap',
 				padding: '8px 10px', background: 'rgba(0,0,0,0.65)',
 				color: '#fff', border: '1px solid rgba(255,204,0,0.5)',
 				borderRadius: '6px', fontSize: '12px',

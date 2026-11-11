@@ -24,7 +24,7 @@
  * in `CSS2DRenderer` (which would require its own DOM mount).
  */
 
-import { getTHREE, getScene } from './gameContext.js';
+import { getTHREE, getScene, getRenderer } from './gameContext.js';
 import { translatePosition } from './centreBoardMarker.js';
 import { isCellVisibleInCurrentView } from './battle/battleRules.js';
 
@@ -32,10 +32,19 @@ const NAMEPLATE_GROUP_NAME = 'nameplate-overlay';
 const NAMEPLATE_HEIGHT_ABOVE_KING = 2.4;
 const NAMEPLATE_BOB_AMPLITUDE = 0.08;
 const NAMEPLATE_BOB_FREQ_HZ = 0.4;
-const PANEL_PADDING = 18;
-const PANEL_RADIUS = 12;
-const FONT = 'bold 36px "Times New Roman", serif';
-const SUBFONT = '24px "Times New Roman", serif';
+const PANEL_PADDING = 16;
+const PANEL_RADIUS = 14;
+const NAME_PX = 34;
+const SUB_PX = 24;
+const FONT_STACK = '"Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif';
+const FONT = `700 ${NAME_PX}px ${FONT_STACK}`;
+const SUBFONT = `600 ${SUB_PX}px ${FONT_STACK}`;
+// Canvas pixels per layout pixel. The sprite is often magnified when
+// the camera zooms in, so paint well above screen resolution and let
+// mipmaps handle the far end — a 1× canvas was visibly blurry.
+const SUPERSAMPLE = 3;
+// World units per layout pixel.
+const WORLD_PER_PX = 0.012;
 
 // Captured-piece glyphs used in the spectator legend strip.
 const PIECE_GLYPHS = Object.freeze({
@@ -91,7 +100,6 @@ function resolvePlayerColour(player) {
  */
 function paintCanvas(name, colour, captures) {
 	const canvas = document.createElement('canvas');
-	const dpr = Math.min(window.devicePixelRatio || 1, 2);
 	const ctx = canvas.getContext('2d');
 	if (!ctx) return { canvas, width: 0, height: 0 };
 
@@ -108,36 +116,56 @@ function paintCanvas(name, colour, captures) {
 	const subMetrics = subText ? ctx.measureText(subText) : { width: 0 };
 	const subWidth = subMetrics.width;
 
-	const innerWidth = Math.max(nameWidth, subWidth);
-	const panelWidth = innerWidth + PANEL_PADDING * 2;
+	const swatch = 14;   // colour dot before the name
+	const swatchGap = 10;
+	const innerWidth = Math.max(nameWidth + swatch + swatchGap, subWidth);
+	const panelWidth = Math.ceil(innerWidth + PANEL_PADDING * 2);
 	const panelHeight = subText
-		? 36 + 8 + 24 + PANEL_PADDING * 2
-		: 36 + PANEL_PADDING * 2;
+		? NAME_PX + 8 + SUB_PX + PANEL_PADDING * 2
+		: NAME_PX + PANEL_PADDING * 2;
 
-	canvas.width = Math.ceil(panelWidth * dpr);
-	canvas.height = Math.ceil(panelHeight * dpr);
-	ctx.scale(dpr, dpr);
+	canvas.width = panelWidth * SUPERSAMPLE;
+	canvas.height = panelHeight * SUPERSAMPLE;
+	ctx.scale(SUPERSAMPLE, SUPERSAMPLE);
 
-	// Panel background — translucent dark with a coloured border.
-	ctx.fillStyle = 'rgba(10, 10, 18, 0.78)';
-	ctx.strokeStyle = colour;
-	ctx.lineWidth = 3;
-	roundRect(ctx, 1.5, 1.5, panelWidth - 3, panelHeight - 3, PANEL_RADIUS);
+	// Panel — dark glass with the player's colour as a border, so the
+	// label stays readable whatever the colour (dark bot colours used
+	// to vanish when they were also the text colour).
+	ctx.fillStyle = 'rgba(12, 14, 24, 0.82)';
+	roundRect(ctx, 2, 2, panelWidth - 4, panelHeight - 4, PANEL_RADIUS);
 	ctx.fill();
+	ctx.strokeStyle = colour;
+	ctx.lineWidth = 4;
+	ctx.stroke();
+	ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+	ctx.lineWidth = 1.5;
+	roundRect(ctx, 5, 5, panelWidth - 10, panelHeight - 10, PANEL_RADIUS - 3);
 	ctx.stroke();
 
-	// Player name
-	ctx.font = FONT;
+	// Colour dot + player name in near-white.
+	const nameLeft = (panelWidth - (nameWidth + swatch + swatchGap)) / 2;
+	const nameMid = PANEL_PADDING + NAME_PX / 2;
+	ctx.beginPath();
+	ctx.arc(nameLeft + swatch / 2, nameMid, swatch / 2, 0, Math.PI * 2);
 	ctx.fillStyle = colour;
-	ctx.textAlign = 'center';
-	ctx.textBaseline = 'top';
-	ctx.fillText(name, panelWidth / 2, PANEL_PADDING);
+	ctx.fill();
+	ctx.lineWidth = 2;
+	ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+	ctx.stroke();
+
+	ctx.font = FONT;
+	ctx.fillStyle = '#f7f4ec';
+	ctx.textAlign = 'left';
+	ctx.textBaseline = 'middle';
+	ctx.fillText(name, nameLeft + swatch + swatchGap, nameMid + 1);
 
 	// Capture strip
 	if (subText) {
 		ctx.font = SUBFONT;
 		ctx.fillStyle = '#f6e7c1';
-		ctx.fillText(subText, panelWidth / 2, PANEL_PADDING + 36 + 8);
+		ctx.textAlign = 'center';
+		ctx.textBaseline = 'top';
+		ctx.fillText(subText, panelWidth / 2, PANEL_PADDING + NAME_PX + 8);
 	}
 
 	return { canvas, width: panelWidth, height: panelHeight };
@@ -204,10 +232,23 @@ function buildSignature(name, colour, captures) {
 	return `${name}|${colour}|${captures}`;
 }
 
+/** Mipmapped, anisotropic texture so the label stays crisp at any zoom. */
+function makeTexture(THREE, canvas) {
+	const texture = new THREE.CanvasTexture(canvas);
+	texture.generateMipmaps = true;
+	texture.minFilter = THREE.LinearMipmapLinearFilter;
+	texture.magFilter = THREE.LinearFilter;
+	const renderer = getRenderer();
+	if (renderer && renderer.capabilities && typeof renderer.capabilities.getMaxAnisotropy === 'function') {
+		texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+	}
+	texture.needsUpdate = true;
+	return texture;
+}
+
 function buildSprite(THREE, name, colour, captures) {
 	const { canvas, width, height } = paintCanvas(name, colour, captures);
-	const texture = new THREE.CanvasTexture(canvas);
-	texture.needsUpdate = true;
+	const texture = makeTexture(THREE, canvas);
 	const material = new THREE.SpriteMaterial({
 		map: texture,
 		transparent: true,
@@ -217,8 +258,7 @@ function buildSprite(THREE, name, colour, captures) {
 	const sprite = new THREE.Sprite(material);
 	// Aspect-preserving scale — sprites in Three.js are unit-sized
 	// so we scale by the canvas aspect ratio.
-	const baseScale = 0.012;
-	sprite.scale.set(width * baseScale, height * baseScale, 1);
+	sprite.scale.set(width * WORLD_PER_PX, height * WORLD_PER_PX, 1);
 	// Render above almost everything else.
 	sprite.renderOrder = 999;
 	return { sprite, texture, canvas, width, height };
@@ -289,8 +329,7 @@ export function syncNameplates(chessPieces, players, options = {}) {
 			visual.height = repainted.height;
 			visual.texture.image = repainted.canvas;
 			visual.texture.needsUpdate = true;
-			const baseScale = 0.012;
-			visual.sprite.scale.set(repainted.width * baseScale, repainted.height * baseScale, 1);
+			visual.sprite.scale.set(repainted.width * WORLD_PER_PX, repainted.height * WORLD_PER_PX, 1);
 			visual.lastSignature = signature;
 		}
 		positionSprite(visual.sprite, piece, gameState);

@@ -15,11 +15,11 @@
  */
 
 import { getTHREE } from './gameContext.js';
+import { SEA_SURFACE_Y } from './seaLevel.js';
 
 // Sit just above the water plane so the foam doesn't z-fight with
-// it but still reads as sitting on the surface. Water plane is at
-// y=-0.50 (see `scene.js` `addWaterPlane`).
-const FOAM_Y = -0.45;
+// it but still reads as sitting on the surface.
+const FOAM_Y = SEA_SURFACE_Y + 0.05;
 const FOAM_SPREAD = 80;
 const FOAM_PATCH_COUNT = 38;
 

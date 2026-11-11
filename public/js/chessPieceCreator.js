@@ -183,9 +183,13 @@ export function createChessPiece(gameState, x, z, pieceType, player, options = {
 			if (hasCustomColor) {
 				initMaterials();
 				materials = createSafeMaterials(materialKey);
+				// Body in the player's colour, trim (collars, mane,
+				// mitre cut) in a deeper shade of it. The accent keeps
+				// the side's metal — gold for you, silver for everyone
+				// else — so your own royals glint at a glance.
 				applyColorToMaterial(materials.primary);
 				applyColorToMaterial(materials.secondary);
-				applyColorToMaterial(materials.accent);
+				materials.secondary.color.multiplyScalar(0.55);
 			}
 			const pieceMesh = buildRussianPiece(pieceTypeNum, materialKey, isLocalPlayer, materials);
 			pieceMesh.visible = true;

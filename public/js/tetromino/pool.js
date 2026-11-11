@@ -8,15 +8,21 @@
  */
 
 import { getTHREE } from '../gameContext.js';
+import { createRoundedCellGeometry } from '../boardFunctions/roundedCellGeometry.js';
 
 const MAX_POOL_SIZE = 100;
 const DEFAULT_PRELOAD_COUNT = 50;
 
 const tetrominoBlocks = [];
 
+// Every pooled block shares one bevelled geometry (matching the board
+// cells); only materials are per block.
+let sharedBlockGeometry = null;
+
 function createBlockMesh() {
 	const THREE = getTHREE();
-	const geometry = new THREE.BoxGeometry(0.9, 0.9, 0.9);
+	if (!sharedBlockGeometry) sharedBlockGeometry = createRoundedCellGeometry(THREE, 0.9, 0.07);
+	const geometry = sharedBlockGeometry;
 	const material = new THREE.MeshStandardMaterial({
 		color: 0x000000,
 		metalness: 0.3,
@@ -38,7 +44,7 @@ function getTetrominoBlock() {
 function returnTetrominoBlock(mesh) {
 	if (!mesh) return;
 	if (tetrominoBlocks.length >= MAX_POOL_SIZE) {
-		if (mesh.geometry) mesh.geometry.dispose();
+		if (mesh.geometry && mesh.geometry !== sharedBlockGeometry) mesh.geometry.dispose();
 		if (mesh.material) mesh.material.dispose();
 		return;
 	}

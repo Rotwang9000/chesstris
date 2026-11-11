@@ -17,12 +17,15 @@ import { createChessPiece as createChessPieceFromCreator } from '../chessPieceCr
 import { extractChessPiecesFromCells } from './pieces.js';
 import { getPlayerColor } from './colours.js';
 import { createCellInstancer } from './cellInstancer.js';
+import { createCloudPuffs } from './cloudPuffs.js';
+import { createRoundedCellGeometry } from './roundedCellGeometry.js';
 import { isCellVisibleInCurrentView } from '../battle/battleRules.js';
 
 function ensureRenderCache(THREE) {
 	if (!ensureRenderCache._cache) {
 		const cache = {};
-		cache.cellGeometry = new THREE.BoxGeometry(0.94, 0.94, 0.94);
+		// Softly bevelled so every block catches a highlight on its edges.
+		cache.cellGeometry = createRoundedCellGeometry(THREE, 0.94, 0.07);
 		cache.cellEdgesGeometry = new THREE.EdgesGeometry(cache.cellGeometry);
 		cache.cellEdgeMaterials = {
 			default: new THREE.LineBasicMaterial({ color: 0x333333, transparent: true, opacity: 0.15, depthTest: false }),
@@ -30,22 +33,6 @@ function ensureRenderCache(THREE) {
 			tetromino: new THREE.LineBasicMaterial({ color: 0x333333, transparent: true, opacity: 0.2, depthTest: false }),
 		};
 		cache.materials = Object.create(null);
-		// Flat foam splash sitting at the water surface beneath each
-		// cell. The geometry was previously a sphere, which made the
-		// "cloud" look puffy and broke the floating-in-sea aesthetic
-		// the rest of the scene is going for — we now use a circle
-		// laid flat so it reads as wave foam swirling around the
-		// island base.
-		cache.cloudGeometry = new THREE.CircleGeometry(0.7, 18);
-		cache.cloudGeometry.rotateX(-Math.PI / 2);
-		cache.cloudMaterial = new THREE.MeshBasicMaterial({
-			color: 0xF6FBFF,
-			transparent: true,
-			opacity: 0.5,
-			depthWrite: false,
-			side: THREE.DoubleSide,
-		});
-
 		// Island bases (rock pillars) were removed at the user's
 		// request — cells now float directly on the water. The cache
 		// entries are retained as `null` so older code that still
@@ -64,57 +51,6 @@ function ensureRenderCache(THREE) {
 		ensureRenderCache._cache = cache;
 	}
 	return ensureRenderCache._cache;
-}
-
-/**
- * Build a sea-foam splash anchored beneath a cell at the water
- * surface. Replaces the old fluffy cloud puff so cells read as
- * islands floating on the sea rather than blocks sitting on a
- * raincloud.
- *
- * The mesh is still tagged with the legacy `cloudPuff` userData
- * type so the cleanup code that prunes orphaned cells/clouds in
- * `renderBoard` keeps working.
- */
-function createCloudPuff(THREE, renderCache, x, z) {
-	const group = new THREE.Group();
-	const seed = ((x * 73856093) ^ (z * 19349663)) >>> 0;
-	const r1 = ((seed & 0xff) / 255 - 0.5) * 0.18;
-	const r2 = (((seed >> 8) & 0xff) / 255 - 0.5) * 0.18;
-	const r3 = (((seed >> 16) & 0xff) / 255 - 0.5) * 0.18;
-
-	// `WATER_SURFACE_Y` mirrors the water plane in scene.js — keep
-	// these in sync if the sea height ever moves.
-	const WATER_SURFACE_Y = -0.45;
-
-	// Island base meshes were removed; cells now float directly on
-	// the sea, so the only thing this group contributes is the
-	// foam splash drawn at the water surface beneath the cell.
-
-	const main = new THREE.Mesh(renderCache.cloudGeometry, renderCache.cloudMaterial);
-	main.position.set(0, WATER_SURFACE_Y, 0);
-	main.scale.set(1.0 + r1 * 0.5, 1, 0.8 + r2 * 0.4);
-	main.rotation.y = ((seed & 0xff) / 255) * Math.PI;
-	main.renderOrder = 2;
-	group.add(main);
-
-	const wisp = new THREE.Mesh(renderCache.cloudGeometry, renderCache.cloudMaterial);
-	wisp.position.set(0.18 + r2, WATER_SURFACE_Y + 0.02, -0.12 + r3);
-	wisp.scale.set(0.45, 1, 0.3);
-	wisp.rotation.y = ((seed >> 8) & 0xff) / 255 * Math.PI;
-	wisp.renderOrder = 2;
-	group.add(wisp);
-
-	group.userData = {
-		type: 'cloudPuff',
-		parentCellKey: `${x},${z}`,
-		isStatic: true,
-		isCellFoam: true,
-		basePulse: 0.85 + ((seed >> 16) & 0xff) / 255 * 0.25,
-		pulseSpeed: 0.18 + ((seed >> 8) & 0xff) / 255 * 0.18,
-		pulsePhase: ((seed & 0xff) / 255) * Math.PI * 2,
-	};
-	return group;
 }
 
 /**
@@ -321,7 +257,6 @@ export function renderBoard(gameState, boardGroup, _createFloatingIsland, THREE)
 	const renderCache = ensureRenderCache(THREE);
 
 	const existingCells = Object.create(null);
-	const existingClouds = Object.create(null);
 	if (boardGroup && boardGroup.children) {
 		for (const child of boardGroup.children) {
 			if (!child || !child.userData) continue;
@@ -329,8 +264,6 @@ export function renderBoard(gameState, boardGroup, _createFloatingIsland, THREE)
 				const pos = child.userData.position;
 				if (!pos || pos.x === undefined || pos.z === undefined) continue;
 				existingCells[`${pos.x},${pos.z}`] = child;
-			} else if (child.userData.type === 'cloudPuff' && child.userData.parentCellKey) {
-				existingClouds[child.userData.parentCellKey] = child;
 			}
 		}
 	}
@@ -340,10 +273,9 @@ export function renderBoard(gameState, boardGroup, _createFloatingIsland, THREE)
 	let cellsRemoved = 0;
 	let cellsReused = 0;
 
-	// Floating-cloud aesthetic only applies to the normal/default
+	// Cloud puffs under the cells only apply to the normal/default
 	// render profile. Retro is a flat CRT board; cute already has its
-	// own space-themed star/heart bed underneath, so we don't pile
-	// puffy clouds on top of either of them.
+	// own space-themed star/heart bed underneath.
 	const renderProfile = gameState
 		? (gameState.renderProfile
 			|| (gameState.retroMode ? 'retro'
@@ -351,6 +283,21 @@ export function renderBoard(gameState, boardGroup, _createFloatingIsland, THREE)
 					: 'normal'))
 		: 'normal';
 	const cloudsEnabled = renderProfile === 'normal';
+	let cloudPuffs = null;
+	if (cloudsEnabled) {
+		const liveMesh = gameState.__cloudPuffs && gameState.__cloudPuffs.getMesh();
+		if (!gameState.__cloudPuffs || gameState.__cloudPuffsOwner !== boardGroup
+			|| !liveMesh || liveMesh.parent !== boardGroup) {
+			if (gameState.__cloudPuffs) gameState.__cloudPuffs.dispose();
+			gameState.__cloudPuffs = createCloudPuffs(THREE, boardGroup);
+			gameState.__cloudPuffsOwner = boardGroup;
+		}
+		cloudPuffs = gameState.__cloudPuffs;
+	} else if (gameState.__cloudPuffs) {
+		gameState.__cloudPuffs.dispose();
+		gameState.__cloudPuffs = null;
+	}
+	const puffCellList = [];
 
 	// ── Instanced terrain ────────────────────────────────────────────
 	// Plain opaque cells collapse into a single InstancedMesh (one draw
@@ -491,34 +438,21 @@ export function renderBoard(gameState, boardGroup, _createFloatingIsland, THREE)
 				}
 			}
 
-			// Hover-cloud under each cell (normal profile only). We only
-			// hide it on decaying cells so a "fading away" cell visually
-			// loses its support — otherwise it looks frozen mid-air. Foam
-			// is independent of whether the cell itself is instanced.
-			if (cloudsEnabled && !appearance.decaying) {
-				let cloud = existingClouds[cellKey];
-				if (!cloud) {
-					cloud = createCloudPuff(THREE, renderCache, x, z);
-					boardGroup.add(cloud);
-				}
-				cloud.position.set(absPos.x, 0, absPos.z);
-				cloud.userData.processed = true;
-			} else {
-				const cloud = existingClouds[cellKey];
-				if (cloud) {
-					boardGroup.remove(cloud);
-					delete existingClouds[cellKey];
-				}
+			// Cloud puffs under each cell (normal profile only). A
+			// decaying cell loses its cloud, so a "fading away" cell
+			// visibly loses its support instead of looking frozen mid-air.
+			if (cloudPuffs && !appearance.decaying) {
+				puffCellList.push({ pos: { x, z }, absX: absPos.x, absZ: absPos.z });
 			}
 		}
 	}
 
 	if (opaqueInstancer) opaqueInstancer.rebuild(opaqueCellList);
 	if (exhomeInstancer) exhomeInstancer.rebuild(exhomeCellList);
+	if (cloudPuffs) cloudPuffs.rebuild(puffCellList);
 
 	if (boardGroup && boardGroup.children) {
 		const cellsToRemove = [];
-		const cloudsToRemove = [];
 		for (const child of boardGroup.children) {
 			if (!child || !child.userData) continue;
 			if (child.userData.type === 'cell' && child.userData.position) {
@@ -526,11 +460,6 @@ export function renderBoard(gameState, boardGroup, _createFloatingIsland, THREE)
 				// Prune an individual cell mesh if its cell is gone OR it is
 				// now rendered by the instancer (key absent from individualKeys).
 				if (!individualKeys[childKey]) cellsToRemove.push(child);
-			}
-			if (child.userData.type === 'cloudPuff' && child.userData.parentCellKey) {
-				if (!processedCells[child.userData.parentCellKey] || !cloudsEnabled) {
-					cloudsToRemove.push(child);
-				}
 			}
 		}
 		for (const cell of cellsToRemove) {
@@ -542,7 +471,6 @@ export function renderBoard(gameState, boardGroup, _createFloatingIsland, THREE)
 			if (cell.geometry && cell.geometry !== renderCache.cellGeometry) cell.geometry.dispose();
 			cellsRemoved++;
 		}
-		for (const cloud of cloudsToRemove) boardGroup.remove(cloud);
 	}
 
 	// Only back-fill from the board when the server has never sent a
