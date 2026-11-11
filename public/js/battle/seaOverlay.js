@@ -21,16 +21,18 @@
 import { getScene, getTHREE, getGameState } from '../gameContext.js';
 import { translatePosition } from '../centreBoardMarker.js';
 import { cellsSinkingBetween, serverNow, seaBlockAt, seaSpiral } from './battleRules.js';
+import { SEA_SURFACE_Y } from '../seaLevel.js';
 
 const HUD_ID = 'tetches-sea-hud';
 const SLOW_FRAME_MS = 120;   // HUD, warnings and edge; the block moves every frame
 const TILE_Y = 0.5;          // just above a cell's top face (cells are 0.94 high, centred on 0)
 const TILE_COLOUR = 0x2f9bff;
-const EDGE_Y = -0.4;
+const EDGE_Y = SEA_SURFACE_Y + 0.1;
 const EDGE_WIDTH = 0.14;
 const EDGE_COLOUR = 0xe8f6ff;
 const BLOCK_SIZE = 0.98;
-const BLOCK_HEIGHT = 1.3;    // stands a little proud of the ground it eats
+const BLOCK_TOP = 0.7;       // stands a little proud of the ground it eats
+const BLOCK_HEIGHT = BLOCK_TOP - SEA_SURFACE_Y; // and reaches down into the sea
 const BLOCK_COLOUR = 0x0b4fb3;
 const FOAM_COLOUR = 0xffffff;
 const SPLASH_MS = 650;
@@ -265,7 +267,7 @@ function drawBlock(battle, now) {
 	const abs = translatePosition({ x, z }, gameState, true);
 	// Base just under the water line, crest above the ground's top.
 	const bob = 0.06 * Math.sin(performance.now() / 260);
-	b.group.position.set(abs.x, BLOCK_HEIGHT / 2 - 0.6 + bob, abs.z);
+	b.group.position.set(abs.x, SEA_SURFACE_Y + BLOCK_HEIGHT / 2 + bob, abs.z);
 	b.foam.material.opacity = 0.75 + 0.2 * Math.sin(performance.now() / 180);
 }
 

@@ -1,4 +1,6 @@
 import { createFewClouds, animateFoamPatches } from './createFewClouds.js';
+import { SEA_SURFACE_Y } from './seaLevel.js';
+import { animateCloudPuffs } from './boardFunctions/cloudPuffs.js';
 import { getTHREE, getGameState } from './gameContext.js';
 import { translatePosition } from './centreBoardMarker.js';
 
@@ -644,7 +646,7 @@ function addWaterPlane(scene, THREE) {
 	// specular term at all; the ripple animation still carries the
 	// "this is water" read.
 	const material = new THREE.MeshLambertMaterial({
-		color: 0x2d8fd4,
+		color: 0x1b64b0,
 		transparent: true,
 		opacity: 0.94,
 		side: THREE.FrontSide,
@@ -652,13 +654,10 @@ function addWaterPlane(scene, THREE) {
 
 	const water = new THREE.Mesh(geometry, material);
 	water.name = 'tetches-water';
-	// Sea surface sits just under the cell bottom (cells are 0.94
-	// cubes centred at y=0, so the bottom face is at y=-0.47). With
-	// the water at y=-0.50 each cell looks like it's floating
-	// directly on the sea — no rock pillars, no visible stilts.
-	// Keep WATER_SURFACE_Y in `boardFunctions/rendering.js` and the
-	// `BOAT_SEA_Y` constant in `server/world/boats.js` in sync.
-	water.position.y = -0.50;
+	// The sea sits well below the cells (see seaLevel.js): each cell
+	// rides on cloud puffs that hang beneath it, so the board reads as
+	// islands floating on cloud above the water.
+	water.position.y = SEA_SURFACE_Y;
 	// The sea no longer receives shadows: the heavy dark blobs
 	// the islands used to cast made the board look glued onto a
 	// flat slab instead of floating. Cells still cast onto each
@@ -682,7 +681,7 @@ function addWaterPlane(scene, THREE) {
 	});
 	const glow = new THREE.Mesh(glowGeo, glowMat);
 	glow.name = 'tetches-water-glow';
-	glow.position.y = -0.40;
+	glow.position.y = SEA_SURFACE_Y + 0.1;
 	scene.add(glow);
 }
 
@@ -705,21 +704,7 @@ export function updateWaterPlane(scene, followTarget = null) {
 	if (!base) return;
 
 	const glow = scene.getObjectByName('tetches-water-glow');
-
-	if (followTarget && Number.isFinite(followTarget.x) && Number.isFinite(followTarget.z)) {
-		// Snap to whole units so the (local-space) ripple pattern doesn't
-		// visibly swim while the camera pans.
-		const fx = Math.round(followTarget.x);
-		const fz = Math.round(followTarget.z);
-		if (water.position.x !== fx || water.position.z !== fz) {
-			water.position.x = fx;
-			water.position.z = fz;
-			if (glow) {
-				glow.position.x = fx;
-				glow.position.z = fz;
-			}
-		}
-	}
+	followWaterPlane(scene, followTarget);
 
 	const t = (performance.now() - (water.userData.startedAt || 0)) / 1000;
 	const positions = water.geometry.attributes.position;
@@ -735,8 +720,36 @@ export function updateWaterPlane(scene, followTarget = null) {
 	if (glow) glow.rotation.y = t * 0.03;
 
 	// Cheap to do here so we don't need a separate frame hook just
-	// for the foam patches.
+	// for the foam patches and the cloud bed.
 	animateFoamPatches(scene);
+	animateCloudPuffs(scene, t);
+}
+
+/**
+ * Keep the (finite) sea centred under the camera target. Cheap, so the
+ * game loop runs it EVERY frame — even frames that skip the decorative
+ * ripple update — otherwise a device that never holds 30fps would never
+ * move the sea out to a battle arena, leaving the arena over bare sky.
+ *
+ * @param {THREE.Scene} scene
+ * @param {{x: number, z: number}} [followTarget] Usually `controls.target`.
+ */
+export function followWaterPlane(scene, followTarget) {
+	if (!scene || !followTarget || !Number.isFinite(followTarget.x) || !Number.isFinite(followTarget.z)) return;
+	const water = scene.getObjectByName('tetches-water');
+	if (!water) return;
+	// Snap to whole units so the (local-space) ripple pattern doesn't
+	// visibly swim while the camera pans.
+	const fx = Math.round(followTarget.x);
+	const fz = Math.round(followTarget.z);
+	if (water.position.x === fx && water.position.z === fz) return;
+	water.position.x = fx;
+	water.position.z = fz;
+	const glow = scene.getObjectByName('tetches-water-glow');
+	if (glow) {
+		glow.position.x = fx;
+		glow.position.z = fz;
+	}
 }
 
 /**

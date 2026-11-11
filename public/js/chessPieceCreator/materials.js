@@ -60,23 +60,23 @@ export function initMaterials() {
 	if (ENHANCED_MATERIALS.self.primary !== null) return;
 
 	ENHANCED_MATERIALS.self.primary = new THREE.MeshStandardMaterial({
-		color: 0x6B0F1A, roughness: 0.38, metalness: 0.2,
+		color: 0x6B0F1A, roughness: 0.32, metalness: 0.08,
 	});
 	ENHANCED_MATERIALS.self.secondary = new THREE.MeshStandardMaterial({
-		color: 0xB08D57, roughness: 0.28, metalness: 0.45,
+		color: 0xB08D57, roughness: 0.4, metalness: 0.1,
 	});
 	ENHANCED_MATERIALS.self.accent = new THREE.MeshStandardMaterial({
-		color: 0xD4AF37, roughness: 0.2, metalness: 0.7,
+		color: 0xF2C14E, roughness: 0.25, metalness: 0.6, emissive: 0x3a2600,
 	});
 
 	ENHANCED_MATERIALS.other.primary = new THREE.MeshStandardMaterial({
-		color: 0x2A3038, roughness: 0.55, metalness: 0.08,
+		color: 0x2A3038, roughness: 0.38, metalness: 0.08,
 	});
 	ENHANCED_MATERIALS.other.secondary = new THREE.MeshStandardMaterial({
-		color: 0x4B5563, roughness: 0.5, metalness: 0.1,
+		color: 0x4B5563, roughness: 0.45, metalness: 0.1,
 	});
 	ENHANCED_MATERIALS.other.accent = new THREE.MeshStandardMaterial({
-		color: 0x94A3B8, roughness: 0.45, metalness: 0.15,
+		color: 0xD6DEE8, roughness: 0.25, metalness: 0.55, emissive: 0x1c2026,
 	});
 }
 

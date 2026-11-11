@@ -456,6 +456,13 @@ function animate(time) {
 				}
 			}
 
+			// The sea must sit under the camera even on frames that skip
+			// the decorative updates below (see followWaterPlane).
+			if (gameState.renderProfile !== 'cute' && gameState.renderProfile !== 'retro'
+				&& typeof sceneModule.followWaterPlane === 'function') {
+				sceneModule.followWaterPlane(scene, getControls()?.target);
+			}
+
 			if (!skipNonEssentialThisFrame) {
 				if (gameState.renderProfile === 'cute') {
 					if (typeof sceneModule.animateCuteElements === 'function') sceneModule.animateCuteElements(scene, delta);

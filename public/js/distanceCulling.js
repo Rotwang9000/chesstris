@@ -114,7 +114,7 @@ export function applyDistanceCulling(gameState) {
 			// is meaningless — testing its origin would wrongly hide EVERY
 			// cell at once. It's a single draw call regardless, so never
 			// cull it (its instances stay on screen; pieces still cull).
-			if (obj.userData && obj.userData.type === 'instancedCells') continue;
+			if (obj.userData && (obj.userData.type === 'instancedCells' || obj.userData.type === 'cloudPuffs')) continue;
 
 			if (disabled) {
 				// Restore only what we hid; leave everything else alone.

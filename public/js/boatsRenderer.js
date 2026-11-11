@@ -21,6 +21,7 @@
  * a chess piece does.
  */
 
+import { BOAT_SEA_OFFSET } from './seaLevel.js';
 import { getTHREE, getScene, getCamera, getGameState } from './gameContext.js';
 
 let boatGroup = null;
@@ -574,7 +575,9 @@ export function syncBoats(boats) {
 			};
 			boatVisuals.set(boat.id, entry);
 		} else {
-			entry.prev = { ...entry.root.position };
+			// `rawY` is the server-space height (the rendered one carries
+			// the sea offset), so lerps don't compound the offset.
+			entry.prev = { ...entry.root.position, y: entry.rawY ?? entry.target.y };
 			entry.target = {
 				x: boat.position?.x ?? entry.target.x,
 				y: boat.position?.y ?? entry.target.y,
@@ -659,14 +662,18 @@ export function animateBoats(timeSec) {
 		const px = entry.prev.x + (entry.target.x - entry.prev.x) * ease;
 		const pz = entry.prev.z + (entry.target.z - entry.prev.z) * ease;
 		const py = entry.prev.y + (entry.target.y - entry.prev.y) * ease;
-		root.position.set(px, py, pz);
+		// Only the normal profile has a sea; there the surface sits
+		// below the server's boat height, so drop the hulls onto it.
+		const profile = _resolveRenderProfile();
+		const seaOffset = (profile === 'cute' || profile === 'retro') ? 0 : BOAT_SEA_OFFSET;
+		entry.rawY = py;
+		root.position.set(px, py + seaOffset, pz);
 		root.rotation.y = entry.heading;
 		root.rotation.z = 0;
 		root.rotation.x = 0;
 
 		// Distance-based culling + fade (normal mode only). Cute/retro
 		// fog already handles distance; fading here left boats invisible.
-		const profile = _resolveRenderProfile();
 		if (profile === 'cute' || profile === 'retro') {
 			if (!root.visible) root.visible = true;
 			if (entry.lastOpacity !== 1) {

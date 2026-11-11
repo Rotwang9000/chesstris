@@ -215,3 +215,70 @@ export function mergeMeshesByMaterial(THREE, meshes, materialsInOrder) {
 	mergedMesh.receiveShadow = true;
 	return mergedMesh;
 }
+
+/**
+ * Merge single-material meshes into ONE mesh with ONE material, baking
+ * each source mesh's `material.color` into a per-vertex `color`
+ * attribute. Where `mergeMeshesByMaterial` still costs a draw call per
+ * distinct material, this costs exactly one per piece — so a piece can
+ * carry many small colour details (eye sparkles, blush, trim) for free.
+ * Used by the cute set, whose look is all flat Lambert colours anyway.
+ *
+ * @param {object} THREE live THREE namespace
+ * @param {THREE.Mesh[]} meshes source meshes (each material needs `.color`)
+ * @param {THREE.Material} material shared output material; its
+ *   `vertexColors` flag is switched on
+ * @returns {THREE.Mesh}
+ */
+export function mergeMeshesByVertexColour(THREE, meshes, material) {
+	assert(THREE && typeof THREE.BufferGeometry === 'function', 'a THREE namespace is required');
+	assert(Array.isArray(meshes) && meshes.length > 0, 'at least one mesh is required');
+	assert(material, 'a material is required');
+
+	const parts = [];
+	let totalVertices = 0;
+	for (const mesh of meshes) {
+		if (!mesh || !mesh.isMesh || !mesh.geometry) continue;
+		assert(mesh.material && mesh.material.color, 'every source mesh needs a coloured material');
+		mesh.updateMatrix();
+		let geometry = mesh.geometry.clone();
+		geometry.applyMatrix4(mesh.matrix);
+		if (geometry.index) {
+			const nonIndexed = geometry.toNonIndexed();
+			geometry.dispose();
+			geometry = nonIndexed;
+		}
+		if (!geometry.attributes.normal) geometry.computeVertexNormals();
+		parts.push({ geometry, colour: mesh.material.color });
+		totalVertices += geometry.attributes.position.count;
+	}
+	assert(parts.length > 0, 'no valid meshes to merge');
+
+	const positions = new Float32Array(totalVertices * 3);
+	const normals = new Float32Array(totalVertices * 3);
+	const colours = new Float32Array(totalVertices * 3);
+	let offset = 0;
+	for (const { geometry, colour } of parts) {
+		const count = geometry.attributes.position.count;
+		positions.set(geometry.attributes.position.array, offset);
+		normals.set(geometry.attributes.normal.array, offset);
+		for (let i = 0; i < count; i++) {
+			colours[offset + i * 3] = colour.r;
+			colours[offset + i * 3 + 1] = colour.g;
+			colours[offset + i * 3 + 2] = colour.b;
+		}
+		offset += count * 3;
+		geometry.dispose();
+	}
+	assert(offset === totalVertices * 3, 'every vertex must be copied exactly once');
+
+	const merged = new THREE.BufferGeometry();
+	merged.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+	merged.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+	merged.setAttribute('color', new THREE.Float32BufferAttribute(colours, 3));
+	material.vertexColors = true;
+	const mesh = new THREE.Mesh(merged, material);
+	mesh.castShadow = true;
+	mesh.receiveShadow = true;
+	return mesh;
+}
