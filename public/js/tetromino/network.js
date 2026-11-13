@@ -119,10 +119,15 @@ async function ensureConnectedAndSend(serverData) {
 			};
 		}
 
+		// The server's friendly text lives in details.message; error.message
+		// is often just its code ('invalid_placement'), which must never
+		// reach a toast.
+		const friendly = [error.details?.message, error.message]
+			.find(m => typeof m === 'string' && m && !/^[a-z]+(_[a-z]+)+$/.test(m));
 		return {
 			success: false,
-			reason: 'validation_error',
-			message: error.message || 'Server rejected placement',
+			reason: error.details?.reason || error.reason || 'validation_error',
+			message: friendly || undefined,
 			error,
 		};
 	}
