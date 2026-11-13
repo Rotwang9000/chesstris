@@ -23,6 +23,8 @@ import { vikingActive } from '../edition.js';
 import { getControls } from '../gameContext.js';
 import { SEA_SURFACE_Y } from '../seaLevel.js';
 import { animateVikingLand } from './landDress.js';
+import { updateCuteSea } from './cuteSea.js';
+import { updateRetroSea } from './retroSea.js';
 
 /* ------------------------------------------------------------ palette */
 
@@ -137,8 +139,14 @@ export function skyColour(elevation, sunDot) {
 	c = mix3(c, hex3(PALETTE.sunBand), band * 0.55);
 	const core = Math.pow(toward, 40) * Math.exp(-Math.abs(elevation - SUN.elevation) * 14);
 	c = mix3(c, hex3(PALETTE.sunCore), core);
-	// below the horizon the dome is mist (hidden by the sea anyway)
-	if (elevation < 0) c = mix3(c, hex3(PALETTE.horizon), Math.min(1, -elevation * 8));
+	// below the horizon: a band of mist, then the fjord's own steel blue.
+	// The sea hides it in play, but while a battle loads (the sea faded
+	// out round the old view) the dome was all a flat beige.
+	if (elevation < 0) {
+		c = mix3(c, hex3(PALETTE.horizon), Math.min(1, -elevation * 8));
+		const deep = Math.min(1, Math.max(0, (-elevation - 0.06) * 5));
+		c = mix3(c, hex3(PALETTE.seaFar), deep * 0.9);
+	}
 	return c;
 }
 
@@ -904,6 +912,10 @@ function anchorPoint() {
  */
 export function updateVikingTheme(scene, gameState, time = 0) {
 	if (!scene) return;
+	// The cute profile's own sea (the fjord dresses normal alone).
+	updateCuteSea(scene, gameState, time);
+	// …and the retro profile's (phosphor scan lines on black).
+	updateRetroSea(scene, gameState, time);
 	if (!st.on && time - st.lastCheck < CHECK_MS) return;
 	const THREE = (typeof window !== 'undefined' && window.THREE) || null;
 	if (!THREE) return;

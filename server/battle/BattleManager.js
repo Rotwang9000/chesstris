@@ -66,17 +66,23 @@ const {
 	seaStartMs,
 	seaEndMs,
 	cellsSinkingBetween,
+	cellsSunkBy,
 	publicSea,
 } = require('./sea');
 const pieces = require('../game/pieces');
 const { EDITIONS, normaliseEdition, battleEdition, isVikingBattle } = require('./edition');
 const ships = require('./ships');
+const shipRules = require('./shipRules');
 
 const LOBBY_TIMEOUT_MS = 15 * 60 * 1000;   // Unstarted battles evaporate.
 const ACTIVE_TIMEOUT_MS = 2 * 60 * 60 * 1000; // Hard cap on battle length.
 const FINISHED_LINGER_MS = 60 * 1000;      // Leave the result on show, then clean.
 const SWEEP_INTERVAL_MS = 5 * 1000;        // Elimination poll + timeouts.
 const OFFLINE_HANDOVER_MS = 60 * 1000;     // Gone this long → a bot takes the seat.
+// A player who was offline when their battle ended can still ask for
+// its result this long after (the battle itself is cleaned up sooner).
+const OUTCOME_KEEP_MS = 30 * 60 * 1000;
+const OUTCOME_KEEP_MAX = 500;
 const QUICKMATCH_WAIT_MS = 20 * 1000;      // Nobody turns up in this long → a bot.
 const QUICKMATCH_SEATS = 2;
 // Safety net: the sea takes every cell, but a king's final detonation
@@ -105,6 +111,11 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 	if (!persistence) throw new Error('createBattleManager: persistence required');
 	if (!lifecycleService) throw new Error('createBattleManager: lifecycleService required');
 	if (!io) throw new Error('createBattleManager: io required');
+
+	// battleId → { payload, players, at }: the `battle_finished` message,
+	// kept for players who were offline when it went out (see
+	// resumeBattle). In memory only: after a restart they get "ended".
+	const recentOutcomes = new Map();
 
 	function battles() {
 		const world = World.getWorld();
@@ -224,6 +235,9 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 				isAi: !!s.isAi,
 				name: s.name,
 				controlledBy: s.controlledBy || null,
+				// The player whose army a bot took over when they dropped
+				// out (their client still knows the seat as theirs).
+				leftBy: s.isAi && s.leftBy ? s.leftBy : null,
 				eliminated: !!World.getPlayer(s.seatId)?.eliminated,
 			})),
 		};
@@ -391,14 +405,15 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 	/**
 	 * Mid-battle join: hand a live bot seat (pieces and all) to a human.
 	 */
-	function takeOverBotSeat({ battle, playerId, playerName }) {
+	function takeOverBotSeat({ battle, playerId, playerName, ownSeatOnly = false }) {
 		const liveBots = battle.seats.filter(s => {
 			if (!s.isAi) return false;
 			const record = World.getPlayer(s.seatId);
 			return record && !record.eliminated;
 		});
 		// Back after a dropped connection: reclaim your own army first.
-		const seat = liveBots.find(s => String(s.leftBy || '') === String(playerId)) || liveBots[0];
+		const own = liveBots.find(s => String(s.leftBy || '') === String(playerId));
+		const seat = own || (ownSeatOnly ? null : liveBots[0]);
 		if (!seat) {
 			return { success: false, error: 'No bot seat left to take over — battle is all humans' };
 		}
@@ -783,6 +798,16 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 			for (const { x, z, t } of cellsSinkingBetween(battle, since, now)) {
 				if (sinkCell(battle, x, z, t)) changed = true;
 			}
+			// Ground that reappeared on drowned squares (line-clear gravity
+			// can drop a block there) goes straight back under. Ships are
+			// left alone: they can't sail onto sunk water, and the pass
+			// above already sank any that were caught.
+			const cells = World.getWorld().board?.cells || {};
+			for (const { x, z, t } of cellsSunkBy(battle, Math.min(now, since))) {
+				const cell = cells[`${x},${z}`];
+				if (!cell || (Array.isArray(cell) && (cell.length === 0 || shipRules.cellHasShip(cell)))) continue;
+				if (sinkCell(battle, x, z, t)) changed = true;
+			}
 			battle.seaSunkUntil = now;
 		}
 		if (changed) {
@@ -963,6 +988,15 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 
 		const payload = { battle: publicState(battle), reason, results: { ...battleResults(battle, now), reason } };
 		emitToSeatHumans(battle, 'battle_finished', payload);
+		// A player whose army a bot took over still sees this battle as
+		// theirs: they get its end too (if they are back online by now).
+		const humans = new Set(battle.seats
+			.filter(s => !s.isAi && s.controlledBy).map(s => String(s.controlledBy)));
+		for (const seat of battle.seats) {
+			if (!seat.isAi || !seat.leftBy || humans.has(String(seat.leftBy))) continue;
+			Sessions.emitToPlayerSockets(seat.leftBy, 'battle_finished', payload);
+		}
+		rememberOutcome(battle, payload, now);
 		clearAllSeatStamps(battle);
 
 		// Winner toast for the whole world — battles are a spectacle.
@@ -982,6 +1016,62 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 		World.markDirty();
 		persistence.markDirty();
 		console.log(`[Battle] ${battle.code} finished (${reason}); winner: ${battle.winnerSeatId || 'none'}`);
+	}
+
+	function battlePlayers(battle) {
+		const ids = new Set();
+		for (const seat of battle.seats) {
+			if (!seat.isAi && seat.controlledBy) ids.add(String(seat.controlledBy));
+			if (seat.leftBy) ids.add(String(seat.leftBy));
+		}
+		return ids;
+	}
+
+	function rememberOutcome(battle, payload, now) {
+		for (const [id, entry] of recentOutcomes) {
+			if (now - entry.at > OUTCOME_KEEP_MS || recentOutcomes.size >= OUTCOME_KEEP_MAX) recentOutcomes.delete(id);
+		}
+		recentOutcomes.set(battle.id, { payload, players: battlePlayers(battle), at: now });
+	}
+
+	/**
+	 * A client that was offline asks what became of the battle it was
+	 * playing (it may have missed `battle_finished`, or a bot may hold
+	 * its army now). Answers with a `status`:
+	 *   'active'    — still your seat, play on;
+	 *   'reclaimed' — a bot held your army: it is yours again
+	 *                 (`battle_started` follows, as for any takeover);
+	 *   'lost'      — the battle goes on, but your army fell meanwhile;
+	 *   'finished'  — it ended: `battle` + `results`, as `battle_finished`;
+	 *   'gone'      — no record left (cleaned up, or never yours).
+	 */
+	function resumeBattle({ battleId, playerId, playerName, now = Date.now() }) {
+		const pid = String(playerId || '');
+		const battle = getBattle(battleId);
+		if (battle && battle.status !== 'finished') {
+			if (seatFor(battle, pid)) {
+				return { success: true, status: battle.status, battle: publicState(battle), seatId: seatFor(battle, pid).seatId };
+			}
+			if (battle.status === 'active' && battle.seats.some(s => s.isAi && String(s.leftBy || '') === pid)) {
+				const back = takeOverBotSeat({ battle, playerId: pid, playerName, ownSeatOnly: true });
+				if (back.success) return { ...back, status: 'reclaimed' };
+				return { success: true, status: 'lost', battle: publicState(battle) };
+			}
+			return { success: true, status: 'gone' };
+		}
+		const kept = recentOutcomes.get(String(battleId));
+		if (kept && now - kept.at <= OUTCOME_KEEP_MS && kept.players.has(pid)) {
+			return { success: true, status: 'finished', battle: kept.payload.battle, results: kept.payload.results, reason: kept.payload.reason };
+		}
+		if (battle && battlePlayers(battle).has(pid)) {
+			return {
+				success: true,
+				status: 'finished',
+				battle: publicState(battle),
+				results: battleResults(battle, battle.finishedAt || now),
+			};
+		}
+		return { success: true, status: 'gone' };
 	}
 
 	/** Remove every trace of a battle from the world. */
@@ -1127,6 +1217,7 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 	return {
 		createBattle,
 		joinBattle,
+		resumeBattle,
 		quickMatch,
 		quickMatchInfo,
 		startBattle,

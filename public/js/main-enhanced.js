@@ -78,7 +78,7 @@ function setupRenderModeToggle(profile) {
 	button.dataset.bound = '1';
 
 	button.addEventListener('click', () => {
-		const current = resolveRenderProfile();
+		const current = normalizeRenderProfile(document.documentElement.dataset.renderProfile) || resolveRenderProfile();
 		const idx = RENDER_PROFILES.indexOf(current);
 		const next = RENDER_PROFILES[(idx + 1) % RENDER_PROFILES.length];
 
@@ -662,7 +662,9 @@ async function joinGameAfterConnection(gameId = null) {
 			}
 			
 			// Update window title with world ID
-			document.title = `Tetches - World ${currentGameId}`;
+			document.title = isViking()
+				? `Tetches — Viking · World ${currentGameId}`
+				: `Tetches - World ${currentGameId}`;
 			
 			// Show in URL but don't reload page
 			const url = new URL(window.location);

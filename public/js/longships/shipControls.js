@@ -3,7 +3,7 @@
  *
  * How a player sails (also in the rules text, battle/vikingRules.js):
  *   • Tap / click your longship (empty or laden), or press the
- *     Longship button or L: gold-edged sea-green tiles show every
+ *     Longship button or L: glowing gold tiles show every
  *     square it can reach this leg (up to 5 squares in a straight line
  *     over open water). Tap a tile to sail there.
  *   • Tap your piece aboard (or its hull, which resolves to the
@@ -42,7 +42,7 @@ import {
 } from '../viking/shipRenderer.js';
 import { isViking } from '../edition.js';
 import { isTouchPrimary } from '../utils/inputMode.js';
-import { DECK_HEIGHT, SHIP_LENGTH_CELLS } from '../viking/shipLayout.js';
+import { DECK_HEIGHT, SHIP_LENGTH_CELLS, shipStyleFor } from '../viking/shipLayout.js';
 
 /**
  * The lane tiles lie ON the sea: every frame each one takes the swell's
@@ -68,6 +68,17 @@ const BUTTON_ID = 'longship-button';
 // outlined debug squares.
 const LANE_FILL = 0xffe2a0;
 const LANE_EDGE = 0xf2c76a;
+/**
+ * …and in each render profile's own look: the cute profile (no sea
+ * plane, a dark sky) gets bright aqua pools ringed with white bubbles
+ * and a candy-pink ring round the hull; the retro one phosphor-green
+ * pixel frames and a low-poly ring, like its wireframe pieces.
+ */
+const LANE_LOOK = Object.freeze({
+	normal: Object.freeze({ fill: LANE_FILL, edge: LANE_EDGE, edgeOpacity: 0.85, halo: 0.2, wash: 2, dots: 'dots', dotsColour: 0xffffff, segments: 72 }),
+	cute: Object.freeze({ fill: 0xffe46b, edge: 0xff8fc8, edgeOpacity: 0.95, halo: 0.26, wash: 2.6, dots: 'bubbles', dotsColour: 0xffffff, segments: 72 }),
+	retro: Object.freeze({ fill: 0x39ff6a, edge: 0x39ff6a, edgeOpacity: 0.95, halo: 0.18, wash: 1.3, dots: 'pixels', dotsColour: 0x39ff6a, segments: 16 }),
+});
 
 const selection = { shipId: null, withPiece: false, lanes: [], rowingAt: 0 };
 let sailInFlight = false;
@@ -113,31 +124,37 @@ export function shipControlsActive(gameState = gs()) {
 
 // ── Lane meshes ──────────────────────────────────────────────────────────────
 
-let meshCache = null;
-function meshes(THREE) {
-	if (meshCache) return meshCache;
+const meshCaches = new Map();
+/** The lane art for the game's render profile (built once per profile). */
+function meshes(THREE, style = shipStyleFor(gs())) {
+	const key = LANE_LOOK[style] ? style : 'normal';
+	let cache = meshCaches.get(key);
+	if (cache) return cache;
+	const look = LANE_LOOK[key];
 	// A 4-segment ring turned 45° is a square frame.
-	meshCache = {
+	cache = {
+		look,
 		tile: new THREE.PlaneGeometry(0.84, 0.84),
 		frame: new THREE.PlaneGeometry(0.92, 0.92),
 		// The chosen ship: a gold ring round its hull at the waterline
 		// (an ellipse the hull's length and beam), plus a faint halo.
-		shipRing: ellipseRing(THREE, SHIP_LENGTH_CELLS / 2 + 0.12, 0.36, 0.07),
-		shipHalo: ellipseRing(THREE, SHIP_LENGTH_CELLS / 2 + 0.2, 0.44, 0.16),
+		shipRing: ellipseRing(THREE, SHIP_LENGTH_CELLS / 2 + 0.12, 0.36, 0.07, look.segments),
+		shipHalo: ellipseRing(THREE, SHIP_LENGTH_CELLS / 2 + 0.2, 0.44, 0.16, look.segments),
 		hit: new THREE.PlaneGeometry(1, 1),
 		hitMat: new THREE.MeshBasicMaterial({ visible: false, side: THREE.DoubleSide }),
 		edgeMat: new THREE.MeshBasicMaterial({
-			color: LANE_EDGE, transparent: true, opacity: 0.7,
+			color: look.edge, transparent: true, opacity: look.edgeOpacity,
 			side: THREE.DoubleSide, depthTest: true, depthWrite: false,
 		}),
 		dotsMat: new THREE.MeshBasicMaterial({
-			color: 0xffffff, map: laneTexture(THREE, 'dots'), transparent: true, opacity: 0.9,
+			color: look.dotsColour, map: laneTexture(THREE, look.dots), transparent: true, opacity: 0.9,
 			side: THREE.DoubleSide, depthTest: true, depthWrite: false,
 		}),
-		washTex: laneTexture(THREE, 'wash'),
+		washTex: laneTexture(THREE, key === 'retro' ? 'scan' : (key === 'cute' ? 'pool' : 'wash')),
 		fills: new Map(),
 	};
-	return meshCache;
+	meshCaches.set(key, cache);
+	return cache;
 }
 
 /**
@@ -152,26 +169,74 @@ function laneTexture(THREE, kind) {
 	const g = c.getContext('2d');
 	if (!g) return null;
 	const mid = S / 2;
-	if (kind === 'wash') {
+	if (kind === 'scan') {
+		// phosphor scan lines filling the square, brighter at its edge
+		for (let y = 4; y < S - 4; y += 8) {
+			g.fillStyle = 'rgba(255,255,255,0.32)';
+			g.fillRect(6, y, S - 12, 3);
+		}
+	} else if (kind === 'pixels') {
+		// a frame of chunky pixels, a gap at each corner
+		g.fillStyle = 'rgba(255,255,255,1)';
+		const p = 10;
+		for (let i = 2; i < S / p - 2; i++) {
+			if (i % 2) continue;
+			for (const [x, y] of [[i * p, 4], [i * p, S - 4 - p], [4, i * p], [S - 4 - p, i * p]]) g.fillRect(x, y, p, p);
+		}
+	} else if (kind === 'bubbles') {
+		// a ring of round white bubbles, each with a shine
+		const n = 10;
+		for (let i = 0; i < n; i++) {
+			const a = (i / n) * Math.PI * 2 + 0.3;
+			const x = mid + Math.cos(a) * mid * 0.78, y = mid + Math.sin(a) * mid * 0.78;
+			const r = S * (i % 2 ? 0.05 : 0.07);
+			g.fillStyle = 'rgba(255,255,255,0.95)';
+			g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+			g.fillStyle = 'rgba(255,143,200,0.95)';
+			g.beginPath(); g.arc(x + r * 0.25, y + r * 0.25, r * 0.5, 0, Math.PI * 2); g.fill();
+		}
+	} else if (kind === 'pool') {
+		// a sunny little pool, solid enough to read on the bright lagoon
 		const grd = g.createRadialGradient(mid, mid, 0, mid, mid, mid);
-		grd.addColorStop(0, 'rgba(255,255,255,0.35)');
-		grd.addColorStop(0.55, 'rgba(255,255,255,0.22)');
-		grd.addColorStop(0.78, 'rgba(255,255,255,0.5)');
-		grd.addColorStop(0.9, 'rgba(255,255,255,0.12)');
+		grd.addColorStop(0, 'rgba(255,255,255,0.92)');
+		grd.addColorStop(0.6, 'rgba(255,255,255,0.95)');
+		grd.addColorStop(0.8, 'rgba(255,255,255,1)');
+		grd.addColorStop(0.92, 'rgba(255,255,255,0.5)');
+		grd.addColorStop(1, 'rgba(255,255,255,0)');
+		g.fillStyle = grd;
+		g.fillRect(0, 0, S, S);
+	} else if (kind === 'wash') {
+		// a pool of gold light with a bright gilt rim (the muted teal
+		// disc it was vanished at overview zoom)
+		const grd = g.createRadialGradient(mid, mid, 0, mid, mid, mid);
+		grd.addColorStop(0, 'rgba(255,255,255,0.5)');
+		grd.addColorStop(0.55, 'rgba(255,255,255,0.42)');
+		grd.addColorStop(0.74, 'rgba(255,255,255,0.85)');
+		grd.addColorStop(0.84, 'rgba(255,255,255,1)');
+		grd.addColorStop(0.93, 'rgba(255,255,255,0.3)');
 		grd.addColorStop(1, 'rgba(255,255,255,0)');
 		g.fillStyle = grd;
 		g.fillRect(0, 0, S, S);
 	} else {
-		g.fillStyle = 'rgba(255,214,130,1)';
-		const n = 14;
+		// gilt beads, each with a dark seat so they read on pale water too
+		const n = 16;
 		for (let i = 0; i < n; i++) {
 			const a = (i / n) * Math.PI * 2;
-			g.beginPath();
-			g.arc(mid + Math.cos(a) * mid * 0.8, mid + Math.sin(a) * mid * 0.8, S * 0.035, 0, Math.PI * 2);
-			g.fill();
+			const x = mid + Math.cos(a) * mid * 0.8, y = mid + Math.sin(a) * mid * 0.8;
+			g.fillStyle = 'rgba(70,40,8,0.75)';
+			g.beginPath(); g.arc(x, y + 1, S * 0.05, 0, Math.PI * 2); g.fill();
+			g.fillStyle = 'rgba(255,220,120,1)';
+			g.beginPath(); g.arc(x, y, S * 0.042, 0, Math.PI * 2); g.fill();
+			g.fillStyle = 'rgba(255,250,225,1)';
+			g.beginPath(); g.arc(x - S * 0.012, y - S * 0.012, S * 0.016, 0, Math.PI * 2); g.fill();
 		}
 	}
 	const t = new THREE.CanvasTexture(c);
+	if (kind === 'pixels' || kind === 'scan') {
+		t.magFilter = THREE.NearestFilter;
+		t.minFilter = THREE.NearestFilter;
+		t.generateMipmaps = false;
+	}
 	return t;
 }
 
@@ -199,11 +264,12 @@ function ellipseRing(THREE, a, b, w, segments = 72) {
 }
 
 function fillMaterial(THREE, opacity) {
-	const cache = meshes(THREE).fills;
+	const m = meshes(THREE);
+	const cache = m.fills;
 	const key = opacity.toFixed(2);
 	if (!cache.has(key)) {
 		cache.set(key, new THREE.MeshBasicMaterial({
-			color: LANE_FILL, map: meshes(THREE).washTex || null, transparent: true, opacity,
+			color: m.look.fill, map: m.washTex || null, transparent: true, opacity: Math.min(1, opacity * m.look.wash),
 			side: THREE.DoubleSide, depthTest: true, depthWrite: false,
 		}));
 	}
@@ -248,7 +314,7 @@ function drawSelection(gameState, entry, lanes) {
 	const band = new THREE.Mesh(m.shipRing, m.edgeMat);
 	band.renderOrder = 998;
 	const halo = new THREE.Mesh(m.shipHalo, m.haloMat || (m.haloMat = new THREE.MeshBasicMaterial({
-		color: LANE_EDGE, transparent: true, opacity: 0.14,
+		color: m.look.edge, transparent: true, opacity: m.look.halo,
 		side: THREE.DoubleSide, depthTest: true, depthWrite: false,
 	})));
 	halo.renderOrder = 997;
@@ -379,9 +445,12 @@ export function selectShip(entry, { withPiece = false, quiet = false } = {}) {
 			toast(shipRefusalText(reason));
 		} else if (!withPiece) {
 			const verb = isTouchPrimary() ? 'tap' : 'click';
+			// (only while this ship is still the one chosen: a hint that
+			// waited behind another toast showed after the ship had sailed)
+			const chosen = selection.shipId;
 			toast(entry.passenger
-				? `Longship with your ${String(entry.passenger.type || 'piece').toLowerCase()} aboard: ${verb} a tile to sail.`
-				: `Empty longship: ${verb} a tile to sail.`, { duration: 2600 });
+				? `Longship with your ${String(entry.passenger.type || 'piece').toLowerCase()} aboard: ${verb} a glowing tile to sail.`
+				: `Empty longship: ${verb} a glowing tile to sail.`, { duration: 2600, stillTrue: () => selection.shipId === chosen });
 		}
 	}
 	return true;
@@ -716,10 +785,13 @@ function ensureButton() {
 		display: 'flex', alignItems: 'center', justifyContent: 'center',
 		fontSize: '18px', lineHeight: '1',
 	});
+	// A drawn dragon-prow longship (img/brand/longship-icon.svg, set by
+	// the UI theme in index.html), not the modern sailboat emoji.
 	const glyph = document.createElement('span');
-	glyph.textContent = '⛵';
+	glyph.className = 'longship-glyph';
+	glyph.setAttribute('aria-hidden', 'true');
 	Object.assign(glyph.style, {
-		width: '26px', height: '26px', borderRadius: '50%', background: 'rgba(8,30,36,0.95)',
+		width: '26px', height: '26px', borderRadius: '50%',
 		display: 'flex', alignItems: 'center', justifyContent: 'center',
 	});
 	ring.appendChild(glyph);
@@ -767,11 +839,20 @@ function renderButton() {
 	button.querySelector('.longship-detail').textContent = state.detail;
 	const ring = button.querySelector('.longship-ring');
 	const deg = Math.round(state.progress * 360);
-	const colour = state.mode === 'lost' ? '#c0503a' : (state.mode === 'none' ? '#6b6b6b' : '#ffcc33');
+	// (retro draws its ring in phosphor green, like the rest of its HUD)
+	const retro = document.documentElement?.dataset?.renderProfile === 'retro';
+	const colour = state.mode === 'lost' ? '#c0503a' : (state.mode === 'none' ? '#6b6b6b' : (retro ? '#00ff41' : '#ffcc33'));
 	ring.style.background = `conic-gradient(${colour} ${deg}deg, rgba(255,255,255,0.15) ${deg}deg)`;
 	const dim = state.mode === 'none' || (state.mode === 'ready' && !state.canSail);
-	button.style.opacity = dim ? '0.75' : '1';
+	// Dimmed by the theme (a muted, still opaque card: see-through, the
+	// world muddied through it), not by opacity.
+	button.style.opacity = '1';
+	if (dim) button.dataset.dim = '1';
+	else delete button.dataset.dim;
 	button.style.borderColor = selection.shipId ? '#7fffd4' : '#ffcc33';
+	// (the UI theme draws the selected state on the framed Viking card)
+	if (selection.shipId) button.dataset.selected = '1';
+	else delete button.dataset.selected;
 }
 
 function tick() {
@@ -856,7 +937,7 @@ function noticeFor(detail, gameState) {
 			return p?.type || live?.passenger?.type || seen?.passengerType || null;
 		},
 	});
-	if (note) toast(note.text, { variant: note.variant, duration: note.variant === 'alert' ? 4500 : 3500 });
+	if (note) toast(note.text, { variant: note.variant, icon: note.icon, duration: note.variant === 'alert' ? 4500 : 3500 });
 }
 
 function onShipEvent(e) {

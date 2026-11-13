@@ -34,91 +34,48 @@ export function promptInlineRename(currentName = '') {
 		left: '0',
 		width: '100%',
 		height: '100%',
-		backgroundColor: 'rgba(0, 0, 0, 0.7)',
 		zIndex: '12000',
 		display: 'flex',
 		justifyContent: 'center',
 		alignItems: 'center',
-		fontFamily: 'serif',
 	});
+	// Look: the shared `.tx-*` UI theme in index.html.
+	overlay.className = 'tx-scrim';
 
 	const card = document.createElement('div');
-	Object.assign(card.style, {
-		backgroundColor: '#222',
-		border: '2px solid #ffcc00',
-		borderRadius: '8px',
-		padding: '24px',
-		minWidth: '320px',
-		maxWidth: '90%',
-		color: '#ffcc00',
-		boxShadow: '0 0 30px rgba(255, 204, 0, 0.3)',
-	});
+	card.className = 'tx-panel tx-dialog tx-dialog--sm';
+	card.setAttribute('role', 'dialog');
+	card.setAttribute('aria-label', 'Change your name');
 
 	const heading = document.createElement('h3');
 	heading.textContent = 'Change your name';
-	Object.assign(heading.style, {
-		margin: '0 0 12px 0',
-		fontSize: '20px',
-	});
+	heading.className = 'tx-title';
 
 	const help = document.createElement('p');
 	help.textContent = 'Visible to everyone in the world. Max 32 characters.';
-	Object.assign(help.style, {
-		margin: '0 0 16px 0',
-		fontSize: '12px',
-		color: '#ccc',
-	});
+	help.className = 'tx-text';
 
 	const input = document.createElement('input');
 	input.type = 'text';
 	input.value = currentName || '';
 	input.placeholder = 'Your name';
 	input.maxLength = MAX_NAME_LENGTH;
-	Object.assign(input.style, {
-		width: '100%',
-		padding: '8px',
-		fontSize: '16px',
-		backgroundColor: '#111',
-		color: '#ffcc00',
-		border: '1px solid #ffcc00',
-		borderRadius: '4px',
-		marginBottom: '16px',
-		boxSizing: 'border-box',
-	});
+	input.className = 'tx-field';
+	input.setAttribute('aria-label', 'Your name');
+	Object.assign(input.style, { width: '100%', marginBottom: '4px' });
 
 	const buttonRow = document.createElement('div');
-	Object.assign(buttonRow.style, {
-		display: 'flex',
-		gap: '8px',
-		justifyContent: 'flex-end',
-	});
+	buttonRow.className = 'tx-actions';
 
 	const cancelBtn = document.createElement('button');
 	cancelBtn.textContent = 'Cancel';
-	Object.assign(cancelBtn.style, {
-		padding: '8px 16px',
-		backgroundColor: '#333',
-		color: '#ccc',
-		border: '1px solid #555',
-		borderRadius: '4px',
-		cursor: 'pointer',
-		fontFamily: 'inherit',
-		fontSize: '14px',
-	});
+	cancelBtn.type = 'button';
+	cancelBtn.className = 'tx-btn';
 
 	const saveBtn = document.createElement('button');
 	saveBtn.textContent = 'Save';
-	Object.assign(saveBtn.style, {
-		padding: '8px 16px',
-		backgroundColor: '#ffcc00',
-		color: '#000',
-		border: '1px solid #ffcc00',
-		borderRadius: '4px',
-		cursor: 'pointer',
-		fontFamily: 'inherit',
-		fontSize: '14px',
-		fontWeight: 'bold',
-	});
+	saveBtn.type = 'button';
+	saveBtn.className = 'tx-btn tx-btn--primary';
 
 	function close() {
 		try { document.body.removeChild(overlay); } catch (_e) { /* already gone */ }

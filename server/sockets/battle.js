@@ -121,6 +121,23 @@ function registerBattleHandlers(socket, ctx) {
 		}
 	});
 
+	// Back after a dropped connection: what became of the battle this
+	// client was playing (reclaims the seat from the stand-in bot).
+	socket.on('battle_resume', (data, callback) => {
+		try {
+			const player = World.getPlayer(playerId);
+			const result = battleManager.resumeBattle({
+				battleId: data?.battleId,
+				playerId,
+				playerName: player?.name || null,
+			});
+			if (typeof callback === 'function') callback(result);
+		} catch (err) {
+			console.error('[Battle] battle_resume failed:', err);
+			if (typeof callback === 'function') callback({ success: false, error: 'Server error' });
+		}
+	});
+
 	socket.on('battle_state', (data, callback) => {
 		try {
 			const all = battleManager.battlesForPlayer(playerId);

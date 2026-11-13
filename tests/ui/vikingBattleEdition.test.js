@@ -180,4 +180,15 @@ describe('Viking battles in the battle client', () => {
 		await battleMode.showBattleDialog();
 		expect(document.querySelector('.viking-battle-badge')).toBeNull();
 	});
+
+	test.each(['standard', 'viking'])('a reconnect mid %s battle keeps the seat as the identity', (edition) => {
+		boot();
+		emitServerEvent('battle_started', { battle: battle({ edition }) });
+		const seatId = gameState.localPlayerId;
+		expect(seatId).toBe('battle-vk1-s0');
+		const { keepSeatOnRejoin } = require('../../public/js/battle/seatHold.js');
+		// The server re-announces the real id on reconnect: the seat stays.
+		expect(keepSeatOnRejoin(mockPlayerId)).toBe(true);
+		expect(gameState.localPlayerId).toBe(seatId);
+	});
 });

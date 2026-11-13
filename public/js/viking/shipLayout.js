@@ -314,6 +314,9 @@ export const LAYOUT_MOOR = 0.45;
 
 const LAND_MARGIN = 0.07;        // kept between a hull and a land block
 const SHIP_HALF_GAP = 0.08;      // each hull keeps this much water round it from another
+/** The smallest a hemmed-in hull is drawn (layoutFleet `k`), and the steps tried. */
+export const SHIP_MIN_FIT = 0.62;
+const FIT_STEPS = [0.9, 0.8, 0.72, SHIP_MIN_FIT];
 
 /** The model's +X (starboard) in board terms, for a bow toward d. */
 export function beamOf(d) {
@@ -336,6 +339,23 @@ export function hullBox(x, z, d, s, c, padLen = 0, padBeam = 0) {
 	const hx = d.dx !== 0 ? half : hb;
 	const hz = d.dz !== 0 ? half : hb;
 	return { x0: mx - hx, x1: mx + hx, z0: mz - hz, z1: mz + hz };
+}
+
+/**
+ * {@link hullBox} for a hull drawn at scale `k` about its float (the
+ * square's centre plus the layout's offset), with a hair of water round it.
+ */
+export function scaledHullBox(x, z, d, s, c, k = 1) {
+	const b = beamOf(d);
+	const cx = x + d.dx * s + b.dx * c;
+	const cz = z + d.dz * s + b.dz * c;
+	const fore = HULL_FORE * k + 0.02, aft = HULL_AFT * k + 0.02, hb = HULL_HALF_BEAM * k + 0.02;
+	const along0 = -aft, along1 = fore;
+	const ax0 = d.dx !== 0 ? (d.dx > 0 ? along0 : -along1) : -hb;
+	const ax1 = d.dx !== 0 ? (d.dx > 0 ? along1 : -along0) : hb;
+	const az0 = d.dz !== 0 ? (d.dz > 0 ? along0 : -along1) : -hb;
+	const az1 = d.dz !== 0 ? (d.dz > 0 ? along1 : -along0) : hb;
+	return { x0: cx + ax0, x1: cx + ax1, z0: cz + az0, z1: cz + az1 };
 }
 
 function overlap1(a0, a1, b0, b1) {
@@ -526,6 +546,35 @@ export function layoutFleet(ships, isLand) {
 			}
 		}
 	}
+	// Hemmed in (two ships moored bow to stern along one narrow channel,
+	// or a slip too short for a hull): rather than run one hull through
+	// the other or into the land, it is drawn a little smaller — the
+	// largest of a few steps that clears.
+	const fitK = new Map(order.map(sh => [sh.id, 1]));
+	const lay = new Map(order.map(sh => [sh.id, placed.find(q => q.id === sh.id).best]));
+	const boxAt = (sh, k) => {
+		const p = lay.get(sh.id);
+		return scaledHullBox(sh.x, sh.z, p.d, p.s, p.c, k);
+	};
+	for (let pass = 0; pass < 2; pass++) {
+		for (const sh of order) {
+			if (sh.moving) continue;
+			const others = order.filter(o => o !== sh && Math.max(Math.abs(o.x - sh.x), Math.abs(o.z - sh.z)) <= 6);
+			const clear = (k) => {
+				const bx = boxAt(sh, k);
+				if (landOverlap(bx, isLand) > 0.02) return false;
+				return others.every(o => boxOverlap(bx, boxAt(o, fitK.get(o.id))) <= 0);
+			};
+			if (clear(fitK.get(sh.id))) continue;
+			let best = fitK.get(sh.id);
+			for (const k of FIT_STEPS) {
+				if (k > best) continue;
+				best = k;
+				if (clear(k)) break;
+			}
+			fitK.set(sh.id, best);
+		}
+	}
 	for (const sh of order) {
 		const p = placed.find(q => q.id === sh.id).best;
 		const b = beamOf(p.d);
@@ -534,6 +583,7 @@ export function layoutFleet(ships, isLand) {
 			dx: p.d.dx * p.s + b.dx * p.c,
 			dz: p.d.dz * p.s + b.dz * p.c,
 			land: p.land,
+			k: Math.round(fitK.get(sh.id) * 1000) / 1000,
 		});
 	}
 	return out;
@@ -543,4 +593,81 @@ export function layoutFleet(ships, isLand) {
 export function isRowing(item, now = Date.now()) {
 	const at = Number(item && item.readyAt);
 	return Number.isFinite(at) && now < at;
+}
+
+/* ------------------------------------------------ render-profile styles */
+
+/**
+ * Each render profile sails its own longship (shipRenderer.js):
+ *   normal  the strake-built ship (longship.js)
+ *   cute    a chunky toy boat (longshipCute.js) beside the cute characters
+ *   retro   a voxel arcade sprite (longshipRetro.js) beside the letter pieces
+ */
+export const SHIP_STYLES = Object.freeze(['normal', 'cute', 'retro']);
+
+/** The longship style for the game's render profile (as theme.js reads it). */
+export function shipStyleFor(gameState) {
+	if (!gameState) return 'normal';
+	const p = gameState.renderProfile
+		|| (gameState.retroMode ? 'retro' : gameState.lowQuality ? 'cute' : 'normal');
+	return SHIP_STYLES.includes(p) ? p : 'normal';
+}
+
+/**
+ * Where a passenger stands on each style's deck, in model units (the
+ * same frame for all three: bow +Z, waterline y 0, 7.8 units long), and
+ * how far it is scaled down. The cute deck is higher (a deep toy tub) and
+ * its characters are chubby; the retro deck is a flat voxel floor for
+ * the letter-on-disc pieces, which stand a touch bigger so the letter
+ * still reads.
+ */
+export const SHIP_FIT = Object.freeze({
+	normal: Object.freeze({ deckY: DECK_MODEL_Y, passengerZ: PASSENGER_MODEL_Z, passengerScale: PASSENGER_SCALE }),
+	cute: Object.freeze({ deckY: 0.42, passengerZ: -1.55, passengerScale: 0.6 }),
+	// (retro: the letter pieces are flat discs, unreadable any smaller)
+	retro: Object.freeze({ deckY: 0.6, passengerZ: -1.5, passengerScale: 0.78 }),
+});
+
+/** A style's fit, with its deck height in board units (stretch included). */
+export function shipFit(style) {
+	const f = SHIP_FIT[style] || SHIP_FIT.normal;
+	return { ...f, deckHeight: f.deckY * SHIP_SCALE * SHIP_STRETCH_Y };
+}
+
+/** Pale stripe on a toy sail, and the candy red on a white army's. */
+export const TOY_CREAM = 0xfff3dc;
+export const TOY_RED = 0xff5a6e;
+/** The retro sail's pixel stripes: white like the letters, red on a white army's, phosphor for a black one. */
+export const RETRO_WHITE = 0xf0f0f0;
+export const RETRO_RED = 0xff3b3b;
+export const RETRO_GREEN = 0x5cff7a;
+
+/**
+ * Seat colour → the two stripe colours of each style's sail.
+ *   normal  dyed wool ({@link woolColours})
+ *   cute    candy-bright: the seat colour kept saturated and mid-light
+ *           (the cute lights are strong) with cream stripes
+ *   retro   phosphor: the seat colour at full brightness with white
+ *           pixel stripes, like the letter pieces (white letters drawn
+ *           in the seat colour)
+ *
+ * @param {string} style
+ * @param {number|string} seat
+ * @returns {{main:number, stripe:number}}
+ */
+export function sailColoursFor(style, seat) {
+	if (style !== 'cute' && style !== 'retro') return woolColours(seat);
+	let hex = typeof seat === 'string' ? parseInt(seat.replace('#', ''), 16) : Number(seat);
+	if (!Number.isFinite(hex)) hex = 0xb3261e;
+	const [h, s, l] = rgbToHsl(...hexToRgb(hex));
+	if (style === 'cute') {
+		if (s < 0.12 && l > 0.7) return { main: 0xfdf6ea, stripe: TOY_RED };
+		if (s < 0.12) return { main: 0x5d4f86, stripe: TOY_CREAM };
+		return { main: rgbToHex(...hslToRgb(h, Math.max(0.62, s), Math.max(0.5, Math.min(0.62, l)))), stripe: TOY_CREAM };
+	}
+	// (a white army: white and phosphor green, not a red stripe outside
+	// the green palette)
+	if (s < 0.12 && l > 0.7) return { main: 0xf2f2f2, stripe: RETRO_GREEN };
+	if (s < 0.12) return { main: RETRO_GREEN, stripe: RETRO_WHITE };
+	return { main: rgbToHex(...hslToRgb(h, Math.max(0.85, s), 0.55)), stripe: RETRO_WHITE };
 }

@@ -29,6 +29,48 @@ export function setToastAvoidExtra(fn) {
 	_avoidExtra = typeof fn === 'function' ? fn : null;
 }
 
+// The top HUD (title, strip, Next piece and the stack under it, the
+// round buttons on a phone, the sea banner).
+const TOP_HUD = ['.game-title', '.debug-indicator', '#next-tetromino-display', '#turn-action-stack', '#longship-button',
+	'#audio-mute-toggle', '#activity-log-toggle', '#tetches-sea-hud'];
+
+/**
+ * "Up in the far side of the arena": just under the top HUD (on a phone
+ * a fixed 24% of the screen landed on the round buttons and the sea
+ * banner), never above 24% down.
+ */
+function highTop(vh) {
+	let bottom = topHudBottom();
+	// (and the CHECK! banner docked under it)
+	const banner = document.getElementById('check-alert-banner');
+	if (banner && !banner.classList.contains('attacker')) {
+		const q = banner.getBoundingClientRect();
+		if (q.height > 0) bottom = Math.max(bottom, q.bottom);
+	}
+	return Math.max(vh * 0.24, bottom + 8);
+}
+
+/**
+ * Where the top HUD ends on screen (CSS px from the top; 0 when none
+ * shows): the CHECK! alert docks just under it.
+ */
+export function topHudBottom(span = null) {
+	if (typeof document === 'undefined' || typeof window === 'undefined') return 0;
+	const vh = window.innerHeight;
+	let bottom = 0;
+	for (const sel of TOP_HUD) {
+		const el = document.querySelector(sel);
+		if (!el) continue;
+		const q = el.getBoundingClientRect();
+		if (!(q.height > 0 && q.width > 0) || q.top >= vh * 0.4) continue;
+		// (only what lies above `span` {left, right}, when given: on a
+		// desktop the tall Next piece column is off to the side)
+		if (span && (q.right <= span.left || q.left >= span.right)) continue;
+		bottom = Math.max(bottom, q.bottom);
+	}
+	return bottom;
+}
+
 function keepClearOf(container) {
 	let r = null;
 	try { r = _avoider ? _avoider() : null; } catch (_e) { r = null; }
@@ -51,7 +93,8 @@ function keepClearOf(container) {
 	const tops = [];
 	if (r) tops.push(r.bottom + 8);
 	for (const q of extra) tops.push(q.bottom + 8);
-	tops.push(vh * 0.24);
+	const high = highTop(vh);
+	tops.push(high);
 	if (r) tops.push(r.top - 8 - t.height);
 	for (const top of tops) {
 		const bottom = vh - top - t.height;
@@ -63,17 +106,14 @@ function keepClearOf(container) {
 	let next;
 	if (belowBottom >= current) next = belowBottom;
 	else {
-		const highTop = vh * 0.24;
-		next = (highTop + t.height + 8 < r.top) ? vh - highTop - t.height : vh - r.top + 8;
+		next = (high + t.height + 8 < r.top) ? vh - high - t.height : vh - r.top + 8;
 	}
 	container.style.bottom = `${Math.round(Math.max(current, Math.min(next, vh - t.height - 8)))}px`;
 }
 
-const TOAST_VARIANTS = {
-	info: { color: '#ffcc00', border: '#ffcc00', shadow: 'rgba(255, 204, 0, 0.3)' },
-	alert: { color: '#ff5252', border: '#ff5252', shadow: 'rgba(255, 82, 82, 0.45)' },
-	success: { color: '#7CFC8A', border: '#7CFC8A', shadow: 'rgba(124, 252, 138, 0.35)' },
-};
+// The variants a toast can take (their look: `.toast-*` in index.html).
+const TOAST_VARIANTS = { info: true, alert: true, success: true };
+const TOAST_ICONS = { longship: true };
 
 /**
  * Show a toast message with deduplication.
@@ -96,7 +136,9 @@ export function showToastMessage(message, optionsOrDuration, _since = Date.now()
 	// one thing at a time — a toast waits while a tip is on screen.
 	// (never longer than WAIT_MAX_MS: then it shows regardless)
 	const waited = Date.now() - _since;
-	const tipUp = !!_avoider && waited < WAIT_MAX_MS && typeof document !== 'undefined'
+	// (an alert — check, a capture — never waits behind a tip)
+	const urgent = !!optionsOrDuration && typeof optionsOrDuration === 'object' && optionsOrDuration.variant === 'alert';
+	const tipUp = !urgent && !!_avoider && waited < WAIT_MAX_MS && typeof document !== 'undefined'
 		&& !!document.querySelector?.('.one-time-tip');
 	// …and one toast at a time (two stacked mid-screen hid the arena): the
 	// one up gives way once it has been read for a moment.
@@ -105,7 +147,16 @@ export function showToastMessage(message, optionsOrDuration, _since = Date.now()
 		setTimeout(() => showToastMessage(message, optionsOrDuration, _since), Math.max(400, holdFor));
 		return;
 	}
-	const { duration, variant, aboveInfoCard } = normaliseOptions(optionsOrDuration);
+	const { duration, variant, aboveInfoCard, icon } = normaliseOptions(optionsOrDuration);
+	// A toast that waited its turn may have gone stale meanwhile (a hint
+	// about the ship just tapped, shown after it had already sailed):
+	// `stillTrue` is asked when it finally shows.
+	const stillTrue = optionsOrDuration && typeof optionsOrDuration === 'object' ? optionsOrDuration.stillTrue : null;
+	if (typeof stillTrue === 'function') {
+		let ok = true;
+		try { ok = !!stillTrue(); } catch (_e) { ok = true; }
+		if (!ok) return;
+	}
 
 	const now = Date.now();
 	_recentMessages = _recentMessages.filter(r => now - r.ts < DEDUP_WINDOW_MS);
@@ -113,6 +164,12 @@ export function showToastMessage(message, optionsOrDuration, _since = Date.now()
 	_recentMessages.push({ msg: message, ts: now });
 
 	let toastContainer = document.getElementById('toast-container');
+	// Docked in a dialog that has closed since: back to the screen.
+	if (toastContainer && toastContainer.classList.contains('toast-docked')) {
+		const host = toastContainer.parentElement;
+		const hr = host && host.isConnected ? host.getBoundingClientRect() : null;
+		if (!hr || !(hr.height > 0)) undock(toastContainer);
+	}
 	if (!toastContainer) {
 		toastContainer = document.createElement('div');
 		toastContainer.id = 'toast-container';
@@ -122,7 +179,10 @@ export function showToastMessage(message, optionsOrDuration, _since = Date.now()
 			bottom: '20px',
 			left: '50%',
 			transform: 'translateX(-50%)',
-			zIndex: '1000',
+			// Above the dialogs (12000-12500) and their blurred scrim: a
+			// toast raised while one is open ("Server timeout") was drawn
+			// under the blur, unreadable. clearOfDialog keeps it off the card.
+			zIndex: '12600',
 			display: 'flex',
 			flexDirection: 'column',
 			alignItems: 'center',
@@ -150,37 +210,40 @@ export function showToastMessage(message, optionsOrDuration, _since = Date.now()
 		toastContainer.removeChild(toastContainer.firstChild);
 	}
 
-	const palette = TOAST_VARIANTS[variant] || TOAST_VARIANTS.info;
-	const isLoud = variant === 'alert';
-
 	const toast = document.createElement('div');
 	toast.classList.add('toast-message');
 	if (variant) toast.classList.add(`toast-${variant}`);
+	if (variant === 'alert') toast.setAttribute('role', 'alert');
+	// A drawn icon before the words (`.toast-icon-*` in the UI theme): the
+	// Viking longship, in place of the modern sailboat emoji.
+	if (icon && TOAST_ICONS[icon]) toast.classList.add(`toast-icon-${icon}`);
 
+	// Colours, border and type per variant: `.toast-*` in the UI theme
+	// (index.html). Inline: only layout and the slide in / out.
 	Object.assign(toast.style, {
-		backgroundColor: 'rgba(0, 0, 0, 0.85)',
-		color: palette.color,
-		padding: isLoud ? '14px 28px' : '10px 20px',
-		borderRadius: '5px',
 		marginBottom: '10px',
-		fontSize: isLoud ? '20px' : '16px',
-		fontWeight: isLoud ? '700' : '400',
-		letterSpacing: isLoud ? '0.5px' : 'normal',
-		fontFamily: 'Times New Roman, serif',
-		boxShadow: `0 2px ${isLoud ? '18px' : '10px'} ${palette.shadow}`,
 		opacity: '0',
 		transition: 'opacity 0.3s, transform 0.3s',
 		transform: 'translateY(20px)',
 		textAlign: 'center',
 		maxWidth: '100%',
-		border: `${isLoud ? 2 : 1}px solid ${palette.border}`
+		boxSizing: 'border-box',
 	});
 
 	toast.textContent = message;
 	toast.dataset.shownAt = String(Date.now());
+	// (asked again while it shows: a hint about the ship just chosen
+	// went on saying "tap a glowing tile to sail" after it had sailed)
+	if (typeof stillTrue === 'function') toast._stillTrue = stillTrue;
 	toastContainer.appendChild(toast);
-	if (aboveInfoCard) liftAboveInfoCard(toastContainer);
-	if (_avoider) keepClearOf(toastContainer);
+	if (!toastContainer.classList.contains('toast-docked')) {
+		clearOfHud(toastContainer);
+		if (aboveInfoCard) liftAboveInfoCard(toastContainer);
+		if (_avoider) keepClearOf(toastContainer);
+		clearOfTip(toastContainer);
+	}
+	clearOfDialog(toastContainer);
+	watchDialogs(toastContainer);
 
 	setTimeout(() => {
 		toast.style.opacity = '1';
@@ -197,6 +260,139 @@ export function showToastMessage(message, optionsOrDuration, _since = Date.now()
 			}
 		}, 300);
 	}, duration);
+}
+
+// The HUD along the bottom of the screen: the button strip and the
+// links over it (bottom left), the round buttons (bottom right).
+// (and the Recent activity panel: a bottom sheet on a phone, where an
+// alert landed butting against its top edge)
+const BOTTOM_HUD = ['.debug-indicator', '.advertise-link', '#session-warning', '#audio-mute-toggle', '#activity-log-toggle',
+	'#activity-log-panel[data-open]'];
+
+/**
+ * Toasts sit bottom-centre; a long one reached across the button strip
+ * and hid its buttons. When the toasts would overlap any of the bottom
+ * HUD, they rise to just above it.
+ */
+function clearOfHud(container) {
+	if (typeof document === 'undefined' || typeof window === 'undefined') return;
+	const t = container.getBoundingClientRect();
+	if (!(t.height > 0)) return;
+	let top = Infinity;
+	for (const sel of BOTTOM_HUD) {
+		for (const el of document.querySelectorAll(sel)) {
+			const r = el.getBoundingClientRect();
+			if (!(r.height > 0) || r.top < window.innerHeight * 0.5) continue;
+			if (t.left < r.right + 8 && t.right > r.left - 8 && t.bottom > r.top - 8) top = Math.min(top, r.top);
+		}
+	}
+	if (top === Infinity) return;
+	const lifted = window.innerHeight - top + 10;
+	const current = parseFloat(container.style.bottom) || 0;
+	if (lifted > current) container.style.bottom = `${Math.round(lifted)}px`;
+}
+
+/**
+ * A dialog is open: the toast (drawn above it) must not cover the card's
+ * text or buttons. It goes just above the card, or to the top of the
+ * screen when there is no room above.
+ */
+function clearOfDialog(container) {
+	if (typeof document === 'undefined' || typeof window === 'undefined') return;
+	// Docked in a dialog that has since closed (hidden, or gone): back to
+	// the screen.
+	if (container.classList.contains('toast-docked')) {
+		const host = container.parentElement;
+		const r = host ? host.getBoundingClientRect() : null;
+		if (host && host.isConnected && r && r.height > 0 && r.width > 0) return;
+		undock(container);
+	}
+	const t = container.getBoundingClientRect();
+	if (!(t.height > 0)) return;
+	const vh = window.innerHeight;
+	for (const d of document.querySelectorAll('.tx-dialog')) {
+		const r = d.getBoundingClientRect();
+		if (!(r.height > 0) || !(r.width > 0)) continue;
+		if (!(t.left < r.right && t.right > r.left && t.top < r.bottom && t.bottom > r.top)) continue;
+		// Just above the card, else just below it; when the card fills the
+		// screen (a phone) there is no gap anywhere, and a toast laid over
+		// it hid its title or its Close button: it docks inside the card,
+		// on top of its content, until it fades.
+		if (r.top - 10 - t.height >= 8) {
+			container.style.bottom = `${Math.round(vh - r.top + 10)}px`;
+		} else if (r.bottom + 10 + t.height <= vh - 8) {
+			container.style.bottom = `${Math.round(vh - r.bottom - 10 - t.height)}px`;
+		} else {
+			dock(container, d);
+		}
+		return;
+	}
+}
+
+/**
+ * A tip card is up mid-screen (nextPiece.js): a toast that would land on
+ * it goes just below it, or just above when there is no room below.
+ */
+function clearOfTip(container) {
+	const tip = document.querySelector('.one-time-tip');
+	if (!tip) return;
+	const r = tip.getBoundingClientRect();
+	const t = container.getBoundingClientRect();
+	if (!(r.height > 0) || !(t.height > 0)) return;
+	if (!(t.left < r.right && t.right > r.left && t.top < r.bottom && t.bottom > r.top)) return;
+	const vh = window.innerHeight;
+	if (r.bottom + 10 + t.height <= vh - 8) container.style.bottom = `${Math.round(vh - r.bottom - 10 - t.height)}px`;
+	else if (r.top - 10 - t.height >= 8) container.style.bottom = `${Math.round(vh - r.top + 10)}px`;
+}
+
+/** Toasts docked in a dialog: first thing in the card, pinned to its top as it scrolls. */
+function dock(container, dialog) {
+	container.classList.add('toast-docked');
+	dialog.insertBefore(container, dialog.firstChild);
+}
+
+function undock(container) {
+	container.classList.remove('toast-docked');
+	document.body.appendChild(container);
+}
+
+/** Fade out the toasts whose `stillTrue` no longer holds. */
+function dropStale(container) {
+	for (const t of Array.from(container.children)) {
+		if (typeof t._stillTrue !== 'function' || t.dataset.leaving) continue;
+		let ok = true;
+		try { ok = !!t._stillTrue(); } catch (_e) { ok = true; }
+		if (ok) continue;
+		t.dataset.leaving = '1';
+		t.style.opacity = '0';
+		t.style.transform = 'translateY(-20px)';
+		setTimeout(() => { if (t.parentNode) t.parentNode.removeChild(t); }, 300);
+	}
+}
+
+let _dialogWatch = null;
+let _watched = null;
+/**
+ * A toast already up when a dialog opens over it (the Controls card,
+ * the battle hub) ended up on the card's buttons; one up when a card
+ * grows past it was cut off at the top. While toasts are on screen
+ * they are re-placed against the dialogs a few times a second.
+ */
+function watchDialogs(container) {
+	if (typeof window === 'undefined' || (_dialogWatch && _watched === container)) return;
+	if (_dialogWatch) clearInterval(_dialogWatch);
+	_watched = container;
+	_dialogWatch = setInterval(() => {
+		if (!container.isConnected || container.childElementCount === 0) {
+			clearInterval(_dialogWatch);
+			_dialogWatch = null;
+			_watched = null;
+			if (container.isConnected && container.classList.contains('toast-docked')) undock(container);
+			return;
+		}
+		dropStale(container);
+		clearOfDialog(container);
+	}, 250);
 }
 
 /**
@@ -252,7 +448,7 @@ function normaliseOptions(input) {
 	if (typeof input === 'object') {
 		const duration = Number.isFinite(input.duration) ? input.duration : 3000;
 		const variant = TOAST_VARIANTS[input.variant] ? input.variant : 'info';
-		return { duration, variant, aboveInfoCard: input.aboveInfoCard === true };
+		return { duration, variant, aboveInfoCard: input.aboveInfoCard === true, icon: typeof input.icon === 'string' ? input.icon : null };
 	}
 	return { duration: 3000, variant: 'info' };
 }

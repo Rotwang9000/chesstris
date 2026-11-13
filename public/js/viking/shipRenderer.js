@@ -15,7 +15,9 @@
  *             the square like any other cell.
  *     hitbox  invisible, the square's column from the sea up
  *     float   rides the sea: wave height + bob, heading, heel, pitch
- *       model a clone of the cached buildLongship() model, scaled
+ *       model a clone of the cached model for the render profile
+ *             (normal: buildLongship; cute: buildCuteLongship; retro:
+ *             buildRetroLongship — same frame, same named parts), scaled
  *     foam    soft foam round the hull (on the water, not heeling)
  *     wake    a V of churned water behind it while it moves
  *
@@ -25,10 +27,13 @@
  */
 
 import { buildLongship, longshipReady, preloadLongship } from './longship.js';
+import { buildCuteLongship } from './longshipCute.js';
+import { buildRetroLongship } from './longshipRetro.js';
 import {
-	SHIP_SCALE, SHIP_STRETCH_Y, CENTRE_MODEL_Z, MODEL_LENGTH, PASSENGER_MODEL_Z, DECK_HEIGHT, PASSENGER_SCALE,
+	SHIP_SCALE, SHIP_STRETCH_Y, CENTRE_MODEL_Z, MODEL_LENGTH,
 	collectShips, chooseHeading, headingAngle, chooseDetail, glideDuration,
-	woolColours, diffFleet, isRowing, sailDirection, shipItemOf, layoutFleet, beamOf,
+	diffFleet, isRowing, sailDirection, shipItemOf, layoutFleet, beamOf,
+	shipStyleFor, shipFit, sailColoursFor,
 } from './shipLayout.js';
 import { SEA_SURFACE_Y } from '../seaLevel.js';
 import { translatePosition } from '../centreBoardMarker.js';
@@ -100,6 +105,14 @@ function localPlayerIds(gameState) {
 
 function seatColour(gameState, item) {
 	let c = null;
+	// A battle seat's own army colour first, as its pieces wear it: the
+	// retro palette's colour for "anyone else" is orange, so every rival
+	// ship sailed orange whatever its team (Bot 3's blue army included).
+	const rec = gameState?.players?.[item.player];
+	if (rec && rec.battleId && typeof rec.color === 'string') {
+		const hex = parseInt(rec.color.replace('#', ''), 16);
+		if (Number.isFinite(hex)) return hex;
+	}
 	try { c = getPlayerColor(item.player, gameState, 'chess'); } catch (_e) { c = null; }
 	if (!Number.isFinite(c) && typeof item.color === 'string') c = parseInt(item.color.replace('#', ''), 16);
 	return Number.isFinite(c) ? c : 0xb3261e;
@@ -265,11 +278,44 @@ function ensureAssets(THREE) {
 		}
 	});
 	streak.wrapS = THREE.RepeatWrapping;
+	// Cute: the toy pool a hull sits in (no sea plane on that profile):
+	// a soft pale fill, a brighter rim, and a ring of ripple.
+	const pond = canvasTexture(THREE, 128, (g, S) => {
+		g.clearRect(0, 0, S, S);
+		const c = S / 2;
+		const grd = g.createRadialGradient(c, c, 0, c, c, c);
+		grd.addColorStop(0, 'rgba(255,255,255,0.55)');
+		grd.addColorStop(0.62, 'rgba(255,255,255,0.7)');
+		grd.addColorStop(0.8, 'rgba(255,255,255,1)');
+		grd.addColorStop(0.88, 'rgba(255,255,255,0.35)');
+		grd.addColorStop(0.94, 'rgba(255,255,255,0.75)');
+		grd.addColorStop(1, 'rgba(255,255,255,0)');
+		g.fillStyle = grd; g.fillRect(0, 0, S, S);
+	});
+	// Retro: the same pool drawn in phosphor scan lines, with a dotted rim.
+	const scan = canvasTexture(THREE, 128, (g, S) => {
+		g.clearRect(0, 0, S, S);
+		const c = S / 2;
+		for (let y = 2; y < S; y += 6) {
+			const dy = (y - c) / c;
+			const half = Math.sqrt(Math.max(0, 1 - dy * dy)) * c * 0.92;
+			for (let x = c - half; x < c + half; x += 4) {
+				g.fillStyle = `rgba(255,255,255,${0.35 + 0.4 * (Math.abs(x - c) / c)})`;
+				g.fillRect(Math.round(x), y, 3, 2);
+			}
+		}
+		g.fillStyle = 'rgba(255,255,255,1)';
+		for (let a = 0; a < 48; a++) {
+			const t = a / 48 * Math.PI * 2;
+			g.fillRect(Math.round(c + Math.cos(t) * c * 0.95) - 2, Math.round(c + Math.sin(t) * c * 0.95) - 2, 4, 4);
+		}
+	});
+	for (const t of [scan]) { t.magFilter = THREE.NearestFilter; t.minFilter = THREE.NearestFilter; t.generateMipmaps = false; }
 	const plane = new THREE.PlaneGeometry(1, 1);
 	plane.rotateX(-Math.PI / 2);
 	const hitGeo = new THREE.BoxGeometry(0.5, 1.6, SHIP_SCALE * 6.6);
 	const hitMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, colorWrite: false });
-	state.tex = { foam, wake, bubble, droplet, shadow, trail, streak, plane, hitGeo, hitMat };
+	state.tex = { foam, wake, bubble, droplet, shadow, trail, streak, pond, scan, plane, hitGeo, hitMat };
 	return state.tex;
 }
 
@@ -298,17 +344,24 @@ function resync() {
 	try { syncShips(...args); } catch (err) { console.error('Ship sync failed:', err); }
 }
 
-function template(THREE, main, stripe, detail) {
-	const key = `${main}|${stripe}|${detail}`;
+/** Each render profile's longship builder (all share one frame and contract). */
+const BUILDERS = {
+	normal: (THREE, o) => buildLongship(THREE, o),
+	cute: (THREE, o) => buildCuteLongship(THREE, o),
+	retro: (THREE, o) => buildRetroLongship(THREE, o),
+};
+
+function template(THREE, main, stripe, detail, style = 'normal') {
+	const key = `${style}|${main}|${stripe}|${detail}`;
 	let t = state.templates.get(key);
 	if (t) return t;
 	const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-	const group = buildLongship(THREE, { sailColour: main, stripeColour: stripe, detail });
+	const group = (BUILDERS[style] || BUILDERS.normal)(THREE, { sailColour: main, stripeColour: stripe, detail });
 	if (!group) return null;
 	state.stats.builds++;
 	state.stats.buildMs += (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0;
 	const meta = {
-		oarData: group.userData.oarData, main, stripe, detail,
+		oarData: group.userData.oarData, main, stripe, detail, style,
 		rigLines: group.userData.rigLines || null,
 		aimRigLines: typeof group.userData.aimRigLines === 'function' ? group.userData.aimRigLines : null,
 	};
@@ -322,18 +375,25 @@ function template(THREE, main, stripe, detail) {
 	return t;
 }
 
+/**
+ * Which model a ship gets: the render profile's style, its sail colours
+ * in that style, and (normal only: the cute and retro ships are light
+ * already) the level of detail.
+ */
 function lookFor(gameState, item, isLocal) {
-	const { main, stripe } = woolColours(seatColour(gameState, item));
-	const lowPower = !!(gameState && (gameState.lowQuality || gameState.renderProfile === 'cute'
-		|| gameState.renderProfile === 'retro' || gameState.performanceMode === 'low'))
-		|| coarsePointer();
-	const detail = chooseDetail({ isLocal, lowPower });
-	return { main, stripe, detail, key: `${main}|${stripe}|${detail}` };
+	const style = shipStyleFor(gameState);
+	const { main, stripe } = sailColoursFor(style, seatColour(gameState, item));
+	let detail = style;
+	if (style === 'normal') {
+		const lowPower = !!(gameState && (gameState.lowQuality || gameState.performanceMode === 'low')) || coarsePointer();
+		detail = chooseDetail({ isLocal, lowPower });
+	}
+	return { main, stripe, detail, style, key: `${style}|${main}|${stripe}|${detail}` };
 }
 
 function instantiate(THREE, gameState, item, isLocal) {
-	const { main, stripe, detail } = lookFor(gameState, item, isLocal);
-	const t = template(THREE, main, stripe, detail);
+	const { main, stripe, detail, style } = lookFor(gameState, item, isLocal);
+	const t = template(THREE, main, stripe, detail, style);
 	const model = t.group.clone();
 	model.name = 'longship-model';
 	model.scale.set(SHIP_SCALE, SHIP_SCALE * SHIP_STRETCH_Y, SHIP_SCALE);
@@ -347,7 +407,8 @@ function instantiate(THREE, gameState, item, isLocal) {
 		rigLines: t.meta.rigLines,
 		aimRigLines: t.meta.aimRigLines,
 		oarData: t.meta.oarData,
-		main, stripe, detail,
+		main, stripe, detail, style,
+		fit: shipFit(style),
 	};
 	return { model, parts };
 }
@@ -614,9 +675,10 @@ function makeEntry(THREE, gameState, ship, boardGroup) {
 		recolour: null,    // {start, fromMain, fromStripe, toMain, toStripe, geo}
 		rowing: false,
 		oarsAtRest: true,
-		deck: { x: w.x, y: SEA_SURFACE_Y + DECK_HEIGHT, z: w.z },
+		deck: { x: w.x, y: SEA_SURFACE_Y + parts.fit.deckHeight, z: w.z },
 		sway: 0,
 	};
+	dressWater(entry);
 	return entry;
 }
 
@@ -638,6 +700,7 @@ function disposeEntry(entry) {
 		st.mesh.material.dispose();
 	}
 	if (entry.recolour && entry.recolour.geo) entry.recolour.geo.dispose();
+	if (entry.sailSeeThrough) { entry.sailSeeThrough.dispose(); entry.sailSeeThrough = null; }
 	if (entry.sink && entry.sink.points) {
 		entry.sink.points.geometry.dispose();
 		entry.sink.points.material.dispose();
@@ -652,14 +715,66 @@ function swapModel(THREE, gameState, entry) {
 	entry.float.add(model);
 	entry.model = model;
 	entry.parts = parts;
+	if (entry.sailSeeThrough) { entry.sailSeeThrough.dispose(); entry.sailSeeThrough = null; }
 	entry.isLocal = isLocal;
 	entry.oarsAtRest = false;
+	entry.oarsStowKey = null;
+	entry.rigKey = null;
+	dressWater(entry);
 }
+
+/**
+ * The render profile changed under a ship: rebuild it in the new style
+ * (a sail fade in flight is dropped; the new model has the new owner's
+ * colours anyway).
+ */
+function restyle(THREE, gameState, entry) {
+	if (entry.recolour) {
+		const geo = entry.recolour.geo;
+		entry.recolour = null;
+		if (geo) geo.dispose();
+	}
+	swapModel(THREE, gameState, entry);
+	// Anyone aboard is re-seated at the new deck's scale by the piece
+	// reconciler (passengerPose); a piece it has not reached yet is
+	// rescaled here when it next counts as boarding.
+	if (entry.riders) for (const m of entry.riders) if (m.userData) m.userData.deckSettled = null;
+}
+
+/**
+ * The water round a hull, in the profile's look: white foam and a dark
+ * contact shadow on the normal sea; on the cute and retro profiles there
+ * is no sea plane, so the hull sits in a little pool of its own (a
+ * pale toy-blue one, or phosphor scan lines) and its foam, wake and
+ * spray take the profile's tint.
+ */
+function dressWater(entry) {
+	const style = entry.parts.style || 'normal';
+	const tex = state.tex;
+	if (!tex) return;
+	const look = WATER_LOOK[style] || WATER_LOOK.normal;
+	entry.water = look;
+	if (entry.shadow) {
+		const m = entry.shadow.material;
+		const map = tex[look.shadowMap] || tex.shadow;
+		if (m.map !== map) { m.map = map; m.needsUpdate = true; }
+		m.color.setHex(look.shadowColour);
+	}
+	for (const o of [entry.foam, entry.wake, entry.spray, entry.vwake && entry.vwake.mesh]) {
+		if (o && o.material && o.material.color) o.material.color.setHex(look.tint);
+	}
+}
+
+const WATER_LOOK = {
+	normal: { shadowMap: 'shadow', shadowColour: 0xffffff, shadowOpacity: SHADOW_OPACITY, shadowScale: [2.3, 7.4], tint: 0xffffff },
+	cute: { shadowMap: 'pond', shadowColour: 0x7fd6ff, shadowOpacity: 0.6, shadowScale: [3.1, 8.6], tint: 0xffffff },
+	retro: { shadowMap: 'scan', shadowColour: 0x2bff5a, shadowOpacity: 0.55, shadowScale: [3.0, 8.6], tint: 0x5cff7a },
+};
 
 /* ------------------------------------------------- sail colour fades */
 
 function startRecolour(THREE, gameState, entry) {
-	const { main, stripe } = woolColours(seatColour(gameState, entry.item));
+	const { main, stripe } = sailColoursFor(entry.parts.style || 'normal', seatColour(gameState, entry.item));
 	const current = entry.recolour ? entry.recolour.toHex : entry.parts.main;
 	if (current === main) return;
 	const sail = entry.parts.sail;
@@ -671,13 +786,26 @@ function startRecolour(THREE, gameState, entry) {
 	const fromMain = new THREE.Color(entry.parts.main);
 	const fromStripe = new THREE.Color(entry.parts.stripe);
 	const mask = new Uint8Array(col.count);
+	// The profile models mark their cloth (`paint`: 1 dye, 2 stripe, 0
+	// yard and trim, left alone) and bake light into it (kept, as a
+	// ratio); the normal model's sail is all cloth, told apart by colour.
+	const paint = geo.attributes.paint || null;
+	const shade = paint ? new Float32Array(col.count) : null;
 	for (let i = 0; i < col.count; i++) {
+		if (paint) {
+			const p = paint.getX(i);
+			mask[i] = p === 1 ? 1 : (p === 2 ? 0 : 2);
+			const from = p === 1 ? fromMain : fromStripe;
+			const sum = from.r + from.g + from.b;
+			shade[i] = sum > 0.01 ? Math.min(2, (col.getX(i) + col.getY(i) + col.getZ(i)) / sum) : 1;
+			continue;
+		}
 		const dm = Math.abs(col.getX(i) - fromMain.r) + Math.abs(col.getY(i) - fromMain.g) + Math.abs(col.getZ(i) - fromMain.b);
 		const ds = Math.abs(col.getX(i) - fromStripe.r) + Math.abs(col.getY(i) - fromStripe.g) + Math.abs(col.getZ(i) - fromStripe.b);
 		mask[i] = dm <= ds ? 1 : 0;
 	}
 	entry.recolour = {
-		start: now(), geo, mask, fromMain, fromStripe, toHex: main,
+		start: now(), geo, mask, shade, fromMain, fromStripe, toHex: main,
 		toMain: new THREE.Color(main), toStripe: new THREE.Color(stripe),
 	};
 }
@@ -690,8 +818,10 @@ function stepRecolour(THREE, gameState, entry, t) {
 	a.copy(rc.fromMain).lerp(rc.toMain, k);
 	b.copy(rc.fromStripe).lerp(rc.toStripe, k);
 	for (let i = 0; i < col.count; i++) {
+		if (rc.mask[i] === 2) continue;
 		const c = rc.mask[i] ? a : b;
-		col.setXYZ(i, c.r, c.g, c.b);
+		const f = rc.shade ? rc.shade[i] : 1;
+		col.setXYZ(i, c.r * f, c.g * f, c.b * f);
 	}
 	col.needsUpdate = true;
 	if (k >= 1) {
@@ -1020,11 +1150,12 @@ export function passengerPose(gameState, x, z) {
 	if (!shipItemOf(cell)) return null;
 	for (const e of state.ships.values()) {
 		if (e.x === x && e.z === z && !e.sink) {
-			return { x: e.deck.x, y: e.deck.y, z: e.deck.z, scale: PASSENGER_SCALE, heading: e.heading };
+			return { x: e.deck.x, y: e.deck.y, z: e.deck.z, scale: e.parts.fit.passengerScale, heading: e.heading };
 		}
 	}
 	const w = worldOf(gameState, x, z);
-	return { x: w.x, y: SEA_SURFACE_Y + DECK_HEIGHT, z: w.z, scale: PASSENGER_SCALE, heading: null };
+	const fit = shipFit(shipStyleFor(gameState));
+	return { x: w.x, y: SEA_SURFACE_Y + fit.deckHeight, z: w.z, scale: fit.passengerScale, heading: null };
 }
 
 /** Whether any ship is drawn (renderBoard keeps syncing until none are). */
@@ -1208,7 +1339,7 @@ function stepVWake(THREE, scene, e, t, speed, bowX, bowZ, dirX, dirZ, sea) {
 		geo.setIndex(idx);
 		const mat = new THREE.MeshBasicMaterial({
 			map: ensureAssets(THREE).streak, vertexColors: true, transparent: true, depthWrite: false, fog: true,
-			side: THREE.DoubleSide,
+			side: THREE.DoubleSide, color: (e.water || WATER_LOOK.normal).tint,
 		});
 		const mesh = new THREE.Mesh(geo, mat);
 		mesh.name = 'ship-vwake';
@@ -1356,7 +1487,15 @@ export function animateShips(scene, gameState, dtMs = 16) {
 		layoutShips(gameState);
 	}
 
+	// The render profile changed: each ship is rebuilt in the new style,
+	// one a frame (a build is a few milliseconds).
+	const style = shipStyleFor(gameState);
+	let restyled = false;
 	for (const [id, e] of state.ships) {
+		if (!restyled && !e.sink && e.parts.style !== style) {
+			restyled = true;
+			try { restyle(THREE, gameState, e); } catch (err) { console.warn('Ship restyle failed:', err?.message || err); }
+		}
 		// Glide
 		let speed = 0;
 		if (e.glide) {
@@ -1375,9 +1514,24 @@ export function animateShips(scene, gameState, dtMs = 16) {
 
 		const wx = e.root.position.x, wz = e.root.position.z;
 		const sea = seaHeightAt(scene, wx, wz);
-		const bob = 0.022 * Math.sin(secs * 1.25 + e.phase) + 0.01 * Math.sin(secs * 2.1 + e.phase * 1.7);
-		const roll = 0.032 * Math.sin(secs * 0.92 + e.phase) + speed * 0.11;
-		const pitch = 0.018 * Math.sin(secs * 1.13 + e.phase * 0.6) - speed * 0.05 - 0.02 * speed * Math.sin(secs * 5.1);
+		let bob = 0.022 * Math.sin(secs * 1.25 + e.phase) + 0.01 * Math.sin(secs * 2.1 + e.phase * 1.7);
+		let roll = 0.032 * Math.sin(secs * 0.92 + e.phase) + speed * 0.11;
+		let pitch = 0.018 * Math.sin(secs * 1.13 + e.phase * 0.6) - speed * 0.05 - 0.02 * speed * Math.sin(secs * 5.1);
+		let yawWiggle = 0;
+		const look = e.parts.style;
+		if (look === 'cute') {
+			// a bath toy: a bigger, bouncier bob, a waggle from side to
+			// side, and little hops over the waves while under way
+			bob = bob * 1.8 + 0.06 * speed * Math.abs(Math.sin(secs * 8.5 + e.phase));
+			roll += 0.05 * Math.sin(secs * 2.2 + e.phase * 1.3);
+			yawWiggle = 0.035 * Math.sin(secs * 1.6 + e.phase) * (1 - speed);
+			pitch += 0.04 * speed * Math.sin(secs * 8.5 + e.phase);
+		} else if (look === 'retro') {
+			// an arcade sprite: the swell in whole steps, not smooth
+			bob = Math.round(bob / 0.012) * 0.012;
+			roll = Math.round(roll / 0.025) * 0.025;
+			pitch = Math.round(pitch / 0.02) * 0.02;
+		}
 		let y = sea + bob;
 		let extraPitch = 0, extraRoll = 0;
 
@@ -1424,9 +1578,15 @@ export function animateShips(scene, gameState, dtMs = 16) {
 		e.nudge.z += (nz - e.nudge.z) * kN;
 
 		e.float.position.set(e.nudge.x, y, e.nudge.z);
+		// Hemmed in bow to stern by a neighbour: drawn a little smaller
+		// so the hulls clear (layoutFleet `k`); full size again under way.
+		const wantK = lay && !e.glide && !e.sink && Number.isFinite(lay.k) ? lay.k : 1;
+		e.fitK = e.fitK == null ? wantK : e.fitK + (wantK - e.fitK) * Math.min(1, dt * 2);
+		if (Math.abs(wantK - e.fitK) < 0.002) e.fitK = wantK;
+		e.float.scale.setScalar(e.fitK);
 		e.float.rotation.set(0, 0, 0);
 		e.float.rotation.order = 'YXZ';
-		e.float.rotation.y = e.heading;
+		e.float.rotation.y = e.heading + yawWiggle;
 		e.float.rotation.x = pitch + extraPitch;
 		e.float.rotation.z = roll + extraRoll;
 
@@ -1527,8 +1687,9 @@ export function animateShips(scene, gameState, dtMs = 16) {
 			// triangles tilt up to ~0.02 per unit), or half of it is cut off
 			sw.position.set(dirX * off + e.nudge.x, sea + 0.04, dirZ * off + e.nudge.z);
 			sw.rotation.set(0, e.heading, 0);
-			sw.scale.set(SHIP_SCALE * 2.3, 1, SHIP_SCALE * 7.4);
-			sw.material.opacity = SHADOW_OPACITY * (e.sink ? 1 - sinkK : (e.rise ? riseK : 1));
+			const [pw, pl] = (e.water || WATER_LOOK.normal).shadowScale;
+			sw.scale.set(SHIP_SCALE * pw, 1, SHIP_SCALE * pl);
+			sw.material.opacity = (e.water || WATER_LOOK.normal).shadowOpacity * (e.sink ? 1 - sinkK : (e.rise ? riseK : 1));
 		}
 		e.hull.x = e.root.position.x + dirX * off + e.nudge.x;
 		e.hull.z = e.root.position.z + dirZ * off + e.nudge.z;
@@ -1558,10 +1719,12 @@ export function animateShips(scene, gameState, dtMs = 16) {
 		// root moved this frame (glide): refresh it and its children now,
 		// so the passenger is placed on this frame's deck, not last frame's
 		e.root.updateMatrixWorld(true);
-		_v.x = 0; _v.y = DECK_HEIGHT; _v.z = (PASSENGER_MODEL_Z - CENTRE_MODEL_Z) * SHIP_SCALE;
+		const fit = e.parts.fit;
+		_v.x = 0; _v.y = fit.deckHeight; _v.z = (fit.passengerZ - CENTRE_MODEL_Z) * SHIP_SCALE;
 		const v = new THREE.Vector3(_v.x, _v.y, _v.z).applyMatrix4(e.float.matrixWorld);
 		e.deck.x = v.x; e.deck.y = v.y; e.deck.z = v.z;
 		carryPassengers(e, sinkK, dt, idsBySquare);
+		if (e.parts.style === 'retro') seeThroughSail(e, dt);
 
 		if (e.sink && sinkK >= 1 && (e.gone || t - e.sink.start > SINK_MS + 4000)) {
 			disposeEntry(e);
@@ -1613,7 +1776,7 @@ function carryPassengers(e, sinkK, dt, idsBySquare) {
 		// The reconciler's renderScale then matches, and it restores the
 		// full size when the piece steps ashore.
 		if (!m.userData.aboard) {
-			const s = (m.userData.renderScale || 1) * PASSENGER_SCALE;
+			const s = (m.userData.renderScale || 1) * e.parts.fit.passengerScale;
 			m.scale.setScalar(s);
 			m.userData.renderScale = s;
 			m.userData.aboard = true;
@@ -1639,6 +1802,28 @@ function carryPassengers(e, sinkK, dt, idsBySquare) {
  *   boardDropped: the ship left the board without a 'sunk' event — only
  *   a rider the board has already removed is taken down with it.
  */
+/**
+ * Retro: the voxel sail is a solid block of pixels, and a passenger's
+ * flat letter disc sat behind it — a laden ship read as empty. While
+ * someone is aboard, its sail goes half see-through (its own material:
+ * the template's is shared by every ship of that colour).
+ */
+function seeThroughSail(e, dt) {
+	const sail = e.parts.sail;
+	if (!sail || !sail.material) return;
+	const want = e.riders && e.riders.length > 0 && !e.sink ? 0.42 : 1;
+	if (!e.sailSeeThrough) {
+		if (want === 1) return;
+		sail.material = sail.material.clone();
+		e.sailSeeThrough = sail.material;
+	}
+	const m = e.sailSeeThrough;
+	const op = m.opacity + (want - m.opacity) * Math.min(1, dt * 4);
+	m.opacity = Math.abs(want - op) < 0.01 ? want : op;
+	const see = m.opacity < 0.999;
+	if (m.transparent !== see) { m.transparent = see; m.depthWrite = !see; m.needsUpdate = true; }
+}
+
 function drownWithShip(e, { passengerId, boardDropped = false } = {}) {
 	if (passengerId === null) return;
 	const recent = e.lastRiders && (now() - (e.lastRidersAt || 0)) < 1500 ? e.lastRiders : null;
@@ -1663,7 +1848,7 @@ function drownWithShip(e, { passengerId, boardDropped = false } = {}) {
 		copy.userData = { type: 'drownedPassenger' };
 		copy.matrixAutoUpdate = true;
 		copy.visible = true;
-		copy.position.set(0, DECK_HEIGHT, (PASSENGER_MODEL_Z - CENTRE_MODEL_Z) * SHIP_SCALE);
+		copy.position.set(0, e.parts.fit.deckHeight, (e.parts.fit.passengerZ - CENTRE_MODEL_Z) * SHIP_SCALE);
 		copy.rotation.set(0, 0, 0);
 		copy.scale.copy(m.scale);
 		e.float.add(copy);

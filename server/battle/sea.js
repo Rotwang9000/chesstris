@@ -141,6 +141,24 @@ function cellsSinkingBetween(battle, since, until) {
 	return out;
 }
 
+/**
+ * Every arena coordinate the sea has already taken by `until`, in sink
+ * order. Used to re-sweep ground that came back after its cell sank
+ * (line-clear gravity can drop a block onto drowned ground).
+ */
+function cellsSunkBy(battle, until) {
+	const out = [];
+	if (!hasSea(battle) || !battle.centre) return out;
+	const { cells } = spiralFor(outerBand(battle));
+	const start = seaStartMs(battle);
+	if (until < start) return out;
+	const last = Math.min(cells.length - 1, Math.floor((until - start) / SEA.CELL_MS));
+	for (let i = 0; i <= last; i++) {
+		out.push({ x: battle.centre.x + cells[i].dx, z: battle.centre.z + cells[i].dz, t: start + i * SEA.CELL_MS });
+	}
+	return out;
+}
+
 /** Sea timing for clients (they compute the rest themselves). */
 function publicSea(battle, now = Date.now()) {
 	if (!hasSea(battle)) return null;
@@ -166,5 +184,6 @@ module.exports = {
 	sinkAtMs,
 	isSunk,
 	cellsSinkingBetween,
+	cellsSunkBy,
 	publicSea,
 };

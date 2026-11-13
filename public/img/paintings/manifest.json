@@ -35,8 +35,8 @@
 			"alt": "In a muddy field by a sunlit fjord farm, a barefoot youth in a white tunic, wicker shield up and spear levelled, drives back a mailed warrior in a steel helm who stumbles away."
 		},
 		"capture.knight": {
-			"file": "capture.knight.v1.webp",
-			"alt": "A rider in a red cloak leaps his dappled grey horse over a stone wall on a heather slope above a teal fjord, as a mailed warrior below raises his sword and shield too late."
+			"file": "capture.knight.v2.webp",
+			"alt": "A rider in a red cloak and iron helm leaps his dappled grey horse over a dry-stone wall on a heather slope above a sunlit fjord, sword raised, as a barefoot youth falls back into the heather with his wicker shield thrown up too late and his spear on the ground."
 		},
 		"capture.bishop": {
 			"file": "capture.bishop.v1.webp",
@@ -77,6 +77,14 @@
 		"capture.rook.pawn": {
 			"file": "capture.rook.pawn.v1.webp",
 			"alt": "A huge bearded huscarl in a red cloak, axe raised and painted shield on his arm, wades through a river ford as a barefoot youth with a wicker shield and spear reels back into the water."
+		},
+		"capture.rook.bishop": {
+			"file": "capture.rook.bishop.v1.webp",
+			"alt": "On a heather headland beside a tall standing stone, a mailed huscarl in a red cloak, axe on his shoulder and painted round shield on his arm, stands over a white-bearded seer who kneels with bowed head, his carved crook staff lying in the grass."
+		},
+		"capture.queen.rook": {
+			"file": "capture.queen.rook.v1.webp",
+			"alt": "On a snowy fjord shore at sunset a queen with long braids, a silver circlet and a green cloak holds her sword over a mailed huscarl who kneels with bowed head, his round shield and axe lying in the snow."
 		},
 		"arrival.rook": {
 			"file": "arrival.rook.v1.webp",

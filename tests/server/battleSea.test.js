@@ -231,6 +231,22 @@ describe('BattleManager — quick battles', () => {
 		expect(cells[south]).toBeDefined();
 	});
 
+	test('ground that reappears on a drowned square goes back under next tick', () => {
+		const pub = startOneVsOne();
+		const battle = manager.getBattle(pub.id);
+		const cells = World.getWorld().board.cells;
+		const outer = sea.outerBand(battle);
+		const north = `${battle.centre.x},${battle.centre.z - outer}`;
+		const t = sea.seaStartMs(battle) + 3 * sea.SEA.CELL_MS;
+		manager.seaTick({ now: t });
+		expect(cells[north]).toBeUndefined();
+
+		// Line-clear gravity drops a block back onto the drowned square.
+		cells[north] = [{ type: 'tetromino', player: battle.seats[0].seatId }];
+		expect(manager.seaTick({ now: t + 1000 })).toBe(true);
+		expect(cells[north]).toBeUndefined();
+	});
+
 	test('a king caught by the sea is out for good, credited to the sea', () => {
 		const pub = startOneVsOne();
 		const battle = manager.getBattle(pub.id);
@@ -297,6 +313,60 @@ describe('BattleManager — quick battles', () => {
 		expect(back.success).toBe(true);
 		expect(back.seatId).toBe(guestSeat.seatId);
 		expect(guestSeat.isAi).toBe(false);
+	});
+
+	test('back online after the handover: battle_resume takes the own seat back', () => {
+		const pub = startOneVsOne();
+		const battle = manager.getBattle(pub.id);
+		const guestSeat = battle.seats[1];
+		const t0 = pub.startedAt + 1000;
+		online.delete('guest1');
+		manager.tick({ now: t0 });
+		manager.tick({ now: t0 + 61 * 1000 });
+		expect(guestSeat.isAi).toBe(true);
+		// The public record says whose army the bot is holding.
+		expect(manager.publicState(battle).seats[1].leftBy).toBe('guest1');
+		// Somebody else's resume never takes it.
+		expect(manager.resumeBattle({ battleId: battle.id, playerId: 'stranger' }).status).toBe('gone');
+		expect(guestSeat.isAi).toBe(true);
+
+		online.add('guest1');
+		const back = manager.resumeBattle({ battleId: battle.id, playerId: 'guest1', playerName: 'Guesty' });
+		expect(back).toMatchObject({ success: true, status: 'reclaimed', seatId: guestSeat.seatId });
+		expect(guestSeat.isAi).toBe(false);
+		expect(guestSeat.controlledBy).toBe('guest1');
+		// …and asking again is just "still yours".
+		expect(manager.resumeBattle({ battleId: battle.id, playerId: 'guest1' }).status).toBe('active');
+	});
+
+	test('a battle that ended while a player was offline: they still get its end', () => {
+		const pub = startOneVsOne();
+		const battle = manager.getBattle(pub.id);
+		const guestSeat = battle.seats[1];
+		const t0 = pub.startedAt + 1000;
+		online.delete('guest1');
+		manager.tick({ now: t0 });
+		manager.tick({ now: t0 + 61 * 1000 });
+		expect(guestSeat.leftBy).toBe('guest1');
+
+		const emitted = [];
+		Sessions.emitToPlayerSockets.mockImplementation((id, ev, payload) => emitted.push({ id, ev, payload }));
+		// The host's king goes: the bot-held guest seat wins.
+		const world = World.getWorld();
+		world.chessPieces = world.chessPieces.filter(p => !(p.player === battle.seats[0].seatId && p.type === 'KING'));
+		manager.tick({ now: t0 + 62 * 1000 });
+		expect(battle.status).toBe('finished');
+		const ends = emitted.filter(e => e.ev === 'battle_finished').map(e => e.id);
+		expect(ends).toEqual(expect.arrayContaining(['host1', 'guest1']));
+
+		// Asking later (even after the arena is cleaned up) gives the result.
+		online.add('guest1');
+		const late = manager.resumeBattle({ battleId: battle.id, playerId: 'guest1', now: t0 + 10 * 60 * 1000 });
+		expect(late.status).toBe('finished');
+		expect(late.battle.winnerSeatId).toBe(guestSeat.seatId);
+		expect(late.results.standings.length).toBe(2);
+		expect(manager.resumeBattle({ battleId: battle.id, playerId: 'stranger' }).status).toBe('gone');
+		expect(manager.resumeBattle({ battleId: 'nope', playerId: 'guest1' }).status).toBe('gone');
 	});
 
 	test('coming back within the minute keeps the seat', () => {

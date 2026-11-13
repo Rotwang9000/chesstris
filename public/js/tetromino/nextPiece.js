@@ -30,21 +30,19 @@ function createWidget() {
 	widget.setAttribute('role', 'button');
 	widget.setAttribute('aria-label', 'Next piece: click to start tetris turn');
 	widget.tabIndex = 0;
+	// The panel's look is `#next-tetromino-display` in the UI theme
+	// (index.html); only its place on screen is set here.
 	Object.assign(widget.style, {
 		position: 'fixed', top: '20px', right: '20px',
 		zIndex: '1000',
-		background: 'rgba(0, 0, 0, 0.7)',
-		padding: '10px', borderRadius: '5px',
-		fontFamily: 'Arial, sans-serif',
-		color: 'white',
 		userSelect: 'none',
 		pointerEvents: 'auto',
 		cursor: 'pointer',
 	});
 
 	const title = document.createElement('div');
+	title.className = 'tx-hud-title';
 	title.textContent = 'NEXT PIECE';
-	title.style.cssText = 'text-align:center; margin-bottom:5px; font-weight:bold;';
 	widget.appendChild(title);
 
 	const canvas = document.createElement('canvas');
@@ -56,32 +54,22 @@ function createWidget() {
 	const hint = document.createElement('div');
 	hint.id = HINT_ID;
 	hint.textContent = 'Click to play';
-	hint.style.cssText = 'text-align:center; font-size:10px; margin-top:5px; opacity:0.7;';
 	widget.appendChild(hint);
 
 	const controls = document.createElement('div');
 	controls.id = CONTROLS_ID;
-	controls.style.cssText = [
-		'margin-top: 8px',
-		'padding-top: 6px',
-		'border-top: 1px solid rgba(255, 255, 255, 0.2)',
-		'font-size: 10px',
-		'line-height: 1.4',
-		'color: #ddd',
-		'text-align: left',
-	].join(';');
 	controls.innerHTML = [
-		'<div style="font-weight:bold;color:#ffcc00;margin-bottom:3px;">Controls</div>',
-		'<div><kbd style="background:#222;border:1px solid #555;padding:0 4px;border-radius:3px;">\u2190\u2192\u2191\u2193</kbd> move</div>',
-		'<div><kbd style="background:#222;border:1px solid #555;padding:0 4px;border-radius:3px;">Z</kbd> / <kbd style="background:#222;border:1px solid #555;padding:0 4px;border-radius:3px;">X</kbd> rotate (\u21B7)</div>',
-		'<div><kbd style="background:#222;border:1px solid #555;padding:0 4px;border-radius:3px;">Space</kbd> drop</div>',
+		'<div class="tx-hud-sub">Controls</div>',
+		'<div class="tx-hud-key"><kbd>\u2190\u2192\u2191\u2193</kbd><span>move</span></div>',
+		'<div class="tx-hud-key"><kbd>Z</kbd><kbd>X</kbd><span>rotate</span></div>',
+		'<div class="tx-hud-key"><kbd>Space</kbd><span>drop</span></div>',
 	].join('');
 	// Phones: the on-screen pad already labels its buttons, and screen
 	// space is scarce — skip the keyboard legend and shrink the panel.
 	if (isTouchPrimary()) {
 		controls.style.display = 'none';
-		Object.assign(widget.style, { top: '8px', right: '8px', padding: '6px' });
-		title.style.fontSize = '12px';
+		widget.classList.add('is-compact');
+		Object.assign(widget.style, { top: '8px', right: '8px' });
 		canvas.style.width = '56px';
 		canvas.style.height = '56px';
 	}
@@ -103,12 +91,6 @@ function createWidget() {
 			onClick(event);
 		}
 	});
-	widget.addEventListener('mouseenter', () => {
-		widget.style.boxShadow = '0 0 10px rgba(255, 255, 255, 0.5)';
-	});
-	widget.addEventListener('mouseleave', () => {
-		widget.style.boxShadow = 'none';
-	});
 
 	document.body.appendChild(widget);
 	return widget;
@@ -119,15 +101,14 @@ function drawPreview(canvas, shape, colour) {
 	const ctx = canvas.getContext('2d');
 	const blockSize = 15;
 
+	// (the well behind the piece is the canvas's CSS background)
 	ctx.clearRect(0, 0, canvas.width, canvas.height);
-	ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-	ctx.fillRect(0, 0, canvas.width, canvas.height);
 
 	const offsetX = (canvas.width - shape[0].length * blockSize) / 2;
 	const offsetY = (canvas.height - shape.length * blockSize) / 2;
 
 	ctx.fillStyle = colour;
-	ctx.strokeStyle = '#FFFFFF';
+	ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
 	ctx.lineWidth = 1;
 
 	for (let y = 0; y < shape.length; y++) {
@@ -164,10 +145,18 @@ export function updateNextPieceHint(gameState) {
 	const hint = document.getElementById(HINT_ID);
 	if (!hint) return;
 
+	// Knocked out and watching the battle play on (battleMode.js): no
+	// turn of ours to describe.
+	const battle = gameState?.activeBattle;
+	if (battle && gameState.battleWatching && gameState.battleWatching === battle.id) {
+		hint.textContent = 'Knocked out — watching';
+		hint.dataset.phase = 'out';
+		return;
+	}
+
 	if (gameState && gameState.turnPhase === 'chess') {
 		hint.textContent = isTouchPrimary() ? 'Tap to start tetris turn' : 'Click to start tetris turn';
-		hint.style.color = '#4CAF50';
-		hint.style.opacity = '1';
+		hint.dataset.phase = 'chess';
 		// A Viking battle's first chess turn introduces the longships
 		// (once per device); otherwise the usual chess-turn tip.
 		if (!(gameState?.activeBattle?.edition === 'viking' && showFirstLongshipHint())) showFirstChessTurnHint();
@@ -175,8 +164,7 @@ export function updateNextPieceHint(gameState) {
 		hint.textContent = isTouchPrimary()
 			? 'Tetris turn — tap \u27F3 to rotate'
 			: 'Playing tetris turn — Z/X to rotate';
-		hint.style.color = '#FFA500';
-		hint.style.opacity = '0.9';
+		hint.dataset.phase = 'tetris';
 		showFirstDropRotationHint();
 	}
 
@@ -194,15 +182,15 @@ export function updateNextPieceHint(gameState) {
 const FIRST_DROP_HINT_KEY = 'tetches_seen_rotation_hint_v1';
 const FIRST_CHESS_HINT_KEY = 'tetches_seen_chess_turn_hint_v1';
 const FIRST_LONGSHIP_HINT_KEY = 'tetches_seen_longship_hint_v1';
-const KBD_STYLE = 'background:#222;border:1px solid #777;padding:0 4px;border-radius:3px;';
+// (<kbd> and <b> in a tip are styled by `.one-time-tip` in the UI theme)
 const tipsShown = new Set();
 let dismissActiveTip = null;
 
 function showFirstDropRotationHint() {
 	const touch = isTouchPrimary();
 	showOneTimeTip(FIRST_DROP_HINT_KEY, touch
-		? 'Tap <b style="color:#ffcc00;">\u27F3</b> to rotate the tetromino while it\'s falling.'
-		: `Press <kbd style="${KBD_STYLE}">Z</kbd> or <kbd style="${KBD_STYLE}">X</kbd> to rotate the tetromino while it's falling.`,
+		? 'Tap <b>\u27F3</b> to rotate the tetromino while it\'s falling.'
+		: `Press <kbd>Z</kbd> or <kbd>X</kbd> to rotate the tetromino while it's falling.`,
 	['z', 'Z', 'x', 'X', 'r', 'R', 'q', 'Q', 'e', 'E']);
 }
 
@@ -213,18 +201,18 @@ function showFirstChessTurnHint() {
 	const touch = isTouchPrimary();
 	const verb = touch ? 'Tap' : 'Click';
 	showOneTimeTip(FIRST_CHESS_HINT_KEY,
-		`<b style="color:#ffcc00;">Chess turn.</b> ${verb} one of your pieces, then a highlighted square to move it.<br>`
-		+ `Nothing worth moving? ${verb} <b style="color:#ffcc00;">NEXT PIECE</b> to skip to your next block.`);
+		`<b>Chess turn.</b> ${verb} one of your pieces, then a highlighted square to move it.<br>`
+		+ `Nothing worth moving? ${verb} <b>NEXT PIECE</b> to skip to your next block.`);
 }
 
 // Viking battles: nothing in the battle said how to board or sail.
 function showFirstLongshipHint() {
 	const touch = isTouchPrimary();
 	const verb = touch ? 'Tap' : 'Click';
-	const key = touch ? '' : ` (or press <kbd style="${KBD_STYLE}">L</kbd>)`;
+	const key = touch ? '' : ` (or press <kbd>L</kbd>)`;
 	return showOneTimeTip(FIRST_LONGSHIP_HINT_KEY,
-		`<b style="color:#ffcc00;">\u26F5 Longships.</b> Move a knight, bishop, rook or queen onto the gold ring on your ship, `
-		+ `then ${verb.toLowerCase()} <b style="color:#ffcc00;">\u26F5 Longship</b>${key} and a green tile to sail.<br>`
+		`<span class="tx-longship-icon" aria-hidden="true"></span><b>Longships.</b> Move a knight, bishop, rook or queen onto the gold ring on your ship, `
+		+ `then ${verb.toLowerCase()} <b>Longship</b>${key} and a glowing sea tile to sail.<br>`
 		+ 'Land beside an enemy shore to raid it.', [], 14000);
 }
 
@@ -235,6 +223,9 @@ function showFirstLongshipHint() {
  * `lingerMs` (10 s). Returns whether it was shown now.
  */
 function showOneTimeTip(storageKey, messageHtml, dismissKeys = [], lingerMs = 10000) {
+	// Never behind the welcome card (a world turn can start under it):
+	// keep the tip for a later moment rather than use it up unseen.
+	if (document.getElementById('tutorial-message')) return false;
 	if (tipsShown.has(storageKey)) return false;
 	tipsShown.add(storageKey);
 	try {
@@ -247,10 +238,11 @@ function showOneTimeTip(storageKey, messageHtml, dismissKeys = [], lingerMs = 10
 	const banner = document.createElement('div');
 	banner.className = 'one-time-tip';
 	const touch = isTouchPrimary();
+	banner.setAttribute('role', 'status');
 	banner.innerHTML = `
-		<div style="font-weight:bold;color:#ffcc00;margin-bottom:6px;">Tip</div>
+		<div class="tx-tip-head">Tip</div>
 		<div>${messageHtml}</div>
-		<div style="font-size:11px;margin-top:6px;opacity:0.7;">${touch ? 'Tap' : 'Click'} anywhere to dismiss</div>
+		<div class="tx-tip-foot">${touch ? 'Tap' : 'Click'} anywhere to dismiss</div>
 	`;
 	Object.assign(banner.style, {
 		position: 'fixed',
@@ -263,15 +255,7 @@ function showOneTimeTip(storageKey, messageHtml, dismissKeys = [], lingerMs = 10
 		width: 'max-content',
 		maxWidth: 'min(420px, calc(100vw - 32px))',
 		boxSizing: 'border-box',
-		background: 'rgba(0, 0, 0, 0.85)',
-		color: '#eee',
-		padding: '14px 20px',
-		border: '2px solid #ffcc00',
-		borderRadius: '8px',
-		fontFamily: 'Playfair Display, Times New Roman, serif',
-		fontSize: '14px',
 		zIndex: '11700',
-		boxShadow: '0 0 24px rgba(255, 204, 0, 0.4)',
 		textAlign: 'center',
 		cursor: 'pointer',
 		animation: 'tetches-fade-in 280ms ease-out',
@@ -293,10 +277,55 @@ function showOneTimeTip(storageKey, messageHtml, dismissKeys = [], lingerMs = 10
 	document.addEventListener('keydown', onKey, true);
 	document.addEventListener('click', dismiss, true);
 	document.body.appendChild(banner);
+	placeTip(banner);
 	keepTipClear(banner);
 	dismissActiveTip = dismiss;
 	timer = setTimeout(dismiss, lingerMs);
 	return true;
+}
+
+// The top HUD a tip goes just under (title and button strip, Next
+// piece, the Longship card, the sea banner).
+const TOP_HUD = ['.game-title', '.debug-indicator', '#next-tetromino-display', '#longship-button', '#tetches-sea-hud',
+	'#audio-mute-toggle', '#activity-log-toggle'];
+
+/**
+ * Where a tip goes: up top, out of the play. Mid-screen it sat on the
+ * player's own home row and pieces (or, moved off the ship, right over
+ * them). A phone held upright: just under the top HUD (the round
+ * buttons are part of it there), edge to edge. Elsewhere: top
+ * centre, between the title and the Next piece panel, or under them
+ * when it would touch either. (The tip stays centred on its `top`:
+ * translateY(-50%), as keepTipClear expects.)
+ */
+function placeTip(banner) {
+	if (typeof window === 'undefined') return;
+	const vw = window.innerWidth;
+	const vh = window.innerHeight;
+	const rects = [];
+	for (const sel of TOP_HUD) {
+		const el = document.querySelector(sel);
+		if (!el) continue;
+		const q = el.getBoundingClientRect();
+		if (q.height > 0 && q.width > 0 && q.top < vh * 0.4) rects.push(q);
+	}
+	const hudBottom = rects.reduce((m, q) => Math.max(m, q.bottom), 0);
+	if (vw <= 600 && vh > vw) {
+		Object.assign(banner.style, {
+			left: '12px',
+			transform: 'translateY(-50%)',
+			maxWidth: 'calc(100vw - 24px)',
+		});
+		const h = banner.getBoundingClientRect().height;
+		banner.style.top = `${Math.round(hudBottom + 10 + h / 2)}px`;
+		return;
+	}
+	const b = banner.getBoundingClientRect();
+	if (!(b.height > 0)) return;
+	const top = 14;
+	const hits = rects.some(q => b.left < q.right + 8 && b.right > q.left - 8 && top < q.bottom + 8);
+	const at = hits ? hudBottom + 10 : top;
+	banner.style.top = `${Math.round(at + b.height / 2)}px`;
 }
 
 /**
@@ -335,12 +364,11 @@ function keepTipClear(banner) {
 function flashWaitMessage(text) {
 	const note = document.createElement('div');
 	note.textContent = text;
+	note.className = 'tx-flash';
 	Object.assign(note.style, {
 		position: 'fixed', top: '50%', left: '50%',
 		transform: 'translate(-50%, -50%)',
-		background: 'rgba(0, 0, 0, 0.5)', color: 'white',
-		padding: '10px', borderRadius: '5px',
-		zIndex: '1000', fontFamily: 'Arial, sans-serif', fontSize: '20px',
+		zIndex: '1000',
 	});
 	document.body.appendChild(note);
 	setTimeout(() => note.remove(), 2500);

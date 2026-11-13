@@ -34,7 +34,7 @@ import {
 	onCheckGameUpdate,
 	initCheckAlert,
 } from '../checkAlert.js';
-import { updateGameStatusDisplay } from '../createLoadingIndicator.js';
+import { updateGameStatusDisplay, updateNetworkStatus } from '../createLoadingIndicator.js';
 import * as tetrominoModule from '../tetromino.js';
 import { flashCellsBeforeClear, showChessCaptureAnimation } from '../tetromino/animations.js';
 import {
@@ -494,7 +494,7 @@ function handleKingDetonation(payload, { showGameOverPulseOverlay }) {
 				if (isLocalDetonation) {
 					showToastMessage('Your king has detonated!', { variant: 'alert', duration: 6000 });
 				} else if (isAi) {
-					showToastMessage('An AI was reduced to a lone king — Bye Bye!', { duration: 4500 });
+					showToastMessage('A bot was down to its lone king — its kingdom crumbles.', { duration: 4500 });
 				} else {
 					showToastMessage('An opponent detonated their king!', { duration: 4500 });
 				}
@@ -1218,7 +1218,10 @@ export function setupNetworkEvents(hooks = {}) {
 
 	let hadConnection = false;
 
+	// (the pill under the title says the same as the toast: it kept
+	// "Network: Disconnected" up beside "Reconnected!")
 	NetworkManager.on('disconnect', () => {
+		updateNetworkStatus('disconnected');
 		showToastMessage('Connection lost — reconnecting…', 4000);
 	});
 
@@ -1226,8 +1229,16 @@ export function setupNetworkEvents(hooks = {}) {
 		if (!hadConnection) {
 			hadConnection = true;
 		} else {
+			updateNetworkStatus('connected');
 			showToastMessage('Reconnected!', 2000);
-			if (gameState.localPlayerId && typeof NetworkManager.joinGame === 'function') {
+			if (gameState.activeBattle) {
+				// Seated in a battle: the seat is the identity, and
+				// battleMode.js re-asserts its focus on 'connect'. A world
+				// join here founded a kingdom for a battle-only player in
+				// the middle of the battle and swapped the seat for that
+				// kingdom's id (a world player's join is a no-op anyway).
+				syncDealtPieces(gameState);
+			} else if (gameState.localPlayerId && typeof NetworkManager.joinGame === 'function') {
 				NetworkManager.joinGame()
 					.then(() => syncDealtPieces(gameState))
 					.catch(() => {});

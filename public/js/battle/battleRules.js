@@ -83,18 +83,145 @@ function radialBand(centre, x, z) {
 	return Math.round(Math.sqrt(dx * dx + dz * dz));
 }
 
+// ── The server's clock ──────────────────────────────────────────────────────
+// Sink times are server epoch ms. Every message the server stamps (the
+// battle's `sea.serverNow`, each game update's `timestamp`) is one
+// sample of (server clock − ours), too low by however long it took to
+// arrive AND to wait for our main thread: a battle starting while the
+// arena, the fjord and the Viking chunk are being built, a backlog of
+// updates on a slow device, a background tab. One sample taken at
+// adoption left the sea block up to seconds behind the cells the server
+// was sinking, for the whole battle. So keep learning, and keep the
+// LARGEST sample (no message arrives early): a late one never drags the
+// estimate back. Two things can make the best sample wrong, and both are
+// handled: our wall clock jumping (set by hand, an NTP step: spotted
+// against the monotonic clock), and the two clocks drifting apart (the
+// estimate gives way by CLOCK_DRIFT_PER_MS, far more than any real drift
+// and far less than a late message).
+//
+// A jump BACK is followed at once. A jump FORWARD is not: a suspended
+// device (screen locked) looks exactly the same — the monotonic clock
+// stops while the wall clock runs on — and there the offset has not
+// changed at all. Following it put the sea block a whole suspend behind
+// until the next update (seconds, when the socket had to reconnect). So
+// the estimate stays put and the server's samples decide: one in line
+// with the old offset means it was a suspend; samples lower by about
+// the jump, spread over CLOCK_CONFIRM_MS (not one burst of messages that
+// queued up before the device slept), mean the clock really moved.
+
+/** How fast the estimate gives way to later, lower samples (ms per ms). */
+export const CLOCK_DRIFT_PER_MS = 0.00025;
+/** A change in (wall − monotonic) clock above this is a wall clock jump. */
+export const CLOCK_JUMP_MS = 1500;
+/** A forward jump is believed once samples back it for this long. */
+export const CLOCK_CONFIRM_MS = 1000;
+// confirm: { firstMono, best } — samples so far that back a forward jump.
+const serverClock = { offset: null, at: 0, wallMinusMono: null, confirm: null };
+
+function monotonicNow() {
+	return typeof performance !== 'undefined' && typeof performance.now === 'function'
+		? performance.now()
+		: null;
+}
+
 /**
- * Remember how far the server clock is from ours when a battle object
- * arrives, so sink times (server epoch ms) line up locally.
+ * The clocks to read: ours now (and the monotonic one, to spot wall
+ * clock jumps), or the caller's `now` (tests, replays) and its `mono`
+ * if given — a caller's `now` alone is taken as plain time passing.
  */
-export function withClockOffset(sea, now = Date.now()) {
+function clocksFor(now, mono) {
+	if (now === undefined) return { now: Date.now(), mono: mono === undefined ? monotonicNow() : mono };
+	return { now, mono: mono === undefined ? null : mono };
+}
+
+/** How far (wall − monotonic) has moved since the offset was learnt. */
+function wallJump(now, mono) {
+	if (!Number.isFinite(mono) || serverClock.wallMinusMono === null) return 0;
+	return (now - mono) - serverClock.wallMinusMono;
+}
+
+function adoptSample(sample, now, mono) {
+	serverClock.offset = sample;
+	serverClock.at = now;
+	serverClock.wallMinusMono = Number.isFinite(mono) ? now - mono : null;
+	serverClock.confirm = null;
+}
+
+/**
+ * Note a server timestamp received at (our) `now`.
+ * @returns {number|null} The current best (server − ours) offset.
+ */
+export function noteServerClock(serverMs, nowArg, monoArg) {
+	const { now, mono } = clocksFor(nowArg, monoArg);
+	const s = Number(serverMs);
+	const current = clockOffsetEstimate(now, mono);
+	if (!Number.isFinite(s) || s <= 0 || !Number.isFinite(now)) return current;
+	const sample = s - now;
+	const jump = current === null ? 0 : wallJump(now, mono);
+	if (jump > CLOCK_JUMP_MS) {
+		if (sample > current - CLOCK_JUMP_MS) {
+			// The server says nothing moved: we were asleep. Re-base.
+			serverClock.wallMinusMono = now - mono;
+			serverClock.confirm = null;
+		} else if (Math.abs(sample - (current - jump)) <= CLOCK_JUMP_MS) {
+			// Backs a real forward jump: believe it once samples keep
+			// saying so (a burst queued before a sleep says it too).
+			const c = serverClock.confirm || (serverClock.confirm = { firstMono: mono, best: sample });
+			c.best = Math.max(c.best, sample);
+			if (mono - c.firstMono < CLOCK_CONFIRM_MS) return current;
+			adoptSample(c.best, now, mono);
+			return clockOffsetEstimate(now, mono);
+		} else {
+			return current; // neither: a stray late message
+		}
+	}
+	if (current === null || sample > current) adoptSample(sample, now, mono);
+	return clockOffsetEstimate(now, mono);
+}
+
+/** Best guess at (server clock − ours), or null before any sample. */
+export function clockOffsetEstimate(nowArg, monoArg) {
+	const { now, mono } = clocksFor(nowArg, monoArg);
+	if (serverClock.offset === null || !Number.isFinite(now)) return serverClock.offset;
+	const jump = wallJump(now, mono);
+	if (jump < -CLOCK_JUMP_MS) {
+		// Our wall clock was set back (a suspend never does that): the
+		// offset grew by as much.
+		serverClock.offset -= jump;
+		serverClock.at += jump;
+		serverClock.wallMinusMono += jump;
+		serverClock.confirm = null;
+	}
+	// A forward jump is left to the server's samples (noteServerClock).
+	return serverClock.offset - Math.max(0, now - serverClock.at) * CLOCK_DRIFT_PER_MS;
+}
+
+/** Forget what we learnt about the server's clock (tests). */
+export function resetServerClock() {
+	serverClock.offset = null;
+	serverClock.at = 0;
+	serverClock.wallMinusMono = null;
+	serverClock.confirm = null;
+}
+
+/**
+ * A battle object's sea, with how far the server clock is from ours
+ * (its `serverNow` is one more clock sample), so sink times (server
+ * epoch ms) line up locally.
+ */
+export function withClockOffset(sea, nowArg) {
 	if (!sea) return null;
+	const now = nowArg === undefined ? Date.now() : nowArg;
 	const offset = Number.isFinite(sea.serverNow) ? sea.serverNow - now : 0;
-	return { ...sea, clockOffset: offset };
+	const best = Number.isFinite(sea.serverNow) ? noteServerClock(sea.serverNow, nowArg) : null;
+	return { ...sea, clockOffset: best !== null && best > offset ? best : offset };
 }
 
 /** The server's clock, as best we know it. */
-export function serverNow(battle, now = Date.now()) {
+export function serverNow(battle, nowArg) {
+	const now = nowArg === undefined ? Date.now() : nowArg;
+	const learnt = clockOffsetEstimate(nowArg);
+	if (learnt !== null) return now + learnt;
 	return now + (Number(battle?.sea?.clockOffset) || 0);
 }
 

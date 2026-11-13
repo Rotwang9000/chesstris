@@ -800,7 +800,15 @@ export function highlightValidMoves(validMoves) {
 		highlight.name = 'moveHighlight';
 		highlight.renderOrder = 999;
 		highlight.rotation.x = -Math.PI / 2;
-		highlight.position.set(absPos.x, onShip ? SHIP_DECK_Y : 0.46, absPos.z);
+		// (each render profile's longship has its own deck height)
+		let deckY = SHIP_DECK_Y;
+		if (onShip) {
+			try {
+				const pose = passengerPose(gameState, move.x, move.z);
+				if (pose && Number.isFinite(pose.y)) deckY = Math.max(SHIP_DECK_Y, pose.y + 0.08);
+			} catch (_e) { /* the default deck height */ }
+		}
+		highlight.position.set(absPos.x, onShip ? deckY : 0.46, absPos.z);
 
 		highlight.userData = { moveTarget: true, x: move.x, z: move.z, isCapture };
 		highlight.add(new THREE.Mesh(hlCache.hitGeo, hlCache.hitMat));

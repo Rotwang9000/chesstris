@@ -625,6 +625,9 @@ function initializeGameUI() {
 				// Viking edition: the keys are on the NEXT PIECE panel already,
 				// and this strip landed on the player's own longship.
 				if (vikingActive(gameState)) return;
+				// Nor when the NEXT PIECE panel lists them (it does on
+				// desktop): it stacked on the toasts, bottom-centre.
+				if (document.getElementById('tetromino-controls-hint')) return;
 				document.body.appendChild(hint);
 				setTimeout(() => { hint.style.opacity = '0'; hint.style.transition = 'opacity 1s'; }, 8000);
 			});

@@ -172,13 +172,13 @@ describe('ship event notices', () => {
 			kind, move: { playerId, movedPiece: { type: 'KNIGHT' }, ship: { kind, landOwner: 'me' }, ...extra },
 		});
 		expect(shipEventToast(move('bot', 'land'), ctxFor()))
-			.toEqual({ text: '⛵ Bot 2’s knight lands on your shore!', variant: 'alert' });
+			.toEqual({ text: 'Bot 2’s knight lands on your shore!', variant: 'alert', icon: 'longship' });
 		expect(shipEventToast(move('bot', 'raid', { capturedPiece: { type: 'PAWN' } }), ctxFor()).text)
 			.toBe('⚔ Bot 2’s knight raids your shore and takes your pawn!');
 		expect(shipEventToast(move('me', 'land'), ctxFor())).toBeNull();
 		expect(shipEventToast({ kind: 'land', move: { playerId: 'bot', ship: { landOwner: 'x' } } }, ctxFor())).toBeNull();
 		// nameless rivals still read well
-		expect(shipEventToast(move('ghost', 'land'), ctxFor()).text).toBe('⛵ A rival’s knight lands on your shore!');
+		expect(shipEventToast(move('ghost', 'land'), ctxFor()).text).toBe('A rival’s knight lands on your shore!');
 	});
 });
 

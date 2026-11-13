@@ -83,7 +83,7 @@ export function shipEventToast(detail, ctx = {}) {
 			return { text: 'Your longship is destroyed. A new keel is laid at your mooring in 45 s.', variant: 'alert' };
 		case 'built':
 			if (!same(detail.seatId, me)) return null;
-			return { text: '⛵ A new longship is built at your mooring.', variant: 'success' };
+			return { text: 'A new longship is built at your mooring.', variant: 'success', icon: 'longship' };
 		case 'land':
 		case 'raid': {
 			const move = detail.move || {};
@@ -95,7 +95,7 @@ export function shipEventToast(detail, ctx = {}) {
 				const lost = move.capturedPiece?.type ? ` and takes your ${pieceName(move.capturedPiece.type)}` : '';
 				return { text: `⚔ ${whose} ${piece} raids your shore${lost}!`, variant: 'alert' };
 			}
-			return { text: `⛵ ${whose} ${piece} lands on your shore!`, variant: 'alert' };
+			return { text: `${whose} ${piece} lands on your shore!`, variant: 'alert', icon: 'longship' };
 		}
 		default:
 			return null;

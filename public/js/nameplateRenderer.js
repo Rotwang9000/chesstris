@@ -103,6 +103,9 @@ function paintCanvas(name, colour, captures) {
 	const canvas = document.createElement('canvas');
 	const ctx = canvas.getContext('2d');
 	if (!ctx) return { canvas, width: 0, height: 0 };
+	const look = nameplateLook();
+	const FONT = look.font;
+	const SUBFONT = look.subfont;
 
 	// Measure first so we can size the canvas. We do an off-DOM
 	// measure with the same fonts; the panel rects are based on
@@ -132,30 +135,34 @@ function paintCanvas(name, colour, captures) {
 	// Panel — dark glass with the player's colour as a border, so the
 	// label stays readable whatever the colour (dark bot colours used
 	// to vanish when they were also the text colour).
-	ctx.fillStyle = 'rgba(12, 14, 24, 0.82)';
-	roundRect(ctx, 2, 2, panelWidth - 4, panelHeight - 4, PANEL_RADIUS);
+	const radius = look.radius === 'pill' ? (panelHeight - 4) / 2 : look.radius;
+	ctx.fillStyle = look.fill;
+	roundRect(ctx, 2, 2, panelWidth - 4, panelHeight - 4, radius);
 	ctx.fill();
-	ctx.strokeStyle = colour;
-	ctx.lineWidth = 4;
+	ctx.strokeStyle = look.border || colour;
+	ctx.lineWidth = look.borderWidth;
 	ctx.stroke();
-	ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
-	ctx.lineWidth = 1.5;
-	roundRect(ctx, 5, 5, panelWidth - 10, panelHeight - 10, PANEL_RADIUS - 3);
-	ctx.stroke();
+	if (look.rim) {
+		ctx.strokeStyle = look.rim;
+		ctx.lineWidth = 1.5;
+		roundRect(ctx, 5, 5, panelWidth - 10, panelHeight - 10, Math.max(0, radius - 3));
+		ctx.stroke();
+	}
 
 	// Colour dot + player name in near-white.
 	const nameLeft = (panelWidth - (nameWidth + swatch + swatchGap)) / 2;
 	const nameMid = PANEL_PADDING + NAME_PX / 2;
 	ctx.beginPath();
-	ctx.arc(nameLeft + swatch / 2, nameMid, swatch / 2, 0, Math.PI * 2);
+	if (look.squareSwatch) ctx.rect(nameLeft, nameMid - swatch / 2, swatch, swatch);
+	else ctx.arc(nameLeft + swatch / 2, nameMid, swatch / 2, 0, Math.PI * 2);
 	ctx.fillStyle = colour;
 	ctx.fill();
 	ctx.lineWidth = 2;
-	ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+	ctx.strokeStyle = look.swatchRim;
 	ctx.stroke();
 
 	ctx.font = FONT;
-	ctx.fillStyle = '#f7f4ec';
+	ctx.fillStyle = look.ink;
 	ctx.textAlign = 'left';
 	ctx.textBaseline = 'middle';
 	ctx.fillText(name, nameLeft + swatch + swatchGap, nameMid + 1);
@@ -163,13 +170,54 @@ function paintCanvas(name, colour, captures) {
 	// Capture strip
 	if (subText) {
 		ctx.font = SUBFONT;
-		ctx.fillStyle = '#f6e7c1';
+		ctx.fillStyle = look.subInk;
 		ctx.textAlign = 'center';
 		ctx.textBaseline = 'top';
 		ctx.fillText(subText, panelWidth / 2, PANEL_PADDING + NAME_PX + 8);
 	}
 
 	return { canvas, width: panelWidth, height: panelHeight };
+}
+
+/**
+ * The nameplate's look follows the render profile (and the edition):
+ * normal is dark glass rimmed in the player's colour; cute a soft
+ * cream pill in a rounded face; retro a black phosphor box in green
+ * monospace; the Viking edition's normal look dark wood with a gilt
+ * hairline. `key` goes into the repaint signature.
+ */
+function nameplateLook() {
+	const root = typeof document !== 'undefined' ? document.documentElement : null;
+	const profile = root?.dataset?.renderProfile || 'normal';
+	const viking = root?.dataset?.edition === 'viking';
+	if (profile === 'retro') {
+		const mono = '"Courier New", ui-monospace, Menlo, monospace';
+		return {
+			key: 'retro', font: `700 ${NAME_PX}px ${mono}`, subfont: `700 ${SUB_PX}px ${mono}`,
+			radius: 0, fill: 'rgba(0, 8, 2, 0.9)', border: '#00ff41', borderWidth: 3, rim: null,
+			squareSwatch: true, swatchRim: '#00ff41', ink: '#00ff41', subInk: '#7dff9c',
+		};
+	}
+	if (profile === 'cute') {
+		const round = '"Nunito", "Varela Round", "Arial Rounded MT Bold", ui-rounded, ' + FONT_STACK;
+		return {
+			key: 'cute', font: `800 ${NAME_PX}px ${round}`, subfont: `700 ${SUB_PX}px ${round}`,
+			radius: 'pill', fill: 'rgba(255, 250, 244, 0.94)', border: null, borderWidth: 5, rim: null,
+			squareSwatch: false, swatchRim: 'rgba(60, 40, 80, 0.55)', ink: '#3b2a4a', subInk: '#6a4a7a',
+		};
+	}
+	if (viking) {
+		return {
+			key: 'viking', font: FONT, subfont: SUBFONT,
+			radius: 8, fill: 'rgba(44, 29, 16, 0.88)', border: null, borderWidth: 4, rim: 'rgba(233, 196, 106, 0.45)',
+			squareSwatch: false, swatchRim: 'rgba(246, 223, 160, 0.9)', ink: '#f6ecd2', subInk: '#ecd08c',
+		};
+	}
+	return {
+		key: 'normal', font: FONT, subfont: SUBFONT,
+		radius: PANEL_RADIUS, fill: 'rgba(12, 14, 24, 0.82)', border: null, borderWidth: 4, rim: 'rgba(255, 255, 255, 0.18)',
+		squareSwatch: false, swatchRim: 'rgba(255, 255, 255, 0.85)', ink: '#f7f4ec', subInk: '#f6e7c1',
+	};
 }
 
 function roundRect(ctx, x, y, w, h, r) {
@@ -230,7 +278,7 @@ function buildCaptureSummary(player) {
  * by the per-frame positioner.
  */
 function buildSignature(name, colour, captures) {
-	return `${name}|${colour}|${captures}`;
+	return `${name}|${colour}|${captures}|${nameplateLook().key}`;
 }
 
 /** Mipmapped, anisotropic texture so the label stays crisp at any zoom. */
@@ -360,7 +408,7 @@ export function animateNameplates(timeSec) {
 		visual.sprite.position.y = baseY + Math.sin(t) * NAMEPLATE_BOB_AMPLITUDE;
 		if (clamp) {
 			clampLabel(visual, clamp);
-			clearOfHud(visual, clamp);
+			if (clamp.viking) clearOfHud(visual, clamp);
 		} else if (visual.clamped) {
 			visual.sprite.scale.set(visual.width * WORLD_PER_PX, visual.height * WORLD_PER_PX, 1);
 			visual.sprite.material.opacity = 1;
@@ -424,19 +472,31 @@ function labelUnderHud(visual, camera, worldPerPxAt1) {
 function vikingLabelClamp() {
 	let live = false;
 	try { live = vikingActive(getGameState()); } catch (_e) { live = false; }
-	if (!live) return null;
 	const camera = getCamera();
 	const el = getRenderer()?.domElement;
 	const h = el ? (el.clientHeight || el.height) : 0;
 	if (!camera || !camera.isPerspectiveCamera || !(h > 0)) return null;
-	const maxPx = Math.max(22, Math.min(34, h * 0.045));
-	return { camera, worldPerPxAt1: (2 * Math.tan((camera.fov * Math.PI / 180) / 2)) / h, maxPx };
+	// (the standard game too, more loosely: the CHECK! close-up, and any
+	// zoom right in, blew its label up past the width of a phone)
+	const maxPx = live ? Math.max(22, Math.min(34, h * 0.045)) : Math.max(26, Math.min(40, h * 0.045));
+	return { camera, worldPerPxAt1: (2 * Math.tan((camera.fov * Math.PI / 180) / 2)) / (h * (camera.zoom || 1)), maxPx, viking: live };
 }
 
+const _camW = { v: null, s: null };
 function clampLabel(visual, { camera, worldPerPxAt1, maxPx }) {
 	const baseW = visual.width * WORLD_PER_PX;
 	const baseH = visual.height * WORLD_PER_PX;
-	const d = camera.position.distanceTo(visual.sprite.position);
+	// (world positions: the camera can sit inside a rig)
+	const THREE = getTHREE();
+	let d;
+	if (THREE && typeof camera.getWorldPosition === 'function') {
+		if (!_camW.v) { _camW.v = new THREE.Vector3(); _camW.s = new THREE.Vector3(); }
+		camera.getWorldPosition(_camW.v);
+		visual.sprite.getWorldPosition(_camW.s);
+		d = _camW.v.distanceTo(_camW.s);
+	} else {
+		d = camera.position.distanceTo(visual.sprite.position);
+	}
 	const k = Math.min(1, (maxPx * worldPerPxAt1 * d) / (baseH || 1));
 	visual.sprite.scale.set(baseW * k, baseH * k, 1);
 	visual.clamped = true;

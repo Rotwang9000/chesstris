@@ -430,8 +430,8 @@ describe('the tip for your piece with nowhere to step', () => {
 
 describe('tap on touch, click on a mouse', () => {
 	test('the battle-start toast', () => {
-		expect(longshipsInPlayText(true)).toBe('⛵ Longships in play: tap your ship to sail it.');
-		expect(longshipsInPlayText(false)).toBe('⛵ Longships in play: click your ship (or press L) to sail it.');
+		expect(longshipsInPlayText(true)).toBe('Longships in play: tap your ship to sail it.');
+		expect(longshipsInPlayText(false)).toBe('Longships in play: click your ship (or press L) to sail it.');
 	});
 
 	test('the help card controls', () => {

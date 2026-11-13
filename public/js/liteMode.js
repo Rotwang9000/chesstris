@@ -21,7 +21,7 @@ import * as NetworkManager from './utils/networkManager.js';
 import gameState from './utils/gameState.js';
 import { showToastMessage } from './showToastMessage.js';
 import { initBattleMode, enterBattleFlow, inviteCodeFromUrl } from './battle/battleMode.js';
-import { isCellVisibleInCurrentView } from './battle/battleRules.js';
+import { isCellVisibleInCurrentView, noteServerClock } from './battle/battleRules.js';
 import { getPlayerColor } from './boardFunctions/colours.js';
 import { TETROMINO_SHAPES } from './tetromino/shapes.js';
 import { showKingdomRestoreDialog } from './kingdomRestoreDialog.js';
@@ -305,6 +305,8 @@ function normalisePlayers(list) {
 
 function applyGameUpdate(data) {
 	if (!data) return;
+	// Every stamped update tunes the server clock the sea runs on.
+	if (data.timestamp != null) noteServerClock(data.timestamp);
 	if (data.board && data.fullUpdate !== false) {
 		gameState.board = data.board;
 	} else if (Array.isArray(data.boardChanges) || Array.isArray(data.removedCells)) {

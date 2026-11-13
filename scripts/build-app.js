@@ -31,7 +31,9 @@ const THREE = path.join(ROOT, 'node_modules', 'three');
 const FONT = path.join(ROOT, 'node_modules', '@fontsource', 'playfair-display', 'files');
 
 // Static assets the game page uses (the client JS is bundled).
-const ASSET_DIRS = ['img', 'css', 'sounds', 'textures', 'models'];
+// `fonts` holds the Viking edition's self-hosted rune faces (and their
+// licences); the Playfair Display copies are added beside them below.
+const ASSET_DIRS = ['img', 'css', 'sounds', 'textures', 'models', 'fonts'];
 const ASSET_FILES = ['styles.css', 'favicon.svg'];
 
 const THREE_VERSION = '0.132.2';

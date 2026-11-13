@@ -14,6 +14,14 @@ import { vikingChunkUrl } from '../vikingLazy/loader.js';
 
 /** The paintings' list (paintings/paintingCatalogue.js MANIFEST_URL). */
 const PAINTINGS_MANIFEST_URL = '/img/paintings/manifest.json';
+/** The Viking wordmark: its carved mark and Futhark face (index.html, viking-brand style). */
+const VIKING_BRAND_URLS = [
+	'/fonts/viking-futhark.woff2',
+	'/img/brand/viking-mark.svg', '/img/brand/viking-mark-cute.svg', '/img/brand/viking-mark-retro.svg',
+];
+
+/** The cute look's rounded face (index.html, tx-ui-theme): either edition. */
+const CUTE_FONT_URLS = ['/fonts/cute-fredoka-600.woff2', '/fonts/cute-fredoka-700.woff2'];
 
 /** Running as an installed app (home screen / desktop install)? */
 export function isInstalledApp() {
@@ -72,7 +80,8 @@ export function urlsToKeep() {
 		absolute(offlineEngineUrl()),
 		absolute('/img/welcome-hero.png'),
 		absolute('/manifest.json'),
-		...(chunk ? [absolute(chunk), absolute(PAINTINGS_MANIFEST_URL)] : []),
+		...CUTE_FONT_URLS.map(absolute),
+		...(chunk ? [absolute(chunk), absolute(PAINTINGS_MANIFEST_URL), ...VIKING_BRAND_URLS.map(absolute)] : []),
 		...loaded,
 	].filter(u => /^https?:/.test(u));
 }

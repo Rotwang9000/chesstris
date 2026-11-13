@@ -135,6 +135,7 @@ describe('slot chain', () => {
 			'capture', 'capture.pawn', 'capture.knight', 'capture.bishop', 'capture.rook', 'capture.queen', 'capture.king',
 			'capture.knight.bishop', 'capture.pawn.queen', 'capture.knight.rook', 'capture.knight.queen',
 			'capture.queen.knight', 'capture.bishop.knight', 'capture.rook.pawn',
+			'capture.rook.bishop', 'capture.queen.rook',
 			...SHIP_SCENES.map(scene => `ship.${scene}`),
 		].sort());
 		for (const [slot, entry] of entries) {

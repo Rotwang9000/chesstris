@@ -25,7 +25,7 @@ import { flyToPosition } from './setupCamera.js';
 import { getCamera, getControls, getRenderer, getScene, getGameState, getTHREE } from './gameContext.js';
 import { translatePosition } from './centreBoardMarker.js';
 import { clearChessSelection, clearStaleChessSelection } from './chessInteraction.js';
-import { showToastMessage } from './showToastMessage.js';
+import { showToastMessage, topHudBottom } from './showToastMessage.js';
 import { updateGameStatusDisplay } from './createLoadingIndicator.js';
 
 function playCheckSound(name) {
@@ -51,53 +51,128 @@ function ensureStyle() {
 	const style = document.createElement('style');
 	style.id = STYLE_ID;
 	style.textContent = `
+		/* A banner docked just under the top HUD (placeBanner), over
+		   the far side of the arena: the camera brings the king to the
+		   middle of the screen, where a card used to cover it, the
+		   Longship card and the history button. Its look follows the
+		   UI theme's tokens (index.html): danger red inside the
+		   profile's own frame — gilt wood (Viking), candy (cute),
+		   phosphor (retro). */
 		#${BANNER_ID} {
 			position: fixed;
 			top: 18%;
 			left: 50%;
 			transform: translateX(-50%);
-			background: linear-gradient(180deg, rgba(160, 0, 0, 0.95) 0%, rgba(80, 0, 0, 0.95) 100%);
-			color: #fff;
-			padding: 18px 32px;
-			border: 3px solid #ffd24c;
-			border-radius: 14px;
-			box-shadow: 0 0 40px rgba(255, 80, 80, 0.85), 0 6px 18px rgba(0, 0, 0, 0.6);
-			text-align: center;
-			z-index: 12000;
-			font-family: 'Playfair Display', 'Times New Roman', serif;
+			display: grid;
+			grid-template-columns: minmax(0, auto) auto;
+			grid-template-areas: "title count" "sub count";
+			align-items: center;
+			column-gap: 18px;
+			width: max-content;
+			max-width: min(460px, calc(100vw - 24px));
+			box-sizing: border-box;
+			padding: 10px 20px 11px 18px;
+			background: var(--tx-sheen, none) top center / 100% 1px no-repeat,
+				var(--tx-danger-bg, linear-gradient(180deg, rgba(120, 22, 18, 0.95) 0%, rgba(62, 8, 10, 0.97) 100%));
+			color: var(--tx-ink, #fff4ea);
+			border: 1px solid var(--tx-danger-line, rgba(255, 110, 90, 0.75));
+			border-left: 4px solid #ff5a44;
+			border-radius: var(--tx-r-lg, 14px);
+			box-shadow: var(--tx-edge, 0 0 0 1px rgba(0, 0, 0, 0.55)), 0 10px 26px -8px rgba(0, 0, 0, 0.7), 0 0 26px -4px rgba(255, 70, 50, 0.55);
+			text-align: left;
+			/* (under the dialogs' scrims, 12000+: a card opened mid-check
+			   is on top; over the tips, 11700) */
+			z-index: 11900;
+			font-family: var(--tx-font-display, 'Playfair Display', 'Times New Roman', serif);
+			font-variant-numeric: lining-nums;
 			pointer-events: none;
-			animation: check-alert-pulse 1.2s ease-in-out infinite;
+			animation: check-alert-in 260ms cubic-bezier(0.2, 1.3, 0.4, 1) both, check-alert-pulse 1.4s ease-in-out 260ms infinite;
 		}
 		#${BANNER_ID} .ca-title {
-			font-size: 36px;
-			font-weight: bold;
-			letter-spacing: 0.05em;
-			text-shadow: 0 0 8px rgba(255, 200, 100, 0.7);
+			grid-area: title;
+			font-size: 30px;
+			font-weight: 700;
+			line-height: 1.05;
+			letter-spacing: 0.06em;
+			color: var(--tx-gold-hi, #ffe27a);
+			text-shadow: 0 2px 0 rgba(0, 0, 0, 0.45), 0 0 14px rgba(255, 120, 80, 0.55);
 		}
 		#${BANNER_ID} .ca-subtitle {
-			margin-top: 6px;
-			font-size: 16px;
-			opacity: 0.92;
+			grid-area: sub;
+			margin-top: 3px;
+			font-family: var(--tx-font-ui, sans-serif);
+			font-size: 13px;
+			line-height: 1.35;
+			color: var(--tx-ink-2, #f3dcd2);
 		}
 		#${BANNER_ID} .ca-countdown {
-			margin-top: 10px;
-			font-size: 48px;
-			font-weight: bold;
-			color: #ffd24c;
-			text-shadow: 0 0 12px rgba(255, 210, 76, 0.8);
+			grid-area: count;
+			min-width: 2.3em;
+			padding-left: 16px;
+			border-left: 1px solid var(--tx-trim-soft, rgba(255, 210, 90, 0.25));
+			font-size: 38px;
+			font-weight: 700;
+			line-height: 1;
+			text-align: center;
+			color: var(--tx-gold, #ffd24c);
+			font-variant-numeric: tabular-nums lining-nums;
+			text-shadow: 0 0 12px rgba(255, 190, 60, 0.55);
 		}
 		#${BANNER_ID}.attacker {
 			top: auto;
 			bottom: 22%;
-			background: linear-gradient(180deg, rgba(60, 60, 60, 0.92) 0%, rgba(20, 20, 20, 0.92) 100%);
-			border-color: #999;
-			box-shadow: 0 0 16px rgba(255, 255, 255, 0.2);
+			background: var(--tx-sheen, none) top center / 100% 1px no-repeat, var(--tx-hud-bg, rgba(20, 20, 20, 0.92));
+			border-color: var(--tx-trim, #999);
+			border-left-color: var(--tx-gold, #ffcc00);
+			box-shadow: var(--tx-edge, 0 0 0 1px rgba(0, 0, 0, 0.55)), 0 8px 22px -6px rgba(0, 0, 0, 0.6);
+			-webkit-backdrop-filter: var(--tx-blur, none);
+			backdrop-filter: var(--tx-blur, none);
+			animation: check-alert-in 260ms ease-out both;
 		}
-		#${BANNER_ID}.attacker .ca-title { font-size: 22px; }
-		#${BANNER_ID}.attacker .ca-countdown { font-size: 28px; color: #fff; }
+		#${BANNER_ID}.attacker .ca-title { font-size: 19px; letter-spacing: 0.01em; text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5); }
+		#${BANNER_ID}.attacker .ca-countdown { font-size: 26px; color: var(--tx-ink, #fff); text-shadow: none; }
+		/* Viking (wood and gilt) and cute (candy): the profile's frame. */
+		html[data-edition="viking"]:not([data-render-profile="retro"]) #${BANNER_ID},
+		html[data-render-profile="cute"] #${BANNER_ID} {
+			border: 3px solid transparent;
+			background: var(--tx-danger-bg) padding-box, var(--tx-frame) border-box;
+		}
+		html[data-edition="viking"]:not([data-render-profile="retro"]) #${BANNER_ID}.attacker,
+		html[data-render-profile="cute"] #${BANNER_ID}.attacker {
+			background: var(--tx-hud-bg) padding-box, var(--tx-frame) border-box;
+		}
+		html[data-render-profile="cute"] #${BANNER_ID} .ca-title { letter-spacing: 0.02em; }
+		/* Retro: red phosphor on black. */
+		html[data-render-profile="retro"] #${BANNER_ID} {
+			background: repeating-linear-gradient(0deg, rgba(255, 60, 40, 0.05) 0 1px, transparent 1px 3px), #0d0100;
+			border: 1px solid #ff4a3a;
+			border-left-width: 1px;
+			box-shadow: 0 0 0 1px #000, 0 0 18px rgba(255, 60, 40, 0.35);
+		}
+		html[data-render-profile="retro"] #${BANNER_ID} .ca-title,
+		html[data-render-profile="retro"] #${BANNER_ID} .ca-countdown { color: #ff6b5a; text-shadow: 0 0 8px rgba(255, 70, 50, 0.8); }
+		html[data-render-profile="retro"] #${BANNER_ID} .ca-subtitle { color: #ffb0a4; }
+		html[data-render-profile="retro"] #${BANNER_ID} .ca-countdown { border-left-color: rgba(255, 74, 58, 0.4); }
+		html[data-render-profile="retro"] #${BANNER_ID}.attacker { background: #000; border-color: var(--tx-gold); box-shadow: none; }
+		html[data-render-profile="retro"] #${BANNER_ID}.attacker .ca-title,
+		html[data-render-profile="retro"] #${BANNER_ID}.attacker .ca-countdown { color: var(--tx-gold); text-shadow: none; }
+		@media (max-width: 600px) {
+			#${BANNER_ID} { column-gap: 12px; padding: 8px 14px 9px 12px; }
+			#${BANNER_ID} .ca-title { font-size: 24px; }
+			#${BANNER_ID} .ca-subtitle { font-size: 12px; }
+			#${BANNER_ID} .ca-countdown { font-size: 30px; padding-left: 12px; }
+		}
+		/* (no fade: a page whose animations are held — a background tab
+		   coming back — would keep the banner invisible at its first frame) */
+		@keyframes check-alert-in {
+			from { transform: translateX(-50%) translateY(-12px) scale(0.94); }
+		}
 		@keyframes check-alert-pulse {
-			0%, 100% { box-shadow: 0 0 40px rgba(255, 80, 80, 0.85), 0 6px 18px rgba(0, 0, 0, 0.6); }
-			50% { box-shadow: 0 0 70px rgba(255, 160, 80, 1.0), 0 6px 18px rgba(0, 0, 0, 0.6); }
+			0%, 100% { box-shadow: var(--tx-edge, 0 0 0 1px rgba(0, 0, 0, 0.55)), 0 10px 26px -8px rgba(0, 0, 0, 0.7), 0 0 20px -6px rgba(255, 70, 50, 0.45); }
+			50% { box-shadow: var(--tx-edge, 0 0 0 1px rgba(0, 0, 0, 0.55)), 0 10px 26px -8px rgba(0, 0, 0, 0.7), 0 0 34px 0 rgba(255, 90, 50, 0.75); }
+		}
+		@media (prefers-reduced-motion: reduce) {
+			#${BANNER_ID} { animation: none; }
 		}
 	`;
 	document.head.appendChild(style);
@@ -120,6 +195,24 @@ function ensureBanner(role) {
 	return el;
 }
 
+/**
+ * The defender's banner docks just under the top HUD (the title, the
+ * button strip and Next piece; on a phone also the round buttons and
+ * the Longship card), so it never covers them or the king the camera
+ * brings to the middle of the screen.
+ */
+function placeBanner() {
+	const el = document.getElementById(BANNER_ID);
+	if (!el || el.classList.contains('attacker')) return;
+	let top = 0;
+	try {
+		const r = el.getBoundingClientRect();
+		top = topHudBottom(r.width > 0 ? { left: r.left, right: r.right } : null);
+	} catch (_e) { top = 0; }
+	const vh = window.innerHeight || 800;
+	el.style.top = `${Math.round(Math.min(Math.max(top + 10, 12), vh * 0.4))}px`;
+}
+
 function destroyBanner() {
 	const el = document.getElementById(BANNER_ID);
 	if (el && el.parentNode) el.parentNode.removeChild(el);
@@ -137,10 +230,13 @@ function formatCountdown(ms) {
 
 function startCountdown(deadlineAt) {
 	if (countdownTimer) clearInterval(countdownTimer);
+	let ticks = 0;
 	const render = () => {
 		const remaining = deadlineAt - Date.now();
 		const el = document.getElementById(COUNTDOWN_ID);
 		if (!el) return;
+		// (the HUD reflows as the turn changes: Skip move, the stack)
+		if (ticks++ % 5 === 0) placeBanner();
 		el.textContent = formatCountdown(Math.max(0, remaining));
 		if (remaining <= 0 && countdownTimer) {
 			clearInterval(countdownTimer);
@@ -165,10 +261,12 @@ function flyCameraToKing(pendingCheck) {
 		if (!kingPos) return;
 		const abs = translatePosition({ x: kingPos.x, z: kingPos.z }, gameState, true);
 		const lookAt = { x: abs.x, y: 0.5, z: abs.z };
+		// (high enough to show the attacker too; a closer dive filled
+		// a phone with the king's name label)
 		const cameraPos = {
 			x: abs.x,
-			y: 8,
-			z: abs.z + 7,
+			y: 10.5,
+			z: abs.z + 9,
 		};
 		flyToPosition(camera, controls, cameraPos, lookAt, renderer, scene);
 	} catch (e) {
@@ -388,7 +486,7 @@ function renderBanner(role, pendingCheck) {
 	const subEl = banner.querySelector('.ca-subtitle');
 	if (role === 'defender') {
 		titleEl.textContent = 'CHECK!';
-		subEl.textContent = 'Your king is in danger — move to safety or capture the attacker';
+		subEl.textContent = 'Move your king to safety, or take the attacker';
 		playCheckSound('alert');
 	} else {
 		titleEl.textContent = 'Threatening their king…';
