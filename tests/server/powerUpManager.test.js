@@ -124,6 +124,30 @@ describe('PowerUpManager', () => {
 		expect(world.powerUps).toHaveLength(0);
 	});
 
+	test('an orb a longship has sailed onto stays put: nothing spawns aboard', () => {
+		seedWorld();
+		const manager = createPowerUpManager({
+			io: makeIo(), broadcaster: makeBroadcaster(), persistence: makePersistence(),
+		});
+		const world = World.getWorld();
+		world.board.cells['6,5'] = [{
+			type: 'ship', shipId: 'b-ship-1', player: 'p1', battleId: 'b', homeSeatId: 'p1', readyAt: 0,
+		}];
+		world.powerUps.push({ id: 'orb-under-ship', x: 6, z: 5, pieceType: 'PAWN', spawnedAt: Date.now() });
+		const before = world.chessPieces.length;
+
+		const claims = manager.claimAcrossPlacement(world, 'p2', [{ x: 5, z: 5 }]);
+
+		expect(claims).toEqual([]);
+		expect(world.chessPieces).toHaveLength(before);
+		expect(world.board.cells['6,5']).toHaveLength(1);
+		expect(world.powerUps.map(o => o.id)).toEqual(['orb-under-ship']);
+
+		// The ship sails on: the orb is claimable again.
+		delete world.board.cells['6,5'];
+		expect(manager.claimAcrossPlacement(world, 'p2', [{ x: 5, z: 5 }])).toHaveLength(1);
+	});
+
 	test('claimAcrossPlacement converts an orb under a tetromino cell into a chess piece', () => {
 		seedWorld();
 		const io = makeIo();

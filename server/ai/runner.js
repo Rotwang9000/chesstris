@@ -136,6 +136,13 @@ function createAiRunner({
 			return;
 		}
 
+		// Viking battles: captain the ships first (flee the sea, raid
+		// legs, bring an empty ship home). A sail isn't a chess move, so
+		// the bot still takes its normal action this tick.
+		const sailed = typeof aiActions.maybeSail === 'function'
+			? aiActions.maybeSail(computerId) > 0
+			: false;
+
 		// AI players that were marked `eliminated` (e.g. by the
 		// ghost-sweep or by a previous king capture that never finished
 		// its respawn) used to spin forever doing nothing because every
@@ -221,7 +228,7 @@ function createAiRunner({
 				|| !!aiActions.performStrategicTetrominoPlacement(computerId);
 		}
 
-		if (acted) {
+		if (acted || sailed) {
 			computerPlayer.aiStuckTicks = 0;
 			return;
 		}

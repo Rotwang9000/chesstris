@@ -17,6 +17,9 @@ const pieces = require('../game/pieces');
 const territory = require('../game/territory');
 // Shared with the AI so human and computer pawns freeze identically.
 const { markPawnAwaitingPromotion } = require('../game/promotion');
+// Viking longships: shared with the AI so both classify ship moves alike.
+const ships = require('../battle/ships');
+const shipRules = require('../battle/shipRules');
 
 /**
  * Legacy credit-banking flow — kept so persisted worlds that still
@@ -397,6 +400,9 @@ function registerChessHandlers(socket, ctx) {
 
 			const originalPosition = { x: piece.position.x, z: piece.position.z };
 			const targetCell = gameManager.boardManager.getCell(world.board, targetPosition.x, targetPosition.z);
+			// Viking: classify embark / land / raid / seize / boarded against
+			// the board as it is NOW — the move below flips the ship's owner.
+			const shipPlan = ships.planChessMove(world, piece, targetPosition.x, targetPosition.z);
 
 			// The captured piece's *last server-authoritative position* is
 			// the capture cell. We snapshot the live record before removal
@@ -664,12 +670,20 @@ function registerChessHandlers(socket, ctx) {
 			}
 
 			broadcaster.broadcastGameUpdate();
+			const shipMove = ships.afterPieceMoved(
+				world, piece, originalPosition,
+				{ x: targetPosition.x, z: targetPosition.z },
+				capturedPieceSnapshot, shipPlan,
+			);
 			io.to(world.id).emit('chess_move', {
 				playerId,
 				movedPiece: piece,
 				movedFrom: originalPosition,
 				movedTo: { x: targetPosition.x, z: targetPosition.z },
 				capturedPiece: capturedPieceSnapshot,
+				// Only moves that touch a longship carry the field, so
+				// standard payloads are unchanged.
+				...(shipMove ? { ship: shipMove } : {}),
 			});
 
 			// Dedicated capture event so the client can play an
@@ -1365,6 +1379,9 @@ function classifyMoveRejection(gameManager, world, piece, targetPosition, destEx
 		}
 	}
 
+	const shipRejection = classifyShipRejection(gameManager, world, piece, targetPosition, targetCell);
+	if (shipRejection) return shipRejection;
+
 	const pieceType = String(piece.type || '').toUpperCase();
 	const dx = toX - fromX;
 	const dz = toZ - fromZ;
@@ -1408,6 +1425,35 @@ function classifyMoveRejection(gameManager, world, piece, targetPosition, destEx
 		reason: 'bad_geometry',
 		message: `That square isn't reachable by your ${pieceType.toLowerCase()}.`,
 	};
+}
+
+/**
+ * Viking battles: name the longship rule a refused move broke (boarding,
+ * rowing, mooring, attacking a king from aboard, ship to ship, sliding
+ * over a ship), or null so the generic reasons apply.
+ */
+function classifyShipRejection(gameManager, world, piece, targetPosition, targetCell) {
+	if (!ships.vikingBattleOf(world, piece.player)) return null;
+	const getCell = (x, z) => gameManager.boardManager.getCell(world.board, x, z);
+	const from = { x: piece.position.x, z: piece.position.z };
+	const to = { x: targetPosition.x, z: targetPosition.z };
+	const marker = Array.isArray(targetCell)
+		? targetCell.find(it => it && it.type === 'chess') : null;
+	const veto = shipRules.chessMoveVeto({ getCell, now: Date.now() }, piece, from, to, marker || null);
+	if (veto) return veto;
+	const type = String(piece.type || '').toUpperCase();
+	if (type === 'KNIGHT') return null;
+	const dx = to.x - from.x;
+	const dz = to.z - from.z;
+	if (!(dx === 0 || dz === 0 || Math.abs(dx) === Math.abs(dz))) return null;
+	const sx = Math.sign(dx);
+	const sz = Math.sign(dz);
+	for (let x = from.x + sx, z = from.z + sz; x !== to.x || z !== to.z; x += sx, z += sz) {
+		if (shipRules.pathBlockedByShip(getCell, x, z)) {
+			return { reason: 'path_blocked_by_ship', message: shipRules.SHIP_REJECTIONS.path_blocked_by_ship };
+		}
+	}
+	return null;
 }
 
 // Per-player throttle on rejected-chess-move log entries. Without

@@ -20,6 +20,8 @@
  *     slot, centre,       // arena grid slot + centre cell
  *     seatCount,          // requested seats (2-4)
  *     mode,               // 'quick' (the sea rises) | 'classic'
+ *     edition,            // 'standard' | 'viking' (longships; see shipRules.js)
+ *     fleet,              // viking only: ship bookkeeping (see ships.js)
  *     isPublic,           // a Quick-match lobby anyone looking can join
  *     autoStartAt,        // quick match: bots fill the seats at this time
  *     seaSunkUntil,       // quick: sink times up to here are applied
@@ -67,6 +69,8 @@ const {
 	publicSea,
 } = require('./sea');
 const pieces = require('../game/pieces');
+const { EDITIONS, normaliseEdition, battleEdition, isVikingBattle } = require('./edition');
+const ships = require('./ships');
 
 const LOBBY_TIMEOUT_MS = 15 * 60 * 1000;   // Unstarted battles evaporate.
 const ACTIVE_TIMEOUT_MS = 2 * 60 * 60 * 1000; // Hard cap on battle length.
@@ -201,6 +205,9 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 			seatCount: battle.seatCount,
 			botDifficulty: battle.botDifficulty || 'auto',
 			mode: battle.mode || BATTLE_MODES.CLASSIC,
+			// Clients adopt the battle's edition (never their own URL) on
+			// join, bot takeover and reconnect.
+			edition: battleEdition(battle),
 			sea: publicSea(battle),
 			isPublic: !!battle.isPublic,
 			startsInMs: battle.isPublic && battle.status === 'lobby'
@@ -275,7 +282,10 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 	 * Create a battle lobby. The host takes seat 0.
 	 * @returns {{success: boolean, error?: string, battle?: Object}}
 	 */
-	function createBattle({ hostId, hostName, seatCount = 2, botDifficulty = 'auto', mode = BATTLE_MODES.QUICK }) {
+	function createBattle({
+		hostId, hostName, seatCount = 2, botDifficulty = 'auto', mode = BATTLE_MODES.QUICK,
+		edition = EDITIONS.STANDARD,
+	}) {
 		const seats = Number(seatCount);
 		if (!Number.isInteger(seats) || seats < BATTLE.MIN_SEATS || seats > BATTLE.MAX_SEATS) {
 			return { success: false, error: `Seat count must be ${BATTLE.MIN_SEATS}-${BATTLE.MAX_SEATS}` };
@@ -307,6 +317,7 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 			seatCount: seats,
 			botDifficulty: normaliseBotDifficulty(botDifficulty),
 			mode: normaliseBattleMode(mode),
+			edition: normaliseEdition(edition),
 			hostId: String(hostId),
 			createdAt: Date.now(),
 			startedAt: null,
@@ -325,7 +336,7 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 		World.markDirty();
 		persistence.markDirty();
 
-		console.log(`[Battle] ${hostId} created battle ${code} (${seats} seats, ${battle.mode})`);
+		console.log(`[Battle] ${hostId} created battle ${code} (${seats} seats, ${battle.mode}, ${battle.edition})`);
 		return { success: true, battle: publicState(battle) };
 	}
 
@@ -434,7 +445,10 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 	 * (starting it the moment it's full), or open one that bots fill
 	 * after QUICKMATCH_WAIT_MS if nobody else turns up.
 	 */
-	function quickMatch({ playerId, playerName }) {
+	function quickMatch({ playerId, playerName, edition = EDITIONS.STANDARD }) {
+		// Viking and standard players are never paired: the edition is a
+		// property of the lobby, and a lobby only matches its own.
+		const wanted = normaliseEdition(edition);
 		for (const battle of battlesForPlayer(playerId)) {
 			if (battle.isPublic && battle.status === 'lobby') {
 				return { success: true, battle: publicState(battle), seatId: seatFor(battle, playerId).seatId };
@@ -443,6 +457,7 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 
 		const open = Object.values(battles())
 			.filter(b => b && b.isPublic && b.status === 'lobby' && b.seats.length < b.seatCount
+				&& battleEdition(b) === wanted
 				&& !seatFor(b, playerId))
 			.sort((a, b) => a.createdAt - b.createdAt)[0];
 		if (open) {
@@ -458,7 +473,7 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 
 		const created = createBattle({
 			hostId: playerId, hostName: playerName, seatCount: QUICKMATCH_SEATS,
-			botDifficulty: BOT_PACE.AUTO, mode: BATTLE_MODES.QUICK,
+			botDifficulty: BOT_PACE.AUTO, mode: BATTLE_MODES.QUICK, edition: wanted,
 		});
 		if (!created.success) return created;
 		const battle = getBattle(created.battle.id);
@@ -608,6 +623,10 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 			}
 		}
 
+		// Viking: one longship moored behind each queen. After every seat
+		// is built, so a mooring can never be overwritten by a zone.
+		if (isVikingBattle(battle)) ships.spawnFleet(world, battle);
+
 		gameManager.boardManager.recalculateBoardBoundaries(world.board);
 	}
 
@@ -709,6 +728,9 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 		const world = World.getWorld();
 		const key = `${x},${z}`;
 		const kingLifeService = gameManager.kingLifeService || null;
+		// A longship on this square goes down with whoever is aboard —
+		// note the passenger before the sea removes them.
+		const sunkShip = ships.noteSinking(world, battle, x, z);
 		const standing = (world.chessPieces || []).filter(p =>
 			p && p.position && p.position.x === x && p.position.z === z);
 		for (const piece of standing) {
@@ -734,6 +756,7 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 				note: 'the sea rose',
 			});
 		}
+		if (sunkShip) emitToSeatHumans(battle, 'ship_sunk', sunkShip);
 		if (world.board.cells[key]) {
 			delete world.board.cells[key];
 			return true;
@@ -985,6 +1008,9 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 			else delete world.board.cells[key];
 			ringRemoved++;
 		}
+		// Longships carry the battle id, not a ring tag; a reused slot
+		// must never inherit the last battle's fleet.
+		ships.stripBattleShips(world, battle.id);
 
 		delete battles()[battle.id];
 		gameManager.boardManager.recalculateBoardBoundaries(world.board);
@@ -1040,6 +1066,12 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 					finishBattle(battle, { reason: 'timeout' });
 				} else {
 					retuneAutoBots(battle, now);
+					// Viking: spot lost ships and rebuild at the moorings.
+					if (ships.reconcileShips(World.getWorld(), battle, { now, seatIsAlive })) {
+						World.markDirty();
+						persistence.markDirty();
+						broadcaster.broadcastGameUpdate();
+					}
 				}
 				continue;
 			}

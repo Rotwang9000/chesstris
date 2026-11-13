@@ -369,3 +369,76 @@ describe('BattleManager — quick battles', () => {
 		expect(battle.winnerSeatId).toBeNull();
 	});
 });
+
+describe('Viking longships and the sea', () => {
+	const fixtures = require('./shipFixtures');
+	const ships = require('../../server/battle/ships');
+	const { shipAt } = require('../../server/battle/shipRules');
+	let emitted;
+
+	beforeEach(() => {
+		fixtures.vikingWorld({ mode: 'quick' });
+		emitted = [];
+		jest.spyOn(Sessions, 'emitToPlayerSockets').mockImplementation((playerId, event, payload) => {
+			emitted.push({ playerId, event, payload });
+			return 1;
+		});
+	});
+
+	afterEach(() => jest.restoreAllMocks());
+
+	function manager() {
+		const gm = fixtures.managers();
+		return createBattleManager({
+			gameManager: gm,
+			aiRunner: { startAiPlayer: () => {}, stopAiPlayer: () => {} },
+			broadcaster: { broadcastGameUpdate: () => {} },
+			persistence: { markDirty: () => {} },
+			lifecycleService: { removePlayerCompletely: id => World.removePlayer(id) },
+			io: { to: () => ({ emit: () => {} }) },
+		});
+	}
+
+	test('a ship sinks with its passenger aboard, and the battle is told who', () => {
+		const battle = fixtures.battle();
+		const spot = fixtures.ship(0, -12, { shipId: 'doomed' });
+		fixtures.land(1, -12);
+		fixtures.piece('crew', 'ROOK', 0, -12);
+		const t = sea.sinkAtMs(battle, spot.x, spot.z);
+		manager().seaTick({ now: t });
+		expect(World.getWorld().board.cells[`${spot.x},${spot.z}`]).toBeUndefined();
+		expect(World.getWorld().chessPieces.some(p => p.id === 'crew')).toBe(false);
+		const sunk = emitted.filter(e => e.event === 'ship_sunk');
+		expect(sunk.map(e => e.playerId).sort()).toEqual(['h0', 'h1']);
+		expect(sunk[0].payload).toEqual({ shipId: 'doomed', x: spot.x, z: spot.z, passengerId: 'crew' });
+	});
+
+	test('an empty ship sinks with passengerId null', () => {
+		const battle = fixtures.battle();
+		const spot = fixtures.ship(0, -12, { shipId: 'empty' });
+		manager().seaTick({ now: sea.sinkAtMs(battle, spot.x, spot.z) });
+		expect(emitted.find(e => e.event === 'ship_sunk').payload.passengerId).toBeNull();
+	});
+
+	test('a ship cannot sail onto a square the sea has taken', () => {
+		const battle = fixtures.battle();
+		const world = World.getWorld();
+		const from = fixtures.ship(0, -8, { shipId: 'drakkar' });
+		const target = fixtures.at(0, -11);
+		const realNow = Date.now;
+		try {
+			Date.now = () => sea.sinkAtMs(battle, target.x, target.z) - 1;
+			expect(ships.sail(world, battle, 's0', { shipId: 'drakkar', to: target }, { now: Date.now() }).success)
+				.toBe(true);
+			// Back to where it was, and try again once that square has gone.
+			delete world.board.cells[`${target.x},${target.z}`];
+			fixtures.ship(0, -8, { shipId: 'drakkar' });
+			const late = sea.sinkAtMs(battle, target.x, target.z) + 1;
+			const refused = ships.sail(world, battle, 's0', { shipId: 'drakkar', to: target }, { now: late });
+			expect(refused).toMatchObject({ success: false, reason: 'not_water' });
+			expect(shipAt(world.board.cells[`${from.x},${from.z}`]).shipId).toBe('drakkar');
+		} finally {
+			Date.now = realNow;
+		}
+	});
+});

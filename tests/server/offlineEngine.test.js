@@ -4,7 +4,8 @@
  *  • the browser `crypto` shim matches Node's for what the game uses;
  *  • the in-memory socket.io stand-in routes rooms like the real one;
  *  • the BUILT engine bundle (scripts/build-offline.js) plays a whole
- *    Quick battle against a bot through the postMessage interface.
+ *    Quick battle against a bot through the postMessage interface, and
+ *    a Viking one in which the longships exist and a bot sails.
  */
 
 const fs = require('fs');
@@ -148,6 +149,64 @@ describe('offline engine bundle', () => {
 		for (const m of posted) expect(() => JSON.stringify(m)).not.toThrow();
 
 		jest.clearAllTimers();
+		spy.mockRestore();
+	}, 30000);
+
+	test('plays a Viking battle: the longships are built and a bot sails one', () => {
+		jest.useFakeTimers();
+		const spy = jest.spyOn(console, 'log').mockImplementation(() => {});
+		const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+		const posted = [];
+		global.self = { postMessage: (m) => posted.push(m), location: { search: '?seaScale=0.2' } };
+		// A fresh engine: its own world, separate from the Quick battle above.
+		jest.isolateModules(() => { require(bundle); });
+
+		let ackSeq = 0;
+		const emit = (event, data) => {
+			const ackId = ++ackSeq;
+			global.self.onmessage({ data: { type: 'emit', socketId: 'v1', event, args: [data], ackId } });
+			return posted.find(m => m.type === 'ack' && m.ackId === ackId)?.args?.[0];
+		};
+		global.self.onmessage({ data: { type: 'connect', socketId: 'v1', query: { playerName: 'Viking', proto: '2' } } });
+
+		const created = emit('battle_create', { seatCount: 2, botDifficulty: 'hard', mode: 'quick', edition: 'viking' });
+		expect(created.success).toBe(true);
+		expect(created.battle.edition).toBe('viking');
+		const started = emit('battle_start', { battleId: created.battle.id });
+		expect(started.success).toBe(true);
+		expect(started.battle.edition).toBe('viking');
+
+		// Ships ride in the ordinary board state: one per seat.
+		const shipIds = new Set();
+		const scan = (value) => {
+			if (!value || typeof value !== 'object') return;
+			if (value.type === 'ship' && value.shipId) { shipIds.add(value.shipId); return; }
+			for (const v of Array.isArray(value) ? value : Object.values(value)) scan(v);
+		};
+		for (const m of posted) scan(m.args);
+		expect(shipIds.size).toBe(2);
+
+		// The sea reaches the moorings at the arena's edge: the bot
+		// flees with its ship (8 s calm, then 80 ms a cell at 5x).
+		jest.advanceTimersByTime(60 * 1000);
+		const sails = posted.filter(m => m.event === 'ship_sailed').map(m => m.args[0]);
+		const botSeat = started.battle.seats.find(s => s.isAi).seatId;
+		expect(sails.some(e => e.playerId === botSeat)).toBe(true);
+		for (const e of sails) {
+			expect(Math.abs(e.to.x - e.from.x) + Math.abs(e.to.z - e.from.z)).toBeLessThanOrEqual(5);
+			expect(e.to.x === e.from.x || e.to.z === e.from.z).toBe(true);
+		}
+		// The page can't sail the bot's ship — only its own.
+		const botSail = sails.find(e => e.playerId === botSeat);
+		const refused = emit('ship_sail', { shipId: botSail.shipId, to: botSail.from });
+		expect(refused.success).toBe(false);
+
+		jest.advanceTimersByTime(120 * 1000);
+		expect(posted.find(m => m.event === 'battle_finished')).toBeDefined();
+		for (const m of posted) expect(() => JSON.stringify(m)).not.toThrow();
+
+		jest.clearAllTimers();
+		warn.mockRestore();
 		spy.mockRestore();
 	}, 30000);
 });

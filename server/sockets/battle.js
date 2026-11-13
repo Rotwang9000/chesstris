@@ -26,6 +26,8 @@ function registerBattleHandlers(socket, ctx) {
 				seatCount: Number(data?.seatCount) || 2,
 				botDifficulty: data?.botDifficulty,
 				mode: data?.mode,
+				// Normalised by the manager: only an exact 'viking' opts in.
+				edition: data?.edition,
 			});
 			if (result?.success && !player.isComputer) funnel.recordBattleJoin(playerId);
 			if (typeof callback === 'function') callback(result);
@@ -83,7 +85,12 @@ function registerBattleHandlers(socket, ctx) {
 				if (typeof callback === 'function') callback({ success: false, error: 'Not registered' });
 				return;
 			}
-			const result = battleManager.quickMatch({ playerId, playerName: player.name || 'Player' });
+			const result = battleManager.quickMatch({
+				playerId,
+				playerName: player.name || 'Player',
+				// Viking players are only paired with Viking players.
+				edition: data?.edition,
+			});
 			if (result?.success && !player.isComputer) funnel.recordBattleJoin(playerId);
 			if (typeof callback === 'function') callback(result);
 		} catch (err) {

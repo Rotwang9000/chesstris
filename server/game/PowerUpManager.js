@@ -46,6 +46,7 @@ const { randomUUID: uuidv4 } = require('crypto');
 
 const World = require('../world/World');
 const pieces = require('./pieces');
+const { cellHasShip } = require('../battle/shipRules');
 
 const SPAWN_TICK_MS = 45 * 1000;
 const ORB_LIFETIME_MS = 4 * 60 * 1000;
@@ -350,6 +351,12 @@ function createPowerUpManager({
 			&& normalizeCoord(o.z) === cellZ);
 		if (idx < 0) return null;
 		const orb = orbs[idx];
+
+		// Viking longships: orbs spawn on empty water, and a ship may
+		// since have sailed onto that square. Spawning the piece there
+		// would put it aboard — a pawn on a ship, or a second passenger.
+		// Leave the orb where it is until the ship moves on.
+		if (cellHasShip(world.board?.cells?.[`${cellX},${cellZ}`])) return null;
 
 		// AI soft-cap: consume the orb without awarding so it doesn't
 		// linger under AI territory, and so a mega-army stops vacuuming

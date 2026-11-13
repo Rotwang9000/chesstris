@@ -4,7 +4,7 @@
  *
  * A cell is stored as an array of `item` objects on `board.cells`. Items
  * carry a `type` (one of `home`, `tetromino`, `chess`, `specialMarker`,
- * `boardCentre`), an owner `player` (except for `boardCentre` which is
+ * `boardCentre`, and in Viking battles `ship`), an owner `player` (except for `boardCentre` which is
  * the world centre marker and intentionally ownerless), and type-
  * specific extras. The schema is historical — splitting it out into
  * this module lets the rest of the codebase reason about cells without
@@ -29,6 +29,11 @@ const CHESS_TYPE = 'chess';
 const TETROMINO_TYPE = 'tetromino';
 const SPECIAL_TYPE = 'specialMarker';
 const CENTRE_TYPE = 'boardCentre';
+// Viking longships (server/battle/shipRules.js). A ship cell is open
+// water with a boat on it, not land: it never clears, never falls with
+// gravity and never joins an island. Only Viking battles ever hold one,
+// so every check below is inert everywhere else.
+const { SHIP: { TYPE: SHIP_TYPE }, isShipItem } = require('../battle/shipRules');
 
 function asArray(items) {
 	return Array.isArray(items) ? items : [];
@@ -104,6 +109,11 @@ function onlyDegradedOrMarkers(items) {
 
 function hasChess(items) {
 	return hasItemType(items, CHESS_TYPE);
+}
+
+/** Does this cell hold a longship (and so isn't land at all)? */
+function hasShip(items) {
+	return asArray(items).some(isShipItem);
 }
 
 /**
@@ -204,6 +214,7 @@ function getChessOwner(items) {
 function isClearable(items) {
 	if (hasHome(items)) return false;
 	if (hasChess(items)) return false;
+	if (hasShip(items)) return false;
 	return asArray(items).some(item => {
 		if (!item) return false;
 		if (item.fromHomeZone === true) return false;
@@ -234,6 +245,7 @@ function isLineClearTarget(items) {
 	if (hasHome(items)) return false;
 	if (hasAwaitingPromotion(items)) return false;
 	if (hasBattleRing(items)) return false;
+	if (hasShip(items)) return false;
 	if (onlyDegradedOrMarkers(items)) return false;
 	return asArray(items).some(item => {
 		if (!item) return false;
@@ -263,7 +275,7 @@ function stripForLineClear(items) {
 			preserved.push(item);
 			continue;
 		}
-		if (item.fromHomeZone === true || isBattleRingItem(item)) {
+		if (item.fromHomeZone === true || isBattleRingItem(item) || isShipItem(item)) {
 			preserved.push(item);
 			continue;
 		}
@@ -292,6 +304,12 @@ function gravityAnchor(items) {
 	// Ring cells are welded to the arena floor — they (and anything
 	// standing on them) never travel with clearing gravity.
 	if (hasBattleRing(items)) {
+		return { movable: false, owner: null };
+	}
+	// A longship is moored on water: clearing gravity (which drags
+	// land toward its king) has nothing to drag, and a passenger stays
+	// aboard. Ships move only by sailing.
+	if (hasShip(items)) {
 		return { movable: false, owner: null };
 	}
 	const chessOwner = getChessOwner(items);
@@ -357,6 +375,7 @@ function stripClearable(items) {
 		if (!item) return false;
 		if (item.fromHomeZone === true) return true;
 		if (isBattleRingItem(item)) return true;
+		if (isShipItem(item)) return true;
 		return item.type === HOME_TYPE
 			|| item.type === CHESS_TYPE
 			|| item.type === CENTRE_TYPE
@@ -370,9 +389,11 @@ module.exports = {
 	TETROMINO_TYPE,
 	SPECIAL_TYPE,
 	CENTRE_TYPE,
+	SHIP_TYPE,
 
 	hasHome,
 	hasChess,
+	hasShip,
 	hasTerrain,
 	hasBoardCentre,
 	hasDegradedHomeRemnant,
