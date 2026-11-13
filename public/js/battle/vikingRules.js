@@ -22,12 +22,40 @@ export const VIKING_RULES = Object.freeze([
 	'Lost your last ship? A new one is built at your mooring after 45 seconds.',
 ]);
 
-export const VIKING_CONTROLS = Object.freeze([
-	['Select your longship', 'Tap or click it, press L, or use the ⛵ Longship button (again for your next ship)'],
-	['Sail', 'Tap a gold-edged green tile on the water (keyboard: arrows, then Enter)'],
-	['Piece aboard', 'Tap it (or its ship): rings show its moves, tiles show where the ship can sail. The Longship button or L picks the ship alone'],
-	['Board / land', 'Select a piece and tap the gold ring on a moored ship, or a ring ashore'],
-]);
+/**
+ * The longship controls for the help card, in the words of the pointer
+ * in hand: "tap" for a finger (and no keys to press), "click" for a
+ * mouse, with the keyboard ways too.
+ *
+ * @param {boolean} [touch]
+ * @returns {ReadonlyArray<[string, string]>}
+ */
+export function vikingControls(touch = false) {
+	if (touch) {
+		return Object.freeze([
+			['Select your longship', 'Tap it, or use the ⛵ Longship button (again for your next ship)'],
+			['Sail', 'Tap a gold-edged green tile on the water'],
+			['Piece aboard', 'Tap it (or its ship): rings show its moves, tiles show where the ship can sail. The Longship button picks the ship alone'],
+			['Board / land', 'Select a piece and tap the gold ring on a moored ship, or a ring ashore'],
+		]);
+	}
+	return Object.freeze([
+		['Select your longship', 'Click it, press L, or use the ⛵ Longship button (again for your next ship)'],
+		['Sail', 'Click a gold-edged green tile on the water (keyboard: arrows, then Enter)'],
+		['Piece aboard', 'Click it (or its ship): rings show its moves, tiles show where the ship can sail. The Longship button or L picks the ship alone'],
+		['Board / land', 'Select a piece and click the gold ring on a moored ship, or a ring ashore'],
+	]);
+}
+
+/** The controls for a mouse and keyboard (see vikingControls). */
+export const VIKING_CONTROLS = vikingControls(false);
+
+/** The toast at the start of a Viking battle. */
+export function longshipsInPlayText(touch = false) {
+	return touch
+		? '⛵ Longships in play: tap your ship to sail it.'
+		: '⛵ Longships in play: click your ship (or press L) to sail it.';
+}
 
 /** Shown when lite (2D) mode meets a Viking battle. */
 export const VIKING_LITE_REFUSAL = 'Viking battles need the full 3D game to show the longships. '

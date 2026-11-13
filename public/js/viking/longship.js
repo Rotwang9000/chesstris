@@ -1301,8 +1301,7 @@ export function buildLongship(THREE, opts) {
 	group.userData.yard = yard;
 	group.userData.rigRopes = rigRopes;
 	group.userData.rigLines = rigLines;
-	// (handed over this way, not imported: the production bundle loads
-	// this builder lazily, behind longshipLazy.js)
+	// (handed over this way rather than imported by the renderer)
 	group.userData.aimRigLines = aimRigLines;
 	return group;
 }
@@ -1340,11 +1339,9 @@ export function aimRigLines(THREE, mesh, lines, brace, fill) {
 	mesh.instanceMatrix.needsUpdate = true;
 }
 
-// Loading hooks. This module is the builder itself, so it is always
-// ready. The production bundle swaps it for longshipLazy.js (see
-// scripts/build-client.js), which fetches the builder as its own file
-// the first time a Viking battle needs one, so standard visitors never
-// download it.
+// Loading hooks: the builder is always ready where it is loaded at all
+// (in production it comes with the rest of the Viking code in
+// dist/viking.bundle.js — vikingLazy/runtime.js).
 export function longshipReady() {
 	return true;
 }

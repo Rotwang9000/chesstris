@@ -60,9 +60,18 @@ export function slotCandidates(moment) {
 		}
 		case 'battle':
 			return moment.outcome === 'victory' ? ['battle.victory'] : ['battle.defeat'];
-		case 'ship':
-			// Longship scenes (paintingShips.js): one painting each.
-			return SHIP_SCENE_SET.has(moment.scene) ? [`ship.${moment.scene}`] : [];
+		case 'ship': {
+			// Longship scenes (paintingShips.js): one painting each…
+			if (!SHIP_SCENE_SET.has(moment.scene)) return [];
+			// …except a knight, seer or huscarl stepping ashore on an enemy
+			// shore, who has an arrival of their own (a queen's landing is
+			// already an `arrival` moment; pawns and kings use the scene).
+			const piece = normalisePieceType(moment.pieceType);
+			if (moment.scene === 'landing' && LANDING_ARRIVALS.has(piece)) {
+				return [`arrival.${piece}`, 'ship.landing'];
+			}
+			return [`ship.${moment.scene}`];
+		}
 		default:
 			return [];
 	}
@@ -72,6 +81,8 @@ const SHIP_SCENE_SET = new Set([
 	'embark', 'setsail', 'landing', 'raid', 'raidcheck', 'boarded',
 	'seized', 'lifeboat', 'lost', 'emptysunk', 'newkeel',
 ]);
+/** Pieces whose landing on an enemy shore is painted as their arrival. */
+const LANDING_ARRIVALS = new Set(['knight', 'bishop', 'rook']);
 
 /**
  * The first candidate slot the manifest has a painting for.
@@ -154,12 +165,50 @@ export function loadImage(src) {
 }
 
 /**
- * Warm the browser cache with every listed painting, one at a time, in
- * idle moments — so the first capture shows the real picture rather
- * than losing the 250 ms race to the woodcut.
+ * The paintings nearly every battle shows — a voyage begun, the king's
+ * fall, a queen come ashore, the battle's end — warmed first, and on a
+ * phone the only ones warmed: the rest (a picture for each capture
+ * pairing, ~35 in all, ~3 MB) load when their moment comes, the woodcut
+ * standing in until the painting fades in over it.
  */
-export function preloadPaintings(manifest) {
-	const queue = allPaintingSources(manifest);
+export const LIKELY_SLOTS = Object.freeze([
+	'ship.embark', 'ship.setsail', 'kingfall.blade', 'arrival.queen', 'battle.victory', 'battle.defeat',
+]);
+
+/**
+ * Which painting files to warm, in order: the likely few, then — unless
+ * the device is `constrained` (a phone, Save-Data, a slow connection) —
+ * everything else the manifest lists.
+ */
+export function preloadSources(manifest, { constrained = false } = {}) {
+	const likely = LIKELY_SLOTS
+		.map(slot => resolvePainting(manifest, [slot]))
+		.filter(Boolean)
+		.map(p => p.src);
+	if (constrained) return likely;
+	return likely.concat(allPaintingSources(manifest).filter(src => !likely.includes(src)));
+}
+
+/** A phone or tablet, Save-Data, or a slow connection: warm only the likely few. */
+export function constrainedDevice() {
+	try {
+		const conn = typeof navigator !== 'undefined' ? navigator.connection : null;
+		if (conn?.saveData) return true;
+		if (/(^|-)(2g|3g)$/.test(String(conn?.effectiveType || ''))) return true;
+		if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+			return window.matchMedia('(pointer: coarse), (max-width: 700px)').matches;
+		}
+	} catch (_e) { /* no way to tell: treat as a desktop */ }
+	return false;
+}
+
+/**
+ * Warm the browser cache with the likely paintings (preloadSources), one
+ * at a time, in idle moments — so the first voyage or king's fall shows
+ * the real picture rather than losing the 250 ms race to the woodcut.
+ */
+export function preloadPaintings(manifest, { constrained = constrainedDevice() } = {}) {
+	const queue = preloadSources(manifest, { constrained });
 	const idle = typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function'
 		? (fn) => window.requestIdleCallback(fn, { timeout: 4000 })
 		: (fn) => setTimeout(fn, 600);

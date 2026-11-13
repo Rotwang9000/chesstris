@@ -2,11 +2,12 @@
  * The door to the event paintings (Viking edition).
  *
  * The standard game imports only this small file. Everything else —
- * the director, the card, the woodcut, the manifest — is loaded by a
- * dynamic `import()` the first time the Viking edition needs it, so a
- * standard page never runs that code or asks for anything under
- * /img/paintings/. (esbuild inlines the import into the single bundle;
- * unbundled dev pages fetch the modules only when it fires.)
+ * the director, the card, the woodcut, the manifest — is loaded the
+ * first time the Viking edition needs it (vikingLazy/loader.js), so a
+ * standard page never downloads or runs that code or asks for anything
+ * under /img/paintings/. (In the production bundle it comes with the
+ * rest of the Viking code in dist/viking.bundle.js; unbundled dev
+ * pages import the modules when it fires.)
  *
  * "Viking" means the edition is switched on (`?edition=viking`) OR the
  * viewer sits in a Viking battle (`vikingActive`), so someone who joins
@@ -20,6 +21,7 @@
 
 import gameState from '../utils/gameState.js';
 import { vikingActive } from '../edition.js';
+import { loadVikingModule } from '../vikingLazy/loader.js';
 
 let director = null;
 
@@ -34,7 +36,10 @@ export function paintsFor(type, payload) {
 
 function loadDirector() {
 	if (!director) {
-		director = import('./paintingDirector.js').catch((err) => {
+		director = loadVikingModule('paintingDirector').then((m) => {
+			if (!m) director = null;  // try again on the next event
+			return m;
+		}, (err) => {
 			console.warn('[paintings] could not load:', err?.message || err);
 			director = null;
 			return null;

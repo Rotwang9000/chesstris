@@ -14,7 +14,7 @@ import { vikingActive, isVikingBattle, requestedBattleEdition } from '../../publ
 import {
 	laneTargets, checkSail, applyShipRules, listShips, shipsControlledBy, shipEntryAt, findShip,
 	shipRefusalText, isShipRefusal, SHIP_REFUSAL_TEXT, noteSailReadyAt, shipServerNow, resetShipClock,
-	shipRulesActive, rowingMsLeft,
+	shipRulesActive, rowingMsLeft, noMoveShipTip,
 } from '../../public/js/longships/shipEnv.js';
 import { shipButtonState, updateFleetMemo } from '../../public/js/longships/shipHudState.js';
 import {
@@ -22,7 +22,9 @@ import {
 } from '../../public/js/longships/shipEvents.js';
 import { getChessPieceMoveSets } from '../../public/js/boardFunctions/moves.js';
 import { makeShipItem, SHIP } from '../../public/js/viking/shipRulesClient.js';
-import { VIKING_RULES, adoptedEdition, vikingBattleBadgeText, vikingRulesText } from '../../public/js/battle/vikingRules.js';
+import {
+	VIKING_RULES, VIKING_CONTROLS, adoptedEdition, vikingBattleBadgeText, vikingRulesText, vikingControls, longshipsInPlayText,
+} from '../../public/js/battle/vikingRules.js';
 
 const C = { x: 2000, z: 2000 };
 const key = (dx, dz) => `${C.x + dx},${C.z + dz}`;
@@ -352,5 +354,94 @@ describe("'tetches:ship' events", () => {
 		expect(dispatchShipEvent(null)).toBe(false);
 		window.removeEventListener(SHIP_EVENT, listener);
 		expect(seen).toEqual([{ kind: 'sunk', shipId: 'z' }]);
+	});
+});
+
+describe('the tip for your piece with nowhere to step', () => {
+	const NOW = 100000;
+	// Land along dz = 0; the ship moored at dz = 1 with a rook aboard.
+	function moored({ readyAt = 0, type = 'ROOK', dz = 1 } = {}) {
+		const a = arena();
+		for (let dx = -3; dx <= 3; dx++) a.land(dx, 0);
+		a.ship(0, dz, { readyAt });
+		const piece = a.piece('r1', type, 0, dz);
+		return { gameState: a.gameState, piece };
+	}
+
+	test('aboard a rowing ship: it is rowing, the crew steps off in N s, or sails on', () => {
+		const { gameState, piece } = moored({ readyAt: NOW + 2500 });
+		expect(noMoveShipTip(gameState, piece, { now: NOW }))
+			.toBe('Your longship is still rowing: your rook can step off in 3 s, or sail on.');
+		// …the same on a phone (no tapping to be done yet), and never the
+		// "nowhere to go" or "tap a tile to sail" hints.
+		const phone = noMoveShipTip(gameState, piece, { now: NOW, touch: true, lanes: 0 });
+		expect(phone).toBe('Your longship is still rowing: your rook can step off in 3 s, or sail on.');
+		expect(noMoveShipTip(gameState, piece, { now: NOW + 2000 })).toMatch(/step off in 1 s/);
+	});
+
+	test('rowing wins over the refusals it causes', () => {
+		const { gameState, piece } = moored({ readyAt: NOW + 1200 });
+		const refused = [{ x: 0, z: 0, reason: 'ship_rowing' }];
+		expect(noMoveShipTip(gameState, piece, { now: NOW, refused })).toMatch(/^Your longship is still rowing: your rook can step off in 2 s/);
+	});
+
+	test('a pawn aboard (it cannot be rowed away) is not told to sail on', () => {
+		const { gameState, piece } = moored({ readyAt: NOW + 2500, type: 'PAWN' });
+		expect(noMoveShipTip(gameState, piece, { now: NOW }))
+			.toBe('Your longship is still rowing: your pawn can step off in 3 s.');
+	});
+
+	test('rowing out at sea: it can sail on; the crew lands once it touches land', () => {
+		const { gameState, piece } = moored({ readyAt: NOW + 2500, dz: 4 });
+		expect(noMoveShipTip(gameState, piece, { now: NOW }))
+			.toBe('Your longship is still rowing: it can sail on in 3 s. Your rook steps off once it touches land.');
+	});
+
+	test('steady, with lanes: no square ashore from here — click (mouse) or tap (finger) to sail', () => {
+		const { gameState, piece } = moored();
+		const lanes = laneTargets(gameState, shipEntryAt(gameState, C.x, C.z + 1), NOW).lanes.length;
+		expect(lanes).toBeGreaterThan(0);
+		expect(noMoveShipTip(gameState, piece, { now: NOW, lanes }))
+			.toBe('No square to step onto from here. Click a tile on the water to sail.');
+		expect(noMoveShipTip(gameState, piece, { now: NOW, lanes, touch: true }))
+			.toBe('No square to step onto from here. Tap a tile on the water to sail.');
+		const atSea = moored({ dz: 4 });
+		expect(noMoveShipTip(atSea.gameState, atSea.piece, { now: NOW, lanes, touch: true }))
+			.toBe('Out at sea: sail next to land to step off. Tap a tile on the water to sail.');
+	});
+
+	test('a ship rule refusal is named, with the way to sail when there is one', () => {
+		const { gameState, piece } = moored();
+		const refused = [{ x: 0, z: 0, reason: 'path_blocked_by_ship' }, { x: 0, z: 0, reason: 'ship_not_moored' }];
+		expect(noMoveShipTip(gameState, piece, { now: NOW, refused, lanes: 3 }))
+			.toBe(`${SHIP_REFUSAL_TEXT.ship_not_moored} Click a tile on the water to sail.`);
+		expect(noMoveShipTip(gameState, piece, { now: NOW, refused }))
+			.toBe(SHIP_REFUSAL_TEXT.ship_not_moored);
+	});
+
+	test('ashore with nothing ship-related: null (the ordinary hint applies)', () => {
+		const a = arena();
+		for (let dx = -3; dx <= 3; dx++) a.land(dx, 0);
+		const piece = a.piece('k1', 'KING', 0, 0);
+		expect(noMoveShipTip(a.gameState, piece, { now: NOW })).toBeNull();
+		expect(noMoveShipTip(a.gameState, { type: 'ROOK' }, { now: NOW })).toBeNull();
+	});
+});
+
+describe('tap on touch, click on a mouse', () => {
+	test('the battle-start toast', () => {
+		expect(longshipsInPlayText(true)).toBe('⛵ Longships in play: tap your ship to sail it.');
+		expect(longshipsInPlayText(false)).toBe('⛵ Longships in play: click your ship (or press L) to sail it.');
+	});
+
+	test('the help card controls', () => {
+		const touch = vikingControls(true).map(([, v]) => v).join(' ');
+		const mouse = vikingControls(false).map(([, v]) => v).join(' ');
+		expect(touch).not.toMatch(/click|press L|keyboard| or L /i);
+		expect(touch).toMatch(/^Tap/);
+		expect(mouse).not.toMatch(/\btap\b/i);
+		expect(mouse).toMatch(/press L/);
+		expect(VIKING_CONTROLS).toEqual(vikingControls(false));
+		expect(vikingControls(true).map(([k]) => k)).toEqual(vikingControls(false).map(([k]) => k));
 	});
 });

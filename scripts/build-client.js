@@ -20,6 +20,11 @@
  *     no rebuild step required (the un-bundled modules are still
  *     loadable directly). Production gets the bundle.
  *
+ * The Viking edition is the one exception to "one file": its code is
+ * split into `public/dist/viking.bundle.js`, fetched only when the
+ * Viking edition or a Viking battle needs it, so standard visitors never
+ * download it (scripts/vikingSplit.js, public/js/vikingLazy/).
+ *
  * THREE.js and Socket.IO are still loaded via CDN <script> tags in
  * `index.html` (see top of that file) and exposed on `window`. We
  * mark them as external here so esbuild doesn't try to re-bundle
@@ -37,23 +42,10 @@ const ENTRY = path.join(ROOT, 'public', 'js', 'main-enhanced.js');
 const OUT_DIR = path.join(ROOT, 'public', 'dist');
 const OUT_FILE = path.join(OUT_DIR, 'app.bundle.js');
 const META_FILE = path.join(OUT_DIR, 'meta.json');
-// The Viking edition's longship builder is its own file, fetched only
-// when a Viking battle needs it (public/js/viking/longshipLazy.js).
-const VIKING_ENTRY = path.join(ROOT, 'public', 'js', 'viking', 'longshipChunk.js');
+// The Viking edition is its own file, fetched only when the Viking
+// edition or a Viking battle needs it (scripts/vikingSplit.js).
 const VIKING_OUT = path.join(OUT_DIR, 'viking.bundle.js');
-const LONGSHIP_REAL = path.join(ROOT, 'public', 'js', 'viking', 'longship.js');
-const LONGSHIP_LAZY = path.join(ROOT, 'public', 'js', 'viking', 'longshipLazy.js');
-
-/** In the app bundle, `viking/longship.js` is the on-demand loader. */
-const lazyLongship = {
-	name: 'lazy-longship',
-	setup(b) {
-		b.onResolve({ filter: /(^|\/)longship\.js$/ }, (args) => {
-			const resolved = path.resolve(args.resolveDir, args.path);
-			return resolved === LONGSHIP_REAL ? { path: LONGSHIP_LAZY } : undefined;
-		});
-	},
-};
+const split = require('./vikingSplit');
 
 const isWatch = process.argv.includes('--watch');
 
@@ -64,6 +56,7 @@ function ensureOutDir() {
 }
 
 const sharedOptions = {
+	absWorkingDir: ROOT,
 	entryPoints: [ENTRY],
 	bundle: true,
 	outfile: OUT_FILE,
@@ -85,11 +78,41 @@ const sharedOptions = {
 	metafile: true,
 };
 
+/**
+ * Both bundles: the Viking chunk first (its host list decides what the
+ * app bundle publishes for it), then the app with its stubs.
+ */
+async function buildBoth(options) {
+	const { hosts, build: hostBuild } = await split.analyseChunk(esbuild, options);
+	const viking = await esbuild.build({
+		...options,
+		entryPoints: [split.CHUNK_ENTRY],
+		outfile: VIKING_OUT,
+		metafile: false,
+		plugins: [split.chunkPlugin(hosts)],
+		// Runs only beside the app bundle it was built with.
+		banner: { js: `if(window.__tetchesHostBuild===${JSON.stringify(hostBuild)}){` },
+		footer: { js: '}else console.warn("[viking] viking.bundle.js is from another build: not started");' },
+	});
+	if (viking.errors?.length) throw new Error('viking chunk failed');
+	const app = await esbuild.build({
+		...options,
+		plugins: [split.appPlugin({ entry: ENTRY, hosts, build: hostBuild })],
+	});
+	if (app.metafile) split.assertSplit(app.metafile);
+	return { app, hosts };
+}
+
 async function build() {
 	ensureOutDir();
 	if (isWatch) {
+		// Watch mode rebuilds the app bundle only; run a full build for the chunk.
 		console.log('[build-client] starting esbuild in watch mode…');
-		const ctx = await esbuild.context(sharedOptions);
+		const { hosts, build: hostBuild } = await split.analyseChunk(esbuild, sharedOptions);
+		const ctx = await esbuild.context({
+			...sharedOptions,
+			plugins: [split.appPlugin({ entry: ENTRY, hosts, build: hostBuild })],
+		});
 		await ctx.watch();
 		console.log('[build-client] watching ' + path.relative(ROOT, ENTRY) +
 			' → ' + path.relative(ROOT, OUT_FILE));
@@ -98,15 +121,9 @@ async function build() {
 
 	console.log('[build-client] bundling ' + path.relative(ROOT, ENTRY) +
 		' → ' + path.relative(ROOT, OUT_FILE));
-	const result = await esbuild.build({ ...sharedOptions, plugins: [lazyLongship] });
-	const viking = await esbuild.build({
-		...sharedOptions,
-		entryPoints: [VIKING_ENTRY],
-		outfile: VIKING_OUT,
-		metafile: false,
-	});
-	if (viking.errors?.length) throw new Error('viking chunk failed');
-	console.log(`[build-client] longship chunk → ${(fs.statSync(VIKING_OUT).size / 1024).toFixed(1)} KiB`);
+	const { app: result, hosts } = await buildBoth(sharedOptions);
+	console.log(`[build-client] Viking chunk → ${(fs.statSync(VIKING_OUT).size / 1024).toFixed(1)} KiB `
+		+ `(${hosts.length} app modules shared)`);
 	if (result.metafile) {
 		fs.writeFileSync(META_FILE, JSON.stringify(result.metafile));
 	}

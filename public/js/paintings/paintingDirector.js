@@ -16,8 +16,10 @@
  *     is taken down);
  *   • while the battle results card is open, the battle's own painting
  *     is shown inside it and nothing floats over it;
- *   • moments that waited too long (the queue's STALE_MS; 3 s for the
- *     longship scenes) are let go rather than shown out of time, and a
+ *   • moments that waited too long while they could have been shown
+ *     (the queue's STALE_MS; SHIP_STALE_MS for the longship scenes —
+ *     time behind another card doesn't count) are let go rather than
+ *     shown out of time, and a
  *     battle's end lets go of everything still waiting, so nothing from
  *     it turns up in the next battle;
  *   • each longship scene is painted once per battle (paintingShips.js
@@ -53,8 +55,9 @@ import {
 export const ART_RACE_MS = 250;
 /**
  * A card on screen at least this long makes way for a waiting ship
- * scene of equal or higher rank, which would otherwise expire (3 s)
- * behind it — embark then set sail is the usual rhythm.
+ * scene of equal or higher rank, told while the ship is still where it
+ * happened — embark then set sail is the usual rhythm (a set-sail hard
+ * on its embark's heels joins it instead: paintingQueue.js).
  */
 const MAKE_WAY_MS = 2000;
 /** …and a lesser card (a capture) makes way for a ship scene sooner. */
@@ -64,8 +67,13 @@ const MAKE_WAY_LESSER_MS = 900;
  * least this long apart. Between them the capture toasts tell the tale.
  */
 const CAPTURE_CARD_GAP_MS = 20000;
-/** A card not visible this long after mounting is given up. */
-const NEVER_SHOWN_MS = 4000;
+/**
+ * A card not visible this long after mounting is given up: in a hidden
+ * tab (no frames, it would surface long after the moment) soon; in a
+ * visible one only when the device is very slow indeed.
+ */
+const NEVER_SHOWN_HIDDEN_MS = 4000;
+const NEVER_SHOWN_MS = 12000;
 const GAP_MS = 350;
 const RETRY_MS = 400;
 const RESULTS_ID = 'tetches-battle-results';
@@ -131,6 +139,10 @@ function nameOf(id) {
 
 function sameId(a, b) {
 	return a != null && b != null && String(a) === String(b);
+}
+
+function pageHidden() {
+	try { return document.visibilityState === 'hidden'; } catch (_e) { return false; }
 }
 
 function sleep(ms) {
@@ -350,7 +362,7 @@ export function handlePaintingEvent(type, payload) {
 		case 'chess_check':
 			if (moment) {
 				// Once per battle each (the queue's throttle), and let go if
-				// it can't be shown within 3 s.
+				// it can't be shown soon (SHIP_STALE_MS).
 				const slot = slotCandidates(moment)[0] || moment.kind;
 				// (news from afar has a throttle of its own: it never uses up
 				// the viewer's own scene)
@@ -451,7 +463,7 @@ function pump() {
 	if (!queue || showing || presenting || queue.size === 0) return;
 	if (getPaintingSetting() === 'off') { queue.clear(); return; }
 	if (suppressed()) { schedule(RETRY_MS); return; }
-	// Stale moments (20 s; ship scenes 3 s) are let go inside next().
+	// Stale moments (STALE_MS; ship scenes SHIP_STALE_MS) are let go inside next().
 	const moment = queue.next(Date.now());
 	if (!moment) return;
 	present(moment);
@@ -494,7 +506,29 @@ function imageFor(entry) {
 	return img;
 }
 
+/**
+ * Put `moment` on screen. A failure (the woodcut or the card could not
+ * be made) ends its turn like a close would: the busy period finishes,
+ * so the moments waiting behind it keep aging, and the queue moves on.
+ */
 async function present(moment) {
+	try {
+		await presentCard(moment);
+	} catch (err) {
+		console.warn('[paintings] could not show a painting:', err?.message || err);
+		presenting = false;
+		if (showing?.moment === moment) {
+			try { showing.handle?.close?.(); } catch (_e) { /* already gone */ }
+			showing = null;
+			clearInterval(watchTimer);
+			watchTimer = null;
+		}
+		queue?.finish(Date.now());
+		schedule(RETRY_MS);
+	}
+}
+
+async function presentCard(moment) {
 	presenting = true;
 	const caption = captionFor(moment);
 	let picked;
@@ -508,7 +542,7 @@ async function present(moment) {
 	const size = moment.distant && setting === 'full' ? 'small' : setting;
 	if (size === 'off' || suppressed()) {
 		// Turned off or a check began during the race: let it go.
-		queue.finish();
+		queue.finish(Date.now());
 		schedule(RETRY_MS);
 		return;
 	}
@@ -521,7 +555,7 @@ async function present(moment) {
 		size,
 		// Once it starts to fade, a new capture is a new painting rather
 		// than an unseen "…and 1 more" on a card going away.
-		onClosing: () => { if (showing === entry) queue.finish(); },
+		onClosing: () => { if (showing === entry) queue.finish(Date.now()); },
 		// Its time on screen counts from when it can be seen: the picture
 		// decoded and the fade-in begun, not from when it was mounted.
 		onVisible: () => {
@@ -534,7 +568,7 @@ async function present(moment) {
 			showing = null;
 			clearInterval(watchTimer);
 			watchTimer = null;
-			queue.finish();
+			queue.finish(Date.now());
 			setTimeout(pump, GAP_MS);
 		},
 	});
@@ -550,7 +584,7 @@ async function present(moment) {
 			? now >= entry.closeAt
 			// Never got to fade in (a hidden tab runs no frames): let it go
 			// rather than surface long after the moment.
-			: now - entry.mountedAt > NEVER_SHOWN_MS;
+			: now - entry.mountedAt > (pageHidden() ? NEVER_SHOWN_HIDDEN_MS : NEVER_SHOWN_MS);
 		const shownFor = entry.visibleAt != null ? now - entry.visibleAt : -1;
 		const rank = priorityOf(moment);
 		const makeWay = (shownFor >= MAKE_WAY_MS && queue.hasUrgent(rank, now))

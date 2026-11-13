@@ -22,7 +22,9 @@
  *   emptysunk  …an empty one                               ('sunk', no passenger)
  *   newkeel    a ship rebuilt at the mooring               ('built')
  * A QUEEN landing or raiding is instead her arrival (`arrival.queen`,
- * the owner's centrepiece), which outranks every ship scene.
+ * the owner's centrepiece), which outranks every ship scene. A knight,
+ * bishop or rook landing stays a 'landing' scene but is painted as its
+ * own arrival (`arrival.<piece>`, then `ship.landing`: paintingCatalogue.js).
  * `ship_lost` never paints: it follows a sinking or a seizure that
  * already did ('seized' reason) or a king's fall ('destroyed').
  *
@@ -36,8 +38,13 @@
 
 import { normalisePieceType } from './paintingCatalogue.js';
 
-/** A ship painting that waited longer than this is let go (spec: 3 s). */
-export const SHIP_STALE_MS = 3000;
+/**
+ * A ship painting that could have been shown for this long, and wasn't,
+ * is let go: time spent behind another card doesn't count
+ * (paintingQueue.js), so this is slack for a slow device, or a check
+ * holding the screen, not a race against the card before it.
+ */
+export const SHIP_STALE_MS = 6000;
 /** A check this soon after the attacker came ashore is a raider's check. */
 export const RAIDCHECK_WINDOW_MS = 30000;
 /** Boarding from a square the sea takes this soon is taking to the boats. */
@@ -256,6 +263,8 @@ export class ShipMoments {
 				return {
 					kind: 'ship', scene: 'setsail', attackerId: ev.playerId, victimId: null,
 					pieceType: voyage.pieceType || pieceTypeOf(ctx.pieces, ev.passengerId),
+					// Joins a waiting embark of the same voyage (paintingQueue.js).
+					voyageKey: `${shipId}:${voyage.pieceId}`,
 				};
 			}
 
@@ -316,7 +325,10 @@ export class ShipMoments {
 				const from = move.movedFrom;
 				const sinkIn = typeof ctx.sinkInMs === 'function' && from ? ctx.sinkInMs(from.x, from.z) : null;
 				const fleeing = Number.isFinite(sinkIn) && sinkIn > 0 && sinkIn <= LIFEBOAT_WINDOW_MS;
-				return { kind: 'ship', scene: fleeing ? 'lifeboat' : 'embark', attackerId: mover, victimId: null, pieceType };
+				return {
+					kind: 'ship', scene: fleeing ? 'lifeboat' : 'embark', attackerId: mover, victimId: null, pieceType,
+					voyageKey: `${shipId}:${str(piece.id)}`,
+				};
 			}
 
 			case 'seize':

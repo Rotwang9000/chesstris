@@ -25,7 +25,8 @@
 import { isCameraRelativeControls, setCameraRelativeControls } from './controlSettings.js';
 import { getGameState } from './gameContext.js';
 import { vikingActive } from './edition.js';
-import { VIKING_RULES, VIKING_CONTROLS } from './battle/vikingRules.js';
+import { VIKING_RULES, vikingControls } from './battle/vikingRules.js';
+import { isTouchPrimary } from './utils/inputMode.js';
 
 const ZOOM_STEP = 0.18;
 const PAN_STEP = 0.6;
@@ -460,7 +461,7 @@ function renderVikingHelp() {
 	title.textContent = '\u26F5 Longships (Viking battles)';
 	Object.assign(title.style, { color: '#ffcc00', fontSize: '15px', fontWeight: 'bold', marginBottom: '6px' });
 	section.appendChild(title);
-	for (const [k, v] of VIKING_CONTROLS) {
+	for (const [k, v] of vikingControls(isTouchPrimary())) {
 		const row = document.createElement('div');
 		Object.assign(row.style, { display: 'flex', justifyContent: 'space-between', gap: '12px', padding: '2px 0' });
 		const keyEl = document.createElement('div');

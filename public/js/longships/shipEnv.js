@@ -22,6 +22,7 @@ import {
 	validateSail,
 	chessMoveVeto,
 	classifyMove,
+	isMoored,
 } from '../viking/shipRulesClient.js';
 import { seaSinkAt, battlePlayRadius } from '../battle/battleRules.js';
 
@@ -327,6 +328,65 @@ export const SHIP_REFUSAL_TEXT = Object.freeze({
 /** The words for a refusal reason (or the server's own message). */
 export function shipRefusalText(reason, fallback = null) {
 	return SHIP_REFUSAL_TEXT[reason] || fallback || 'The longship could not do that.';
+}
+
+/**
+ * The hint when you select your own piece and it has nowhere to step,
+ * in a Viking battle — or null when ships have nothing to do with it
+ * (the caller then gives its ordinary "nowhere to go yet").
+ *
+ *   • aboard a ship that is still rowing: it says so, and when the crew
+ *     can step off (or the ship sail on);
+ *   • a move a ship rule refuses (not moored, a rowing ship to board):
+ *     that rule, plus the way to sail when the ship can;
+ *   • aboard with sail lanes: no square ashore from here, sail.
+ *
+ * @param {Object} gameState
+ * @param {{type?:string, position:{x:number,z:number}}} piece
+ * @param {Object} [opts]
+ * @param {Array<{reason:string,message?:string}>} [opts.refused] gameState.shipRefusedMoves
+ * @param {number} [opts.lanes] how many sail lanes are showing
+ * @param {boolean} [opts.touch] a finger (tap) rather than a mouse (click)
+ * @param {number} [opts.now] server ms
+ * @returns {string|null}
+ */
+export function noMoveShipTip(gameState, piece, {
+	refused = [], lanes = 0, touch = false, now = shipServerNow(gameState),
+} = {}) {
+	const sailHint = `${touch ? 'Tap' : 'Click'} a tile on the water to sail.`;
+	const pos = piece?.position;
+	const x = Number(pos?.x);
+	const z = Number(pos?.z);
+	const entry = pos && Number.isFinite(x) && Number.isFinite(z) ? shipEntryAt(gameState, x, z) : null;
+	const getCell = (a, b) => cellItems(gameState, a, b);
+
+	if (entry && rowingMsLeft(entry.ship, now) > 0) {
+		const secs = Math.max(1, Math.ceil(rowingMsLeft(entry.ship, now) / 1000));
+		const crew = String(piece.type || '').toLowerCase() || 'crew';
+		// Once it steadies, can it sail on? (A king or pawn aboard can't
+		// be rowed away; and it needs open water beside it.)
+		const sailsOn = !SHIP.NO_BOARD.includes(String(piece.type || '').toUpperCase())
+			&& sailTargets(shipEnv(gameState, now), { x, z }).length > 0;
+		if (isMoored(getCell, x, z)) {
+			return `Your longship is still rowing: your ${crew} can step off in ${secs} s${sailsOn ? ', or sail on' : ''}.`;
+		}
+		return sailsOn
+			? `Your longship is still rowing: it can sail on in ${secs} s. Your ${crew} steps off once it touches land.`
+			: `Your longship is still rowing (${secs} s). Your ${crew} steps off once it touches land.`;
+	}
+	if (refused.length > 0) {
+		const why = refused.find(m => m.reason === 'ship_rowing')
+			|| refused.find(m => m.reason === 'ship_not_moored')
+			|| refused[0];
+		const text = SHIP_REFUSAL_TEXT[why.reason] || why.message || shipRefusalText(why.reason);
+		return lanes > 0 ? `${text} ${sailHint}` : text;
+	}
+	if (lanes > 0) {
+		return entry && !isMoored(getCell, x, z)
+			? `Out at sea: sail next to land to step off. ${sailHint}`
+			: `No square to step onto from here. ${sailHint}`;
+	}
+	return null;
 }
 
 /** Is this a ship refusal reason (so a ship toast, not a generic one)? */

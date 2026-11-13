@@ -12,9 +12,11 @@ jest.mock('../../public/js/checkAlert.js', () => ({ isDefenderInCheck: () => fal
 import fs from 'fs';
 import path from 'path';
 import {
-	slotCandidates, resolvePainting, allPaintingSources, normalisePieceType,
+	slotCandidates, resolvePainting, allPaintingSources, normalisePieceType, preloadSources, LIKELY_SLOTS,
 } from '../../public/js/paintings/paintingCatalogue.js';
-import { PaintingQueue, priorityOf, durationFor, COALESCE_MS } from '../../public/js/paintings/paintingQueue.js';
+import {
+	PaintingQueue, priorityOf, durationFor, COALESCE_MS, MAX_AGE_MS, EMBARK_MERGE_MS,
+} from '../../public/js/paintings/paintingQueue.js';
 import {
 	fromChessCapture, fromChessMove, fromKingCaptured, fromPromotion, fromBattleEnd,
 } from '../../public/js/paintings/paintingEvents.js';
@@ -62,12 +64,50 @@ describe('slot chain', () => {
 			slot: 'capture.knight.bishop',
 			src: '/img/paintings/capture.knight.bishop.v1.webp',
 		}));
-		// Bishop takes knight: no pair, no attacker painting → the woodcut.
-		expect(resolvePainting(MANIFEST, slotCandidates(capture({ attackerType: 'bishop', victimType: 'knight' })))).toBeNull();
-		// The siege falls back to the blade.
-		expect(resolvePainting(MANIFEST, slotCandidates({ kind: 'kingfall', siege: true })).slot).toBe('kingfall.blade');
-		// No defeat painting yet.
-		expect(resolvePainting(MANIFEST, slotCandidates({ kind: 'battle', outcome: 'defeat' }))).toBeNull();
+		// Pawn takes bishop: no pair painting → the pawn's own capture.
+		expect(resolvePainting(MANIFEST, slotCandidates(capture({ attackerType: 'pawn', victimType: 'bishop' }))).slot)
+			.toBe('capture.pawn');
+		// An attacker of unknown type → the generic capture.
+		expect(resolvePainting(MANIFEST, slotCandidates(capture({ attackerType: null }))).slot).toBe('capture');
+		expect(resolvePainting(MANIFEST, slotCandidates({ kind: 'kingfall', siege: true })).slot).toBe('kingfall.siege');
+		expect(resolvePainting(MANIFEST, slotCandidates({ kind: 'battle', outcome: 'defeat' })).slot).toBe('battle.defeat');
+	});
+
+	test('every capture, arrival and ending the catalogue asks for has a painting', () => {
+		const pieces = ['pawn', 'knight', 'bishop', 'rook', 'queen', 'king'];
+		for (const attackerType of pieces) {
+			for (const victimType of pieces.filter(p => p !== 'king')) {
+				const hit = resolvePainting(MANIFEST, slotCandidates(capture({ attackerType, victimType })));
+				expect(hit && hit.slot.startsWith(`capture.${attackerType}`)).toBe(true);
+			}
+		}
+		for (const pieceType of ['knight', 'bishop', 'rook']) {
+			const landing = { kind: 'ship', scene: 'landing', pieceType };
+			expect(resolvePainting(MANIFEST, slotCandidates(landing)).slot).toBe(`arrival.${pieceType}`);
+		}
+		for (const outcome of ['victory', 'defeat']) {
+			expect(resolvePainting(MANIFEST, slotCandidates({ kind: 'battle', outcome })).slot).toBe(`battle.${outcome}`);
+		}
+	});
+
+	test('a knight, bishop or rook landing is painted as its arrival, else the landing', () => {
+		expect(slotCandidates({ kind: 'ship', scene: 'landing', pieceType: 'ROOK' })).toEqual(['arrival.rook', 'ship.landing']);
+		expect(slotCandidates({ kind: 'ship', scene: 'landing', pieceType: 'pawn' })).toEqual(['ship.landing']);
+		expect(slotCandidates({ kind: 'ship', scene: 'landing' })).toEqual(['ship.landing']);
+		// A raid stays a raid, whoever leads it.
+		expect(slotCandidates({ kind: 'ship', scene: 'raid', pieceType: 'rook' })).toEqual(['ship.raid']);
+	});
+
+	test('warms the likely few first, and on a phone only those', () => {
+		const all = allPaintingSources(MANIFEST);
+		const likely = LIKELY_SLOTS.map(slot => `/img/paintings/${MANIFEST.paintings[slot].file}`);
+		const phone = preloadSources(MANIFEST, { constrained: true });
+		expect(phone).toEqual(likely);
+		expect(phone.length).toBeLessThan(all.length / 3);
+		const desktop = preloadSources(MANIFEST);
+		expect(desktop.slice(0, likely.length)).toEqual(likely);
+		expect([...desktop].sort()).toEqual([...all].sort());
+		expect(preloadSources(null, { constrained: true })).toEqual([]);
 	});
 
 	test('falls through to a less specific slot', () => {
@@ -90,7 +130,11 @@ describe('slot chain', () => {
 	test('every manifest entry is a versioned file that exists, with alt text', () => {
 		const entries = Object.entries(MANIFEST.paintings);
 		expect(entries.map(([slot]) => slot).sort()).toEqual([
-			'arrival.queen', 'battle.victory', 'capture.knight.bishop', 'kingfall.blade',
+			'arrival.queen', 'arrival.knight', 'arrival.bishop', 'arrival.rook',
+			'battle.victory', 'battle.defeat', 'kingfall.blade', 'kingfall.siege',
+			'capture', 'capture.pawn', 'capture.knight', 'capture.bishop', 'capture.rook', 'capture.queen', 'capture.king',
+			'capture.knight.bishop', 'capture.pawn.queen', 'capture.knight.rook', 'capture.knight.queen',
+			'capture.queen.knight', 'capture.bishop.knight', 'capture.rook.pawn',
 			...SHIP_SCENES.map(scene => `ship.${scene}`),
 		].sort());
 		for (const [slot, entry] of entries) {
@@ -548,7 +592,8 @@ describe('longship moments', () => {
 	test('landing: onto enemy land only, told from either side', () => {
 		const land = move('land', { ship: { kind: 'land', shipId: 's1', landOwner: BOT } });
 		const mine = new ShipMoments().fromShipEvent(land, ctx());
-		expect(slotOf(mine)).toBe('ship.landing');
+		// A knight coming ashore has a painting of its own.
+		expect(slotCandidates(mine)).toEqual(['arrival.knight', 'ship.landing']);
 		expect(caption(mine)).toBe('Your knight lands on Bot 2’s shore');
 		// Bot 2 lands on my shore.
 		const theirs = new ShipMoments().fromShipEvent(move('land', {
@@ -711,7 +756,7 @@ describe('longship moments', () => {
 			playerId: BOT, movedPiece: { id: 'k1', type: 'KNIGHT', player: BOT }, movedTo: { x: 4, z: 0 },
 			ship: { kind: 'land', shipId: 's2' },
 		}), { ...ctx(), cells });
-		expect(slotOf(m)).toBe('ship.landing');
+		expect(slotCandidates(m)).toContain('ship.landing');
 		expect(m.victimId).toBe(ME);
 	});
 
@@ -782,7 +827,7 @@ describe('longship throttle', () => {
 		expect(q.push(capture({ dedupeKey: 'piece:b' }), 9010)).toBe('queued');
 	});
 
-	test('dropped if it waited more than 3 s; other moments keep 20 s', () => {
+	test('dropped if it could have been shown for SHIP_STALE_MS; other moments keep 20 s', () => {
 		const q = new PaintingQueue();
 		q.push(ship('newkeel'), 0);
 		q.push(capture({ dedupeKey: 'piece:1' }), 0);
@@ -811,6 +856,120 @@ describe('longship throttle', () => {
 		q.push({ kind: 'kingfall', dedupeKey: 'kingfall:x' }, 20);
 		expect([q.next(30), q.next(30), q.next(30)].map(m => m.kind)).toEqual(['kingfall', 'arrival', 'ship']);
 		expect(durationFor({ kind: 'ship', scene: 'raid' })).toBe(5000);
+	});
+});
+
+describe('ship cards on a slow device', () => {
+	const ship = (scene, over = {}) => ({
+		kind: 'ship', scene, dedupeKey: `ship:${scene}:${Math.random()}`, staleMs: SHIP_STALE_MS,
+		throttleKey: `b1:ship.${scene}`, voyageKey: 's1:n1', pieceType: 'rook', attackerId: 'me', attackerIsYou: true, ...over,
+	});
+
+	test('the limits are slack for a slow device', () => {
+		expect(SHIP_STALE_MS).toBeGreaterThanOrEqual(5000);
+		expect(MAX_AGE_MS).toBeGreaterThan(SHIP_STALE_MS);
+	});
+
+	test('a ship scene waiting behind a card does not age while that card is up', () => {
+		const q = new PaintingQueue();
+		q.push(capture({ dedupeKey: 'piece:1' }), 0);
+		expect(q.next(0).kind).toBe('capture');        // on screen from 0
+		q.push(ship('embark'), 100);
+		// The capture stays up (a slow device: 9 s); the embark has not
+		// waited at all while it could not be shown.
+		expect(q.hasUrgent(1.5, 9000)).toBe(true);
+		q.finish(9100);
+		const next = q.next(9500);
+		expect(next && next.scene).toBe('embark');
+	});
+
+	test('…but ages once it could be shown, and is let go after SHIP_STALE_MS of that', () => {
+		const q = new PaintingQueue();
+		q.push(capture({ dedupeKey: 'piece:1' }), 0);
+		q.next(0);
+		q.push(ship('embark'), 100);
+		q.finish(5000);
+		expect(q.next(5000 + SHIP_STALE_MS + 1)).toBeNull();
+	});
+
+	test('a card being prepared (the art race) holds the clock too', () => {
+		const q = new PaintingQueue();
+		q.push(ship('embark', { voyageKey: 's9:x' }), 0);
+		q.next(0);                                      // presenting: busy
+		q.push(ship('newkeel', { voyageKey: null }), 50);
+		q.finish(SHIP_STALE_MS + 2000);                 // a very slow card
+		expect(q.next(SHIP_STALE_MS + 2100).scene).toBe('newkeel');
+	});
+
+	test('nothing surfaces more than MAX_AGE_MS after it happened', () => {
+		const q = new PaintingQueue();
+		q.push(capture({ dedupeKey: 'piece:1' }), 0);
+		q.next(0);
+		q.push(ship('embark'), 100);
+		q.finish(MAX_AGE_MS + 200);
+		expect(q.next(MAX_AGE_MS + 200)).toBeNull();
+	});
+
+	test('the older embark shows before the set-sail (equal rank, first come)', () => {
+		const q = new PaintingQueue();
+		q.push(capture({ dedupeKey: 'piece:1' }), 0);
+		q.next(0);
+		q.push(ship('embark'), 100);
+		// Comes too late to join the embark: a card of its own, after it.
+		q.push(ship('setsail'), 100 + EMBARK_MERGE_MS + 1);
+		q.finish(6000);
+		expect(q.next(6000).scene).toBe('embark');
+		q.finish(9000);
+		expect(q.next(9000).scene).toBe('setsail');
+	});
+
+	test('a set-sail hard on a waiting embark becomes one card: "…embarks and sets sail"', () => {
+		const q = new PaintingQueue();
+		q.push(capture({ dedupeKey: 'piece:1' }), 0);
+		q.next(0);
+		q.push(ship('embark'), 100);
+		expect(q.push(ship('setsail'), 900)).toBe('merged-embark');
+		expect(q.size).toBe(1);
+		q.finish(5000);
+		const card = q.next(5000);
+		expect(card.scene).toBe('setsail');
+		expect(card.embarked).toBe(true);
+		expect(slotCandidates(card)[0]).toBe('ship.setsail');
+		expect(captionFor(card)).toBe('Your rook embarks and sets sail');
+		expect(captionFor({ ...card, attackerIsYou: false, attackerName: 'Bot 2' })).toBe('Bot 2’s rook embarks and sets sail');
+		// The embark is told: no second embark card this battle.
+		expect(q.push(ship('embark'), 6000)).toBe('throttled');
+	});
+
+	test('only the same voyage merges, and never into a card already showing', () => {
+		const q = new PaintingQueue();
+		q.push(capture({ dedupeKey: 'piece:1' }), 0);
+		q.next(0);
+		q.push(ship('embark'), 100);
+		expect(q.push(ship('setsail', { voyageKey: 's2:b1' }), 200)).toBe('queued');
+
+		const q2 = new PaintingQueue();
+		q2.push(ship('embark'), 0);
+		q2.next(0);                                     // the embark is up
+		expect(q2.push(ship('setsail'), 500)).toBe('queued');
+		expect(q2.hasUrgent(1.5, 600)).toBe(true);      // it makes way for the set-sail
+	});
+
+	test('the voyage key ties an embark to its set-sail', () => {
+		const ships = new ShipMoments();
+		const at = { localId: 'me', now: 1000, cells: {}, pieces: [] };
+		const embark = ships.fromShipEvent({
+			kind: 'embark',
+			move: {
+				playerId: 'me', movedPiece: { id: 'r1', type: 'ROOK', player: 'me' },
+				movedFrom: { x: 1, z: 1 }, movedTo: { x: 1, z: 2 }, ship: { kind: 'embark', shipId: 's1' },
+			},
+		}, at);
+		const setsail = ships.fromShipEvent({
+			kind: 'sailed', shipId: 's1', from: { x: 1, z: 2 }, to: { x: 1, z: 5 }, playerId: 'me', passengerId: 'r1', readyAt: 4000,
+		}, { ...at, now: 1500 });
+		expect(embark.voyageKey).toBe('s1:r1');
+		expect(setsail.voyageKey).toBe('s1:r1');
 	});
 });
 
@@ -872,6 +1031,28 @@ describe('the director with longships', () => {
 		await flush();
 		expect(document.querySelector('#tetches-painting .tp-caption').textContent)
 			.toBe('Your knight steps aboard your longship');
+	});
+
+	test('embark then set sail behind another card: one card, told as one voyage', async () => {
+		gameState.activeBattle = { id: 'b-voyage', edition: 'viking' };
+		closePaintingCard();
+		await new Promise(resolve => setTimeout(resolve, 800));
+		// A new keel holds the screen…
+		director.handlePaintingEvent('ship', { kind: 'built', shipId: 's2', seatId: ME, x: 0, z: 0 });
+		await flush();
+		await new Promise(resolve => setTimeout(resolve, 300));
+		expect(document.querySelector('#tetches-painting .tp-caption').textContent).toBe('A new keel is laid for you');
+		// …while a rook steps aboard and the ship sails at once.
+		const rookAboard = { ...embark, movedPiece: { id: 'r7', type: 'ROOK', player: ME }, ship: { kind: 'embark', shipId: 's7' } };
+		director.handlePaintingEvent('chess_move', rookAboard);
+		director.handlePaintingEvent('ship', {
+			kind: 'sailed', shipId: 's7', from: { x: 1, z: 2 }, to: { x: 1, z: 6 }, playerId: ME, passengerId: 'r7', readyAt: Date.now() + 3000,
+		});
+		expect(window.tetchesPaintings.queue.size).toBe(1);
+		closePaintingCard();
+		await new Promise(resolve => setTimeout(resolve, 1200));
+		expect(document.querySelector('#tetches-painting .tp-caption').textContent)
+			.toBe('Your rook embarks and sets sail');
 	});
 
 	test('a raid through the director: one card, captioned by name, and chess_capture adds none', async () => {

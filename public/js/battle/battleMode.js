@@ -23,7 +23,10 @@ import { withClockOffset } from './battleRules.js';
 import { startSeaOverlay, stopSeaOverlay } from './seaOverlay.js';
 import { isOffline } from '../offline/offlineMode.js';
 import { vikingActive, isVikingBattle, requestedBattleEdition } from '../edition.js';
-import { VIKING_LITE_REFUSAL, VIKING_RULES, vikingBattleBadgeText, adoptedEdition } from './vikingRules.js';
+import {
+	VIKING_LITE_REFUSAL, VIKING_RULES, vikingBattleBadgeText, adoptedEdition, longshipsInPlayText,
+} from './vikingRules.js';
+import { isTouchPrimary } from '../utils/inputMode.js';
 import { paintingEvent, startPaintings } from '../paintings/index.js';
 import { setSeatHold } from './seatHold.js';
 
@@ -217,8 +220,7 @@ function adoptSeat(battle, { announce = true } = {}) {
 			const battleId = battle.id;
 			setTimeout(() => {
 				if (gameStateRef?.activeBattle?.id !== battleId) return;
-				showToastMessage('⛵ Longships in play: tap your ship (or press L) to sail it.',
-					{ duration: 6000 });
+				showToastMessage(longshipsInPlayText(isTouchPrimary()), { duration: 6000 });
 			}, 11000);
 		}
 	}

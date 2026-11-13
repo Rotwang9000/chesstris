@@ -41,6 +41,7 @@ import {
 	shipObjects, seaHeightAt, shipPose, setShipFrameHook, prepareShips,
 } from '../viking/shipRenderer.js';
 import { isViking } from '../edition.js';
+import { isTouchPrimary } from '../utils/inputMode.js';
 import { DECK_HEIGHT, SHIP_LENGTH_CELLS } from '../viking/shipLayout.js';
 
 /**
@@ -377,9 +378,10 @@ export function selectShip(entry, { withPiece = false, quiet = false } = {}) {
 		} else if (reason) {
 			toast(shipRefusalText(reason));
 		} else if (!withPiece) {
+			const verb = isTouchPrimary() ? 'tap' : 'click';
 			toast(entry.passenger
-				? `Longship with your ${String(entry.passenger.type || 'piece').toLowerCase()} aboard: tap a tile to sail.`
-				: 'Empty longship: tap a tile to sail.', { duration: 2600 });
+				? `Longship with your ${String(entry.passenger.type || 'piece').toLowerCase()} aboard: ${verb} a tile to sail.`
+				: `Empty longship: ${verb} a tile to sail.`, { duration: 2600 });
 		}
 	}
 	return true;

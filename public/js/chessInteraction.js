@@ -29,8 +29,9 @@ import { updateNextPieceHint } from './tetromino/nextPiece.js';
 import { showToastMessage } from './showToastMessage.js';
 import { showFrozenPawnPromotionDialog } from './uiOverlays.js';
 import { displaySponsorInfo } from '../utils/sponsors.js';
-import { shipRulesActive, cellItems, shipEntryAt, SHIP_REFUSAL_TEXT } from './longships/shipEnv.js';
-import { cellHasShip, isMoored } from './viking/shipRulesClient.js';
+import { shipRulesActive, cellItems, shipEntryAt, SHIP_REFUSAL_TEXT, noMoveShipTip } from './longships/shipEnv.js';
+import { cellHasShip } from './viking/shipRulesClient.js';
+import { isTouchPrimary } from './utils/inputMode.js';
 import {
 	trySailLaneClick, pickShipEntry, handleShipClick, clearShipSelection,
 	showLanesForPassenger, SHIP_DECK_Y, waterSquareUnderPointer, selectedShipId,
@@ -643,23 +644,18 @@ export function selectChessPiece(piece) {
 	const pieceType = String(piece.userData.pieceType || piece.userData.type || '').toUpperCase();
 	const isOwn = String(piece.userData.player) === String(gameState.currentPlayer);
 	// Selecting a boxed-in piece used to do nothing visible at all.
-	const shipRefused = gameState.shipRefusedMoves || [];
 	const noMoves = !Array.isArray(gameState.validMoves) || gameState.validMoves.length === 0;
-	if (isOwn && noMoves && shipRefused.length > 0) {
-		// Boxed in by a longship rule (rowing, not moored): say which.
-		const why = shipRefused.find(m => m.reason === 'ship_rowing')
-			|| shipRefused.find(m => m.reason === 'ship_not_moored')
-			|| shipRefused[0];
-		const lanes = (gameState.sailLanes || []).length;
-		showToastMessage(lanes
-			? `${SHIP_REFUSAL_TEXT[why.reason] || why.message} Tap a tile on the water to sail.`
-			: (SHIP_REFUSAL_TEXT[why.reason] || why.message), { duration: 3500, aboveInfoCard: true });
-	} else if (isOwn && noMoves && (gameState.sailLanes || []).length > 0) {
-		const at = piece.userData.position || {};
-		const ashoreSoon = isMoored((x, z) => cellItems(gameState, x, z), Number(at.x), Number(at.z));
-		showToastMessage(ashoreSoon
-			? 'No square to step onto from here. Tap a tile on the water to sail.'
-			: 'Out at sea: sail next to land to step off. Tap a tile on the water to sail.', { duration: 3000, aboveInfoCard: true });
+	// Boxed in by a longship (still rowing, not moored, out at sea): say
+	// why, and how to sail (longships/shipEnv.js).
+	const shipTip = isOwn && noMoves && shipRulesActive(gameState)
+		? noMoveShipTip(gameState, { type: pieceType, position: piece.userData.position }, {
+			refused: gameState.shipRefusedMoves || [],
+			lanes: (gameState.sailLanes || []).length,
+			touch: isTouchPrimary(),
+		})
+		: null;
+	if (shipTip) {
+		showToastMessage(shipTip, { duration: 3500, aboveInfoCard: true });
 	} else if (isOwn && noMoves) {
 		const movable = movablePieceNames(gameState, piece.userData.player);
 		showToastMessage(movable

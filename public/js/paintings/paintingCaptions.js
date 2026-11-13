@@ -134,6 +134,8 @@ function shipCaption(m) {
 			return `${actor} ${crewWord(m.pieceType)} takes to the longship as the sea rises`;
 		case 'setsail': {
 			const type = normalisePieceType(m.pieceType);
+			// Stepped aboard and sailed within moments: one card for both.
+			if (m.embarked) return `${actor} ${crewWord(m.pieceType)} embarks and sets sail`;
 			const ship = `${actor} longship sets sail`;
 			return type ? `${ship} with ${you ? 'your' : 'its'} ${type} aboard` : ship;
 		}

@@ -24,8 +24,6 @@
  * the piece reconciler put it there too.
  */
 
-// (in the production bundle this resolves to longshipLazy.js: the
-// builder is its own file, fetched for the first Viking battle)
 import { buildLongship, longshipReady, preloadLongship } from './longship.js';
 import {
 	SHIP_SCALE, SHIP_STRETCH_Y, CENTRE_MODEL_Z, MODEL_LENGTH, PASSENGER_MODEL_Z, DECK_HEIGHT, PASSENGER_SCALE,

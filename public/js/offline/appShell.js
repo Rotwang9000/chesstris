@@ -10,6 +10,10 @@
 
 import { isOffline, offlineEngineUrl } from './offlineMode.js';
 import { isEmbedded } from '../portal.js';
+import { vikingChunkUrl } from '../vikingLazy/loader.js';
+
+/** The paintings' list (paintings/paintingCatalogue.js MANIFEST_URL). */
+const PAINTINGS_MANIFEST_URL = '/img/paintings/manifest.json';
 
 /** Running as an installed app (home screen / desktop install)? */
 export function isInstalledApp() {
@@ -53,15 +57,22 @@ function absolute(url) {
 	return new URL(url, window.location.href).href;
 }
 
-/** Everything this page has loaded, plus what offline play will need. */
-function urlsToKeep() {
+/**
+ * Everything this page has loaded, plus what offline play will need —
+ * the Viking edition's code and paintings list included, whichever
+ * edition this page is, so the app can open `?edition=viking` (or a
+ * Viking battle) later with no connection. Kept only, never run.
+ */
+export function urlsToKeep() {
 	const loaded = (performance.getEntriesByType?.('resource') || []).map(e => e.name);
+	const chunk = vikingChunkUrl();
 	return [
 		window.location.href,
 		absolute(offlineUrl()),
 		absolute(offlineEngineUrl()),
 		absolute('/img/welcome-hero.png'),
 		absolute('/manifest.json'),
+		...(chunk ? [absolute(chunk), absolute(PAINTINGS_MANIFEST_URL)] : []),
 		...loaded,
 	].filter(u => /^https?:/.test(u));
 }
