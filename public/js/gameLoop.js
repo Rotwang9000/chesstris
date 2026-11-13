@@ -20,6 +20,8 @@ import { syncPowerUps, animatePowerUps } from './powerUpRenderer.js';
 import { syncNameplates, animateNameplates } from './nameplateRenderer.js';
 import { updateAwaitingPromotionHalos } from './updateChessPieces.js';
 import { applyDistanceCulling } from './distanceCulling.js';
+import { animateShips } from './viking/shipRenderer.js';
+import { updateVikingTheme } from './viking/theme.js';
 
 // ── Timing state ────────────────────────────────────────────────────────────
 
@@ -535,6 +537,14 @@ function animate(time) {
 		// camera glides. Skipping them would make controls feel
 		// frozen which is worse than a slow frame.
 		if (window.TWEEN) window.TWEEN.update();
+
+		// Viking edition: longships ride the sea and carry their
+		// passengers (no-op without ships), and the fjord dresses the
+		// scene for a Viking battle (no-op otherwise).
+		try { animateShips(scene, gameState, sinceLastFrameMs); }
+		catch (e) { console.error('Ship animation failed:', e); }
+		try { updateVikingTheme(scene, gameState, time); }
+		catch (e) { console.error('Viking theme failed:', e); }
 
 		if (!skipNonEssentialThisFrame
 			&& window.animationsModule && typeof window.animationsModule.updateAnimations === 'function') {

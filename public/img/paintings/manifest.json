@@ -1,0 +1,66 @@
+{
+	"version": 1,
+	"base": "/img/paintings/",
+	"paintings": {
+		"arrival.queen": {
+			"file": "arrival.queen.v1.webp",
+			"alt": "A queen with long braids and a green cloak steps from a beached longship onto a timber jetty, shield-bearers lining the shore of a misty fjord at dawn."
+		},
+		"capture.knight.bishop": {
+			"file": "capture.knight.bishop.v1.webp",
+			"alt": "A helmed rider in a red cloak rears his grey horse in the surf before a white-robed seer with a carved crook staff, on a stony shore under a storm."
+		},
+		"kingfall.blade": {
+			"file": "kingfall.blade.v1.webp",
+			"alt": "In a smoky mead hall a grey-bearded king in furs kneels in the straw, his gold circlet fallen, as a young warrior in a red cloak stands over him with a sword."
+		},
+		"battle.victory": {
+			"file": "battle.victory.v1.webp",
+			"alt": "A crowned king in a fur mantle and a queen in a green cloak stand on a headland at sunset as warriors raise their spears and longships sail home below."
+		},
+		"ship.embark": {
+			"file": "ship.embark.v1.webp",
+			"alt": "Warriors with round shields wade out to a dragon-prowed longship in a mountain fjord at sunrise, while a red-cloaked figure and a helmed rider on a grey horse wait on the timber jetty."
+		},
+		"ship.setsail": {
+			"file": "ship.setsail.v1.webp",
+			"alt": "A longship under a white and crimson striped sail pulls away from the harbour on its oars, watched from the jetty by a woman in a green cloak with a long braid, a boy and a grey-bearded old man."
+		},
+		"ship.landing": {
+			"file": "ship.landing.v1.webp",
+			"alt": "A dragon-headed longship drives into the surf and warriors leap from it onto a pebble beach, where two startled men with a spear and a red shield turn to face them."
+		},
+		"ship.raid": {
+			"file": "ship.raid.v1.webp",
+			"alt": "At moonrise raiders pour from a beached longship onto a pale shore and charge a timber palisade gate held by shield-bearing spearmen, as smoke rises from a hall beyond."
+		},
+		"ship.raidcheck": {
+			"file": "ship.raidcheck.v1.webp",
+			"alt": "A grey-bearded king in a fur cloak and gold crown stands on the steps of his carved hall as a column of shielded warriors marches up the snowy shore from a longship under a stormy sky."
+		},
+		"ship.boarded": {
+			"file": "ship.boarded.v1.webp",
+			"alt": "Two longships grappled together with ropes and chains in a rough sea, warriors with swords and shields leaping the gunwales to fight hand to hand."
+		},
+		"ship.seized": {
+			"file": "ship.seized.v1.webp",
+			"alt": "Strangers have taken a beached longship at sunset: one climbs the mast to hoist a blue and white striped sail, another stands on deck, and two more watch from the rocks."
+		},
+		"ship.lifeboat": {
+			"file": "ship.lifeboat.v1.webp",
+			"alt": "Under a black storm sky a crew rows a small longship hard through white-capped waves as the sea closes over a low sandy island behind them."
+		},
+		"ship.lost": {
+			"file": "ship.lost.v1.webp",
+			"alt": "Lightning splits the sky as a longship with a torn purple-striped sail founders in towering waves, its last crew clinging on at the bow."
+		},
+		"ship.emptysunk": {
+			"file": "ship.emptysunk.v1.webp",
+			"alt": "An empty dragon-prowed longship settles into a calm fjord at sunset, its striped sail trailing in the water while gulls circle overhead."
+		},
+		"ship.newkeel": {
+			"file": "ship.newkeel.v1.webp",
+			"alt": "Under a boatshed roof shipwrights raise the tall curved stem of a new longship on the shore, while a woman holding a lantern looks on and others plane the planks."
+		}
+	}
+}

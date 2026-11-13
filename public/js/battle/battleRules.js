@@ -258,3 +258,9 @@ export function isEventInCurrentView(gameState, participantIds) {
 	if (ids.length === 0) return true;
 	return ids.some(id => isPlayerInCurrentView(gameState, id));
 }
+
+// ── Viking battles (longships) ──────────────────────────────────────────────
+// The player-facing longship rules and controls live in vikingRules.js
+// (next to the generated rules mirror in js/viking/shipRulesClient.js);
+// re-exported here so every battle rule is reachable from one module.
+export { VIKING_RULES, VIKING_CONTROLS, vikingRulesText } from './vikingRules.js';

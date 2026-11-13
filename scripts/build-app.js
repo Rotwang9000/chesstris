@@ -104,6 +104,10 @@ function build() {
 	for (const file of ['app.bundle.js', 'offline-engine.js']) {
 		copy(path.join(PUBLIC, 'dist', file), path.join(OUT, 'dist', file));
 	}
+	// The Viking edition's longship builder (fetched on demand beside the app bundle).
+	if (fs.existsSync(path.join(PUBLIC, 'dist', 'viking.bundle.js'))) {
+		copy(path.join(PUBLIC, 'dist', 'viking.bundle.js'), path.join(OUT, 'dist', 'viking.bundle.js'));
+	}
 	for (const [, [from, to]] of Object.entries(VENDOR)) copy(path.join(THREE, from), path.join(OUT, to));
 	for (const weight of [400, 700]) {
 		const name = `playfair-display-latin-${weight}-normal.woff2`;

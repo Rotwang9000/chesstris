@@ -37,6 +37,23 @@ const ENTRY = path.join(ROOT, 'public', 'js', 'main-enhanced.js');
 const OUT_DIR = path.join(ROOT, 'public', 'dist');
 const OUT_FILE = path.join(OUT_DIR, 'app.bundle.js');
 const META_FILE = path.join(OUT_DIR, 'meta.json');
+// The Viking edition's longship builder is its own file, fetched only
+// when a Viking battle needs it (public/js/viking/longshipLazy.js).
+const VIKING_ENTRY = path.join(ROOT, 'public', 'js', 'viking', 'longshipChunk.js');
+const VIKING_OUT = path.join(OUT_DIR, 'viking.bundle.js');
+const LONGSHIP_REAL = path.join(ROOT, 'public', 'js', 'viking', 'longship.js');
+const LONGSHIP_LAZY = path.join(ROOT, 'public', 'js', 'viking', 'longshipLazy.js');
+
+/** In the app bundle, `viking/longship.js` is the on-demand loader. */
+const lazyLongship = {
+	name: 'lazy-longship',
+	setup(b) {
+		b.onResolve({ filter: /(^|\/)longship\.js$/ }, (args) => {
+			const resolved = path.resolve(args.resolveDir, args.path);
+			return resolved === LONGSHIP_REAL ? { path: LONGSHIP_LAZY } : undefined;
+		});
+	},
+};
 
 const isWatch = process.argv.includes('--watch');
 
@@ -81,7 +98,15 @@ async function build() {
 
 	console.log('[build-client] bundling ' + path.relative(ROOT, ENTRY) +
 		' → ' + path.relative(ROOT, OUT_FILE));
-	const result = await esbuild.build(sharedOptions);
+	const result = await esbuild.build({ ...sharedOptions, plugins: [lazyLongship] });
+	const viking = await esbuild.build({
+		...sharedOptions,
+		entryPoints: [VIKING_ENTRY],
+		outfile: VIKING_OUT,
+		metafile: false,
+	});
+	if (viking.errors?.length) throw new Error('viking chunk failed');
+	console.log(`[build-client] longship chunk → ${(fs.statSync(VIKING_OUT).size / 1024).toFixed(1)} KiB`);
 	if (result.metafile) {
 		fs.writeFileSync(META_FILE, JSON.stringify(result.metafile));
 	}

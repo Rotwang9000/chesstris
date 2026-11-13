@@ -23,6 +23,9 @@
  */
 
 import { isCameraRelativeControls, setCameraRelativeControls } from './controlSettings.js';
+import { getGameState } from './gameContext.js';
+import { vikingActive } from './edition.js';
+import { VIKING_RULES, VIKING_CONTROLS } from './battle/vikingRules.js';
 
 const ZOOM_STEP = 0.18;
 const PAN_STEP = 0.6;
@@ -370,6 +373,12 @@ function buildHelpOverlay() {
 	card.appendChild(camRelToggle);
 	card.appendChild(list);
 	card.appendChild(note);
+	// Viking edition / Viking battles: longship controls and rules,
+	// filled on each open (see renderVikingHelp).
+	const viking = document.createElement('div');
+	viking.id = 'help-viking-section';
+	viking.style.display = 'none';
+	card.appendChild(viking);
 	card.appendChild(closeBtn);
 	root.appendChild(card);
 	document.body.appendChild(root);
@@ -430,8 +439,54 @@ function buildCameraRelativeToggle() {
 	return row;
 }
 
+/** The longship section of the help card, shown only when Viking is live. */
+function renderVikingHelp() {
+	const section = document.getElementById('help-viking-section');
+	if (!section) return;
+	let live = false;
+	try { live = vikingActive(getGameState()); } catch (_e) { live = false; }
+	section.style.display = live ? 'block' : 'none';
+	const card = section.parentElement;
+	if (card) {
+		card.style.maxHeight = live ? '88vh' : '';
+		card.style.overflowY = live ? 'auto' : '';
+	}
+	if (!live || section.childElementCount > 0) return;
+	Object.assign(section.style, {
+		marginTop: '14px', paddingTop: '10px', fontSize: '12.5px', lineHeight: '1.5',
+		borderTop: '1px solid rgba(255, 204, 0, 0.25)', color: '#ddd',
+	});
+	const title = document.createElement('div');
+	title.textContent = '\u26F5 Longships (Viking battles)';
+	Object.assign(title.style, { color: '#ffcc00', fontSize: '15px', fontWeight: 'bold', marginBottom: '6px' });
+	section.appendChild(title);
+	for (const [k, v] of VIKING_CONTROLS) {
+		const row = document.createElement('div');
+		Object.assign(row.style, { display: 'flex', justifyContent: 'space-between', gap: '12px', padding: '2px 0' });
+		const keyEl = document.createElement('div');
+		keyEl.textContent = k;
+		Object.assign(keyEl.style, { color: '#ffcc00', minWidth: '120px' });
+		const valEl = document.createElement('div');
+		valEl.textContent = v;
+		Object.assign(valEl.style, { color: '#ddd', textAlign: 'right', flex: '1 1 auto' });
+		row.appendChild(keyEl);
+		row.appendChild(valEl);
+		section.appendChild(row);
+	}
+	const list = document.createElement('ol');
+	Object.assign(list.style, { margin: '8px 0 0 0', paddingLeft: '20px', color: '#ccc' });
+	for (const line of VIKING_RULES) {
+		const li = document.createElement('li');
+		li.textContent = line;
+		li.style.marginBottom = '2px';
+		list.appendChild(li);
+	}
+	section.appendChild(list);
+}
+
 export function showHelpOverlay() {
 	if (!helpOverlay) helpOverlay = buildHelpOverlay();
+	renderVikingHelp();
 	// Re-sync the toggle from the stored preference each open, in case it
 	// was changed via the player-bar footer toggle since we last built it.
 	const t = document.getElementById('cam-rel-controls-overlay-toggle');

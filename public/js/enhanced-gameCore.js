@@ -64,6 +64,7 @@ import {
 import * as animationsModule from './animations.js';
 import { clearChessSelection } from './chessInteraction.js';
 import { isTouchPrimary } from './utils/inputMode.js';
+import { vikingActive } from './edition.js';
 
 // ── Backward-compatible re-exports ──────────────────────────────────────────
 
@@ -621,6 +622,9 @@ function initializeGameUI() {
 				zIndex: '10002', pointerEvents: 'none'
 			});
 			afterWelcomeClosed(() => {
+				// Viking edition: the keys are on the NEXT PIECE panel already,
+				// and this strip landed on the player's own longship.
+				if (vikingActive(gameState)) return;
 				document.body.appendChild(hint);
 				setTimeout(() => { hint.style.opacity = '0'; hint.style.transition = 'opacity 1s'; }, 8000);
 			});

@@ -22,6 +22,10 @@ import { showBattleResults, closeBattleResults } from './battleResults.js';
 import { withClockOffset } from './battleRules.js';
 import { startSeaOverlay, stopSeaOverlay } from './seaOverlay.js';
 import { isOffline } from '../offline/offlineMode.js';
+import { vikingActive, isVikingBattle, requestedBattleEdition } from '../edition.js';
+import { VIKING_LITE_REFUSAL, VIKING_RULES, vikingBattleBadgeText, adoptedEdition } from './vikingRules.js';
+import { paintingEvent, startPaintings } from '../paintings/index.js';
+import { setSeatHold } from './seatHold.js';
 
 const DIALOG_ID = 'tetches-battle-dialog';
 const CAMERA_FLY_DELAY_MS = 1200;  // let the battle board arrive first
@@ -152,10 +156,20 @@ function adoptSeat(battle, { announce = true } = {}) {
 	if (!gameStateRef) return;
 	const seat = mySeat(battle);
 	if (!seat) return;
+	// Lite (2D) mode cannot show longships: refuse Viking battles.
+	if (gameStateRef.liteMode && isVikingBattle(battle)) {
+		showToastMessage(VIKING_LITE_REFUSAL, { variant: 'alert', duration: 8000 });
+		return;
+	}
 	// Idempotent: the push event and the poll/ack fallbacks can both
 	// land — the second call must not re-fly the camera.
 	if (gameStateRef.activeBattle?.id === battle.id
-		&& gameStateRef.localPlayerId === seat.seatId) return;
+		&& gameStateRef.localPlayerId === seat.seatId) {
+		// …but a fresher record still carries the battle's edition.
+		gameStateRef.activeBattle.edition = adoptedEdition(battle, gameStateRef.activeBattle.edition);
+		if (vikingActive(gameStateRef)) startPaintings();
+		return;
+	}
 	if (!savedRealPlayerId) {
 		savedRealPlayerId = gameStateRef.localPlayerId || getPlayerId() || null;
 	}
@@ -166,6 +180,9 @@ function adoptSeat(battle, { announce = true } = {}) {
 		playRadius: battle.playRadius,
 		mode: battle.mode || 'classic',
 		sea: withClockOffset(battle.sea),
+		// The battle's edition (never the URL's): 'viking' turns on the
+		// longship rules, controls and art for this seat.
+		edition: adoptedEdition(battle),
 	};
 	gameStateRef.localPlayerId = seat.seatId;
 	gameStateRef.myPlayerId = seat.seatId;
@@ -186,13 +203,43 @@ function adoptSeat(battle, { announce = true } = {}) {
 	syncBattleUrl(battle.code);
 	if (battle.sea) startSeaOverlay();
 	else stopSeaOverlay();
+	// A Viking battle paints its great moments, even for a player who
+	// joined it by code from the standard game (paintings/index.js).
+	if (vikingActive(gameStateRef)) startPaintings();
 	if (announce) {
 		showToastMessage(battle.sea
 			? '⚔ Fight! The sea rises soon: keep your king off the flashing cells.'
 			: `⚔ Battle ${battle.code} — fight!`,
 		{ variant: 'success', duration: battle.sea ? 7000 : 5000 });
+		if (isVikingBattle(battle)) {
+			// After the opening toasts have gone (one message at a time, so
+			// the fjord gets a clean first look, on a phone above all).
+			const battleId = battle.id;
+			setTimeout(() => {
+				if (gameStateRef?.activeBattle?.id !== battleId) return;
+				showToastMessage('⛵ Longships in play: tap your ship (or press L) to sail it.',
+					{ duration: 6000 });
+			}, 11000);
+		}
 	}
 	flyToSeat(seat.seatId);
+}
+
+/**
+ * The socket reconnected and the world join answered with the player's
+ * real id. While seated in a Viking battle the seat stays the local
+ * identity (the longship controls, HUD and detail levels all go by it);
+ * the real id waits for the battle's end. Returns true when it kept the
+ * seat (the caller must then not overwrite localPlayerId).
+ * Standard battles keep their old behaviour.
+ */
+export function keepBattleSeatOnRejoin(realId) {
+	const battle = gameStateRef?.activeBattle;
+	if (!battle || !isVikingBattle(battle) || !savedRealPlayerId || !realId) return false;
+	const seatId = gameStateRef.localPlayerId;
+	if (!seatId || String(seatId) === String(realId)) return false;
+	savedRealPlayerId = realId;
+	return true;
 }
 
 /** Return to the player's real kingdom identity (the world view). */
@@ -251,7 +298,8 @@ async function rematch(battle) {
 	const realId = String(getPlayerId() || '');
 	const friends = (battle.seats || []).filter(s => !s.isAi && String(s.controlledBy) !== realId);
 	const seatCount = battle.seatCount || (battle.seats || []).length || 2;
-	const created = await createBattle(seatCount, battle.botDifficulty || 'auto', battle.mode || 'quick');
+	const created = await createBattle(seatCount, battle.botDifficulty || 'auto', battle.mode || 'quick',
+		adoptedEdition(battle));
 	if (!created.success) {
 		showToastMessage(created.error || 'Could not start a rematch', { variant: 'alert' });
 		return;
@@ -290,6 +338,8 @@ function showEndScene(battle, results, seat, { realId } = {}) {
 			},
 		],
 	});
+	// The seat is already released here: the battle itself says Viking.
+	if (vikingActive(gameStateRef) || isVikingBattle(battle)) paintingEvent('battle_end', { battle, results, mySeatId: seat?.seatId, outcome });
 	// Defeat already played the king's fall with the capture.
 	if (outcome === 'victory') {
 		try { playSound('promotion'); } catch (_e) { /* sound is best-effort */ }
@@ -318,17 +368,35 @@ function emitBattle(event, data = {}) {
 	});
 }
 
-export function createBattle(seatCount, botDifficulty = 'auto', mode = 'quick') {
-	return emitBattle('battle_create', { seatCount, botDifficulty, mode });
+/** Lite (2D) mode can't draw longships: Viking battles are refused there. */
+function liteRefusesViking(edition) {
+	return !!gameStateRef?.liteMode && edition === 'viking';
 }
 
-export function joinBattle(code) {
-	return emitBattle('battle_join', { code });
+/**
+ * @param {string} [edition] 'viking' | 'standard'; defaults to this
+ *        client's edition (?edition=viking asks for a Viking battle).
+ */
+export function createBattle(seatCount, botDifficulty = 'auto', mode = 'quick', edition = requestedBattleEdition()) {
+	if (liteRefusesViking(edition)) return Promise.resolve({ success: false, error: VIKING_LITE_REFUSAL });
+	return emitBattle('battle_create', { seatCount, botDifficulty, mode, edition });
+}
+
+export async function joinBattle(code) {
+	const result = await emitBattle('battle_join', { code });
+	// The server lets anyone in; lite mode gives a Viking seat straight back.
+	if (result?.success && liteRefusesViking(adoptedEdition(result.battle))) {
+		await emitBattle('battle_leave', result.battle?.id ? { battleId: result.battle.id } : {});
+		return { success: false, error: VIKING_LITE_REFUSAL };
+	}
+	return result;
 }
 
 /** Pair with whoever else is looking (a bot steps in after a short wait). */
-export function quickMatch() {
-	return emitBattle('battle_quickmatch');
+export function quickMatch(edition = requestedBattleEdition()) {
+	if (liteRefusesViking(edition)) return Promise.resolve({ success: false, error: VIKING_LITE_REFUSAL });
+	// Viking players are paired only with Viking players.
+	return emitBattle('battle_quickmatch', { edition });
 }
 
 /** How many players are looking for / playing quick battles right now. */
@@ -578,7 +646,7 @@ function renderBattleSwitcher(card) {
 		const statusText = battle.status === 'lobby'
 			? `lobby ${battle.seats.length}/${battle.seatCount}`
 			: battle.status;
-		const label = `⚔ ${battle.code} — ${statusText}`;
+		const label = `${isVikingBattle(battle) ? '⛵' : '⚔'} ${battle.code} — ${statusText}`;
 
 		if (battle.status === 'lobby') {
 			const row = el('div', {
@@ -616,6 +684,46 @@ function renderBattleSwitcher(card) {
 
 	card.appendChild(list);
 	card.appendChild(orDivider());
+}
+
+/**
+ * "⛵ Viking battle: longships in play" — on the lobby, matchmaking
+ * and create screens when the battle (or the battle you'd create) is a
+ * Viking one. Nothing at all for the standard game.
+ */
+function appendVikingBadge(card, battle) {
+	const text = vikingBattleBadgeText(battle);
+	if (!text) return null;
+	const badge = el('div', {
+		display: 'flex', alignItems: 'center', gap: '8px',
+		fontSize: '12px', color: '#bfe9dc', marginBottom: '10px',
+		padding: '6px 10px', borderRadius: '6px',
+		background: 'linear-gradient(180deg, rgba(18,72,74,0.9), rgba(10,40,48,0.9))',
+		border: '1px solid #ffcc33',
+	});
+	badge.className = 'viking-battle-badge';
+	badge.appendChild(el('span', { fontSize: '18px' }, '\u26F5'));
+	badge.appendChild(el('span', { flex: '1' }, text));
+	const rulesBtn = el('button', {
+		background: 'transparent', color: '#ffcc33', border: '1px solid #ffcc33',
+		borderRadius: '4px', fontFamily: 'inherit', fontSize: '11px',
+		padding: '4px 8px', minHeight: '28px', cursor: 'pointer',
+	}, 'Rules');
+	rulesBtn.type = 'button';
+	const rules = el('ol', {
+		display: 'none', margin: '0 0 10px 0', padding: '8px 10px 8px 28px',
+		fontSize: '12px', lineHeight: '1.45', color: '#ddd',
+		background: 'rgba(10,40,48,0.6)', border: '1px solid rgba(255,204,51,0.4)', borderRadius: '6px',
+	});
+	rules.className = 'viking-battle-rules';
+	for (const line of VIKING_RULES) rules.appendChild(el('li', { marginBottom: '3px' }, line));
+	rulesBtn.addEventListener('click', () => {
+		rules.style.display = rules.style.display === 'none' ? 'block' : 'none';
+	});
+	badge.appendChild(rulesBtn);
+	card.appendChild(badge);
+	card.appendChild(rules);
+	return badge;
 }
 
 function sectionLabel(text) {
@@ -690,6 +798,7 @@ function renderOfflineSetup(card) {
 	const prefs = loadOfflinePrefs();
 	card.appendChild(el('p', { margin: '0 0 14px 0', fontSize: '12px', color: '#ccc', lineHeight: '1.5' },
 		'Play the computer. Drop blocks to build ground, march your pieces across it and take the enemy king.'));
+	appendVikingBadge(card, { edition: requestedBattleEdition() });
 
 	const seats = choiceRow(card, 'OPPONENTS', [
 		{ value: '2', label: '1 bot' },
@@ -737,6 +846,7 @@ function renderCreateJoin(card, options = {}) {
 	}
 	// ── Quick match ──────────────────────────────────────────────
 	card.appendChild(sectionLabel('PLAY SOMEONE NOW'));
+	appendVikingBadge(card, { edition: requestedBattleEdition() });
 	const matchBtn = themedButton('⚡ Quick match', { primary: true });
 	matchBtn.style.width = '100%';
 	matchBtn.style.fontSize = '17px';
@@ -901,6 +1011,7 @@ function stopMatchCountdown() {
 
 function renderMatchmaking(card, battle) {
 	card.appendChild(sectionLabel('QUICK MATCH'));
+	appendVikingBadge(card, battle);
 	card.appendChild(el('div', { fontSize: '20px', textAlign: 'center', margin: '10px 0 6px' },
 		'Looking for an opponent…'));
 	const countdown = el('div', { fontSize: '13px', color: '#ccc', textAlign: 'center', marginBottom: '6px' });
@@ -1021,6 +1132,7 @@ function renderLobby(card, battle) {
 		battle.mode === 'classic'
 			? '♾ Classic: fight until one king is left'
 			: '🌊 Quick: the sea swallows the arena, round and round. Last king above water wins'));
+	appendVikingBadge(card, battle);
 
 	const note = el('div', { fontSize: '12px', color: '#ccc', marginBottom: '12px', lineHeight: '1.5' });
 	if (!isHost) {
@@ -1108,6 +1220,8 @@ function refreshOpenLobby(battle) {
  */
 export function initBattleMode(gameState) {
 	gameStateRef = gameState;
+	// A reconnect mid Viking battle keeps the seat as the local identity.
+	setSeatHold(keepBattleSeatOnRejoin);
 
 	// Bottom-left HUD strip button (static markup in index.html).
 	const hudBtn = document.getElementById('battle-btn');
@@ -1182,7 +1296,7 @@ export function initBattleMode(gameState) {
 		if (!battle || gameStateRef?.activeBattle?.id !== battle.id) return;
 		const seat = mySeat(battle);
 		try { playSound('kingFall'); } catch (_e) { /* sound is best-effort */ }
-		showBattleResults({
+		const { outcome } = showBattleResults({
 			battle,
 			results: data.results,
 			mySeatId: seat?.seatId,
@@ -1199,6 +1313,7 @@ export function initBattleMode(gameState) {
 				},
 			],
 		});
+		if (vikingActive(gameStateRef)) paintingEvent('battle_end', { battle, results: data.results, mySeatId: seat?.seatId, outcome });
 	});
 
 	onNetworkEvent('battle_cancelled', (data) => {

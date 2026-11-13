@@ -91,6 +91,34 @@ function ensureHud() {
 	return hud;
 }
 
+/**
+ * Viking battles: on a phone the Longship button (first in the turn
+ * action stack, top right) sits where the centred banner goes, and the
+ * banner would hide its rowing ring. Drop the banner under the stack
+ * when they overlap; put it back when they don't.
+ */
+function keepClearOfActionStack(hud) {
+	const stack = document.getElementById('turn-action-stack');
+	const home = window.innerWidth < 600 ? 124 : 58;
+	const visible = (el) => el && el.offsetParent !== null && el.getBoundingClientRect().height > 0;
+	const shown = stack ? [...stack.children].filter(visible) : [];
+	if (shown.length === 0) {
+		hud.style.top = `${home}px`;
+		return;
+	}
+	hud.style.top = `${home}px`;
+	const h = hud.getBoundingClientRect();
+	let bottom = 0;
+	for (const el of shown) {
+		const r = el.getBoundingClientRect();
+		if (h.left < r.right && h.right > r.left && h.top < r.bottom && h.bottom > r.top) bottom = Math.max(bottom, r.bottom);
+	}
+	if (bottom > 0) {
+		const stackBottom = Math.max(...shown.map(el => el.getBoundingClientRect().bottom));
+		hud.style.top = `${Math.round(Math.max(bottom, stackBottom) + 8)}px`;
+	}
+}
+
 function removeHud() {
 	document.getElementById(HUD_ID)?.remove();
 }
@@ -362,8 +390,11 @@ function frame() {
 		if (wall - lastSlowFrame >= SLOW_FRAME_MS) {
 			lastSlowFrame = wall;
 			const text = seaHudText(battle.sea, now);
-			if (text) ensureHud().textContent = text;
-			else removeHud();
+			if (text) {
+				const hud = ensureHud();
+				hud.textContent = text;
+				if (battle.edition === 'viking') keepClearOfActionStack(hud);
+			} else removeHud();
 			drawTiles(battle, now);
 			drawEdge(battle, now);
 		}

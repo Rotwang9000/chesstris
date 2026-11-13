@@ -24,7 +24,8 @@
  * in `CSS2DRenderer` (which would require its own DOM mount).
  */
 
-import { getTHREE, getScene, getRenderer } from './gameContext.js';
+import { getTHREE, getScene, getRenderer, getCamera, getGameState } from './gameContext.js';
+import { vikingActive } from './edition.js';
 import { translatePosition } from './centreBoardMarker.js';
 import { isCellVisibleInCurrentView } from './battle/battleRules.js';
 
@@ -353,10 +354,92 @@ export function syncNameplates(chessPieces, players, options = {}) {
 export function animateNameplates(timeSec) {
 	if (!Number.isFinite(timeSec)) return;
 	const t = timeSec * Math.PI * 2 * NAMEPLATE_BOB_FREQ_HZ;
+	const clamp = vikingLabelClamp();
 	for (const visual of nameplateVisuals.values()) {
 		const baseY = NAMEPLATE_HEIGHT_ABOVE_KING;
 		visual.sprite.position.y = baseY + Math.sin(t) * NAMEPLATE_BOB_AMPLITUDE;
+		if (clamp) {
+			clampLabel(visual, clamp);
+			clearOfHud(visual, clamp);
+		} else if (visual.clamped) {
+			visual.sprite.scale.set(visual.width * WORLD_PER_PX, visual.height * WORLD_PER_PX, 1);
+			visual.sprite.material.opacity = 1;
+			visual.clamped = false;
+		}
 	}
+}
+
+const _hudV = { v: null };
+/**
+ * Viking edition: a label that would sit under the HUD (the title, the
+ * NEXT PIECE panel, the Longship / Skip buttons, the strip of buttons, a
+ * painting) fades out instead of showing ghosted through it. Checked a
+ * few times a second at the label's corners and centre.
+ */
+function clearOfHud(visual, { camera, worldPerPxAt1 }) {
+	const now = Date.now();
+	if (!visual.hudAt || now - visual.hudAt > 200) {
+		visual.hudAt = now;
+		visual.underHud = labelUnderHud(visual, camera, worldPerPxAt1);
+	}
+	const m = visual.sprite.material;
+	const want = visual.underHud ? 0 : 1;
+	m.opacity += (want - m.opacity) * 0.25;
+	if (Math.abs(want - m.opacity) < 0.01) m.opacity = want;
+}
+
+function labelUnderHud(visual, camera, worldPerPxAt1) {
+	const THREE = getTHREE();
+	const el = getRenderer()?.domElement;
+	if (!THREE || !el || typeof document === 'undefined' || typeof document.elementFromPoint !== 'function') return false;
+	const r = el.getBoundingClientRect();
+	if (!_hudV.v) _hudV.v = new THREE.Vector3();
+	const v = _hudV.v;
+	visual.sprite.getWorldPosition(v);
+	const d = camera.position.distanceTo(v);
+	v.project(camera);
+	if (v.z > 1 || Math.abs(v.x) > 1.2 || Math.abs(v.y) > 1.2) return false;
+	const cx = r.left + (v.x + 1) / 2 * r.width;
+	const cy = r.top + (1 - v.y) / 2 * r.height;
+	const hw = (visual.sprite.scale.x / (worldPerPxAt1 * d)) / 2;
+	const hh = (visual.sprite.scale.y / (worldPerPxAt1 * d)) / 2;
+	const card = document.getElementById('tetches-painting');
+	const cardBox = card && card.classList.contains('tp-visible') ? card.getBoundingClientRect() : null;
+	for (const [dx, dy] of [[0, 0], [-0.9, -0.7], [0.9, -0.7], [-0.9, 0.7], [0.9, 0.7]]) {
+		const x = cx + dx * hw, y = cy + dy * hh;
+		if (x < r.left || x > r.right || y < r.top || y > r.bottom) return true;   // clipped by the screen edge
+		if (cardBox && x > cardBox.left && x < cardBox.right && y > cardBox.top && y < cardBox.bottom) return true;
+		const top = document.elementFromPoint(x, y);
+		if (top && top !== el && !el.contains(top) && top !== document.body && top !== document.documentElement) return true;
+	}
+	return false;
+}
+
+/**
+ * Viking edition: a name label never grows past a fixed height on
+ * screen. The labels are world-sized, so in any close view of a ship
+ * they used to swell into billboards over a third of the screen. (The
+ * standard game keeps its world-sized labels.)
+ */
+function vikingLabelClamp() {
+	let live = false;
+	try { live = vikingActive(getGameState()); } catch (_e) { live = false; }
+	if (!live) return null;
+	const camera = getCamera();
+	const el = getRenderer()?.domElement;
+	const h = el ? (el.clientHeight || el.height) : 0;
+	if (!camera || !camera.isPerspectiveCamera || !(h > 0)) return null;
+	const maxPx = Math.max(22, Math.min(34, h * 0.045));
+	return { camera, worldPerPxAt1: (2 * Math.tan((camera.fov * Math.PI / 180) / 2)) / h, maxPx };
+}
+
+function clampLabel(visual, { camera, worldPerPxAt1, maxPx }) {
+	const baseW = visual.width * WORLD_PER_PX;
+	const baseH = visual.height * WORLD_PER_PX;
+	const d = camera.position.distanceTo(visual.sprite.position);
+	const k = Math.min(1, (maxPx * worldPerPxAt1 * d) / (baseH || 1));
+	visual.sprite.scale.set(baseW * k, baseH * k, 1);
+	visual.clamped = true;
 }
 
 export function disposeNameplateVisuals() {

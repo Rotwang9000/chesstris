@@ -9,6 +9,7 @@
 		"dev": "nodemon server.js",
 		"build": "npm run build:client && npm run build:offline",
 		"build:client": "node scripts/build-client.js",
+		"gen:ship-rules": "node scripts/gen-ship-rules-client.js",
 		"build:offline": "node scripts/build-offline.js",
 		"build:app": "node scripts/build-app.js",
 		"build:client:watch": "node scripts/build-client.js --watch",

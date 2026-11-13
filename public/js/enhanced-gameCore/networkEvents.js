@@ -60,6 +60,12 @@ import { playSound } from '../audio/soundManager.js';
 import { mountMuteButton } from '../audio/muteButton.js';
 import { applyServerPieces, syncDealtPieces } from '../tetromino/dealer.js';
 import { expandPieceDelta, expandPlayerDelta, expandDisconnectedDelta } from '../utils/pieceDelta.js';
+import { vikingActive } from '../edition.js';
+import { keepSeatOnRejoin } from '../battle/seatHold.js';
+import { paintingEvent } from '../paintings/index.js';
+import {
+	SHIP_SOCKET_EVENTS, shipSocketDetail, chessMoveShipDetail, dispatchShipEvent,
+} from '../longships/shipEvents.js';
 
 // `king_detonation` and `island_decay` cap how many simultaneous
 // particle animations we'll spawn so a 100×100 detonation doesn't pin
@@ -297,6 +303,10 @@ function handleCellsClearing(payload) {
 }
 
 function handleChessMoveBroadcast(payload) {
+	// AI captures (check escapes) may come only as a chess_move.
+	if (vikingActive(gameState)) paintingEvent('chess_move', payload);
+	// Longship moves (embark/land/raid/boarded/seize) → 'tetches:ship'.
+	if (payload?.ship) dispatchShipEvent(chessMoveShipDetail(payload));
 	try {
 		const captured = payload?.capturedPiece;
 		if (!captured) return;
@@ -340,6 +350,7 @@ function handleChessMoveBroadcast(payload) {
  * @param {Object} payload See `server/sockets/chess.js`.
  */
 function handleChessCapture(payload) {
+	if (vikingActive(gameState)) paintingEvent('chess_capture', payload);
 	try {
 		if (!payload || !payload.at) return;
 		const x = Number(payload.at.x);
@@ -680,6 +691,7 @@ function handlePawnPromotionAvailable(payload) {
 }
 
 function handleKingCaptured(payload) {
+	if (vikingActive(gameState)) paintingEvent('king_captured', payload);
 	try {
 		const { captorId, captorName, defeatedId, defeatedName, defeatedColor, inheritedPawnCount } = payload || {};
 		if (!captorId || !defeatedId) return;
@@ -880,6 +892,8 @@ export function setupNetworkEvents(hooks = {}) {
 
 	NetworkManager.on('player_id', (payload) => {
 		if (!payload?.playerId) return;
+		// A reconnect mid Viking battle: the seat stays the identity.
+		if (keepSeatOnRejoin(payload.playerId)) return;
 		dispatchGameUpdate({ localPlayerId: payload.playerId });
 	});
 
@@ -908,6 +922,10 @@ export function setupNetworkEvents(hooks = {}) {
 	NetworkManager.on('row_cleared', handleRowCleared);
 	NetworkManager.on('cells_clearing', handleCellsClearing);
 	NetworkManager.on('chess_move', handleChessMoveBroadcast);
+	// Viking longships: every ship_* event → window 'tetches:ship'.
+	for (const eventName of Object.keys(SHIP_SOCKET_EVENTS)) {
+		NetworkManager.on(eventName, (payload) => dispatchShipEvent(shipSocketDetail(eventName, payload)));
+	}
 	NetworkManager.on('chess_capture', handleChessCapture);
 	NetworkManager.on('chessFailed', handleChessFailed);
 	NetworkManager.on('pawn_detonation', handlePawnDetonation);
@@ -929,6 +947,8 @@ export function setupNetworkEvents(hooks = {}) {
 	NetworkManager.on('chess_check', safe('chess_check', (payload) => {
 		try { onCheckStart(payload); }
 		catch (e) { console.warn('checkAlert start failed:', e); }
+		// Viking: a check by a piece fresh off a longship is a painting.
+		if (vikingActive(gameState)) paintingEvent('chess_check', payload);
 	}));
 	NetworkManager.on('chess_check_cleared', safe('chess_check_cleared', (payload) => {
 		try { onCheckClear(payload); }
@@ -1147,6 +1167,7 @@ export function setupNetworkEvents(hooks = {}) {
 	// confirmation toast for the local player.
 	NetworkManager.on('pawn_promotion_deployed', (payload) => {
 		if (!payload || !payload.pawnId) return;
+		if (vikingActive(gameState)) paintingEvent('promotion', payload);
 		const pieces = Array.isArray(gameState.chessPieces) ? gameState.chessPieces : null;
 		if (pieces) {
 			const stale = pieces.find(p => p && String(p.id) === String(payload.pawnId));
@@ -1169,6 +1190,7 @@ export function setupNetworkEvents(hooks = {}) {
 
 	NetworkManager.on('promotion_credit_redeemed', (payload) => {
 		if (!payload || !payload.creditId) return;
+		if (vikingActive(gameState)) paintingEvent('promotion', payload);
 		const isLocal = payload.playerId && payload.playerId === gameState.localPlayerId;
 		if (isLocal) {
 			const list = Array.isArray(gameState.promotionCredits) ? gameState.promotionCredits : [];

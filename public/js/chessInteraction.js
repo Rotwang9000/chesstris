@@ -29,6 +29,13 @@ import { updateNextPieceHint } from './tetromino/nextPiece.js';
 import { showToastMessage } from './showToastMessage.js';
 import { showFrozenPawnPromotionDialog } from './uiOverlays.js';
 import { displaySponsorInfo } from '../utils/sponsors.js';
+import { shipRulesActive, cellItems, shipEntryAt, SHIP_REFUSAL_TEXT } from './longships/shipEnv.js';
+import { cellHasShip, isMoored } from './viking/shipRulesClient.js';
+import {
+	trySailLaneClick, pickShipEntry, handleShipClick, clearShipSelection,
+	showLanesForPassenger, SHIP_DECK_Y, waterSquareUnderPointer, selectedShipId,
+} from './longships/shipControls.js';
+import { passengerPose } from './viking/shipRenderer.js';
 
 /**
  * In-flight chess move tracker.
@@ -354,6 +361,11 @@ export function performRaycast() {
 
 	raycaster.setFromCamera(mouse, camera);
 
+	// Viking battles: a sail-lane tile sails, when it is the nearest
+	// thing under the pointer (a piece, ring or land in front keeps it).
+	const shipsLive = shipRulesActive(gameState);
+	if (shipsLive && trySailLaneClick(raycaster)) return;
+
 	if (tryMoveViaHighlightRaycast(raycaster)) return;
 
 	const pieceIntersections = chessPiecesGroup
@@ -388,6 +400,7 @@ export function performRaycast() {
 	// the depth-sorted intersections so a closer instanced cell isn't
 	// lost to a farther individual one (or vice versa).
 	let cellHit = null;
+	let cellHitDistance = Infinity;
 	for (let i = 0; i < boardIntersections.length; i++) {
 		const it = boardIntersections[i];
 		const obj = it.object;
@@ -400,6 +413,7 @@ export function performRaycast() {
 				? cellAt[it.instanceId] : null;
 			if (pos) {
 				cellHit = { userData: { type: 'cell', position: { x: pos.x, z: pos.z } } };
+				cellHitDistance = it.distance;
 				break;
 			}
 			continue;
@@ -413,6 +427,7 @@ export function performRaycast() {
 		}
 		if (parentObj.userData && parentObj.userData.type === 'cell') {
 			cellHit = parentObj;
+			cellHitDistance = it.distance;
 			break;
 		}
 	}
@@ -423,6 +438,36 @@ export function performRaycast() {
 		const cellPiece = findChessPieceMeshAt(cellHit.userData.position.x, cellHit.userData.position.z);
 		if (cellPiece) {
 			if (!chessPieceHit || chessPieceHit !== cellPiece) chessPieceHit = cellPiece;
+		}
+	}
+
+	// Viking battles: a longship's hull and sail stand in front of the
+	// pieces behind it. When the ship is nearer than any piece the ray
+	// meets, the click is the ship's (its passenger, if it has one).
+	if (shipsLive && chessPieceHit && cellHit?.userData?.ship && cellHit.userData.position) {
+		const pieceDistance = pieceIntersections.length ? pieceIntersections[0].distance : Infinity;
+		if (cellHitDistance < pieceDistance) {
+			chessPieceHit = findChessPieceMeshAt(cellHit.userData.position.x, cellHit.userData.position.z);
+		}
+	}
+
+	// Viking battles: a click on a longship (no piece in the way) picks
+	// the ship for sailing, or boards it when it is a legal target.
+	if (shipsLive && !chessPieceHit) {
+		const cellPos = cellHit?.userData?.position;
+		const landHit = !!(cellPos && !cellHasShip(cellItems(gameState, cellPos.x, cellPos.z)));
+		// The renderer's hull resolves to its square like a cell does.
+		const shipEntry = (cellPos && !landHit && shipEntryAt(gameState, cellPos.x, cellPos.z))
+			|| pickShipEntry(raycaster, { landHit, landDistance: cellHitDistance });
+		if (shipEntry && handleShipClick(shipEntry, moveChessPieceToCell)) return;
+		// Water with a ship selected and no lane there: say so, keep it.
+		if (!cellHit && selectedShipId()) {
+			const sq = waterSquareUnderPointer(raycaster);
+			const lanes = gameState.sailLanes || [];
+			if (sq && lanes.length && !lanes.some(l => l.x === sq.x && l.z === sq.z)) {
+				showToastMessage('A longship sails 1 to 5 squares in a straight line over open water: pick a tile.', { duration: 2500, aboveInfoCard: true });
+				return;
+			}
 		}
 	}
 
@@ -438,6 +483,14 @@ export function performRaycast() {
 					);
 					if (isCaptureTarget) {
 						moveChessPieceToCell(enemyPos.x, enemyPos.z);
+						return;
+					}
+					// A longship rule refuses this capture: say why.
+					const shipRefusal = gameState.selectedChessPiece && (gameState.shipRefusedMoves || []).find(
+						m => m.x === Number(enemyPos.x) && m.z === Number(enemyPos.z),
+					);
+					if (shipRefusal) {
+						showToastMessage(SHIP_REFUSAL_TEXT[shipRefusal.reason] || shipRefusal.message, { duration: 3500, aboveInfoCard: true });
 						return;
 					}
 				}
@@ -498,8 +551,14 @@ export function performRaycast() {
 			const isValidMove = (gameState.validMoves || []).some(
 				m => m.x === cellPosition.x && m.z === cellPosition.z,
 			);
+			const shipRefusal = !isValidMove && (gameState.shipRefusedMoves || []).find(
+				m => m.x === cellPosition.x && m.z === cellPosition.z,
+			);
 			if (isValidMove) {
 				moveChessPieceToCell(cellPosition.x, cellPosition.z);
+			} else if (shipRefusal) {
+				// A longship rule says no: say why, keep the selection.
+				showToastMessage(SHIP_REFUSAL_TEXT[shipRefusal.reason] || shipRefusal.message, { duration: 3500, aboveInfoCard: true });
 			} else {
 				clearChessSelection();
 			}
@@ -584,7 +643,24 @@ export function selectChessPiece(piece) {
 	const pieceType = String(piece.userData.pieceType || piece.userData.type || '').toUpperCase();
 	const isOwn = String(piece.userData.player) === String(gameState.currentPlayer);
 	// Selecting a boxed-in piece used to do nothing visible at all.
-	if (isOwn && (!Array.isArray(gameState.validMoves) || gameState.validMoves.length === 0)) {
+	const shipRefused = gameState.shipRefusedMoves || [];
+	const noMoves = !Array.isArray(gameState.validMoves) || gameState.validMoves.length === 0;
+	if (isOwn && noMoves && shipRefused.length > 0) {
+		// Boxed in by a longship rule (rowing, not moored): say which.
+		const why = shipRefused.find(m => m.reason === 'ship_rowing')
+			|| shipRefused.find(m => m.reason === 'ship_not_moored')
+			|| shipRefused[0];
+		const lanes = (gameState.sailLanes || []).length;
+		showToastMessage(lanes
+			? `${SHIP_REFUSAL_TEXT[why.reason] || why.message} Tap a tile on the water to sail.`
+			: (SHIP_REFUSAL_TEXT[why.reason] || why.message), { duration: 3500, aboveInfoCard: true });
+	} else if (isOwn && noMoves && (gameState.sailLanes || []).length > 0) {
+		const at = piece.userData.position || {};
+		const ashoreSoon = isMoored((x, z) => cellItems(gameState, x, z), Number(at.x), Number(at.z));
+		showToastMessage(ashoreSoon
+			? 'No square to step onto from here. Tap a tile on the water to sail.'
+			: 'Out at sea: sail next to land to step off. Tap a tile on the water to sail.', { duration: 3000, aboveInfoCard: true });
+	} else if (isOwn && noMoves) {
 		const movable = movablePieceNames(gameState, piece.userData.player);
 		showToastMessage(movable
 			? `This piece has nowhere to go yet. Try your ${movable}.`
@@ -643,9 +719,13 @@ export function showValidMoves(piece) {
 		orientation: Number.isFinite(piece.userData.orientation) ? piece.userData.orientation : 0
 	};
 
-	const validMoves = boardFunctions.getChessPieceMoveSets(gameState, pieceData);
+	const shipOut = { refused: [] };
+	const validMoves = boardFunctions.getChessPieceMoveSets(gameState, pieceData, shipOut);
 	gameState.validMoves = validMoves;
+	gameState.shipRefusedMoves = shipOut.refused;
 	highlightValidMoves(validMoves);
+	// Viking battles: a piece aboard your ship shows the ship's lanes too.
+	if (shipRulesActive(gameState)) showLanesForPassenger(pieceData);
 }
 
 export function highlightValidMoves(validMoves) {
@@ -693,6 +773,11 @@ export function highlightValidMoves(validMoves) {
 				color: captureColour, transparent: true, opacity: 0.9,
 				side: THREE.DoubleSide, depthTest: false, depthWrite: false,
 			}),
+			// Viking battles: stepping onto a longship (embark / seize).
+			matShip: new THREE.MeshBasicMaterial({
+				color: 0xffcc33, transparent: true, opacity: 0.92,
+				side: THREE.DoubleSide, depthTest: false, depthWrite: false,
+			}),
 			// Invisible full-cell click target. The ring has a hole in
 			// the middle, exactly where people click, and the board
 			// fallback in tryPriorityChessMoveClick can't resolve
@@ -710,13 +795,16 @@ export function highlightValidMoves(validMoves) {
 		const isCapture = !!(occupant && selectedPlayer !== undefined && String(occupant.player) !== String(selectedPlayer));
 
 		const geometry = hlCache.geo;
-		const material = isCapture ? hlCache.matCapture : hlCache.matMove;
+		// Viking battles: a ring on a longship square sits on its deck.
+		const onShip = move.ship === 'embark' || move.ship === 'seize' || move.ship === 'boarded';
+		const material = isCapture ? hlCache.matCapture
+			: ((move.ship === 'embark' || move.ship === 'seize') && hlCache.matShip ? hlCache.matShip : hlCache.matMove);
 
 		const highlight = new THREE.Mesh(geometry, material);
 		highlight.name = 'moveHighlight';
 		highlight.renderOrder = 999;
 		highlight.rotation.x = -Math.PI / 2;
-		highlight.position.set(absPos.x, 0.46, absPos.z);
+		highlight.position.set(absPos.x, onShip ? SHIP_DECK_Y : 0.46, absPos.z);
 
 		highlight.userData = { moveTarget: true, x: move.x, z: move.z, isCapture };
 		highlight.add(new THREE.Mesh(hlCache.hitGeo, hlCache.hitMat));
@@ -759,7 +847,9 @@ export function clearChessSelection() {
 	gameState.selectedChessPiece = null;
 	gameState.selectedHoveredPlayer = null;
 	gameState.validMoves = [];
+	gameState.shipRefusedMoves = [];
 	clearMoveHighlights();
+	if (gameState.selectedShipId || window.sailLanesGroup) clearShipSelection();
 	hideDetonateButton();
 	try { setInfoCardPiece(null); } catch (_e) { /* card is non-critical */ }
 	clearAdjacentClickGuard();
@@ -962,8 +1052,14 @@ function handleChessMoveRejection({
 			clearInFlightMove(gameState);
 			gameState._forceUpdate = true;
 		});
+		// Viking battles: the "square" was a longship that sailed on.
+		const shipTarget = (gameState.validMoves || []).find(
+			m => m && m.ship && m.x === attemptedX && m.z === attemptedZ,
+		);
 		const message = reason === 'destination_missing'
-			? 'That square is gone — board refreshed. Please pick a different target.'
+			? (shipTarget
+				? 'That longship sailed off before you reached it. Pick another target.'
+				: 'That square is gone — board refreshed. Please pick a different target.')
 			: (responseData?.error || 'Move could not be applied — please try again.');
 		try { showToastMessage(message, { duration: 4500 }); } catch (_) { /* toast best-effort */ }
 		keepChessMode();
@@ -990,6 +1086,13 @@ function handleChessMoveRejection({
 		attacker_locked: 'That piece is committed to the check — wait for the defender.',
 		check_not_escaped: 'Your king is still threatened — pick a move that escapes.',
 		king_in_check: 'That king is already in check — wait for it to resolve.',
+		// Viking battles: longship refusals (server/battle/shipRules.js).
+		cannot_board: SHIP_REFUSAL_TEXT.cannot_board,
+		ship_rowing: SHIP_REFUSAL_TEXT.ship_rowing,
+		ship_not_moored: SHIP_REFUSAL_TEXT.ship_not_moored,
+		aboard_no_king_attack: SHIP_REFUSAL_TEXT.aboard_no_king_attack,
+		ship_to_ship: SHIP_REFUSAL_TEXT.ship_to_ship,
+		path_blocked_by_ship: SHIP_REFUSAL_TEXT.path_blocked_by_ship,
 	};
 	const friendly = reason && reasonToText[reason];
 	const errorMessage = friendly
@@ -1008,11 +1111,23 @@ export function animateChessPieceMove(piece, _fromX, _fromZ, toX, toZ, onComplet
 	}
 
 	const endAbs = translatePosition({ x: toX, z: toZ }, gameState, true);
+	// Viking longships: stepping aboard lands on the deck down on the
+	// sea, stepping ashore climbs back up to land height. Null / false
+	// everywhere else, so every other move hops exactly as before.
+	let deck = null;
+	try { deck = passengerPose(gameState, toX, toZ); } catch (_e) { deck = null; }
+	const restY = deck ? deck.y : (piece.userData?.aboard ? 0.5 : piece.position.y);
+	const endX = deck ? deck.x : endAbs.x;
+	const endZ = deck ? deck.z : endAbs.z;
 	const startPos = { x: piece.position.x, y: piece.position.y, z: piece.position.z };
-	const endPos = { x: endAbs.x, y: piece.position.y + 0.6, z: endAbs.z };
-	const finalPos = { x: endAbs.x, y: piece.position.y, z: endAbs.z };
+	const endPos = { x: endX, y: Math.max(piece.position.y, restY) + 0.6, z: endZ };
+	const finalPos = { x: endX, y: restY, z: endZ };
 
 	const duration = 500;
+	// The ship renderer carries whatever stands on its square each frame;
+	// let this hop fly (on or off the deck) until it lands.
+	const shipHop = !!(deck || piece.userData?.aboard);
+	if (shipHop && piece.userData) piece.userData.hopUntil = Date.now() + duration + 400;
 
 	const upTween = new TWEEN.Tween(startPos)
 		.to(endPos, duration / 2)
@@ -1025,6 +1140,7 @@ export function animateChessPieceMove(piece, _fromX, _fromZ, toX, toZ, onComplet
 		.onUpdate(() => { piece.position.set(endPos.x, endPos.y, endPos.z); })
 		.onComplete(() => {
 			if (piece.userData) piece.userData.position = { x: toX, z: toZ };
+			if (shipHop && piece.userData) piece.userData.hopUntil = 0;
 			if (onComplete) onComplete();
 		});
 

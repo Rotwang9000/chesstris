@@ -11,6 +11,7 @@
 
 import { getShape, getColourCss } from './shapes.js';
 import { isTouchPrimary } from '../utils/inputMode.js';
+import { avoidRect } from '../showToastMessage.js';
 
 const HUD_ID = 'next-tetromino-display';
 const CANVAS_ID = 'next-tetromino-canvas';
@@ -167,7 +168,9 @@ export function updateNextPieceHint(gameState) {
 		hint.textContent = isTouchPrimary() ? 'Tap to start tetris turn' : 'Click to start tetris turn';
 		hint.style.color = '#4CAF50';
 		hint.style.opacity = '1';
-		showFirstChessTurnHint();
+		// A Viking battle's first chess turn introduces the longships
+		// (once per device); otherwise the usual chess-turn tip.
+		if (!(gameState?.activeBattle?.edition === 'viking' && showFirstLongshipHint())) showFirstChessTurnHint();
 	} else {
 		hint.textContent = isTouchPrimary()
 			? 'Tetris turn — tap \u27F3 to rotate'
@@ -190,6 +193,7 @@ export function updateNextPieceHint(gameState) {
 
 const FIRST_DROP_HINT_KEY = 'tetches_seen_rotation_hint_v1';
 const FIRST_CHESS_HINT_KEY = 'tetches_seen_chess_turn_hint_v1';
+const FIRST_LONGSHIP_HINT_KEY = 'tetches_seen_longship_hint_v1';
 const KBD_STYLE = 'background:#222;border:1px solid #777;padding:0 4px;border-radius:3px;';
 const tipsShown = new Set();
 let dismissActiveTip = null;
@@ -213,16 +217,28 @@ function showFirstChessTurnHint() {
 		+ `Nothing worth moving? ${verb} <b style="color:#ffcc00;">NEXT PIECE</b> to skip to your next block.`);
 }
 
+// Viking battles: nothing in the battle said how to board or sail.
+function showFirstLongshipHint() {
+	const touch = isTouchPrimary();
+	const verb = touch ? 'Tap' : 'Click';
+	const key = touch ? '' : ` (or press <kbd style="${KBD_STYLE}">L</kbd>)`;
+	return showOneTimeTip(FIRST_LONGSHIP_HINT_KEY,
+		`<b style="color:#ffcc00;">\u26F5 Longships.</b> Move a knight, bishop, rook or queen onto the gold ring on your ship, `
+		+ `then ${verb.toLowerCase()} <b style="color:#ffcc00;">\u26F5 Longship</b>${key} and a green tile to sail.<br>`
+		+ 'Land beside an enemy shore to raid it.', [], 14000);
+}
+
 /**
  * Show a tip once per device (localStorage key), or once per page load
  * if storage is blocked. A newer tip replaces one still on screen.
- * Dismissed by any click, Escape, one of `dismissKeys`, or after 10 s.
+ * Dismissed by any click, Escape, one of `dismissKeys`, or after
+ * `lingerMs` (10 s). Returns whether it was shown now.
  */
-function showOneTimeTip(storageKey, messageHtml, dismissKeys = []) {
-	if (tipsShown.has(storageKey)) return;
+function showOneTimeTip(storageKey, messageHtml, dismissKeys = [], lingerMs = 10000) {
+	if (tipsShown.has(storageKey)) return false;
 	tipsShown.add(storageKey);
 	try {
-		if (window.localStorage && window.localStorage.getItem(storageKey)) return;
+		if (window.localStorage && window.localStorage.getItem(storageKey)) return false;
 	} catch (_) {
 		// localStorage might be blocked; just show it once per page load.
 	}
@@ -277,8 +293,43 @@ function showOneTimeTip(storageKey, messageHtml, dismissKeys = []) {
 	document.addEventListener('keydown', onKey, true);
 	document.addEventListener('click', dismiss, true);
 	document.body.appendChild(banner);
+	keepTipClear(banner);
 	dismissActiveTip = dismiss;
-	timer = setTimeout(dismiss, 10000);
+	timer = setTimeout(dismiss, lingerMs);
+	return true;
+}
+
+/**
+ * Viking edition: a tip that would sit on the player's own longship
+ * (avoidRect, set only while ships are drawn) moves above it, or below
+ * it when there is no room above.
+ */
+function keepTipClear(banner) {
+	// (only while a Viking battle draws the player's longship: never in
+	// the standard game)
+	const r = avoidRect();
+	if (!r) return;
+	const b = banner.getBoundingClientRect();
+	if (!(b.height > 0)) return;
+	// Keep clear of the ship and of the buttons the tip is about (the
+	// Longship / Skip stack, the piece card): a tip on top of the button
+	// it names is no help.
+	const rectOf = (id) => {
+		const el = document.getElementById(id);
+		if (!el || el.style.display === 'none') return null;
+		const q = el.getBoundingClientRect();
+		return q.height > 0 && q.width > 0 ? q : null;
+	};
+	const avoid = [r, rectOf('turn-action-stack'), rectOf('selected-piece-card')].filter(Boolean);
+	const vh = window.innerHeight;
+	const clearAt = (top) => top >= 8 && top + b.height <= vh - 8
+		&& !avoid.some(a => b.left < a.right && b.right > a.left && top < a.bottom && top + b.height > a.top);
+	if (clearAt(b.top)) return;
+	const tops = [r.top - 12 - b.height, vh * 0.7 - b.height / 2, vh * 0.32 - b.height / 2,
+		vh * 0.82 - b.height / 2, r.bottom + 12, vh * 0.22 - b.height / 2];
+	const top = tops.find(clearAt);
+	if (top === undefined) return;
+	banner.style.top = `${Math.round(top + b.height / 2)}px`;
 }
 
 function flashWaitMessage(text) {

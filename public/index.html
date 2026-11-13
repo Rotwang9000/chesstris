@@ -21,6 +21,26 @@
 					document.documentElement.dataset.offline = '1';
 				}
 			} catch (e) { /* no URL params */ }
+			// Edition (see js/edition.js): `?edition=viking` switches it on
+			// and is remembered across visits (so the installed app keeps
+			// it); `?edition=standard` forgets it. A packaged build can set
+			// `window.__TETCHES_EDITION__` instead. Allow-listed: anything
+			// else is the standard game.
+			try {
+				var KEY = 'tetches_edition', ed = null, q = null;
+				try { q = new URLSearchParams(location.search).get('edition'); } catch (e) { /* no URL params */ }
+				if (q === 'viking') {
+					ed = q;
+					try { localStorage.setItem(KEY, q); } catch (e) { /* storage blocked */ }
+				} else if (q === 'standard') {
+					try { localStorage.removeItem(KEY); } catch (e) { /* storage blocked */ }
+				}
+				if (!ed && q !== 'standard' && window.__TETCHES_EDITION__ === 'viking') ed = 'viking';
+				if (!ed && q !== 'standard') {
+					try { if (localStorage.getItem(KEY) === 'viking') ed = 'viking'; } catch (e) { /* storage blocked */ }
+				}
+				if (ed) document.documentElement.dataset.edition = ed;
+			} catch (e) { /* the standard game */ }
 		})();
 	</script>
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
