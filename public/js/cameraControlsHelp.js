@@ -23,6 +23,10 @@
  */
 
 import { isCameraRelativeControls, setCameraRelativeControls } from './controlSettings.js';
+import { getGameState } from './gameContext.js';
+import { vikingActive } from './edition.js';
+import { VIKING_RULES, vikingControls } from './battle/vikingRules.js';
+import { isTouchPrimary } from './utils/inputMode.js';
 
 const ZOOM_STEP = 0.18;
 const PAN_STEP = 0.6;
@@ -273,36 +277,29 @@ function wireButton() {
 function buildHelpOverlay() {
 	const root = document.createElement('div');
 	root.id = 'camera-controls-help';
+	// Look from the shared `.tx-*` UI theme (index.html); layout here.
+	root.className = 'tx-scrim';
 	Object.assign(root.style, {
 		position: 'fixed', inset: '0',
 		display: 'none', alignItems: 'center', justifyContent: 'center',
-		backgroundColor: 'rgba(0, 0, 0, 0.7)',
 		zIndex: '12500',
-		fontFamily: 'Playfair Display, Times New Roman, serif',
 	});
 	root.addEventListener('click', (e) => {
 		if (e.target === root) hideHelpOverlay();
 	});
 
 	const card = document.createElement('div');
-	Object.assign(card.style, {
-		maxWidth: '420px',
-		width: 'min(90vw, 420px)',
-		background: '#111',
-		border: '2px solid #ffcc00',
-		borderRadius: '8px',
-		boxShadow: '0 0 30px rgba(255, 204, 0, 0.4)',
-		padding: '18px 22px 16px',
-		color: '#eee',
-	});
+	card.className = 'tx-panel tx-dialog';
+	card.setAttribute('role', 'dialog');
+	card.setAttribute('aria-label', 'Camera & keyboard controls');
 	card.addEventListener('click', (e) => e.stopPropagation());
 
+	// Phones and tablets: the touch controls (they have no keyboard or
+	// mouse, and the list was all keys and buttons).
+	const touch = isTouchPrimary();
 	const title = document.createElement('div');
-	title.textContent = 'Camera & keyboard controls';
-	Object.assign(title.style, {
-		color: '#ffcc00', fontSize: '18px', fontWeight: 'bold',
-		marginBottom: '12px',
-	});
+	title.textContent = touch ? 'Touch controls' : 'Camera & keyboard controls';
+	title.className = 'tx-title';
 
 	// Interactive preference (not just a cheatsheet row). Lives here so
 	// it's always reachable from the "Controls" button, and stays in
@@ -310,8 +307,20 @@ function buildHelpOverlay() {
 	const camRelToggle = buildCameraRelativeToggle();
 
 	const list = document.createElement('div');
-	Object.assign(list.style, { fontSize: '13px', lineHeight: '1.6' });
-	const items = [
+	list.className = 'tx-keys';
+	const touchItems = [
+		['Turn the camera', 'Drag with one finger'],
+		['Pan and zoom', 'Two fingers: drag to pan, pinch to zoom'],
+		['Reset camera', 'Tap "Reset Camera"'],
+		['—', ''],
+		['Move tetromino', 'The arrow pad (bottom of the screen)'],
+		['Rotate tetromino', 'The ⟳ button'],
+		['Drop it', 'The ⬇ button'],
+		['—', ''],
+		['Chess move', 'Tap a piece, then a green square'],
+		['Skip chess move', 'The Skip button under Next piece'],
+	];
+	const keyItems = [
 		['Rotate view', 'Mouse drag (left button) — or , / . to orbit'],
 		['Orbit (chess phase)', 'Q / E (yields to tetromino during a fall)'],
 		['Tilt view', 'F to tilt down, R to tilt up (R only outside tetris)'],
@@ -325,52 +334,61 @@ function buildHelpOverlay() {
 		['Hard drop tetromino', 'Spacebar'],
 		['Skip chess move', 'Spacebar (when no chess move available)'],
 		['Clear chess selection', 'Escape'],
-		['Toggle debug mode', 'Ctrl + D'],
 	];
-	for (const [k, v] of items) {
+	for (const [k, v] of (touch ? touchItems : keyItems)) {
 		const row = document.createElement('div');
-		Object.assign(row.style, {
-			display: 'flex', justifyContent: 'space-between', gap: '12px',
-			padding: '3px 0',
-			borderTop: k === '—' ? '1px solid rgba(255, 204, 0, 0.25)' : 'none',
-		});
 		if (k === '—') {
-			row.style.padding = '6px 0 0 0';
+			row.className = 'tx-key-gap';
 			list.appendChild(row);
 			continue;
 		}
+		row.className = 'tx-key-row';
 		const keyEl = document.createElement('div');
+		keyEl.className = 'tx-key-name';
 		keyEl.textContent = k;
-		Object.assign(keyEl.style, { color: '#ffcc00', minWidth: '120px' });
 		const valEl = document.createElement('div');
+		valEl.className = 'tx-key-what';
 		valEl.textContent = v;
-		Object.assign(valEl.style, { color: '#ddd', textAlign: 'right', flex: '1 1 auto' });
 		row.appendChild(keyEl);
 		row.appendChild(valEl);
 		list.appendChild(row);
 	}
 
 	const note = document.createElement('div');
-	Object.assign(note.style, { fontSize: '11px', color: '#888', marginTop: '12px' });
+	note.className = 'tx-note';
+	note.style.marginTop = '12px';
 	note.textContent = 'No pinch / wheel on your device? Use + and − to zoom.';
 
+	const closeRow = document.createElement('div');
+	closeRow.className = 'tx-actions';
 	const closeBtn = document.createElement('button');
+	closeBtn.type = 'button';
+	closeBtn.className = 'tx-btn tx-btn--primary';
 	closeBtn.textContent = 'Close';
-	Object.assign(closeBtn.style, {
-		marginTop: '14px',
-		padding: '6px 14px',
-		background: '#333', color: '#ffcc00',
-		border: '1px solid #ffcc00', borderRadius: '4px',
-		cursor: 'pointer', float: 'right',
-		fontFamily: 'inherit',
-	});
 	closeBtn.addEventListener('click', hideHelpOverlay);
+	// "More below": the list runs on under the pinned footer on a short
+	// screen (the longship rows were cut at the footer with no cue).
+	const more = document.createElement('button');
+	more.type = 'button';
+	more.className = 'tx-scroll-cue';
+	more.textContent = 'More below ▾';
+	more.addEventListener('click', () => card.scrollBy({ top: Math.round(card.clientHeight * 0.7), behavior: 'smooth' }));
+	closeRow.appendChild(more);
+	closeRow.appendChild(closeBtn);
+	card.addEventListener('scroll', () => markMore(card), { passive: true });
 
 	card.appendChild(title);
-	card.appendChild(camRelToggle);
+	// (the toggle and the zoom note are about keys: not on a touch screen)
+	if (!touch) card.appendChild(camRelToggle);
 	card.appendChild(list);
-	card.appendChild(note);
-	card.appendChild(closeBtn);
+	if (!touch) card.appendChild(note);
+	// Viking edition / Viking battles: longship controls and rules,
+	// filled on each open (see renderVikingHelp).
+	const viking = document.createElement('div');
+	viking.id = 'help-viking-section';
+	viking.style.display = 'none';
+	card.appendChild(viking);
+	card.appendChild(closeRow);
 	root.appendChild(card);
 	document.body.appendChild(root);
 	return root;
@@ -387,27 +405,20 @@ function buildHelpOverlay() {
 function buildCameraRelativeToggle() {
 	const row = document.createElement('label');
 	row.htmlFor = 'cam-rel-controls-overlay-toggle';
-	Object.assign(row.style, {
-		display: 'flex', alignItems: 'flex-start', gap: '10px',
-		cursor: 'pointer', userSelect: 'none',
-		background: 'rgba(255, 204, 0, 0.08)',
-		border: '1px solid rgba(255, 204, 0, 0.4)',
-		borderRadius: '6px', padding: '10px 12px', marginBottom: '14px',
-	});
+	row.className = 'tx-toggle-row';
 
 	const input = document.createElement('input');
 	input.type = 'checkbox';
 	input.id = 'cam-rel-controls-overlay-toggle';
 	input.checked = isCameraRelativeControls();
-	Object.assign(input.style, { cursor: 'pointer', marginTop: '2px' });
 
 	const text = document.createElement('div');
 	const heading = document.createElement('div');
 	heading.textContent = 'Rotate controls with view';
-	Object.assign(heading.style, { color: '#ffcc00', fontWeight: 'bold', fontSize: '14px' });
+	heading.className = 'tx-toggle-title';
 	const sub = document.createElement('div');
 	sub.textContent = "Arrow keys follow the camera — Left always nudges the piece left on screen, whichever way you've spun the board. Off by default.";
-	Object.assign(sub.style, { color: '#bbb', fontSize: '11px', marginTop: '2px', lineHeight: '1.4' });
+	sub.className = 'tx-toggle-sub';
 	text.appendChild(heading);
 	text.appendChild(sub);
 
@@ -430,13 +441,66 @@ function buildCameraRelativeToggle() {
 	return row;
 }
 
+/** The longship section of the help card, shown only when Viking is live. */
+function renderVikingHelp() {
+	const section = document.getElementById('help-viking-section');
+	if (!section) return;
+	let live = false;
+	try { live = vikingActive(getGameState()); } catch (_e) { live = false; }
+	section.style.display = live ? 'block' : 'none';
+	// (the card scrolls itself: max-height in the theme)
+	if (!live || section.childElementCount > 0) return;
+	section.className = 'tx-section';
+	const title = document.createElement('div');
+	// (the drawn longship of the Longship card, not the ⛵ emoji)
+	const icon = document.createElement('span');
+	icon.className = 'tx-longship-icon';
+	icon.setAttribute('aria-hidden', 'true');
+	title.appendChild(icon);
+	title.appendChild(document.createTextNode('Longships (Viking battles)'));
+	title.className = 'tx-section-title';
+	section.appendChild(title);
+	const keys = document.createElement('div');
+	keys.className = 'tx-keys';
+	for (const [k, v] of vikingControls(isTouchPrimary())) {
+		const row = document.createElement('div');
+		row.className = 'tx-key-row';
+		const keyEl = document.createElement('div');
+		keyEl.className = 'tx-key-name';
+		keyEl.textContent = k;
+		const valEl = document.createElement('div');
+		valEl.className = 'tx-key-what';
+		valEl.textContent = v;
+		row.appendChild(keyEl);
+		row.appendChild(valEl);
+		keys.appendChild(row);
+	}
+	section.appendChild(keys);
+	const list = document.createElement('ol');
+	for (const line of VIKING_RULES) {
+		const li = document.createElement('li');
+		li.textContent = line;
+		list.appendChild(li);
+	}
+	section.appendChild(list);
+}
+
 export function showHelpOverlay() {
 	if (!helpOverlay) helpOverlay = buildHelpOverlay();
+	renderVikingHelp();
 	// Re-sync the toggle from the stored preference each open, in case it
 	// was changed via the player-bar footer toggle since we last built it.
 	const t = document.getElementById('cam-rel-controls-overlay-toggle');
 	if (t) t.checked = isCameraRelativeControls();
 	helpOverlay.style.display = 'flex';
+	const card = helpOverlay.querySelector('.tx-dialog');
+	if (card) markMore(card);
+}
+
+/** Is there more of the card below the fold? (`data-more` shows the cue) */
+function markMore(card) {
+	const more = card.scrollHeight - card.clientHeight - card.scrollTop > 24;
+	card.dataset.more = more ? '1' : '0';
 }
 
 export function hideHelpOverlay() {

@@ -20,6 +20,7 @@ import {
 import { showToastMessage } from './showToastMessage.js';
 import { playSound, initSoundManager } from './audio/soundManager.js';
 import { setupKeyboardChess } from './keyboardChess.js';
+import { installShipControls } from './longships/shipControls.js';
 import { setupTouchGestures } from './touchGestures.js';
 import { setupTouchControlPad } from './touchControlPad.js';
 
@@ -137,6 +138,8 @@ export function setupInputHandlers() {
 	// touch-capable devices so mobile players have a discoverable
 	// control surface alongside the gestures.
 	setupKeyboardChess();
+	// Viking battles: Longship HUD button + L key (inert elsewhere).
+	installShipControls();
 	setupTouchGestures();
 	setupTouchControlPad();
 }

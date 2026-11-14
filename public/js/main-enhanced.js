@@ -18,10 +18,12 @@ import { initFloatingBanner } from './floatingBanner.js'; // Import floating ban
 import { initSponsorSystem } from '../utils/sponsors.js'; // Import sponsor system
 import { disposeBoats } from './boatsRenderer.js';
 import { initSaveReminder } from './auth/saveReminder.js';
-import { initBattleMode } from './battle/battleMode.js';
+import { initBattleMode, keepBattleSeatOnRejoin } from './battle/battleMode.js';
 import { initLiteMode, liteModeRequested } from './liteMode.js';
 import { showKingdomRestoreDialog } from './kingdomRestoreDialog.js';
 import { initAppShell } from './offline/appShell.js';
+import { isViking } from './edition.js';
+import { startPaintings } from './paintings/index.js';
 
 
 // Global state
@@ -76,7 +78,7 @@ function setupRenderModeToggle(profile) {
 	button.dataset.bound = '1';
 
 	button.addEventListener('click', () => {
-		const current = resolveRenderProfile();
+		const current = normalizeRenderProfile(document.documentElement.dataset.renderProfile) || resolveRenderProfile();
 		const idx = RENDER_PROFILES.indexOf(current);
 		const next = RENDER_PROFILES[(idx + 1) % RENDER_PROFILES.length];
 
@@ -308,6 +310,9 @@ async function init() {
 		wireTetrominoSocketListeners();
 		try { initBattleMode(gameState); }
 		catch (err) { console.warn('Battle mode init failed:', err); }
+
+		// Viking edition: paintings of the great moments (js/paintings/).
+		if (isViking()) startPaintings();
 		
 		console.log('Enhanced game initialized successfully');
 	} catch (error) {
@@ -634,7 +639,8 @@ async function joinGameAfterConnection(gameId = null) {
 			console.log('Successfully joined game:', currentGameId);
 			
 			// Update local player ID if provided
-			if (result.playerId) {
+			// (a reconnect mid Viking battle keeps the seat as the identity)
+			if (result.playerId && !keepBattleSeatOnRejoin(result.playerId)) {
 				gameState.localPlayerId = result.playerId;
 				console.log('Local player ID set to:', gameState.localPlayerId);
 			}
@@ -656,7 +662,9 @@ async function joinGameAfterConnection(gameId = null) {
 			}
 			
 			// Update window title with world ID
-			document.title = `Tetches - World ${currentGameId}`;
+			document.title = isViking()
+				? `Tetches — Viking · World ${currentGameId}`
+				: `Tetches - World ${currentGameId}`;
 			
 			// Show in URL but don't reload page
 			const url = new URL(window.location);

@@ -12,6 +12,11 @@
  *                       the second-rightmost valid move.
  *   Enter / Space     - Confirm the highlighted move.
  *   Escape            - Cancel the current selection.
+ *   L                 - Viking battles: select your longship (again
+ *                       for the next). Arrows then pick a sail lane
+ *                       and Enter sails (js/longships/shipControls.js).
+ *                       A selected passenger's arrows cycle its moves
+ *                       and its ship's lanes together.
  *
  * The keyboard cursor is rendered as a brighter ring on top of the
  * existing move-highlight mesh; no separate render path is needed.
@@ -28,6 +33,8 @@ import {
 	moveChessPieceToCell,
 } from './chessInteraction.js';
 import { playSound } from './audio/soundManager.js';
+import { sailTo, selectedShipId, currentSailLanes, markLaneCursor } from './longships/shipControls.js';
+import { findShip } from './longships/shipEnv.js';
 
 let attached = false;
 let cursorIndex = -1;
@@ -110,39 +117,61 @@ function sortMovesByDirection(moves, from, direction) {
 	return moves.slice().sort((a, b) => scoreOf(a) - scoreOf(b));
 }
 
+/**
+ * Everything the cursor can land on: the selected piece's moves, plus
+ * (Viking battles) the selected longship's sail lanes, tagged `lane`.
+ */
+function cursorTargets(gameState) {
+	const moves = gameState?.selectedChessPiece && Array.isArray(gameState.validMoves) ? gameState.validMoves : [];
+	const lanes = selectedShipId() ? currentSailLanes().map(l => ({ x: l.x, z: l.z, lane: true })) : [];
+	return lanes.length ? moves.concat(lanes) : moves;
+}
+
+/** Where the cursor measures from: the piece, else the selected ship. */
+function cursorOrigin(gameState) {
+	const piece = gameState?.selectedChessPiece;
+	if (piece) {
+		return {
+			x: Number(piece.userData?.position?.x ?? 0),
+			z: Number(piece.userData?.position?.z ?? 0),
+		};
+	}
+	const ship = selectedShipId() ? findShip(gameState, selectedShipId()) : null;
+	return ship ? { x: ship.x, z: ship.z } : null;
+}
+
 function moveCursor(direction) {
 	const gameState = getGameState();
-	const piece = gameState?.selectedChessPiece;
-	if (!piece) {
+	const from = cursorOrigin(gameState);
+	if (!from) {
 		// No selection — pretend Arrow Right is Tab.
 		cyclePiece(direction === 'right' || direction === 'down' ? 1 : -1);
 		return;
 	}
-	const validMoves = Array.isArray(gameState.validMoves) ? gameState.validMoves : [];
+	const validMoves = cursorTargets(gameState);
 	if (validMoves.length === 0) {
 		try { playSound('error'); } catch (_e) { /* sound is best-effort */ }
 		return;
 	}
-	const from = {
-		x: Number(piece.userData?.position?.x ?? 0),
-		z: Number(piece.userData?.position?.z ?? 0),
-	};
 	const sorted = sortMovesByDirection(validMoves, from, direction);
 	cursorIndex = (cursorIndex + 1) % sorted.length;
 	const target = sorted[cursorIndex];
-	gameState._keyboardCursor = { x: target.x, z: target.z };
+	gameState._keyboardCursor = { x: target.x, z: target.z, lane: !!target.lane };
 	highlightKeyboardCursor(target);
 	try { playSound('tick'); } catch (_e) { /* sound is best-effort */ }
 }
 
 function highlightKeyboardCursor(target) {
 	const gameState = getGameState();
-	if (!gameState || !window.moveHighlightsGroup) return;
+	if (!gameState) return;
+	// Sail lanes (Viking battles) mark their own cursor tile.
+	markLaneCursor(target && target.lane ? target : null);
+	if (!window.moveHighlightsGroup) return;
 	// Walk the existing move-highlight meshes and bump the alpha /
 	// emissive on the one that matches the cursor. Reset the rest.
 	for (const child of window.moveHighlightsGroup.children) {
 		if (!child || !child.userData) continue;
-		const isCursor = Number(child.userData.x) === Number(target.x)
+		const isCursor = !target.lane && Number(child.userData.x) === Number(target.x)
 			&& Number(child.userData.z) === Number(target.z);
 		if (child.material) {
 			// Keep existing color but boost opacity/emissive for cursor.
@@ -166,7 +195,8 @@ function confirmMove() {
 		try { playSound('error'); } catch (_e) { /* sound is best-effort */ }
 		return;
 	}
-	moveChessPieceToCell(Number(cursor.x), Number(cursor.z));
+	if (cursor.lane) sailTo(Number(cursor.x), Number(cursor.z));
+	else moveChessPieceToCell(Number(cursor.x), Number(cursor.z));
 	gameState._keyboardCursor = null;
 	cursorIndex = -1;
 }

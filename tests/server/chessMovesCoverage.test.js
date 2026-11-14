@@ -780,3 +780,46 @@ describe('basic gameplay regressions', () => {
 		expect(w.chessManager.isValidChessMove(w.game, rook, 1, 0)).toBe(true);
 	});
 });
+
+describe('phase skip: a sail counts as a chess-phase action (Viking battles)', () => {
+	const World = require('../../server/world/World');
+	const fixtures = require('./shipFixtures');
+	const ships = require('../../server/battle/ships');
+
+	let chess;
+	beforeEach(() => {
+		fixtures.vikingWorld();
+		chess = fixtures.managers().chessManager;
+		// A king boxed in on a one-square island: no chess move at all.
+		fixtures.piece('k', 'KING', -10, 0);
+	});
+
+	const phaseAction = () => ships.hasChessPhaseAction(World.getWorld(), 's0', chess);
+
+	test('no chess move and no ship: the phase is skipped (unchanged behaviour)', () => {
+		expect(chess.hasValidChessMoves(World.getWorld(), 's0')).toBe(false);
+		expect(phaseAction()).toBe(false);
+	});
+
+	test('no chess move, but a ship that can sail: the phase is kept', () => {
+		fixtures.ship(5, 5, { shipId: 'drakkar' });
+		expect(chess.hasValidChessMoves(World.getWorld(), 's0')).toBe(false);
+		expect(phaseAction()).toBe(true);
+	});
+
+	test('a rowing ship, an enemy ship, or a standard battle does not keep it', () => {
+		fixtures.ship(5, 5, { shipId: 'rowing', readyAt: Date.now() + 3000 });
+		fixtures.ship(-5, 5, { shipId: 'foe', player: 's1' });
+		expect(phaseAction()).toBe(false);
+		World.getWorld().board.cells[`${fixtures.at(5, 5).x},${fixtures.at(5, 5).z}`][0].readyAt = 0;
+		expect(phaseAction()).toBe(true);
+		fixtures.battle().edition = 'standard';
+		expect(phaseAction()).toBe(false);
+	});
+
+	test('the shared world is untouched: it is exactly hasValidChessMoves', () => {
+		World.getWorld().players.world1 = { id: 'world1' };
+		expect(ships.hasChessPhaseAction(World.getWorld(), 'world1', chess)).toBe(false);
+		expect(ships.canSailAnyFor(World.getWorld(), 'world1')).toBe(false);
+	});
+});

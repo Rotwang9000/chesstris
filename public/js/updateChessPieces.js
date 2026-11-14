@@ -5,6 +5,9 @@ import { highlightSinglePiece, setChessPiecesGroup } from './pieceHighlightManag
 import { translatePosition } from './centreBoardMarker.js';
 import { setPieceMatrixStatic } from './pieceMatrixState.js';
 import { isCellVisibleInCurrentView } from './battle/battleRules.js';
+import { passengerPose } from './viking/shipRenderer.js';
+import { vikingPieceFinish } from './viking/pieceFinish.js';
+import { vikingLandWanted } from './viking/landDress.js';
 
 
 // Add a timer to track when chess pieces were last updated
@@ -242,6 +245,8 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 		// cell, then forward again when the ack lands.
 		const PIN_SAFETY_MS = 2000;
 		const inFlight = gameState?.inFlightMove;
+		let vikingFinishWanted = false;
+		try { vikingFinishWanted = vikingLandWanted(gameState); } catch (_e) { vikingFinishWanted = false; }
 		const inFlightId = inFlight?.pieceId ? String(inFlight.pieceId) : null;
 		const inFlightStillValid = inFlight && (
 			!Number.isFinite(inFlight.startedAt)
@@ -268,6 +273,10 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 				// Get the position and orientation of the piece
 				const { x, z } = piece.position;
 				const orientation = piece.orientation || 0;
+				// Viking longships: a piece on a ship square stands on its
+				// deck down on the sea (null everywhere else).
+				const aboard = passengerPose(gameState, x, z);
+				const restY = aboard ? aboard.y : 0.5;
 				
 				// Check if we already have this piece at this location
 				const existingPiece = existingPieceMap[pieceId];
@@ -317,7 +326,7 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 						const adjustX = absPos.x;
 						const adjustZ = absPos.z;
 						
-						pieceMesh.position.set(adjustX, 0.5, adjustZ);
+						pieceMesh.position.set(adjustX, restY, adjustZ);
 						chessPiecesGroup.add(pieceMesh);
 						
 						piecesCreated++;
@@ -348,9 +357,9 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 						if (!isAirborne && !isPinned && (
 							existingPiece.position.x !== adjustX
 							|| existingPiece.position.z !== adjustZ
-							|| existingPiece.position.y !== 0.5
+							|| existingPiece.position.y !== restY
 						)) {
-							existingPiece.position.set(adjustX, 0.5, adjustZ);
+							existingPiece.position.set(adjustX, restY, adjustZ);
 						}
 
 						// Continue processing this piece in the shared positioning/userData block below
@@ -442,9 +451,9 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 					const adjustX = absPos.x;
 					const adjustZ = absPos.z;
 					
-					pieceMesh.position.x = adjustX;
-					pieceMesh.position.z = adjustZ;
-					pieceMesh.position.y = 0.5; // Half-height above cell
+					pieceMesh.position.x = aboard ? aboard.x : adjustX;
+					pieceMesh.position.z = aboard ? aboard.z : adjustZ;
+					pieceMesh.position.y = restY; // Half-height above cell (or on deck)
 					
 					
 					// For orientation 0(facing up): main pieces at bottom, pawns above
@@ -454,11 +463,15 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 
 					// Use Y-axis rotation to rotate pieces horizontally rather than tipping them over
 					const orientationVal = Number.isFinite(piece.orientation) ? piece.orientation : 0;
-					pieceMesh.rotation.y = orientationVal * Math.PI / 2;
+					// Aboard a longship the passenger faces the prow.
+					pieceMesh.rotation.y = (aboard && Number.isFinite(aboard.heading))
+						? aboard.heading
+						: orientationVal * Math.PI / 2;
 
 					// Use richer local-piece scale and lighter opponent meshes for speed.
 					const localPiece = isLocalPlayerPiece(piece, gameState);
-					const renderScale = localPiece ? 1.0 : 0.78;
+					const renderScale = (localPiece ? 1.0 : 0.78) * (aboard ? aboard.scale : 1);
+					pieceMesh.userData.aboard = !!aboard;
 					if (!pieceMesh.userData.scaleSet || pieceMesh.userData.renderScale !== renderScale) {
 						pieceMesh.scale.set(renderScale, renderScale, renderScale);
 						pieceMesh.userData.scaleSet = true;
@@ -517,6 +530,9 @@ export function updateChessPieces(chessPiecesGroup, camera, gameState) {
 					
 					// Make sure piece is visible
 					pieceMesh.visible = true;
+					// Viking edition: carved bone and soapstone, not glossy
+					// plastic (a no-op in the standard game).
+					if (vikingFinishWanted || pieceMesh.userData.vkFinish) vikingPieceFinish(pieceMesh, vikingFinishWanted);
 					
 					// Log positioning for debugging
 					// console.log(`Piece positioned at (${adjustX}, ${adjustZ}) relative to centre (${centreX}, ${centreZ})`);

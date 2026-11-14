@@ -13,14 +13,19 @@
  * • A bright line on the water marking the sea's edge: everything
  *   outside it is gone. It steps in by one cell where the block is.
  *
- * Purely visual: the server sinks the cells and the normal board
- * updates remove them. Timing comes from the battle's `sea` (see
- * battleRules.js / server/battle/sea.js).
+ * The server sinks the cells and its board updates remove them, but the
+ * block keeps the server's time on our clock (battleRules.js learns the
+ * clock offset from every server-stamped update), so the cells it
+ * reaches go at once here too: waiting for the update showed the block
+ * gliding on while the ground it had passed stayed up, for seconds on a
+ * busy device (`sinkReachedCells`). Sink times are a pure function of
+ * the battle (see battleRules.js / server/battle/sea.js), so the
+ * server's update then agrees.
  */
 
 import { getScene, getTHREE, getGameState } from '../gameContext.js';
 import { translatePosition } from '../centreBoardMarker.js';
-import { cellsSinkingBetween, serverNow, seaBlockAt, seaSpiral } from './battleRules.js';
+import { cellsSinkingBetween, serverNow, seaBlockAt, seaSpiral, noteServerClock } from './battleRules.js';
 import { SEA_SURFACE_Y } from '../seaLevel.js';
 
 const HUD_ID = 'tetches-sea-hud';
@@ -36,6 +41,12 @@ const BLOCK_HEIGHT = BLOCK_TOP - SEA_SURFACE_Y; // and reaches down into the sea
 const BLOCK_COLOUR = 0x0b4fb3;
 const FOAM_COLOUR = 0xffffff;
 const SPLASH_MS = 650;
+/** A cell the block reached waits this long for the server's own update
+ * (which redraws the board anyway) before we redraw it ourselves. */
+const LOCAL_SINK_REDRAW_MS = 150;
+/** Server updates re-check this much of the block's recent path, in
+ * case a late update put back a cell the sea has already taken. */
+const RESINK_WINDOW_MS = 5000;
 
 let rafId = null;
 let lastSlowFrame = 0;
@@ -45,6 +56,8 @@ const tiles = new Map();     // "x,z" → mesh
 let edge = null;             // { group, key, material }
 let block = null;            // { group, lastIndex }
 const splashes = [];         // { mesh, born }
+let sunkThrough = { battleId: null, index: -1 }; // spiral cells already sunk here
+let redrawTimer = null;
 
 function formatClock(ms) {
 	const s = Math.max(0, Math.ceil(ms / 1000));
@@ -89,6 +102,34 @@ function ensureHud() {
 	});
 	document.body.appendChild(hud);
 	return hud;
+}
+
+/**
+ * Viking battles: on a phone the Longship button (first in the turn
+ * action stack, top right) sits where the centred banner goes, and the
+ * banner would hide its rowing ring. Drop the banner under the stack
+ * when they overlap; put it back when they don't.
+ */
+function keepClearOfActionStack(hud) {
+	const stack = document.getElementById('turn-action-stack');
+	const home = window.innerWidth < 600 ? 124 : 58;
+	const visible = (el) => el && el.offsetParent !== null && el.getBoundingClientRect().height > 0;
+	const shown = stack ? [...stack.children].filter(visible) : [];
+	if (shown.length === 0) {
+		hud.style.top = `${home}px`;
+		return;
+	}
+	hud.style.top = `${home}px`;
+	const h = hud.getBoundingClientRect();
+	let bottom = 0;
+	for (const el of shown) {
+		const r = el.getBoundingClientRect();
+		if (h.left < r.right && h.right > r.left && h.top < r.bottom && h.bottom > r.top) bottom = Math.max(bottom, r.bottom);
+	}
+	if (bottom > 0) {
+		const stackBottom = Math.max(...shown.map(el => el.getBoundingClientRect().bottom));
+		hud.style.top = `${Math.round(Math.max(bottom, stackBottom) + 8)}px`;
+	}
 }
 
 function removeHud() {
@@ -344,6 +385,110 @@ function clearEdge() {
 	edge = null;
 }
 
+// ── Sinking the cells the block reaches ─────────────────────────────────────
+
+function isShipItem(item) {
+	return !!item && typeof item === 'object' && item.type === 'ship';
+}
+
+/** A longship's square: its sinking (and its crew's) is the server's. */
+function holdsShip(cell) {
+	if (Array.isArray(cell)) return cell.some(isShipItem);
+	if (cell && Array.isArray(cell.contents)) return cell.contents.some(isShipItem);
+	return isShipItem(cell);
+}
+
+/**
+ * Take the cells the block has reached (spiral index ≤ the block's at
+ * server time `now`) off `board`, as the server does at the same moment.
+ * Each cell goes once per battle; `rescanFrom` re-checks cells from that
+ * index on (an update may have put one back). Ship squares are left to
+ * the server. Pure apart from `board` and the progress marker.
+ * @returns {string[]} keys removed
+ */
+export function sinkReachedCells(board, battle, now, { rescanFrom = null, pieces = null, piecesGone = null } = {}) {
+	const sea = battle?.sea;
+	const cells = board?.cells;
+	if (!sea || !battle.centre || !sea.cellMs || !cells || !Number.isFinite(now)) return [];
+	const path = seaSpiral(sea.outerBand).cells;
+	const reached = Math.min(path.length - 1, Math.floor((now - sea.startsAt) / sea.cellMs));
+	const battleId = battle.id ?? battle.code ?? null;
+	if (sunkThrough.battleId !== battleId) sunkThrough = { battleId, index: -1 };
+	const from = rescanFrom === null
+		? sunkThrough.index + 1
+		: Math.max(0, Math.min(sunkThrough.index + 1, rescanFrom));
+	const gone = [];
+	// Pieces standing there go under too, as on the server: waiting for
+	// its update left whole armies standing on open water on a busy
+	// device. (A ship's square keeps its crew: the server sinks ships.)
+	const drowned = Array.isArray(pieces) && pieces.length > 0 ? new Set() : null;
+	for (let i = from; i <= reached; i++) {
+		const key = `${battle.centre.x + path[i].dx},${battle.centre.z + path[i].dz}`;
+		const cell = cells[key];
+		if (cell !== undefined && holdsShip(cell)) continue;
+		if (drowned) drowned.add(key);
+		if (cell === undefined) continue;
+		delete cells[key];
+		gone.push(key);
+	}
+	if (drowned && drowned.size > 0) {
+		for (let i = pieces.length - 1; i >= 0; i--) {
+			const pos = pieces[i]?.position || pieces[i];
+			if (!pos || !drowned.has(`${pos.x},${pos.z}`)) continue;
+			const [piece] = pieces.splice(i, 1);
+			if (Array.isArray(piecesGone)) piecesGone.push(piece);
+		}
+	}
+	if (reached > sunkThrough.index) sunkThrough.index = reached;
+	return gone;
+}
+
+/** Redraw the board soon, unless a server update gets there first. */
+function scheduleBoardRedraw() {
+	if (redrawTimer) return;
+	redrawTimer = setTimeout(() => {
+		redrawTimer = null;
+		try {
+			if (typeof window !== 'undefined' && typeof window.updateBoardVisuals === 'function') window.updateBoardVisuals();
+		} catch (_e) { /* the next update redraws */ }
+	}, LOCAL_SINK_REDRAW_MS);
+}
+
+function cancelBoardRedraw() {
+	if (!redrawTimer) return;
+	clearTimeout(redrawTimer);
+	redrawTimer = null;
+}
+
+/**
+ * Every server-stamped update: learn the server's clock from it, and
+ * before it is drawn, keep the sea's cells sunk (the update redraws the
+ * board, so ours can wait). Runs ahead of the game's own handler
+ * (capture phase).
+ */
+export function onServerUpdate(event) {
+	const detail = event?.detail;
+	if (!detail || typeof detail !== 'object') return;
+	const gameState = getGameState();
+	const battle = gameState?.activeBattle;
+	if (detail.timestamp != null) {
+		const best = noteServerClock(detail.timestamp);
+		if (battle?.sea && best !== null) battle.sea.clockOffset = best;
+	}
+	if (!detail.board) return;
+	cancelBoardRedraw();
+	if (!battle?.sea || (battle.id ?? battle.code ?? null) !== sunkThrough.battleId) return;
+	const back = Math.ceil(RESINK_WINDOW_MS / battle.sea.cellMs);
+	sinkReachedCells(detail.board, battle, serverNow(battle), {
+		rescanFrom: sunkThrough.index - back,
+		pieces: Array.isArray(detail.chessPieces) ? detail.chessPieces : null,
+	});
+}
+
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+	window.addEventListener('gameupdate', onServerUpdate, true);
+}
+
 // ── Frame loop ──────────────────────────────────────────────────────────────
 
 function frame() {
@@ -355,19 +500,36 @@ function frame() {
 		return;
 	}
 	const now = serverNow(battle);
+	// Each part on its own: one failing (rendering not ready yet) must
+	// not freeze the others.
 	try {
 		drawBlock(battle, now);
 		animateSplashes();
-		const wall = performance.now();
-		if (wall - lastSlowFrame >= SLOW_FRAME_MS) {
-			lastSlowFrame = wall;
-			const text = seaHudText(battle.sea, now);
-			if (text) ensureHud().textContent = text;
-			else removeHud();
-			drawTiles(battle, now);
-			drawEdge(battle, now);
-		}
 	} catch (_e) { /* rendering not ready yet */ }
+	// The ground the block has reached goes now (after drawBlock, which
+	// splashes where there was ground).
+	try {
+		const piecesGone = [];
+		const cellsGone = sinkReachedCells(gameState.board, battle, now, {
+			pieces: Array.isArray(gameState.chessPieces) ? gameState.chessPieces : null,
+			piecesGone,
+		});
+		if (cellsGone.length > 0 || piecesGone.length > 0) scheduleBoardRedraw();
+	} catch (_e) { /* the server's update removes them */ }
+	const wall = performance.now();
+	if (wall - lastSlowFrame >= SLOW_FRAME_MS) {
+		lastSlowFrame = wall;
+		try {
+			const text = seaHudText(battle.sea, now);
+			if (text) {
+				const hud = ensureHud();
+				hud.textContent = text;
+				if (battle.edition === 'viking') keepClearOfActionStack(hud);
+			} else removeHud();
+		} catch (_e) { /* no document yet */ }
+		try { drawTiles(battle, now); } catch (_e) { /* rendering not ready yet */ }
+		try { drawEdge(battle, now); } catch (_e) { /* rendering not ready yet */ }
+	}
 	rafId = requestAnimationFrame(frame);
 }
 
@@ -388,6 +550,8 @@ export function stopSeaOverlay() {
 	clearEdge();
 	removeBlock();
 	clearSplashes();
+	cancelBoardRedraw();
+	sunkThrough = { battleId: null, index: -1 };
 	if (group?.parent) group.parent.remove(group);
 	group = null;
 	removeHud();

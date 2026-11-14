@@ -513,6 +513,12 @@ function updateUnreadBadge() {
  * filter toggle changes, since the existing DOM rows may now be a
  * mismatched subset.
  */
+function emptyListText() {
+	return filterMineOnly
+		? 'Nothing of yours yet. Your moves and captures appear here.'
+		: 'Nothing yet. Moves and captures appear here.';
+}
+
 function rerenderList() {
 	if (!listElement) return;
 	listElement.innerHTML = '';
@@ -528,6 +534,7 @@ function setFilterMineOnly(value) {
 	if (next === filterMineOnly) return;
 	filterMineOnly = next;
 	try { window.localStorage?.setItem(FILTER_PREF_KEY, next ? '1' : '0'); } catch (_) {}
+	if (listElement) listElement.dataset.emptyText = emptyListText();
 	if (filterToggleEl) {
 		filterToggleEl.checked = next;
 		filterToggleEl.parentElement.title = next
@@ -560,10 +567,16 @@ export function loadActivityLogSnapshot(snapshot) {
 	rerenderList();
 }
 
+// Slid off the right edge (it floats 72px in from it).
+const CLOSED_TRANSFORM = 'translateX(calc(100% + 90px))';
+
 function openPanel() {
 	if (!panelElement) return;
 	isOpen = true;
 	panelElement.style.transform = 'translateX(0)';
+	panelElement.style.visibility = 'visible';
+	panelElement.style.transitionDelay = '0s';
+	panelElement.dataset.open = '1';
 	if (eventBuffer.length > 0) {
 		lastSeenEventId = Math.max(lastSeenEventId, ...eventBuffer.map(e => e.id));
 	}
@@ -573,7 +586,10 @@ function openPanel() {
 function closePanel() {
 	if (!panelElement) return;
 	isOpen = false;
-	panelElement.style.transform = 'translateX(360px)';
+	panelElement.style.transform = CLOSED_TRANSFORM;
+	panelElement.style.visibility = 'hidden';
+	panelElement.style.transitionDelay = '0s, 0.3s';
+	delete panelElement.dataset.open;
 	updateUnreadBadge();
 }
 
@@ -588,9 +604,15 @@ export function ensureActivityLogUI() {
 	panelElement.id = 'activity-log-panel';
 	Object.assign(panelElement.style, {
 		position: 'fixed',
-		right: '0',
-		top: '60px',
-		bottom: '60px',
+		// A popover beside its round button (bottom right): up by the
+		// Next piece panel it covered half of. Phones: a bottom sheet
+		// (index.html).
+		right: '72px',
+		bottom: '16px',
+		// Sized to what it lists (an empty log was a tall dark slab),
+		// never up into the top-right HUD.
+		maxHeight: 'min(460px, calc(100vh - 380px))',
+		minHeight: '160px',
 		width: '340px',
 		backgroundColor: 'rgba(10, 10, 10, 0.93)',
 		borderLeft: '2px solid #ffcc00',
@@ -601,8 +623,9 @@ export function ensureActivityLogUI() {
 		zIndex: '11500',
 		display: 'flex',
 		flexDirection: 'column',
-		transform: 'translateX(360px)',
-		transition: 'transform 0.3s ease-in-out',
+		transform: CLOSED_TRANSFORM,
+		visibility: 'hidden',
+		transition: 'transform 0.3s ease-in-out, visibility 0s linear 0.3s',
 		fontFamily: 'Playfair Display, Times New Roman, serif',
 	});
 
@@ -654,9 +677,13 @@ export function ensureActivityLogUI() {
 	header.appendChild(closeBtn);
 
 	bodyElement = document.createElement('div');
-	Object.assign(bodyElement.style, { flex: '1 1 auto', overflowY: 'auto' });
+	Object.assign(bodyElement.style, { flex: '1 1 auto', minHeight: '0', overflowY: 'auto' });
 
 	listElement = document.createElement('div');
+	// Empty (nothing yet, or "Only mine" filters everything out): the
+	// UI theme shows this text in its place.
+	listElement.className = 'activity-log-list';
+	listElement.dataset.emptyText = emptyListText();
 	bodyElement.appendChild(listElement);
 
 	const footer = document.createElement('div');
@@ -684,17 +711,12 @@ export function ensureActivityLogUI() {
 		// next-piece HUD, Skip-chess button or the Advertise link.
 		right: '16px',
 		bottom: '16px',
-		width: '40px',
-		height: '40px',
-		borderRadius: '50%',
-		border: '2px solid #ffcc00',
-		backgroundColor: 'rgba(0, 0, 0, 0.7)',
-		color: '#ffcc00',
-		fontSize: '18px',
-		cursor: 'pointer',
 		zIndex: '11600',
-		boxShadow: '0 0 10px rgba(255, 204, 0, 0.4)',
 	});
+	// Size and look: `.tx-round-btn` in the UI theme (index.html).
+	toggleButton.className = 'tx-round-btn';
+	toggleButton.type = 'button';
+	toggleButton.setAttribute('aria-label', 'Recent activity');
 	toggleButton.addEventListener('click', toggleActivityLog);
 	document.body.appendChild(toggleButton);
 

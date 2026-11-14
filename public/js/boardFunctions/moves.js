@@ -14,6 +14,7 @@ import {
 	extractCellContent,
 	getPiecesForPlayer,
 } from './cells.js';
+import { applyShipRules, shipRulesActive } from '../longships/shipEnv.js';
 
 const KING_OFFSETS = [
 	{ dx: -1, dz: -1 }, { dx: 0, dz: -1 }, { dx: 1, dz: -1 },
@@ -226,7 +227,14 @@ function addPawnMoves(gameState, piece, validMoves, pieceIndex) {
 	}
 }
 
-export function getChessPieceMoveSets(gameState, piece) {
+/**
+ * @param {Object} gameState
+ * @param {Object} piece
+ * @param {{refused?: Array}} [out] Viking battles: receives the moves a
+ *        longship rule refuses (`{x, z, reason, message}`), so a click
+ *        on one can say why instead of silently deselecting.
+ */
+export function getChessPieceMoveSets(gameState, piece, out = null) {
 	if (!piece || !piece.position) {
 		console.warn('Invalid piece provided to getChessPieceMoveSets');
 		return [];
@@ -259,6 +267,14 @@ export function getChessPieceMoveSets(gameState, piece) {
 			console.warn(`Unknown piece type: ${pieceType}`);
 	}
 
+	// Viking battles only: the longship rules (boarding, rowing,
+	// mooring, no king attacks from aboard, ships block sliders), from
+	// the generated mirror of server/battle/shipRules.js.
+	if (shipRulesActive(gameState)) {
+		const { moves, refused } = applyShipRules(gameState, { ...piece, type: pieceType }, validMoves);
+		if (out) out.refused = refused;
+		return moves;
+	}
 	return validMoves;
 }
 

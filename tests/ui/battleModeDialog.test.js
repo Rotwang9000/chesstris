@@ -261,7 +261,8 @@ describe('battleMode client', () => {
 		await new Promise(resolve => setTimeout(resolve, 0));
 
 		expect(mockSocket.emit).toHaveBeenCalledWith(
-			'battle_create', { seatCount: 2, botDifficulty: 'hard', mode: 'classic' }, expect.any(Function)
+			// A rematch keeps the finished battle's edition (standard here).
+			'battle_create', { seatCount: 2, botDifficulty: 'hard', mode: 'classic', edition: 'standard' }, expect.any(Function)
 		);
 		expect(mockSocket.emit).toHaveBeenCalledWith(
 			'battle_start', { battleId: 'NEXT01' }, expect.any(Function)

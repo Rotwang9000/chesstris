@@ -3,6 +3,7 @@
  */
 
 const World = require('../world/World');
+const ships = require('../battle/ships');
 const { checkForDefender } = require('../king/pendingChecks');
 const { PLAYER_SETTINGS } = require('../game/Constants');
 const { getCooldownRemainingMs } = require('../utils/cooldowns');
@@ -259,7 +260,10 @@ function registerTetrominoHandlers(socket, ctx) {
 			broadcaster.broadcastGameUpdate();
 
 			lineClearService.runCascade({ world, playerId }).then((totals) => {
-				const hasValidMoves = gameManager.chessManager.hasValidChessMoves(world, playerId);
+				// Viking: a seat whose only action is a sail keeps its chess
+				// phase (sailing is that phase's other move). Elsewhere this
+				// is exactly hasValidChessMoves.
+				const hasValidMoves = ships.hasChessPhaseAction(world, playerId, gameManager.chessManager);
 
 				if (!hasValidMoves) {
 					io.to(world.id).emit('no_valid_chess_moves', {

@@ -262,6 +262,10 @@ class TetrominoManager {
 			for (const pos of adjacentPositions) {
 				const adjacentCell = this.boardManager.getCell(game.board, pos.x, pos.z);
 				if (!adjacentCell || adjacentCell.length === 0) continue;
+				// A longship is water, not land: neither the ship item nor
+				// a passenger's chess marker on it lets you build there —
+				// otherwise a ship would be a first-block launch pad.
+				if (cells.hasShip(adjacentCell)) continue;
 
 				const hasPlayerContent = adjacentCell.some(itemIsLiveOwnedContent);
 				if (!hasPlayerContent) continue;

@@ -28,6 +28,18 @@ export function setChessPiecesGroup(group) {
 	chessPiecesGroup = group;
 }
 
+/**
+ * A piece's resting scale. Always 1, except a Viking longship passenger,
+ * which stands smaller on the narrow deck (updateChessPieces sets
+ * `userData.aboard` and `userData.renderScale`): selecting or clearing a
+ * passenger must not blow it back up to land size.
+ */
+function restScale(piece) {
+	if (!piece?.userData?.aboard) return 1;
+	const s = Number(piece.userData.renderScale);
+	return Number.isFinite(s) && s > 0 ? s : 1;
+}
+
 // Current-player pieces get a faint ring so the player knows which are theirs
 export function highlightCurrentPlayerPieces(currentPlayerId) {
 	const THREE = getTHREE();
@@ -63,7 +75,7 @@ export function removePlayerPiecesHighlight() {
 		const hasSelected = !!piece.getObjectByName('selected-highlight') ||
 			!!piece.getObjectByName('selected-indicator');
 		if (!hasSelected && !(piece.userData?._isSelected)) {
-			piece.scale.set(1, 1, 1);
+			piece.scale.setScalar(restScale(piece));
 			bakePieceMatrixIfStatic(piece);
 		}
 	});
@@ -76,7 +88,7 @@ export function highlightSinglePiece(piece, options = {}) {
 	const mode = options.mode || 'hover';
 	const isSelected = mode === 'selected';
 	const ringColour = options.color ?? (isSelected ? 0xFFD200 : 0xFFD700);
-	const pieceScale = options.scale ?? (isSelected ? 1.12 : 1.0);
+	const pieceScale = (options.scale ?? (isSelected ? 1.12 : 1.0)) * restScale(piece);
 
 	removeHighlightMeshes(piece, [
 		'hover-highlight', 'selected-highlight', 'selected-indicator'
@@ -132,7 +144,7 @@ export function clearSinglePieceHighlight(piece) {
 		'hover-highlight', 'selected-highlight', 'selected-indicator'
 	]);
 	if (piece.userData?._isSelected) delete piece.userData._isSelected;
-	piece.scale.set(1, 1, 1);
+	piece.scale.setScalar(restScale(piece));
 	bakePieceMatrixIfStatic(piece);
 }
 

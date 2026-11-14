@@ -1,0 +1,146 @@
+{
+	"version": 1,
+	"base": "/img/paintings/",
+	"paintings": {
+		"arrival.queen": {
+			"file": "arrival.queen.v1.webp",
+			"alt": "A queen with long braids and a green cloak steps from a beached longship onto a timber jetty, shield-bearers lining the shore of a misty fjord at dawn."
+		},
+		"capture.knight.bishop": {
+			"file": "capture.knight.bishop.v1.webp",
+			"alt": "A helmed rider in a red cloak rears his grey horse in the surf before a white-robed seer with a carved crook staff, on a stony shore under a storm."
+		},
+		"kingfall.blade": {
+			"file": "kingfall.blade.v1.webp",
+			"alt": "In a smoky mead hall a grey-bearded king in furs kneels in the straw, his gold circlet fallen, as a young warrior in a red cloak stands over him with a sword."
+		},
+		"battle.victory": {
+			"file": "battle.victory.v1.webp",
+			"alt": "A crowned king in a fur mantle and a queen in a green cloak stand on a headland at sunset as warriors raise their spears and longships sail home below."
+		},
+		"battle.defeat": {
+			"file": "battle.defeat.v1.webp",
+			"alt": "In driving rain a grey-bearded jarl in a fur mantle sits bowed on a rock by the shore, his sword point-down beside him and his banner trampled in the mud, as a longship sails off into the mist and two ravens watch from a fence post."
+		},
+		"kingfall.siege": {
+			"file": "kingfall.siege.v1.webp",
+			"alt": "Before the smoking gate of a snowbound timber stockade, a grey-bearded king in furs and a gold circlet kneels and offers up his sword to a chieftain in a red cloak, ringed by warriors with round shields."
+		},
+		"capture": {
+			"file": "capture.v1.webp",
+			"alt": "On a surf-washed shore under a misty fjord, a warrior in a red tunic charges with his spear raised as a man in dark blue falls to one knee in the waves, his shield held over his head and his spear lost on the stones."
+		},
+		"capture.pawn": {
+			"file": "capture.pawn.v1.webp",
+			"alt": "In a muddy field by a sunlit fjord farm, a barefoot youth in a white tunic, wicker shield up and spear levelled, drives back a mailed warrior in a steel helm who stumbles away."
+		},
+		"capture.knight": {
+			"file": "capture.knight.v2.webp",
+			"alt": "A rider in a red cloak and iron helm leaps his dappled grey horse over a dry-stone wall on a heather slope above a sunlit fjord, sword raised, as a barefoot youth falls back into the heather with his wicker shield thrown up too late and his spear on the ground."
+		},
+		"capture.bishop": {
+			"file": "capture.bishop.v1.webp",
+			"alt": "On a clifftop under a thunderstorm a white-robed seer with a carved crook staff raises a gale that tears the shield from a warrior in a red cloak and sends it spinning over the sea."
+		},
+		"capture.rook": {
+			"file": "capture.rook.v1.webp",
+			"alt": "A towering huscarl with a red-quartered round shield and a raised axe plants his foot on a timber palisade by the sea and forces back a warrior in a dark tunic, spearmen crowding behind him at sunset."
+		},
+		"capture.queen": {
+			"file": "capture.queen.v1.webp",
+			"alt": "A queen with long braids and a green cloak strides along a pebble beach, sword drawn and a shield wall at her back, as a mailed warrior falls sprawling onto the stones before her."
+		},
+		"capture.king": {
+			"file": "capture.king.v1.webp",
+			"alt": "Before a carved timber hall in the snow, a grey-bearded king in a great fur cloak and gold crown crosses swords with a young challenger in a white tunic and red sleeves while the household looks on."
+		},
+		"capture.pawn.queen": {
+			"file": "capture.pawn.queen.v1.webp",
+			"alt": "On a plank bridge over a misty birch-wood stream at sunrise, a barefoot youth with a wicker shield thrusts his spear at a startled queen in a green cloak, her red shield raised."
+		},
+		"capture.knight.rook": {
+			"file": "capture.knight.rook.v1.webp",
+			"alt": "A rider in a red cloak sails over a timber stockade on a leaping grey horse as a broad huscarl below swings his axe up at him behind a painted round shield."
+		},
+		"capture.knight.queen": {
+			"file": "capture.knight.queen.v1.webp",
+			"alt": "On a fjord shore at sunset a rider in a red cloak gallops past on a grey horse and snatches away a banner, while a queen in a green cloak with long braids lunges after it and her guards run up."
+		},
+		"capture.queen.knight": {
+			"file": "capture.queen.knight.v1.webp",
+			"alt": "On a windswept moor a queen in a green cloak seizes the bridle of a rearing black horse as its rider in dark blue is dragged down to his knees beside it."
+		},
+		"capture.bishop.knight": {
+			"file": "capture.bishop.knight.v1.webp",
+			"alt": "Among standing stones on a headland under a storm, a white-robed seer raises his hand and crook staff and a black horse rears back in fright, throwing its rider in a dark blue cloak."
+		},
+		"capture.rook.pawn": {
+			"file": "capture.rook.pawn.v1.webp",
+			"alt": "A huge bearded huscarl in a red cloak, axe raised and painted shield on his arm, wades through a river ford as a barefoot youth with a wicker shield and spear reels back into the water."
+		},
+		"capture.rook.bishop": {
+			"file": "capture.rook.bishop.v1.webp",
+			"alt": "On a heather headland beside a tall standing stone, a mailed huscarl in a red cloak, axe on his shoulder and painted round shield on his arm, stands over a white-bearded seer who kneels with bowed head, his carved crook staff lying in the grass."
+		},
+		"capture.queen.rook": {
+			"file": "capture.queen.rook.v1.webp",
+			"alt": "On a snowy fjord shore at sunset a queen with long braids, a silver circlet and a green cloak holds her sword over a mailed huscarl who kneels with bowed head, his round shield and axe lying in the snow."
+		},
+		"arrival.rook": {
+			"file": "arrival.rook.v1.webp",
+			"alt": "A shield-bearing huscarl with an axe leaps from the dragon prow of a longship into the surf of a rocky shore at sunrise, its mailed crew at the oars and more warriors coming down the misty headland."
+		},
+		"arrival.bishop": {
+			"file": "arrival.bishop.v1.webp",
+			"alt": "A white-bearded seer with a carved crook staff steps down from a beached longship between two shield-bearing warriors, ravens wheeling over a headland of standing stones."
+		},
+		"arrival.knight": {
+			"file": "arrival.knight.v1.webp",
+			"alt": "A helmed warrior in a red cloak leads a dappled grey horse splashing ashore beside a plank from a moored longship, in a sunlit fjord ringed by mountains."
+		},
+		"ship.embark": {
+			"file": "ship.embark.v1.webp",
+			"alt": "Warriors with round shields wade out to a dragon-prowed longship in a mountain fjord at sunrise, while a red-cloaked figure and a helmed rider on a grey horse wait on the timber jetty."
+		},
+		"ship.setsail": {
+			"file": "ship.setsail.v1.webp",
+			"alt": "A longship under a white and crimson striped sail pulls away from the harbour on its oars, watched from the jetty by a woman in a green cloak with a long braid, a boy and a grey-bearded old man."
+		},
+		"ship.landing": {
+			"file": "ship.landing.v1.webp",
+			"alt": "A dragon-headed longship drives into the surf and warriors leap from it onto a pebble beach, where two startled men with a spear and a red shield turn to face them."
+		},
+		"ship.raid": {
+			"file": "ship.raid.v1.webp",
+			"alt": "At moonrise raiders pour from a beached longship onto a pale shore and charge a timber palisade gate held by shield-bearing spearmen, as smoke rises from a hall beyond."
+		},
+		"ship.raidcheck": {
+			"file": "ship.raidcheck.v1.webp",
+			"alt": "A grey-bearded king in a fur cloak and gold crown stands on the steps of his carved hall as a column of shielded warriors marches up the snowy shore from a longship under a stormy sky."
+		},
+		"ship.boarded": {
+			"file": "ship.boarded.v1.webp",
+			"alt": "Two longships grappled together with ropes and chains in a rough sea, warriors with swords and shields leaping the gunwales to fight hand to hand."
+		},
+		"ship.seized": {
+			"file": "ship.seized.v1.webp",
+			"alt": "Strangers have taken a beached longship at sunset: one climbs the mast to hoist a blue and white striped sail, another stands on deck, and two more watch from the rocks."
+		},
+		"ship.lifeboat": {
+			"file": "ship.lifeboat.v1.webp",
+			"alt": "Under a black storm sky a crew rows a small longship hard through white-capped waves as the sea closes over a low sandy island behind them."
+		},
+		"ship.lost": {
+			"file": "ship.lost.v1.webp",
+			"alt": "Lightning splits the sky as a longship with a torn purple-striped sail founders in towering waves, its last crew clinging on at the bow."
+		},
+		"ship.emptysunk": {
+			"file": "ship.emptysunk.v1.webp",
+			"alt": "An empty dragon-prowed longship settles into a calm fjord at sunset, its striped sail trailing in the water while gulls circle overhead."
+		},
+		"ship.newkeel": {
+			"file": "ship.newkeel.v1.webp",
+			"alt": "Under a boatshed roof shipwrights raise the tall curved stem of a new longship on the shore, while a woman holding a lantern looks on and others plane the planks."
+		}
+	}
+}

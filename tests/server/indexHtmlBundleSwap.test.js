@@ -27,11 +27,12 @@ function makeTmpProject(opts = {}) {
 	const distDir = path.join(publicDir, 'dist');
 	fs.mkdirSync(publicDir, { recursive: true });
 	if (opts.withBundle) fs.mkdirSync(distDir, { recursive: true });
-	const html = `<!doctype html><html><head><title>Tetches</title></head><body>${ENTRY_TAG}</body></html>`;
+	const html = `<!doctype html><html><head><!-- viking-chunk-preload --><title>Tetches</title></head><body>${ENTRY_TAG}</body></html>`;
 	fs.writeFileSync(path.join(publicDir, 'index.html'), html);
 	if (opts.withBundle) {
 		fs.writeFileSync(path.join(distDir, 'app.bundle.js'), 'console.log("test bundle");');
 	}
+	if (opts.withViking) fs.writeFileSync(path.join(distDir, 'viking.bundle.js'), 'void 0;');
 	return root;
 }
 
@@ -60,6 +61,42 @@ describe('indexHtmlBundleSwap', () => {
 		expect(res.text).not.toContain(ENTRY_TAG);
 		expect(res.text).toMatch(/<script src="dist\/app\.bundle\.js\?v=\d+" defer><\/script>/);
 		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	test('a Viking page preloads the chunk at the address the app bundle will ask for', async () => {
+		const root = makeTmpProject({ withBundle: true, withViking: true });
+		const res = await request(makeApp(root)).get('/').expect(200);
+		const version = res.text.match(/dist\/app\.bundle\.js\?v=(\d+)/)[1];
+		expect(res.text).not.toContain('viking-chunk-preload');
+		const head = res.text.slice(0, res.text.indexOf('</head>'));
+		expect(head).toContain(`"dist/viking.bundle.js?v=${version}"`);
+		// Only for data-edition="viking", run in a page: standard adds nothing.
+		const script = head.match(/<script>([\s\S]*?)<\/script>/)[1];
+		const run = (edition) => {
+			const added = [];
+			const document = {
+				documentElement: { dataset: edition ? { edition } : {} },
+				createElement: () => ({}),
+				head: { appendChild: el => added.push(el) },
+			};
+			new Function('document', script)(document);
+			return added;
+		};
+		expect(run(undefined)).toEqual([]);
+		expect(run('standard')).toEqual([]);
+		expect(run('viking')).toEqual([{ rel: 'preload', as: 'script', href: `dist/viking.bundle.js?v=${version}` }]);
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	test('no chunk built, or dev mode: the preload marker is left as a comment', async () => {
+		const root = makeTmpProject({ withBundle: true });
+		expect((await request(makeApp(root)).get('/')).text).toContain('<!-- viking-chunk-preload -->');
+		fs.rmSync(root, { recursive: true, force: true });
+		const root2 = makeTmpProject({ withBundle: true, withViking: true });
+		const dev = (await request(makeApp(root2, { preferBundle: false })).get('/')).text;
+		expect(dev).toContain('<!-- viking-chunk-preload -->');
+		expect(dev).not.toContain('viking.bundle.js');
+		fs.rmSync(root2, { recursive: true, force: true });
 	});
 
 	test('serves bundle-swapped HTML on /2d', async () => {

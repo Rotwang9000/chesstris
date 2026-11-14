@@ -31,6 +31,8 @@
 
 const World = require('../world/World');
 const pieces = require('../game/pieces');
+const { cellHasShip } = require('../battle/shipRules');
+const { findRespawnCell } = require('./kingLives');
 
 function homeZoneCentre(zone) {
 	if (!zone) return null;
@@ -254,13 +256,21 @@ function playerHasKing(world, playerId) {
 
 function rescueOnePlayer(world, playerId, player) {
 	const homeZone = world.homeZones && world.homeZones[playerId];
-	const target = homeZoneCentre(homeZone) || { x: 0, z: 0 };
+	const cells = world.board && world.board.cells ? world.board.cells : {};
+	let target = homeZoneCentre(homeZone) || { x: 0, z: 0 };
+	// Viking longships: a ship moored on the home centre is water, not
+	// land — a king put aboard could be rowed out of reach and would
+	// anchor no island. Take the nearest non-ship square instead, by
+	// the king-respawn rules (which never pick a ship cell).
+	if (cellHasShip(cells[`${target.x},${target.z}`])) {
+		const alt = findRespawnCell(world, playerId, target.x, target.z);
+		target = { x: alt.x, z: alt.z };
+	}
 
 	// Make sure the target cell exists and is owned. If the home zone
 	// has been degraded we may have no cell under the king; create a
 	// king-anchor tetromino so the spawn has terrain under its feet.
 	const cellKey = `${target.x},${target.z}`;
-	const cells = world.board && world.board.cells ? world.board.cells : {};
 	const existing = Array.isArray(cells[cellKey]) ? cells[cellKey].slice() : [];
 	const hasOwnedSupport = existing.some(item =>
 		item && item.player != null && String(item.player) === String(playerId) && item.type !== 'home'
@@ -359,4 +369,5 @@ module.exports = {
 	dedupeChessPieces,
 	dedupePiecePositions,
 	dedupeKings,
+	rescueOnePlayer,
 };

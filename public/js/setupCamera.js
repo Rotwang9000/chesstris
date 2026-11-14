@@ -1,7 +1,8 @@
-import { getTHREE } from './gameContext.js';
+import { getTHREE, getGameState } from './gameContext.js';
 import { findBoardCentreMarker, translatePosition } from './centreBoardMarker.js';
 import { boardFunctions } from './boardFunctions.js';
 import { isBattleRegionCell, getActiveBattle } from './battle/battleRules.js';
+import { vikingActive } from './edition.js';
 
 /**
  * Pull the camera back to a high-level overview of the entire board.
@@ -105,6 +106,15 @@ const CAMERA_DEFAULTS = {
 	FALLBACK_POSITION: { x: 10, y: 25, z: 10 },
 	FALLBACK_TARGET: { x: 0, y: 0, z: 0 }
 };
+
+/** The Viking edition's home view (see moveToPlayerZone). */
+const VIKING_VIEW = Object.freeze({ distance: 0.9, elevation: 0.72, lookHeight: 3.0 });
+/**
+ * …and on a portrait phone: ~15° lower than the standard 45°, so a strip
+ * of sky, ridges and the sun's road shows above the far shore while the
+ * longship behind the back rank stays clear of the touch pad.
+ */
+const VIKING_PORTRAIT_VIEW = Object.freeze({ distance: 1.04, elevation: 0.52, lookHeight: 3.0 });
 
 let activeFlyAnimation = null;
 
@@ -254,8 +264,15 @@ export function moveToPlayerZone(camera, controls, gameState, renderer, scene, a
 	// Back off on narrow screens; landscape keeps the standard distance.
 	const aspect = Number.isFinite(camera.aspect) && camera.aspect > 0 ? camera.aspect : 1;
 	const portraitPullBack = Math.min(CAMERA_DEFAULTS.KING_VIEW_PORTRAIT_MAX_SCALE, Math.max(1, 0.75 / aspect));
-	const dist = CAMERA_DEFAULTS.KING_VIEW_DISTANCE * portraitPullBack;
-	const height = dist * Math.sin(Math.PI / 4);
+	// Viking edition: a little lower and closer, so the longship moored
+	// behind your back rank is a presence and the fjord and its sky fill
+	// the top of the view, as in the paintings.
+	// (landscape only: on a portrait phone the lower view put the ship
+	// under the touch pad)
+	const vikingView = vikingActive(gameState) ? (aspect >= 1 ? VIKING_VIEW : VIKING_PORTRAIT_VIEW) : null;
+	const viking = !!vikingView;
+	const dist = CAMERA_DEFAULTS.KING_VIEW_DISTANCE * portraitPullBack * (viking ? vikingView.distance : 1);
+	const height = dist * Math.sin(viking ? vikingView.elevation : Math.PI / 4);
 
 	// The king's forward direction; the camera sits behind it.
 	let forwardX = 0;
@@ -296,7 +313,7 @@ export function moveToPlayerZone(camera, controls, gameState, renderer, scene, a
 	const ahead = CAMERA_DEFAULTS.KING_VIEW_LOOK_AHEAD;
 	const targetLookAt = {
 		x: position.x + forwardX * ahead + panX,
-		y: CAMERA_DEFAULTS.KING_VIEW_LOOK_HEIGHT,
+		y: viking ? vikingView.lookHeight : CAMERA_DEFAULTS.KING_VIEW_LOOK_HEIGHT,
 		z: position.z + forwardZ * ahead + panZ
 	};
 
@@ -394,6 +411,11 @@ function warpToPosition(camera, controls, targetPosition, targetLookAt, renderer
 	}
 
 	const overlay = ensureWarpOverlay();
+	// Viking edition: the fjord's warm haze, not the standard sky-blue
+	// (a pale-cyan flash was the first thing a Viking battle showed).
+	let gs = null;
+	try { gs = getGameState(); } catch (_e) { gs = null; }
+	overlay.style.background = vikingActive(gs) ? '#d6bea8' : '#C5F0FF';
 	overlay.style.transitionDuration = `${CAMERA_DEFAULTS.WARP_FADE_IN_MS}ms`;
 	// Force a style flush so the transition runs even if the overlay
 	// was created this frame.

@@ -8,6 +8,7 @@
  */
 
 import { isMuted, toggleMuted, initSoundManager } from './soundManager.js';
+import { startPhoneHudLayout } from '../phoneHudLayout.js';
 
 const BUTTON_ID = 'audio-mute-toggle';
 
@@ -15,35 +16,35 @@ function glyph() {
 	return isMuted() ? '\uD83D\uDD07' : '\uD83D\uDD0A'; // 🔇 / 🔊
 }
 
+/** The glyph, plus the state the UI theme draws its icon from. */
+function paint(btn) {
+	btn.textContent = glyph();
+	btn.dataset.muted = isMuted() ? '1' : '0';
+	btn.setAttribute('aria-pressed', isMuted() ? 'true' : 'false');
+}
+
 export function mountMuteButton() {
 	if (document.getElementById(BUTTON_ID)) return;
 	const btn = document.createElement('button');
 	btn.id = BUTTON_ID;
 	btn.title = 'Mute / unmute sound effects (M)';
-	btn.textContent = glyph();
+	paint(btn);
 	Object.assign(btn.style, {
 		position: 'fixed',
 		right: '16px',
 		bottom: '64px',
-		width: '40px',
-		height: '40px',
-		borderRadius: '50%',
-		border: '2px solid #ffcc00',
-		backgroundColor: 'rgba(0, 0, 0, 0.7)',
-		color: '#ffcc00',
-		fontSize: '18px',
-		cursor: 'pointer',
 		zIndex: '11600',
-		boxShadow: '0 0 10px rgba(255, 204, 0, 0.4)',
-		lineHeight: '36px',
-		padding: '0',
 	});
+	// Size and look: `.tx-round-btn` in the UI theme (index.html).
+	btn.className = 'tx-round-btn';
+	btn.type = 'button';
+	btn.setAttribute('aria-label', 'Mute or unmute sound effects');
 	btn.addEventListener('click', () => {
 		// Initialising on click also satisfies the browser's
 		// "AudioContext needs a user gesture" requirement.
 		initSoundManager();
 		toggleMuted();
-		btn.textContent = glyph();
+		paint(btn);
 	});
 
 	// Global "M" toggles too.
@@ -56,8 +57,10 @@ export function mountMuteButton() {
 				|| target.isContentEditable
 			)) return;
 			toggleMuted();
-			btn.textContent = glyph();
+			paint(btn);
 		}
 	});
 	document.body.appendChild(btn);
+	// (a phone upright: it and the activity button join the top HUD)
+	startPhoneHudLayout();
 }

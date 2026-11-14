@@ -24,7 +24,8 @@
  * in `CSS2DRenderer` (which would require its own DOM mount).
  */
 
-import { getTHREE, getScene, getRenderer } from './gameContext.js';
+import { getTHREE, getScene, getRenderer, getCamera, getGameState } from './gameContext.js';
+import { vikingActive } from './edition.js';
 import { translatePosition } from './centreBoardMarker.js';
 import { isCellVisibleInCurrentView } from './battle/battleRules.js';
 
@@ -102,6 +103,9 @@ function paintCanvas(name, colour, captures) {
 	const canvas = document.createElement('canvas');
 	const ctx = canvas.getContext('2d');
 	if (!ctx) return { canvas, width: 0, height: 0 };
+	const look = nameplateLook();
+	const FONT = look.font;
+	const SUBFONT = look.subfont;
 
 	// Measure first so we can size the canvas. We do an off-DOM
 	// measure with the same fonts; the panel rects are based on
@@ -131,30 +135,34 @@ function paintCanvas(name, colour, captures) {
 	// Panel — dark glass with the player's colour as a border, so the
 	// label stays readable whatever the colour (dark bot colours used
 	// to vanish when they were also the text colour).
-	ctx.fillStyle = 'rgba(12, 14, 24, 0.82)';
-	roundRect(ctx, 2, 2, panelWidth - 4, panelHeight - 4, PANEL_RADIUS);
+	const radius = look.radius === 'pill' ? (panelHeight - 4) / 2 : look.radius;
+	ctx.fillStyle = look.fill;
+	roundRect(ctx, 2, 2, panelWidth - 4, panelHeight - 4, radius);
 	ctx.fill();
-	ctx.strokeStyle = colour;
-	ctx.lineWidth = 4;
+	ctx.strokeStyle = look.border || colour;
+	ctx.lineWidth = look.borderWidth;
 	ctx.stroke();
-	ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
-	ctx.lineWidth = 1.5;
-	roundRect(ctx, 5, 5, panelWidth - 10, panelHeight - 10, PANEL_RADIUS - 3);
-	ctx.stroke();
+	if (look.rim) {
+		ctx.strokeStyle = look.rim;
+		ctx.lineWidth = 1.5;
+		roundRect(ctx, 5, 5, panelWidth - 10, panelHeight - 10, Math.max(0, radius - 3));
+		ctx.stroke();
+	}
 
 	// Colour dot + player name in near-white.
 	const nameLeft = (panelWidth - (nameWidth + swatch + swatchGap)) / 2;
 	const nameMid = PANEL_PADDING + NAME_PX / 2;
 	ctx.beginPath();
-	ctx.arc(nameLeft + swatch / 2, nameMid, swatch / 2, 0, Math.PI * 2);
+	if (look.squareSwatch) ctx.rect(nameLeft, nameMid - swatch / 2, swatch, swatch);
+	else ctx.arc(nameLeft + swatch / 2, nameMid, swatch / 2, 0, Math.PI * 2);
 	ctx.fillStyle = colour;
 	ctx.fill();
 	ctx.lineWidth = 2;
-	ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+	ctx.strokeStyle = look.swatchRim;
 	ctx.stroke();
 
 	ctx.font = FONT;
-	ctx.fillStyle = '#f7f4ec';
+	ctx.fillStyle = look.ink;
 	ctx.textAlign = 'left';
 	ctx.textBaseline = 'middle';
 	ctx.fillText(name, nameLeft + swatch + swatchGap, nameMid + 1);
@@ -162,13 +170,54 @@ function paintCanvas(name, colour, captures) {
 	// Capture strip
 	if (subText) {
 		ctx.font = SUBFONT;
-		ctx.fillStyle = '#f6e7c1';
+		ctx.fillStyle = look.subInk;
 		ctx.textAlign = 'center';
 		ctx.textBaseline = 'top';
 		ctx.fillText(subText, panelWidth / 2, PANEL_PADDING + NAME_PX + 8);
 	}
 
 	return { canvas, width: panelWidth, height: panelHeight };
+}
+
+/**
+ * The nameplate's look follows the render profile (and the edition):
+ * normal is dark glass rimmed in the player's colour; cute a soft
+ * cream pill in a rounded face; retro a black phosphor box in green
+ * monospace; the Viking edition's normal look dark wood with a gilt
+ * hairline. `key` goes into the repaint signature.
+ */
+function nameplateLook() {
+	const root = typeof document !== 'undefined' ? document.documentElement : null;
+	const profile = root?.dataset?.renderProfile || 'normal';
+	const viking = root?.dataset?.edition === 'viking';
+	if (profile === 'retro') {
+		const mono = '"Courier New", ui-monospace, Menlo, monospace';
+		return {
+			key: 'retro', font: `700 ${NAME_PX}px ${mono}`, subfont: `700 ${SUB_PX}px ${mono}`,
+			radius: 0, fill: 'rgba(0, 8, 2, 0.9)', border: '#00ff41', borderWidth: 3, rim: null,
+			squareSwatch: true, swatchRim: '#00ff41', ink: '#00ff41', subInk: '#7dff9c',
+		};
+	}
+	if (profile === 'cute') {
+		const round = '"Nunito", "Varela Round", "Arial Rounded MT Bold", ui-rounded, ' + FONT_STACK;
+		return {
+			key: 'cute', font: `800 ${NAME_PX}px ${round}`, subfont: `700 ${SUB_PX}px ${round}`,
+			radius: 'pill', fill: 'rgba(255, 250, 244, 0.94)', border: null, borderWidth: 5, rim: null,
+			squareSwatch: false, swatchRim: 'rgba(60, 40, 80, 0.55)', ink: '#3b2a4a', subInk: '#6a4a7a',
+		};
+	}
+	if (viking) {
+		return {
+			key: 'viking', font: FONT, subfont: SUBFONT,
+			radius: 8, fill: 'rgba(44, 29, 16, 0.88)', border: null, borderWidth: 4, rim: 'rgba(233, 196, 106, 0.45)',
+			squareSwatch: false, swatchRim: 'rgba(246, 223, 160, 0.9)', ink: '#f6ecd2', subInk: '#ecd08c',
+		};
+	}
+	return {
+		key: 'normal', font: FONT, subfont: SUBFONT,
+		radius: PANEL_RADIUS, fill: 'rgba(12, 14, 24, 0.82)', border: null, borderWidth: 4, rim: 'rgba(255, 255, 255, 0.18)',
+		squareSwatch: false, swatchRim: 'rgba(255, 255, 255, 0.85)', ink: '#f7f4ec', subInk: '#f6e7c1',
+	};
 }
 
 function roundRect(ctx, x, y, w, h, r) {
@@ -229,7 +278,7 @@ function buildCaptureSummary(player) {
  * by the per-frame positioner.
  */
 function buildSignature(name, colour, captures) {
-	return `${name}|${colour}|${captures}`;
+	return `${name}|${colour}|${captures}|${nameplateLook().key}`;
 }
 
 /** Mipmapped, anisotropic texture so the label stays crisp at any zoom. */
@@ -353,10 +402,104 @@ export function syncNameplates(chessPieces, players, options = {}) {
 export function animateNameplates(timeSec) {
 	if (!Number.isFinite(timeSec)) return;
 	const t = timeSec * Math.PI * 2 * NAMEPLATE_BOB_FREQ_HZ;
+	const clamp = vikingLabelClamp();
 	for (const visual of nameplateVisuals.values()) {
 		const baseY = NAMEPLATE_HEIGHT_ABOVE_KING;
 		visual.sprite.position.y = baseY + Math.sin(t) * NAMEPLATE_BOB_AMPLITUDE;
+		if (clamp) {
+			clampLabel(visual, clamp);
+			if (clamp.viking) clearOfHud(visual, clamp);
+		} else if (visual.clamped) {
+			visual.sprite.scale.set(visual.width * WORLD_PER_PX, visual.height * WORLD_PER_PX, 1);
+			visual.sprite.material.opacity = 1;
+			visual.clamped = false;
+		}
 	}
+}
+
+const _hudV = { v: null };
+/**
+ * Viking edition: a label that would sit under the HUD (the title, the
+ * NEXT PIECE panel, the Longship / Skip buttons, the strip of buttons, a
+ * painting) fades out instead of showing ghosted through it. Checked a
+ * few times a second at the label's corners and centre.
+ */
+function clearOfHud(visual, { camera, worldPerPxAt1 }) {
+	const now = Date.now();
+	if (!visual.hudAt || now - visual.hudAt > 200) {
+		visual.hudAt = now;
+		visual.underHud = labelUnderHud(visual, camera, worldPerPxAt1);
+	}
+	const m = visual.sprite.material;
+	const want = visual.underHud ? 0 : 1;
+	m.opacity += (want - m.opacity) * 0.25;
+	if (Math.abs(want - m.opacity) < 0.01) m.opacity = want;
+}
+
+function labelUnderHud(visual, camera, worldPerPxAt1) {
+	const THREE = getTHREE();
+	const el = getRenderer()?.domElement;
+	if (!THREE || !el || typeof document === 'undefined' || typeof document.elementFromPoint !== 'function') return false;
+	const r = el.getBoundingClientRect();
+	if (!_hudV.v) _hudV.v = new THREE.Vector3();
+	const v = _hudV.v;
+	visual.sprite.getWorldPosition(v);
+	const d = camera.position.distanceTo(v);
+	v.project(camera);
+	if (v.z > 1 || Math.abs(v.x) > 1.2 || Math.abs(v.y) > 1.2) return false;
+	const cx = r.left + (v.x + 1) / 2 * r.width;
+	const cy = r.top + (1 - v.y) / 2 * r.height;
+	const hw = (visual.sprite.scale.x / (worldPerPxAt1 * d)) / 2;
+	const hh = (visual.sprite.scale.y / (worldPerPxAt1 * d)) / 2;
+	const card = document.getElementById('tetches-painting');
+	const cardBox = card && card.classList.contains('tp-visible') ? card.getBoundingClientRect() : null;
+	for (const [dx, dy] of [[0, 0], [-0.9, -0.7], [0.9, -0.7], [-0.9, 0.7], [0.9, 0.7]]) {
+		const x = cx + dx * hw, y = cy + dy * hh;
+		if (x < r.left || x > r.right || y < r.top || y > r.bottom) return true;   // clipped by the screen edge
+		if (cardBox && x > cardBox.left && x < cardBox.right && y > cardBox.top && y < cardBox.bottom) return true;
+		const top = document.elementFromPoint(x, y);
+		if (top && top !== el && !el.contains(top) && top !== document.body && top !== document.documentElement) return true;
+	}
+	return false;
+}
+
+/**
+ * Viking edition: a name label never grows past a fixed height on
+ * screen. The labels are world-sized, so in any close view of a ship
+ * they used to swell into billboards over a third of the screen. (The
+ * standard game keeps its world-sized labels.)
+ */
+function vikingLabelClamp() {
+	let live = false;
+	try { live = vikingActive(getGameState()); } catch (_e) { live = false; }
+	const camera = getCamera();
+	const el = getRenderer()?.domElement;
+	const h = el ? (el.clientHeight || el.height) : 0;
+	if (!camera || !camera.isPerspectiveCamera || !(h > 0)) return null;
+	// (the standard game too, more loosely: the CHECK! close-up, and any
+	// zoom right in, blew its label up past the width of a phone)
+	const maxPx = live ? Math.max(22, Math.min(34, h * 0.045)) : Math.max(26, Math.min(40, h * 0.045));
+	return { camera, worldPerPxAt1: (2 * Math.tan((camera.fov * Math.PI / 180) / 2)) / (h * (camera.zoom || 1)), maxPx, viking: live };
+}
+
+const _camW = { v: null, s: null };
+function clampLabel(visual, { camera, worldPerPxAt1, maxPx }) {
+	const baseW = visual.width * WORLD_PER_PX;
+	const baseH = visual.height * WORLD_PER_PX;
+	// (world positions: the camera can sit inside a rig)
+	const THREE = getTHREE();
+	let d;
+	if (THREE && typeof camera.getWorldPosition === 'function') {
+		if (!_camW.v) { _camW.v = new THREE.Vector3(); _camW.s = new THREE.Vector3(); }
+		camera.getWorldPosition(_camW.v);
+		visual.sprite.getWorldPosition(_camW.s);
+		d = _camW.v.distanceTo(_camW.s);
+	} else {
+		d = camera.position.distanceTo(visual.sprite.position);
+	}
+	const k = Math.min(1, (maxPx * worldPerPxAt1 * d) / (baseH || 1));
+	visual.sprite.scale.set(baseW * k, baseH * k, 1);
+	visual.clamped = true;
 }
 
 export function disposeNameplateVisuals() {

@@ -28,6 +28,8 @@
 'use strict';
 
 const { log } = require('../GameUtilities');
+const shipRules = require('../../battle/shipRules');
+const { isVikingBattle } = require('../../battle/edition');
 
 const PAWN_FORWARD_BY_ORIENTATION = Object.freeze({
 	0: Object.freeze({ dx: 0, dz: 1 }),
@@ -50,6 +52,38 @@ function _isOwnerPaused(game, ownerId) {
 	if (!game || !game.players || ownerId == null) return false;
 	const record = game.players[String(ownerId)];
 	return !!(record && record.paused === true);
+}
+
+/**
+ * Do longship rules apply to this player's moves? Only seats of a
+ * Viking battle — one O(1) lookup, so the shared world and standard
+ * battles never touch a ship check (and couldn't meet a ship anyway).
+ * Status isn't filtered: ship cells exist from arena build to cleanup.
+ */
+function _shipRulesApply(game, playerId) {
+	const record = game && game.players ? game.players[String(playerId)] : null;
+	if (!record || !record.battleId) return false;
+	return isVikingBattle(game.battles ? game.battles[String(record.battleId)] : null);
+}
+
+/**
+ * The longship veto for a move whose geometry is already legal, or
+ * null. See shipRules.chessMoveVeto for the rules.
+ */
+function _shipVeto(ctx, game, piece, toX, toZ, targetPiece) {
+	const pos = piece.position || piece;
+	return shipRules.chessMoveVeto(
+		{ getCell: (x, z) => ctx.boardManager.getCell(game.board, x, z), now: Date.now() },
+		piece,
+		{ x: pos.x, z: pos.z },
+		{ x: toX, z: toZ },
+		targetPiece || null,
+	);
+}
+
+/** Is (x, z) a longship? Ships are not path squares. */
+function _isShipSquare(ctx, game, x, z) {
+	return shipRules.pathBlockedByShip((cx, cz) => ctx.boardManager.getCell(game.board, cx, cz), x, z);
 }
 
 /**
@@ -95,6 +129,24 @@ function validateChessMove(ctx, game, playerId, moveData) {
 		if (piece.type !== 'KNIGHT') {
 			const pathValidation = checkPathObstruction(piece, toX, toZ, pieceAt);
 			if (!pathValidation.valid) return pathValidation;
+		}
+
+		if (_shipRulesApply(game, playerId)) {
+			const veto = _shipVeto(ctx, game, piece, toX, toZ, targetPiece);
+			if (veto) return { valid: false, error: veto.message, reason: veto.reason };
+			if (piece.type !== 'KNIGHT') {
+				const dx = Math.sign(toX - fromX);
+				const dz = Math.sign(toZ - fromZ);
+				for (let x = fromX + dx, z = fromZ + dz; x !== toX || z !== toZ; x += dx, z += dz) {
+					if (_isShipSquare(ctx, game, x, z)) {
+						return {
+							valid: false,
+							error: shipRules.SHIP_REJECTIONS.path_blocked_by_ship,
+							reason: 'path_blocked_by_ship',
+						};
+					}
+				}
+			}
 		}
 
 		return {
@@ -196,9 +248,13 @@ function validateCastle(ctx, game, king, toX, toZ, pieceAt) {
 	let searchX = fromX + dx;
 	let searchZ = fromZ + dz;
 	const maxSearch = 8;
+	// Castling slides two pieces, so a longship between them blocks it
+	// like any other non-path square.
+	const shipsBlock = _shipRulesApply(game, king.player);
 	for (let i = 0; i < maxSearch; i++) {
 		const cell = ctx.boardManager.getCell(game.board, searchX, searchZ);
 		if (!cell) break;
+		if (shipsBlock && shipRules.cellHasShip(cell)) break;
 		const occupant = occupantAt(searchX, searchZ);
 		if (occupant) {
 			if (
@@ -297,8 +353,13 @@ function isValidChessMove(ctx, game, piece, toX, toZ) {
 		const absZ = Math.abs(deltaZ);
 
 		const hasChessPieceAt = (x, z) => !!pieceAt(x, z);
+		// Viking battles: the longship veto (boarding, rowing, mooring,
+		// no king attacks from aboard) and ships as non-path squares.
+		const shipsApply = _shipRulesApply(game, pieceOwner);
+		if (shipsApply && _shipVeto(ctx, game, piece, toX, toZ, targetChess)) return false;
 		const isBoardSquare = (x, z) => {
 			const cell = ctx.boardManager.getCell(game.board, x, z);
+			if (shipsApply && shipRules.cellHasShip(cell)) return false;
 			return !!(cell && Array.isArray(cell) && cell.length > 0);
 		};
 		const isPathClear = () => {
@@ -344,9 +405,8 @@ function isValidChessMove(ctx, game, piece, toX, toZ) {
 				if (isForwardTwo) {
 					const midX = fromX + forward.dx;
 					const midZ = fromZ + forward.dz;
-					const midCell = ctx.boardManager.getCell(game.board, midX, midZ);
-					const midHasBoard = !!(midCell && Array.isArray(midCell) && midCell.length > 0);
-					if (!midHasBoard) return false;
+					// Same test as a slider's path square (ships block it).
+					if (!isBoardSquare(midX, midZ)) return false;
 					if (hasChessPieceAt(midX, midZ)) return false;
 					return !hasChessPieceAt(toX, toZ);
 				}

@@ -20,6 +20,9 @@ import { createCellInstancer } from './cellInstancer.js';
 import { createCloudPuffs } from './cloudPuffs.js';
 import { createRoundedCellGeometry } from './roundedCellGeometry.js';
 import { isCellVisibleInCurrentView } from '../battle/battleRules.js';
+import { cellHasShip } from '../viking/shipLayout.js';
+import { syncShips, hasShipsDrawn } from '../viking/shipRenderer.js';
+import { vikingLandWanted, vikingAppearance, createVikingBase, dressInstancedCells, setVikingOwnership } from '../viking/landDress.js';
 
 function ensureRenderCache(THREE) {
 	if (!ensureRenderCache._cache) {
@@ -260,7 +263,7 @@ export function renderBoard(gameState, boardGroup, _createFloatingIsland, THREE)
 	if (boardGroup && boardGroup.children) {
 		for (const child of boardGroup.children) {
 			if (!child || !child.userData) continue;
-			if (child.userData.type === 'cell') {
+			if (child.userData.type === 'cell' && !child.userData.ship) {
 				const pos = child.userData.position;
 				if (!pos || pos.x === undefined || pos.z === undefined) continue;
 				existingCells[`${pos.x},${pos.z}`] = child;
@@ -282,7 +285,24 @@ export function renderBoard(gameState, boardGroup, _createFloatingIsland, THREE)
 				: gameState.lowQuality ? 'cute'
 					: 'normal'))
 		: 'normal';
-	const cloudsEnabled = renderProfile === 'normal';
+	// Viking edition: granite, timber and turf on rocks in the surf
+	// instead of pastel blocks on clouds (viking/landDress.js).
+	const vikingLand = renderProfile === 'normal' && vikingLandWanted(gameState);
+	const cloudsEnabled = renderProfile === 'normal' && !vikingLand;
+	let vikingBase = null;
+	if (vikingLand) {
+		const liveMesh = gameState.__vikingBase && gameState.__vikingBase.getMesh();
+		if (!gameState.__vikingBase || gameState.__vikingBaseOwner !== boardGroup
+			|| (liveMesh && liveMesh.parent !== boardGroup)) {
+			if (gameState.__vikingBase) gameState.__vikingBase.dispose();
+			gameState.__vikingBase = createVikingBase(THREE, boardGroup);
+			gameState.__vikingBaseOwner = boardGroup;
+		}
+		vikingBase = gameState.__vikingBase;
+	} else if (gameState.__vikingBase) {
+		gameState.__vikingBase.dispose();
+		gameState.__vikingBase = null;
+	}
 	let cloudPuffs = null;
 	if (cloudsEnabled) {
 		const liveMesh = gameState.__cloudPuffs && gameState.__cloudPuffs.getMesh();
@@ -358,6 +378,8 @@ export function renderBoard(gameState, boardGroup, _createFloatingIsland, THREE)
 	// mesh whose key is absent here (gone, or now instanced) is pruned in
 	// the cleanup sweep below.
 	const individualKeys = Object.create(null);
+	// Ship cells seen this pass (Viking battles only; stays null otherwise).
+	let shipCells = null;
 
 	if (gameState.board && gameState.board.cells) {
 		for (const key of Object.keys(gameState.board.cells)) {
@@ -374,9 +396,16 @@ export function renderBoard(gameState, boardGroup, _createFloatingIsland, THREE)
 			// out of `processedCells` are swept away below.
 			if (!isCellVisibleInCurrentView(gameState, x, z)) continue;
 			processedCells[cellKey] = true;
+			// Viking longship: open water with a hull on it — no land
+			// block, no cloud. viking/shipRenderer.js draws it below.
+			if (cellHasShip(cellData)) {
+				(shipCells || (shipCells = Object.create(null)))[cellKey] = cellData;
+				continue;
+			}
 
 			const classification = classifyCell(cellData);
-			const appearance = chooseAppearance(classification, gameState, x, z);
+			let appearance = chooseAppearance(classification, gameState, x, z);
+			if (vikingLand) appearance = vikingAppearance(appearance, x, z);
 			const absPos = translatePosition({ x, z }, gameState, true);
 
 			// Route each cell to the right bucket. Sponsored cells always
@@ -395,6 +424,8 @@ export function renderBoard(gameState, boardGroup, _createFloatingIsland, THREE)
 					absX: absPos.x,
 					absZ: absPos.z,
 					color: appearance.color,
+					// (Viking land only: a player's land, not the arena's granite)
+					own: vikingLand && appearance.kind !== 'ring' && appearance.kind !== 'default',
 				});
 			} else if (canInstanceExhome) {
 				exhomeCellList.push({
@@ -402,6 +433,7 @@ export function renderBoard(gameState, boardGroup, _createFloatingIsland, THREE)
 					absX: absPos.x,
 					absZ: absPos.z,
 					color: appearance.color,
+					own: vikingLand,
 				});
 			} else {
 				individualKeys[cellKey] = true;
@@ -441,7 +473,7 @@ export function renderBoard(gameState, boardGroup, _createFloatingIsland, THREE)
 			// Cloud puffs under each cell (normal profile only). A
 			// decaying cell loses its cloud, so a "fading away" cell
 			// visibly loses its support instead of looking frozen mid-air.
-			if (cloudPuffs && !appearance.decaying) {
+			if ((cloudPuffs || vikingBase) && !appearance.decaying) {
 				puffCellList.push({ pos: { x, z }, absX: absPos.x, absZ: absPos.z });
 			}
 		}
@@ -450,12 +482,21 @@ export function renderBoard(gameState, boardGroup, _createFloatingIsland, THREE)
 	if (opaqueInstancer) opaqueInstancer.rebuild(opaqueCellList);
 	if (exhomeInstancer) exhomeInstancer.rebuild(exhomeCellList);
 	if (cloudPuffs) cloudPuffs.rebuild(puffCellList);
+	if (vikingBase) vikingBase.rebuild(puffCellList);
+	// The instanced cells' finish: matte, mottled in Viking; the standard
+	// material otherwise (a no-op for a board never dressed).
+	if (opaqueInstancer) dressInstancedCells(THREE, opaqueInstancer.getMesh(), vikingLand);
+	if (exhomeInstancer) dressInstancedCells(THREE, exhomeInstancer.getMesh(), vikingLand);
+	if (vikingLand) {
+		if (opaqueInstancer) setVikingOwnership(opaqueInstancer.getMesh(), opaqueCellList);
+		if (exhomeInstancer) setVikingOwnership(exhomeInstancer.getMesh(), exhomeCellList);
+	}
 
 	if (boardGroup && boardGroup.children) {
 		const cellsToRemove = [];
 		for (const child of boardGroup.children) {
 			if (!child || !child.userData) continue;
-			if (child.userData.type === 'cell' && child.userData.position) {
+			if (child.userData.type === 'cell' && child.userData.position && !child.userData.ship) {
 				const childKey = `${child.userData.position.x},${child.userData.position.z}`;
 				// Prune an individual cell mesh if its cell is gone OR it is
 				// now rendered by the instancer (key absent from individualKeys).
@@ -471,6 +512,12 @@ export function renderBoard(gameState, boardGroup, _createFloatingIsland, THREE)
 			if (cell.geometry && cell.geometry !== renderCache.cellGeometry) cell.geometry.dispose();
 			cellsRemoved++;
 		}
+	}
+
+	// Longships: only when the board has (or had) any.
+	if (shipCells || hasShipsDrawn()) {
+		try { syncShips(gameState, boardGroup, THREE, shipCells || {}); }
+		catch (err) { console.error('Ship render failed:', err); }
 	}
 
 	// Only back-fill from the board when the server has never sent a

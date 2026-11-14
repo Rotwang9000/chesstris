@@ -24,6 +24,24 @@ const path = require('path');
 
 const ENTRY_TAG = '<script type="module" src="js/main-enhanced.js"></script>';
 const BUNDLE_HREF = 'dist/app.bundle.js';
+// In <head>, just after the inline script that sets data-edition.
+const VIKING_PRELOAD_MARKER = '<!-- viking-chunk-preload -->';
+const VIKING_HREF = 'dist/viking.bundle.js';
+
+/**
+ * A Viking page wants dist/viking.bundle.js as soon as the app boots
+ * (public/js/vikingLazy/runtime.js injects it then). Start fetching it
+ * alongside the app bundle instead: a preload, added only when the
+ * edition script above has set data-edition="viking", at the very
+ * address runtime.js asks for (the app bundle's, renamed), so the
+ * standard game fetches nothing more.
+ */
+function buildVikingPreloadTag(version) {
+	const href = `${VIKING_HREF}${version ? `?v=${version}` : ''}`;
+	return '<script>(function(){try{if(document.documentElement.dataset.edition!==\'viking\')return;'
+		+ "var l=document.createElement('link');l.rel='preload';l.as='script';"
+		+ `l.href=${JSON.stringify(href)};document.head.appendChild(l);}catch(e){}})();</script>`;
+}
 
 function buildBundleScriptTag(version) {
 	const v = version ? `?v=${version}` : '';
@@ -61,6 +79,7 @@ function createIndexHtmlBundleSwap({ projectRoot, preferBundle } = {}) {
 	const bundlePreferred = typeof preferBundle === 'boolean' ? preferBundle : defaultPreferBundle();
 	const indexPath = path.join(projectRoot, 'public', 'index.html');
 	const bundlePath = path.join(projectRoot, 'public', 'dist', 'app.bundle.js');
+	const vikingPath = path.join(projectRoot, 'public', 'dist', 'viking.bundle.js');
 
 	let bundleExists = false;
 	let bundleVersion = '';
@@ -89,6 +108,9 @@ function createIndexHtmlBundleSwap({ projectRoot, preferBundle } = {}) {
 		refreshBundleStatus();
 		if (bundlePreferred && bundleExists && html.includes(ENTRY_TAG)) {
 			html = html.replace(ENTRY_TAG, buildBundleScriptTag(bundleVersion));
+			if (html.includes(VIKING_PRELOAD_MARKER) && fs.existsSync(vikingPath)) {
+				html = html.replace(VIKING_PRELOAD_MARKER, buildVikingPreloadTag(bundleVersion));
+			}
 		}
 		cachedHtml = html;
 		cachedAt = Date.now();

@@ -74,6 +74,12 @@ const SIMPLE_FORWARD_EVENTS = Object.freeze([
 	'player_pause_state',
 	// Viking longship fleet (drifting boats with adverts on sails)
 	'boats_update',
+	// Viking-battle longships (playable; see js/longships/shipEvents.js)
+	'ship_sailed',
+	'ship_sunk',
+	'ship_seized',
+	'ship_lost',
+	'ship_built',
 	// Battle arenas (lobby refresh, seat adoption, results). These MUST
 	// be forwarded or the battle UI never hears the server: the host
 	// would "start" a battle and nothing would happen client-side.

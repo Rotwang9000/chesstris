@@ -74,23 +74,14 @@ export function positionUnderNextPiece(container) {
 
 function ensureContainer() { return ensureActionStack(); }
 
-function makeButton(id, label, color) {
+function makeButton(id, label, tone) {
 	const button = document.createElement('button');
 	button.id = id;
 	button.type = 'button';
 	button.textContent = label;
+	// Look: `.tx-turn-btn` in the UI theme (index.html), `tone` tints it.
+	button.className = `tx-turn-btn tx-turn-btn--${tone}`;
 	Object.assign(button.style, {
-		padding: '10px 14px',
-		fontFamily: 'serif',
-		fontSize: '13px',
-		fontWeight: '700',
-		color: '#fff8d8',
-		background: color,
-		border: '2px solid #ffcc00',
-		borderRadius: '6px',
-		boxShadow: '0 4px 12px rgba(0, 0, 0, 0.45)',
-		letterSpacing: '0.4px',
-		cursor: 'pointer',
 		opacity: '0',
 		pointerEvents: 'none',
 		transition: 'opacity 0.35s ease',
@@ -103,7 +94,7 @@ function ensureChessButton() {
 	let button = document.getElementById(CHESS_BUTTON_ID);
 	if (button) return button;
 	const container = ensureContainer();
-	button = makeButton(CHESS_BUTTON_ID, 'Skip chess move', 'rgba(120, 30, 30, 0.92)');
+	button = makeButton(CHESS_BUTTON_ID, 'Skip chess move', 'chess');
 	button.addEventListener('click', () => requestSkip(button, 'chess'));
 	container.appendChild(button);
 	return button;
@@ -113,7 +104,7 @@ function ensureDropButton() {
 	let button = document.getElementById(DROP_BUTTON_ID);
 	if (button) return button;
 	const container = ensureContainer();
-	button = makeButton(DROP_BUTTON_ID, 'Skip to chess move', 'rgba(40, 60, 110, 0.92)');
+	button = makeButton(DROP_BUTTON_ID, 'Skip to chess move', 'drop');
 	button.addEventListener('click', () => requestSkip(button, 'drop'));
 	container.appendChild(button);
 	return button;

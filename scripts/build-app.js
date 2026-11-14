@@ -31,7 +31,9 @@ const THREE = path.join(ROOT, 'node_modules', 'three');
 const FONT = path.join(ROOT, 'node_modules', '@fontsource', 'playfair-display', 'files');
 
 // Static assets the game page uses (the client JS is bundled).
-const ASSET_DIRS = ['img', 'css', 'sounds', 'textures', 'models'];
+// `fonts` holds the Viking edition's self-hosted rune faces (and their
+// licences); the Playfair Display copies are added beside them below.
+const ASSET_DIRS = ['img', 'css', 'sounds', 'textures', 'models', 'fonts'];
 const ASSET_FILES = ['styles.css', 'favicon.svg'];
 
 const THREE_VERSION = '0.132.2';
@@ -103,6 +105,10 @@ function build() {
 	for (const file of ASSET_FILES) copy(path.join(PUBLIC, file), path.join(OUT, file));
 	for (const file of ['app.bundle.js', 'offline-engine.js']) {
 		copy(path.join(PUBLIC, 'dist', file), path.join(OUT, 'dist', file));
+	}
+	// The Viking edition's code (fetched on demand beside the app bundle).
+	if (fs.existsSync(path.join(PUBLIC, 'dist', 'viking.bundle.js'))) {
+		copy(path.join(PUBLIC, 'dist', 'viking.bundle.js'), path.join(OUT, 'dist', 'viking.bundle.js'));
 	}
 	for (const [, [from, to]] of Object.entries(VENDOR)) copy(path.join(THREE, from), path.join(OUT, to));
 	for (const weight of [400, 700]) {

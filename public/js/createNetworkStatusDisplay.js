@@ -14,20 +14,16 @@ export function createNetworkStatusDisplay() {
 	// Sits just below the TETCHES title (which owns the top-left corner).
 	// `updateNetworkStatus` (createLoadingIndicator.js) is the single
 	// writer: it hides the pill while connected and shows it otherwise.
+	// Its look (a pill coloured by state) is `#network-status` in the UI
+	// theme (index.html).
 	Object.assign(networkStatusElement.style, {
 		position: 'fixed',
 		top: '44px',
 		left: '10px',
-		padding: '4px 10px',
-		borderRadius: '999px',
-		backgroundColor: 'rgba(0, 0, 0, 0.7)',
-		color: '#ffcc00', // Gold color for Russian theme
-		fontFamily: 'Times New Roman, serif', // Russian-style font
-		fontSize: '12px',
 		zIndex: '1000',
 		pointerEvents: 'none',
-		border: '1px solid #ffcc00' // Gold border
 	});
+	networkStatusElement.setAttribute('role', 'status');
 
 	// Add to DOM
 	document.body.appendChild(networkStatusElement);

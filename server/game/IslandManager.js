@@ -7,6 +7,17 @@ const { log } = require('./GameUtilities');
 const cells = require('./cells');
 const pieces = require('./pieces');
 const battleRules = require('../battle/rules');
+const { isVikingBattle } = require('../battle/edition');
+// Not via `cells`: _findConnectedCells shadows that name with a local.
+const { cellHasShip, isShipItem } = require('../battle/shipRules');
+
+// The 8 neighbours — a longship anchors land it touches diagonally too,
+// matching how stepping on and off a ship works (shipRules.isMoored).
+const NEIGHBOURS_8 = [
+	[-1, -1], [0, -1], [1, -1],
+	[-1, 0], [1, 0],
+	[-1, 1], [0, 1], [1, 1],
+];
 
 // ── Disconnected-island grace policy (bible §15.2) ──────────────────────────
 //
@@ -118,6 +129,8 @@ class IslandManager {
 			const isOwnedCell = (x, z) => {
 				const cellContents = game.board.cells[`${x},${z}`];
 				if (!cellContents) return false;
+				// A longship (and its passenger) is water, not a path.
+				if (cellHasShip(cellContents)) return false;
 				if (Array.isArray(cellContents)) return cellContents.some(itemIsLiveOwned);
 				return itemIsLiveOwned(cellContents);
 			};
@@ -179,6 +192,9 @@ class IslandManager {
 		for (const key in game.board.cells) {
 			const cellContents = game.board.cells[key];
 			if (!cellContents || !Array.isArray(cellContents) || cellContents.length === 0) continue;
+			// Longships are never part of an island — island decay would
+			// otherwise delete the ship and drown its passenger.
+			if (cellHasShip(cellContents)) continue;
 			
 			// Find all player IDs that own content in this cell
 			const playerIds = new Set();
@@ -192,11 +208,19 @@ class IslandManager {
 				const island = this._findConnectedCells(game, key, playerId, visited);
 				
 				if (island.cells.length > 0) {
-					islands.push({
+					const entry = {
 						playerId,
 						cells: island.cells,
 						hasKing: island.hasKing
-					});
+					};
+					// Viking landing parties: land touching a ship its seat
+					// controls is supplied from the sea and doesn't decay.
+					// Seizing the ship or sailing it away restarts the clock.
+					if (!entry.hasKing && this._anchoredByShip(game, playerId, island.cells)) {
+						entry.hasKing = true;
+						entry.anchoredByShip = true;
+					}
+					islands.push(entry);
 				}
 			}
 		}
@@ -226,6 +250,7 @@ class IslandManager {
 		const isOwnedCell = (x, z) => {
 			const cellContents = game.board.cells[`${x},${z}`];
 			if (!cellContents || !Array.isArray(cellContents)) return false;
+			if (cellHasShip(cellContents)) return false; // water, not land
 			return cellContents.some(item => item && String(item.player) === String(playerId));
 		};
 
@@ -282,6 +307,33 @@ class IslandManager {
 		return { cells, hasKing };
 	}
 	
+	/**
+	 * Is this island touching (8-neighbour) a longship its own seat
+	 * controls? Only Viking battle seats can be — everyone else returns
+	 * false before looking at a single cell.
+	 *
+	 * @param {Object} game
+	 * @param {string} playerId
+	 * @param {Array<{x:number, z:number}>} islandCells
+	 * @returns {boolean}
+	 * @private
+	 */
+	_anchoredByShip(game, playerId, islandCells) {
+		const battle = battleRules.activeBattleForSeat(game, playerId);
+		if (!isVikingBattle(battle)) return false;
+		const pid = String(playerId);
+		for (const { x, z } of islandCells) {
+			for (const [dx, dz] of NEIGHBOURS_8) {
+				const contents = game.board.cells[`${x + dx},${z + dz}`];
+				if (!Array.isArray(contents)) continue;
+				if (contents.some(item => isShipItem(item) && String(item.player) === pid)) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
 	/**
 	 * Update islands after a tetromino is placed
 	 * @param {Object} game - The game object

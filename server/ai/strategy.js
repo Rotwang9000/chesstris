@@ -3,6 +3,8 @@
  * action helpers and the runner's action picker.
  */
 
+const shipRules = require('../battle/shipRules');
+
 const COMPUTER_DIFFICULTY = Object.freeze({
 	EASY: 'easy',
 	MEDIUM: 'medium',
@@ -119,14 +121,27 @@ function strategyFor(world, computerId) {
 
 // ── Cheap board heuristics ─────────────────────────────────────────────────
 
+/**
+ * Viking longships: is this piece aboard a ship that touches no land?
+ * Nobody may step on or off an unmoored ship, so its passenger can't
+ * attack anything until it sails in. (Ships only exist in Viking
+ * battles, so this is always false elsewhere.)
+ */
+function isStrandedAboard(cells, piece) {
+	const pos = piecePos(piece);
+	if (!pos || !shipRules.cellHasShip(cells[`${pos.x},${pos.z}`])) return false;
+	return !shipRules.isMoored((x, z) => cells[`${x},${z}`] || null, pos.x, pos.z);
+}
+
 function checkForThreatenedPieces(world, computerId) {
 	const myPieces = (world.chessPieces || []).filter(
 		p => p && String(p.player) === String(computerId)
 	);
 	if (myPieces.length === 0) return false;
 
+	const cells = world.board?.cells || {};
 	const opponentPieces = (world.chessPieces || []).filter(
-		p => p && String(p.player) !== String(computerId)
+		p => p && String(p.player) !== String(computerId) && !isStrandedAboard(cells, p)
 	);
 	const radius = Math.max(2, Math.round((strategyFor(world, computerId).huntRadius || 4) / 3));
 	for (const op of opponentPieces) {
@@ -156,7 +171,8 @@ function isKingExposed(world, computerId) {
 		for (let dz = -1; dz <= 1; dz++) {
 			if (dx === 0 && dz === 0) continue;
 			const key = `${kp.x + dx},${kp.z + dz}`;
-			if (Array.isArray(cells[key]) && cells[key].length > 0) neighbours++;
+			// A longship alongside is no wall: it isn't land (Viking rule 8).
+			if (shipRules.isLandCell(cells[key])) neighbours++;
 		}
 	}
 	return neighbours < 3;
@@ -211,4 +227,5 @@ module.exports = {
 	chebyshev,
 	manhattan,
 	piecePos,
+	isStrandedAboard,
 };

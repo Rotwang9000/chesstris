@@ -1,0 +1,36 @@
+Self-hosted fonts
+=================
+
+Viking edition
+--------------
+The rune face is fetched only by pages in the Viking edition
+(<html data-edition="viking">): the @font-face rule in index.html is
+used solely by Viking-scoped selectors, and the preload is injected by
+the inline edition script only when the edition is on. The standard
+game never requests it.
+
+viking-futhark.woff2
+  Family in CSS: 'Tetches Futhark'
+  Source: "Noto Sans Runic", The Noto Project Authors,
+  https://github.com/notofonts/runic
+  Licence: SIL Open Font License 1.1, see OFL-NotoSansRunic.txt.
+  Modified: subset to the Runic block (U+16A0-16F8) and space,
+  converted to WOFF2.
+
+Rebuild (fonttools + brotli):
+  pyftsubset NotoSansRunic-Regular.ttf --unicodes="U+0020,U+16A0-16F8" \
+    --flavor=woff2 --output-file=viking-futhark.woff2
+
+The VIKING mark itself is not a font: it is drawn as SVG
+(img/brand/viking-mark.svg, -cute.svg, -retro.svg), rune-stave
+capitals between two runic word dividers, cut and lit by SVG filters.
+
+Cute render mode (both editions)
+--------------------------------
+cute-fredoka-600.woff2, cute-fredoka-700.woff2
+  Family in CSS: 'Tetches Fredoka' (index.html, tx-ui-theme style)
+  Source: "Fredoka", The Fredoka Project Authors, via @fontsource/fredoka
+  5.0.8 (latin subset), https://github.com/hafontia/Fredoka-One
+  Licence: SIL Open Font License 1.1, see OFL-Fredoka.txt. Unmodified.
+  Used only by rules keyed on html[data-render-profile="cute"], so it
+  is fetched only once someone picks the cute look.

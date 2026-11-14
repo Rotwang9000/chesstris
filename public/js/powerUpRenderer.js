@@ -28,6 +28,9 @@
 import { getTHREE, getPowerUpGroup, setPowerUpGroup, getScene, getGameState } from './gameContext.js';
 import { translatePosition } from './centreBoardMarker.js';
 import { isCellVisibleInCurrentView } from './battle/battleRules.js';
+import { cellHasShip } from './viking/shipLayout.js';
+import { vikingLandWanted } from './viking/landDress.js';
+import { dressRuneStone } from './viking/runeStone.js';
 
 const ORB_RADIUS = 0.45;
 // Lowered so the orb hovers visibly close to its host cell — the user
@@ -256,6 +259,21 @@ function buildSilhouette(THREE, pieceType) {
 }
 
 /**
+ * Viking longships: an orb may sit on water a ship has since sailed
+ * onto (the server leaves it there until the ship moves on). The ghost
+ * block and tether say "build a cell here", which nobody can do on a
+ * ship, and they float in the hull — show just the orb until the ship
+ * leaves. Never changes anything on a square without a ship.
+ */
+function showGhostBlock(visual, gameState, orb) {
+	const ud = visual.userData;
+	const onShip = !!(gameState && cellHasShip(gameState.board?.cells?.[`${orb.x},${orb.z}`]));
+	if (!onShip && !ud.hiddenForShip) return;
+	for (const part of [ud.block, ud.wireframe, ud.tether]) if (part) part.visible = !onShip;
+	ud.hiddenForShip = onShip;
+}
+
+/**
  * Reconcile the visible orb meshes with the canonical `orbs` array.
  * Missing orbs get a fresh visual; orbs that disappeared have their
  * visual removed (and any materials they uniquely held disposed).
@@ -281,6 +299,8 @@ export function syncPowerUps(orbs) {
 			if (!entry) {
 				const visual = buildOrbVisual(orb);
 				if (!visual) continue;
+				// Viking battle: a carved rune stone instead of the glowing sphere
+				if (vikingLandWanted(gameState)) dressRuneStone(THREE, visual);
 				group.add(visual);
 				orbVisuals.set(orb.id, visual);
 				entry = visual;
@@ -290,6 +310,7 @@ export function syncPowerUps(orbs) {
 				positionOrbAtCell(entry, orb);
 				entry.userData.pieceType = orb.pieceType;
 			}
+			showGhostBlock(entry, gameState, orb);
 		}
 	}
 

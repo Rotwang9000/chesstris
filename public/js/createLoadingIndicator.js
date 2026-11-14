@@ -76,6 +76,7 @@ export function createLoadingIndicator() {
 
 	// Create loading text
 	const loadingText = document.createElement('div');
+	loadingText.className = 'loading-indicator-title';
 	loadingText.textContent = 'Preparing Tetches World...';
 	Object.assign(loadingText.style, {
 		fontSize: '24px',
@@ -347,28 +348,15 @@ export function updateNetworkStatus(status) {
 		networkStatusHideTimer = null;
 	}
 
-	// Set text and color based on status with Russian theme
-	switch (status) {
-		case 'connected':
-			networkStatusElement.textContent = 'Connected ✓';
-			networkStatusElement.style.backgroundColor = 'rgba(0, 128, 0, 0.7)';
-			networkStatusElement.style.borderColor = '#ffcc00'; // Gold border
-			break;
-		case 'disconnected':
-			networkStatusElement.textContent = 'Network: Disconnected';
-			networkStatusElement.style.backgroundColor = 'rgba(255, 0, 0, 0.7)';
-			networkStatusElement.style.borderColor = '#ffcc00'; // Gold border
-			break;
-		case 'connecting':
-			networkStatusElement.textContent = 'Connecting…';
-			networkStatusElement.style.backgroundColor = 'rgba(255, 165, 0, 0.7)';
-			networkStatusElement.style.borderColor = '#ffcc00'; // Gold border
-			break;
-		default:
-			networkStatusElement.textContent = `Network: ${status}`;
-			networkStatusElement.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-			networkStatusElement.style.borderColor = '#ffcc00'; // Gold border
-	}
+	// Text here; the pill's colour per state is `#network-status[data-status]`
+	// in the UI theme (index.html).
+	const NETWORK_STATUS_TEXT = {
+		connected: 'Connected ✓',
+		disconnected: 'Network: Disconnected',
+		connecting: 'Connecting…',
+	};
+	networkStatusElement.textContent = NETWORK_STATUS_TEXT[status] || `Network: ${status}`;
+	networkStatusElement.dataset.status = String(status);
 
 	networkStatusElement.style.display = 'block';
 	if (status === 'connected') {
@@ -408,15 +396,14 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 	tutorialElement.id = 'tutorial-message';
 
 	// Style the container as a full-screen modal with flexbox
+	// The look is the shared `.tx-*` UI theme (index.html); layout here.
+	tutorialElement.className = 'tx-scrim';
 	Object.assign(tutorialElement.style, {
 		position: 'fixed',
 		top: '0',
 		left: '0',
 		width: '100%',
 		height: '100%',
-		backgroundColor: 'rgba(0, 0, 0, 0.85)',
-		color: 'white',
-		fontFamily: 'Times New Roman, serif',
 		fontSize: '16px',
 		zIndex: '1000',
 		display: 'flex',
@@ -427,20 +414,17 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 
 	// Create the inner modal box
 	const modalBox = document.createElement('div');
+	modalBox.className = 'tx-panel tx-dialog';
+	modalBox.setAttribute('role', 'dialog');
+	modalBox.setAttribute('aria-label', 'Welcome to Tetches');
 	Object.assign(modalBox.style, {
 		display: 'flex',
 		flexDirection: 'column',
-		maxWidth: 'min(90%, 600px)',
-		maxHeight: '90vh',
-		backgroundColor: 'rgba(10, 10, 30, 0.98)',
-		borderRadius: '12px',
-		border: '2px solid #ffcc00',
-		boxShadow: '0 0 30px rgba(255, 204, 0, 0.4)',
-		overflow: 'hidden'
 	});
 
 	// Create scrollable content area
 	const scrollContent = document.createElement('div');
+	scrollContent.className = 'tx-welcome-body';
 	Object.assign(scrollContent.style, {
 		flex: '1',
 		overflowY: 'auto',
@@ -451,84 +435,16 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 
 	// Create fixed button area at bottom
 	const buttonArea = document.createElement('div');
+	buttonArea.className = 'tx-welcome-actions';
 	Object.assign(buttonArea.style, {
 		padding: '16px 24px',
-		borderTop: '1px solid rgba(255, 204, 0, 0.3)',
-		backgroundColor: 'rgba(10, 10, 30, 1)',
 		display: 'flex',
 		flexDirection: 'column',
 		gap: '12px'
 	});
 
-	// Add pulse animation style
-	const style = document.createElement('style');
-	style.id = 'tutorial-styles';
-	style.textContent = `
-		@keyframes pulse {
-			0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 204, 0, 0.7); }
-			50% { transform: scale(1.02); box-shadow: 0 0 0 8px rgba(255, 204, 0, 0); }
-			100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 204, 0, 0); }
-		}
-		.tutorial-btn {
-			padding: 14px 28px;
-			background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-			color: #ffcc00;
-			border: 2px solid #ffcc00;
-			border-radius: 8px;
-			cursor: pointer;
-			font-size: 16px;
-			font-weight: bold;
-			font-family: 'Times New Roman', serif;
-			transition: all 0.2s ease;
-			width: 100%;
-		}
-		.tutorial-btn:hover {
-			background: linear-gradient(135deg, #2a2a4e 0%, #26315e 100%);
-			transform: translateY(-1px);
-		}
-		.tutorial-btn.primary {
-			font-size: 18px;
-			animation: pulse 2s infinite;
-			background: linear-gradient(135deg, #2a2a1e 0%, #3a3a2e 100%);
-		}
-		.tutorial-btn:disabled {
-			opacity: 0.6;
-			cursor: default;
-			animation: none;
-		}
-		.game-key-input {
-			padding: 12px 16px;
-			background: rgba(255, 255, 255, 0.1);
-			border: 1px solid rgba(255, 204, 0, 0.5);
-			border-radius: 6px;
-			color: #fff;
-			font-size: 14px;
-			font-family: monospace;
-			width: 100%;
-			box-sizing: border-box;
-		}
-		.game-key-input::placeholder {
-			color: rgba(255, 255, 255, 0.5);
-		}
-		.tutorial-divider {
-			display: flex;
-			align-items: center;
-			margin: 12px 0;
-			color: rgba(255, 204, 0, 0.6);
-			font-size: 12px;
-		}
-		.tutorial-divider::before, .tutorial-divider::after {
-			content: '';
-			flex: 1;
-			border-bottom: 1px solid rgba(255, 204, 0, 0.3);
-		}
-		.tutorial-divider span {
-			padding: 0 12px;
-		}
-	`;
-	if (!document.getElementById('tutorial-styles')) {
-		document.head.appendChild(style);
-	}
+	// (The buttons, fields and dividers — .tutorial-btn, .game-key-input,
+	// .tutorial-divider — are styled by the shared UI theme in index.html.)
 
 	// Persist the (optional) name typed into the welcome modal so the
 	// world join announces the player correctly. Blank = keep whatever
@@ -592,29 +508,28 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 	// Offline (phone app / no server): battles against the computer only.
 	const offline = isOffline();
 	scrollContent.innerHTML = `
-		<img src="/img/welcome-hero.png" alt="Tetches — chess pieces and falling tetromino blocks"
-			style="width: auto; max-width: 100%; max-height: 32vh; box-sizing: border-box; display: block; border-radius: 8px; image-rendering: pixelated; margin: 0 auto 12px auto; border: 1px solid rgba(255, 204, 0, 0.35);">
-		<p style="margin: 0 0 14px 0; font-size: 15px; opacity: 0.9;">
+		<div class="welcome-hero"><img src="/img/welcome-hero.png" alt="Tetches — chess pieces and falling tetromino blocks"
+			style="width: auto; max-width: 100%; max-height: 32vh; box-sizing: border-box; display: block; border-radius: 8px; image-rendering: pixelated; margin: 0 auto 12px auto; border: 1px solid rgba(255, 204, 0, 0.35);"></div>
+		<p class="tx-lede">
 			${battleFirst
-		? `Chess meets Tetris, head to head.<br>
-			<span style="opacity: 0.75; font-size: 13px;">Drop blocks to build ground, march your pieces across it and take the enemy king before the sea takes yours.</span>`
-		: `Chess meets Tetris in one huge shared world.<br>
-			<span style="opacity: 0.75; font-size: 13px;">Drop blocks to grow your kingdom, then march your pieces out to capture kings.</span>`}
+		? `Chess meets Tetris, head to head.
+			<span>Drop blocks to build ground, march your pieces across it and take the enemy king before the sea takes yours.</span>`
+		: `Chess meets Tetris in one huge shared world.
+			<span>Drop blocks to grow your kingdom, then march your pieces out to capture kings.</span>`}
 		</p>
 
-		<button id="howto-toggle" aria-expanded="false"
-			style="background: none; border: 1px solid rgba(255, 204, 0, 0.5); color: #ffcc00; border-radius: 6px; padding: 8px 16px; font-size: 14px; cursor: pointer; font-family: inherit;">
+		<button id="howto-toggle" type="button" class="tx-btn tx-btn--sm" aria-expanded="false" aria-controls="howto-content">
 			❓ How to play
 		</button>
 
-		<div id="howto-content" style="display: none; text-align: left; margin: 14px 0 0 0; padding: 16px; background: rgba(255, 204, 0, 0.05); border-radius: 8px;">
-			<ul style="line-height: 1.6; margin: 0; padding-left: 20px;">
+		<div id="howto-content" class="tx-howto" style="display: none;">
+			<ul>
 				<li><strong>Everyone plays at once</strong> — no waiting for turns</li>
 				<li><strong>Your cycle:</strong> drop a tetromino, move one chess piece, repeat</li>
 				<li><strong>Tetris controls:</strong>
-					<span style="color: #ffcc00;">Arrow keys</span> move,
-					<span style="color: #ffcc00;">Z/X</span> rotate,
-					<span style="color: #ffcc00;">Space</span> drop
+					<kbd>Arrow keys</kbd> move,
+					<kbd>Z</kbd>/<kbd>X</kbd> rotate,
+					<kbd>Space</kbd> drop
 				</li>
 				<li><strong>Landing guide:</strong> the outline under your piece shows where it lands —
 					<span style="color: #66ff88;">green will stick</span>,
@@ -625,10 +540,10 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 				<li><strong>Chess:</strong> click (or tap) a piece → click the green circle to move</li>
 				<li><strong>Goal:</strong> capture opponent kings! 👑</li>
 			</ul>
-			<p style="margin: 10px 0 0 0; font-style: italic; font-size: 13px; opacity: 0.85;">
+			<p class="tx-howto-tip">
 				Tip: blocks grow your territory; chess pieces do the fighting.
 			</p>
-			<div style="margin-top: 10px; font-size: 12px; opacity: 0.75; line-height: 1.5;">
+			<div class="tx-note" style="margin-top: 10px;">
 				<strong>World</strong> = the shared board everyone plays on ·
 				<strong>Player Code</strong> = your identity/progress inside it
 			</div>
@@ -673,10 +588,10 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 	const battleLeads = !!inviteBattleCode || battleFirst;
 	const newGameIsPrimary = !(ENABLE_WORLD_KEY && previousGameKey) && !battleLeads;
 	const playButtonHtml = `
-		<button id="new-game-btn" class="tutorial-btn ${newGameIsPrimary ? 'primary' : ''}" ${battleLeads ? 'style="font-size: 14px; padding: 10px 16px;"' : ''}>
+		<button id="new-game-btn" class="tutorial-btn ${newGameIsPrimary ? 'primary' : ''} ${battleLeads ? 'tx-compact' : ''}">
 			${battleFirst && !inviteBattleCode ? '🌍 EXPLORE THE WORLD' : '✦ PLAY NOW'}
 		</button>
-		<div style="font-size: ${battleLeads ? '11px' : '12px'}; opacity: 0.8; text-align: center; margin-top: -2px;">
+		<div class="tx-caption">
 			${inviteBattleCode
 		? 'Or skip the battle and enter the shared world instead.'
 		: battleFirst
@@ -685,10 +600,10 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 		</div>
 	`;
 	const battleButtonHtml = `
-		<button id="welcome-battle-btn" class="tutorial-btn ${battleLeads ? 'primary' : ''}" style="${battleLeads ? '' : 'font-size: 14px; padding: 10px 16px;'}">
+		<button id="welcome-battle-btn" class="tutorial-btn ${battleLeads ? 'primary' : 'tx-compact'}">
 			${inviteBattleCode ? `⚔ JOIN BATTLE ${inviteBattleCode}` : battleFirst ? '⚔ BATTLE' : '⚔ BATTLE A FRIEND'}
 		</button>
-		<div style="font-size: 11px; opacity: 0.7; text-align: center; margin-top: -4px;">
+		<div class="tx-caption">
 			${inviteBattleCode
 		? 'You have been invited to a private battle — click to take your seat.'
 		: offline
@@ -702,22 +617,22 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 	// online play once a quick check finds the server; the app's online
 	// mode links back to offline play.
 	const onlineButtonHtml = `
-		<button id="welcome-online-btn" class="tutorial-btn" disabled style="font-size: 14px; padding: 10px 16px;">
+		<button id="welcome-online-btn" class="tutorial-btn tx-compact" disabled>
 			🌐 PLAY ONLINE
 		</button>
-		<div id="welcome-online-note" style="font-size: 11px; opacity: 0.7; text-align: center; margin-top: -4px;">
+		<div id="welcome-online-note" class="tx-caption">
 			Checking your connection…
 		</div>
 	`;
 	const offlineLinkHtml = `
-		<div style="font-size: 12px; text-align: center; opacity: 0.85;">
-			<a href="${offlineUrl()}" id="welcome-offline-link" style="color: #ffcc00; text-decoration: underline;">🤖 Battle the computer offline</a>
+		<div class="tx-caption">
+			<a href="${offlineUrl()}" id="welcome-offline-link">🤖 Battle the computer offline</a>
 		</div>
 	`;
 	buttonHTML += `
 		<input type="text" id="welcome-player-name" class="game-key-input"
 			placeholder="Your name (optional)" maxlength="20" value="${escapedName}"
-			autocomplete="nickname" style="text-align: center;">
+			autocomplete="nickname" aria-label="Your name (optional)">
 		${offline ? battleButtonHtml + onlineButtonHtml : battleLeads ? battleButtonHtml + playButtonHtml : playButtonHtml + battleButtonHtml}
 		${!offline && isInstalledApp() ? offlineLinkHtml : ''}
 	`;
@@ -730,14 +645,14 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 		// No accounts offline: nothing leaves the device.
 	} else if (kingdomName) {
 		buttonHTML += `
-			<div style="font-size: 12px; text-align: center; color: #88dd88;">
+			<div class="tx-caption tx-signed-in">
 				✓ Logged in as <strong>${kingdomName.replace(/[<>&]/g, '')}</strong> — your kingdom follows you across devices.
 			</div>
 		`;
 	} else {
 		buttonHTML += `
-			<div style="font-size: 12px; text-align: center; opacity: 0.85;">
-				Optional: <a href="#" id="welcome-login-link" style="color: #ffcc00; text-decoration: underline;">log in</a>
+			<div class="tx-caption">
+				Optional: <a href="#" id="welcome-login-link">log in</a>
 				to keep your kingdom on any device.
 			</div>
 		`;
@@ -814,6 +729,12 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 			howtoContent.style.display = isOpen ? 'none' : 'block';
 			howtoToggle.setAttribute('aria-expanded', String(!isOpen));
 			howtoToggle.textContent = isOpen ? '❓ How to play' : '▲ Hide the rules';
+			// The rules get the picture's room (they were squeezed into a
+			// strip two bullets tall under it), and come into view.
+			tutorialElement.classList.toggle('tx-howto-open', !isOpen);
+			if (!isOpen && typeof howtoToggle.scrollIntoView === 'function') {
+				try { howtoToggle.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (_e) { /* old browser */ }
+			}
 		});
 	}
 

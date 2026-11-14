@@ -17,18 +17,10 @@ function styledInput(type, placeholder, autocomplete) {
 	input.type = type;
 	input.placeholder = placeholder;
 	input.autocomplete = autocomplete;
-	Object.assign(input.style, {
-		width: '100%',
-		padding: '8px',
-		fontSize: '16px',
-		backgroundColor: '#111',
-		color: '#ffcc00',
-		border: '1px solid #ffcc00',
-		borderRadius: '4px',
-		marginBottom: '12px',
-		boxSizing: 'border-box',
-		fontFamily: 'inherit',
-	});
+	// Look: the shared `.tx-*` UI theme in index.html.
+	input.className = 'tx-field';
+	input.setAttribute('aria-label', placeholder);
+	Object.assign(input.style, { width: '100%', marginBottom: '12px' });
 	return input;
 }
 
@@ -47,59 +39,46 @@ export function showLoginDialog(options = {}) {
 		left: '0',
 		width: '100%',
 		height: '100%',
-		backgroundColor: 'rgba(0, 0, 0, 0.7)',
 		zIndex: '12000',
 		display: 'flex',
 		justifyContent: 'center',
 		alignItems: 'center',
-		fontFamily: 'serif',
 	});
+	overlay.className = 'tx-scrim';
 
 	const card = document.createElement('div');
-	Object.assign(card.style, {
-		backgroundColor: '#222',
-		border: '2px solid #ffcc00',
-		borderRadius: '8px',
-		padding: '24px',
-		minWidth: '320px',
-		maxWidth: '90%',
-		color: '#ffcc00',
-		boxShadow: '0 0 30px rgba(255, 204, 0, 0.3)',
-	});
+	card.className = 'tx-panel tx-dialog tx-dialog--sm';
+	card.setAttribute('role', 'dialog');
+	card.setAttribute('aria-label', 'Log in / Create account');
 
 	const heading = document.createElement('h3');
 	heading.textContent = 'Log in / Create account';
-	Object.assign(heading.style, { margin: '0 0 12px 0', fontSize: '20px' });
+	heading.className = 'tx-title';
 
 	const help = document.createElement('p');
 	help.textContent = 'Saves your kingdom so you can play from any device. No email needed — your passphrase never leaves this browser. Keep it safe: it is the only way back into your account.';
-	Object.assign(help.style, { margin: '0 0 16px 0', fontSize: '12px', color: '#ccc', lineHeight: '1.5' });
+	help.className = 'tx-text';
 
 	const usernameInput = styledInput('text', 'Username', 'username');
 	usernameInput.value = options.prefillUsername || '';
 	const passphraseInput = styledInput('password', 'Passphrase', 'current-password');
 
 	const status = document.createElement('p');
-	Object.assign(status.style, { margin: '0 0 12px 0', fontSize: '12px', color: '#ff6666', display: 'none' });
+	status.className = 'tx-error';
+	status.style.display = 'none';
 
 	const buttonRow = document.createElement('div');
-	Object.assign(buttonRow.style, { display: 'flex', gap: '8px', justifyContent: 'flex-end' });
+	buttonRow.className = 'tx-actions';
 
 	const cancelBtn = document.createElement('button');
 	cancelBtn.textContent = 'Cancel';
-	Object.assign(cancelBtn.style, {
-		padding: '8px 16px', backgroundColor: '#333', color: '#ccc',
-		border: '1px solid #555', borderRadius: '4px', cursor: 'pointer',
-		fontFamily: 'inherit', fontSize: '14px',
-	});
+	cancelBtn.type = 'button';
+	cancelBtn.className = 'tx-btn';
 
 	const loginBtn = document.createElement('button');
 	loginBtn.textContent = 'Log in';
-	Object.assign(loginBtn.style, {
-		padding: '8px 16px', backgroundColor: '#ffcc00', color: '#000',
-		border: '1px solid #ffcc00', borderRadius: '4px', cursor: 'pointer',
-		fontFamily: 'inherit', fontSize: '14px', fontWeight: 'bold',
-	});
+	loginBtn.type = 'button';
+	loginBtn.className = 'tx-btn tx-btn--primary';
 
 	function close() {
 		try { document.body.removeChild(overlay); } catch (_e) { /* already gone */ }

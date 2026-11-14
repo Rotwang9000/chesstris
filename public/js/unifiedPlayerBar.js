@@ -340,6 +340,7 @@ export function createUnifiedPlayerBar(gameState) {
 			<div style="font-size: 11px; color: #bbb; margin-top: 6px;">Add a username + passphrase to keep your kingdom on any device. No email needed.</div>`;
 
 	gameIdSection.innerHTML = `
+		<div id="sidebar-world-block"${gameState?.activeBattle ? ' style="display: none;"' : ''}>
 		<div style="font-weight: bold; margin-bottom: 5px; color: #ffcc00;">World ID</div>
 		<div style="display: flex; align-items: center; margin-bottom: 10px;">
 			<input id="sidebar-world-id-display" type="text" value="${worldId}" 
@@ -352,6 +353,7 @@ export function createUnifiedPlayerBar(gameState) {
 			</button>
 		</div>
 		<div style="font-size: 11px; color: #bbb; margin-bottom: 12px;">Shared board identifier</div>
+		</div>
 		<div style="font-weight: bold; margin-bottom: 5px; color: #ffcc00;">Player Code</div>
 		<div style="display: flex; align-items: center; margin-bottom: 6px;">
 			<input id="sidebar-player-code-display" type="text" value="${playerCode || 'Not assigned yet'}" 
@@ -380,13 +382,16 @@ export function createUnifiedPlayerBar(gameState) {
 		lineHeight: '1.5'
 	});
 	
+	// The camera controls for the device in hand (a phone has no mouse).
+	const touch = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+		&& window.matchMedia('(pointer: coarse)').matches;
+	const cameraLines = touch
+		? ['One finger: turn the camera', 'Two fingers: pan, pinch to zoom', 'Tap a piece, then a green square, to move']
+		: ['Left drag: turn the camera', 'Right drag: pan', 'Scroll wheel: zoom'];
 	controlsHelp.innerHTML = `
-		<div style="font-weight: bold; margin-bottom: 5px; color: #ffcc00;">Controls</div>
-		<div>🖱️ <b>Mouse controls:</b></div>
-		<ul style="margin: 5px 0 10px 20px; padding: 0;">
-			<li>Left click + drag: Rotate camera</li>
-			<li>Right click + drag: Pan camera</li>
-			<li>Scroll wheel: Zoom in/out</li>
+		<div style="font-weight: bold; margin-bottom: 5px; color: #ffcc00;">Camera</div>
+		<ul style="margin: 5px 0 6px 18px; padding: 0;">
+			${cameraLines.map(line => `<li>${line}</li>`).join('')}
 		</ul>
 	`;
 	playerBar.appendChild(controlsHelp);
@@ -939,7 +944,8 @@ function addPlayerToBar(playerBar, playerId, playerInfo, gameState) {
 	nameDisplay.textContent = playerInfo.name || `Player ${playerId.substring(0, 6)}`;
 	Object.assign(nameDisplay.style, {
 		flexGrow: '1',
-		fontSize: '14px',
+		minWidth: '0',
+		fontSize: '13.5px',
 		whiteSpace: 'nowrap',
 		overflow: 'hidden',
 		textOverflow: 'ellipsis'
@@ -967,18 +973,31 @@ function addPlayerToBar(playerBar, playerId, playerInfo, gameState) {
 	}
 	
 	// Highlight if current turn
+	let turnBadge = null;
 	const isCurrentTurn = gameState.currentPlayer === playerId;
 	if (isCurrentTurn) {
 		playerElement.style.backgroundColor = 'rgba(255, 204, 0, 0.25)';
 		playerElement.style.border = '1px solid #ffcc00';
 		
 		// Add animated turn indicator
-		const turnIndicator = document.createElement('div');
-		turnIndicator.textContent = '🎮';
+		// (beside the name, not inside it: there it wrapped onto a line
+		// of its own and the name was cut short)
+		const turnIndicator = document.createElement('span');
+		turnIndicator.className = 'player-turn-indicator';
+		// A small pulsing gold dot (the 🎮 emoji took the room the name
+		// needed, and was the one modern pictogram in the panel).
+		turnIndicator.title = 'Their turn';
+		turnIndicator.setAttribute('aria-label', 'Their turn');
 		Object.assign(turnIndicator.style, {
-			marginLeft: '5px',
+			flex: '0 0 auto',
+			display: 'inline-block',
+			width: '8px',
+			height: '8px',
+			marginLeft: '6px',
+			borderRadius: '50%',
+			background: 'var(--tx-gold, #ffcc00)',
+			boxShadow: '0 0 6px var(--tx-gold, #ffcc00)',
 			animation: 'pulse 1.5s infinite',
-			fontSize: '16px'
 		});
 		
 		// Create animation if it doesn't exist
@@ -995,10 +1014,11 @@ function addPlayerToBar(playerBar, playerId, playerInfo, gameState) {
 			document.head.appendChild(style);
 		}
 		
-		nameDisplay.appendChild(turnIndicator);
+		turnBadge = turnIndicator;
 	}
 	
 	playerElement.appendChild(nameDisplay);
+	if (turnBadge) playerElement.appendChild(turnBadge);
 
 	// Show captured-piece basket as a compact badge: "♜ 3" etc.
 	// Each glyph is rendered in the *original owner's* colour so a
@@ -1310,6 +1330,9 @@ export function updateUnifiedPlayerBar(gameState) {
 		playerBar = createUnifiedPlayerBar(gameState);
 		return;
 	}
+	// A battle has no shared world: its World ID only confused.
+	const worldBlock = document.getElementById('sidebar-world-block');
+	if (worldBlock) worldBlock.style.display = gameState.activeBattle ? 'none' : '';
 	
 	// Check if player data has changed
 	let currentHash = '';

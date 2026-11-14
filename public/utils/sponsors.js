@@ -152,29 +152,47 @@ export async function recordImpression(sponsorId, cells = 1) {
  * client because rotation rarely changes that fast and the in-game
  * cell-decoration loop calls this every frame the board updates.
  */
-const _activeCache = { list: null, fetchedAt: 0, ms: 30000 };
+const _activeCache = { list: null, fetchedAt: 0, ms: 30000, inFlight: null };
 export async function fetchActiveSponsors() {
 	if (isOffline()) return [];
 	if (_activeCache.list && (Date.now() - _activeCache.fetchedAt) < _activeCache.ms) {
 		return _activeCache.list;
 	}
-	try {
-		const res = await fetch('/api/advertisers/active');
-		if (!res.ok) return _activeCache.list || [];
-		const data = await res.json();
-		const list = (data && data.advertisers) || [];
-		_activeCache.list = list;
-		_activeCache.fetchedAt = Date.now();
-		return list;
-	} catch (err) {
-		console.warn('fetchActiveSponsors error:', err);
-		return _activeCache.list || [];
-	}
+	// Every board redraw asks; while one request is out, the others wait
+	// for it. (A slow device redrawing during the sea started dozens at
+	// once and ran into the server's /api rate limit.)
+	if (_activeCache.inFlight) return _activeCache.inFlight;
+	const request = (async () => {
+		await null; // (so the `finally` below always runs after `inFlight` is set)
+		try {
+			const res = await fetch('/api/advertisers/active');
+			if (!res.ok) {
+				// Rate limited or down: keep what we had and wait out the
+				// cache period rather than asking again on the next redraw.
+				_activeCache.list = _activeCache.list || [];
+				_activeCache.fetchedAt = Date.now();
+				return _activeCache.list;
+			}
+			const data = await res.json();
+			const list = (data && data.advertisers) || [];
+			_activeCache.list = list;
+			_activeCache.fetchedAt = Date.now();
+			return list;
+		} catch (err) {
+			console.warn('fetchActiveSponsors error:', err);
+			return _activeCache.list || [];
+		} finally {
+			_activeCache.inFlight = null;
+		}
+	})();
+	_activeCache.inFlight = request;
+	return request;
 }
 
 export function invalidateActiveSponsorsCache() {
 	_activeCache.list = null;
 	_activeCache.fetchedAt = 0;
+	_activeCache.inFlight = null;
 }
 
 /**

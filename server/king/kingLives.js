@@ -30,6 +30,9 @@
 
 const World = require('./../world/World');
 const pieces = require('./../game/pieces');
+// Dependency-free: Viking longship cells are water with a boat on them,
+// never somewhere a king may respawn (see findRespawnCell).
+const { cellHasShip } = require('./../battle/shipRules');
 
 const KING_INITIAL_LIVES = 3;
 
@@ -84,6 +87,15 @@ function homeZoneCentre(zone) {
  * Returns `{ x, z, needsAnchor: boolean }` where `needsAnchor=true`
  * means the caller should also stamp a fresh tetromino/home anchor
  * on the destination so the king isn't floating in the void.
+ *
+ * Viking longships: a ship cell is never a candidate at any step. An
+ * empty ship is owned by its seat and holds no chess marker, so step 1
+ * would otherwise pick a ship moored beside the home — and a king
+ * aboard dodges `seatIsAlive`, the last-king tie-break and island
+ * anchoring, and could be rowed out to sea where nothing can reach it.
+ * Stamping a king anchor into a ship cell (steps 2–3) is no better:
+ * the cell still counts as a ship, not land. Only battles hold ships,
+ * so this changes nothing in standard battles or the shared world.
  */
 function findRespawnCell(world, playerId, targetX, targetZ, maxRadius = 6) {
 	if (!world || !world.board || !world.board.cells) {
@@ -95,6 +107,7 @@ function findRespawnCell(world, playerId, targetX, targetZ, maxRadius = 6) {
 		if (!Array.isArray(items)) return false;
 		return items.some(item => item && item.type === 'chess');
 	};
+	const isShipCell = (key) => cellHasShip(cells[key]);
 	const isOwnedExistingCell = (key) => {
 		const items = cells[key];
 		if (!Array.isArray(items) || items.length === 0) return false;
@@ -113,6 +126,7 @@ function findRespawnCell(world, playerId, targetX, targetZ, maxRadius = 6) {
 	let bestDist = Infinity;
 	for (const key of Object.keys(cells)) {
 		if (hasOtherChess(key)) continue;
+		if (isShipCell(key)) continue;
 		if (!isOwnedExistingCell(key)) continue;
 		const [cx, cz] = key.split(',').map(Number);
 		if (!Number.isFinite(cx) || !Number.isFinite(cz)) continue;
@@ -126,7 +140,8 @@ function findRespawnCell(world, playerId, targetX, targetZ, maxRadius = 6) {
 
 	// 2. Home centre — always a safe fallback even if the cell is empty.
 	//    `respawnKing` will lay down a fresh anchor below.
-	if (!hasOtherChess(`${targetX},${targetZ}`)) {
+	const centreKey = `${targetX},${targetZ}`;
+	if (!hasOtherChess(centreKey) && !isShipCell(centreKey)) {
 		return { x: targetX, z: targetZ, needsAnchor: true };
 	}
 
@@ -137,8 +152,9 @@ function findRespawnCell(world, playerId, targetX, targetZ, maxRadius = 6) {
 				if (Math.max(Math.abs(dx), Math.abs(dz)) !== radius) continue;
 				const x = targetX + dx;
 				const z = targetZ + dz;
-				if (!hasOtherChess(`${x},${z}`)) {
-					return { x, z, needsAnchor: !isOwnedExistingCell(`${x},${z}`) };
+				const key = `${x},${z}`;
+				if (!hasOtherChess(key) && !isShipCell(key)) {
+					return { x, z, needsAnchor: !isOwnedExistingCell(key) };
 				}
 			}
 		}
@@ -395,5 +411,6 @@ function createKingLifeService({
 
 module.exports = {
 	createKingLifeService,
+	findRespawnCell,
 	KING_INITIAL_LIVES,
 };

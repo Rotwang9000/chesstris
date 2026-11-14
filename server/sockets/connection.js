@@ -30,6 +30,7 @@ const {
 	accountIdForKey,
 } = require('../security/playerSession');
 const { registerBattleHandlers } = require('./battle');
+const { registerBoatHandlers } = require('./boats');
 const { attachSocketRateLimit } = require('./rateLimiter');
 // External AI registry. Imported via `module.exports.validateApiToken`
 // on the routes module rather than the router object so a circular
@@ -135,6 +136,7 @@ function createConnectionHandler(services) {
 		registerSpectateHandlers(socket, handlerCtx);
 		registerLifecycleHandlers(socket, handlerCtx);
 		registerBattleHandlers(socket, handlerCtx);
+		registerBoatHandlers(socket, handlerCtx);
 
 		// One-shot fetch so a freshly-connected client can paint the
 		// fleet immediately instead of waiting for the next

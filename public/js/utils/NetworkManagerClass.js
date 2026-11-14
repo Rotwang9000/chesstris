@@ -1137,23 +1137,60 @@ export default class NetworkManager {
 		this.emitEvent('disconnect', { reason });
 
 		if (reason === 'io client disconnect') return;
+		this.scheduleReconnect();
+	}
 
-		const MAX_RECONNECT = 8;
+	/**
+	 * Try to reconnect after a backoff (up to MAX_RECONNECT rounds).
+	 * @private
+	 */
+	scheduleReconnect() {
+		if (this._reconnectTimer) return; // a round is already waiting
+		const MAX_RECONNECT = 12;
 		const BASE_DELAY_MS = 2000;
-		const attempt = (this.state.reconnectAttempts || 0) + 1;
+		// Rounds, not initialize() attempts (each round makes several,
+		// and they bump `reconnectAttempts` too): ~4 min of trying.
+		const attempt = (this._reconnectRound || 0) + 1;
 		if (attempt > MAX_RECONNECT) {
 			console.warn('NetworkManager: Max reconnection attempts reached');
+			this._reconnectRound = 0;
 			return;
 		}
-		this.state.reconnectAttempts = attempt;
+		this._reconnectRound = attempt;
 		const delay = Math.min(BASE_DELAY_MS * Math.pow(1.5, attempt - 1), 30000);
 		console.log(`NetworkManager: Reconnecting in ${Math.round(delay)}ms (attempt ${attempt}/${MAX_RECONNECT})`);
-		setTimeout(() => {
-			if (this.state.connectionStatus === 'connected') return;
-			this.ensureConnected(this.state.playerName).catch(err => {
+		this._reconnectTimer = setTimeout(() => {
+			this._reconnectTimer = null;
+			if (this.state.connectionStatus === 'connected') { this._reconnectRound = 0; return; }
+			// A failed round (the network still down) must schedule the
+			// next one: no socket means no further 'disconnect' event, and
+			// a blip longer than one round used to leave the page offline
+			// for good (a battle carried on without us, then ended).
+			const retry = () => {
+				if (this.isConnected() || this.state.connectionStatus === 'connected') return;
+				this.scheduleReconnect();
+			};
+			this.ensureConnected(this.state.playerName).then((ok) => {
+				if (ok) this._reconnectRound = 0;
+				else retry();
+			}).catch(err => {
 				console.warn('NetworkManager: Reconnection attempt failed:', err);
+				retry();
 			});
 		}, delay);
+		// Back online: try at once rather than waiting out the backoff.
+		if (!this._onlineRetryArmed && typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+			this._onlineRetryArmed = true;
+			window.addEventListener('online', () => {
+				if (this.isConnected() || this.state.connectionStatus === 'connected') return;
+				if (this.state.isInitializing) return;
+				this.state.reconnectAttempts = 0;
+				this._reconnectRound = 0;
+				this.ensureConnected(this.state.playerName)
+					.then((ok) => { if (!ok) this.scheduleReconnect(); })
+					.catch(() => this.scheduleReconnect());
+			});
+		}
 	}
 
 	/**
