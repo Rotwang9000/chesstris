@@ -843,9 +843,9 @@ function renderButton() {
 	const raid = inWorldSea(gameState) ? raidClock(gameState, mySeat(gameState)) : null;
 	const detailEl = button.querySelector('.longship-detail');
 	detailEl.textContent = raid ? raid.text : state.detail;
-	detailEl.style.color = raid && raid.msLeft < 20000 ? '#ff6a4d' : '';
+	detailEl.style.color = raid && raid.msLeft < 30000 ? '#ff6a4d' : '';
 	if (raid) {
-		button.dataset.raid = raid.msLeft < 20000 ? 'urgent' : '1';
+		button.dataset.raid = raid.msLeft < 30000 ? 'urgent' : '1';
 		button.title = `${state.title} | Raider ashore: get back aboard or join your land before the time runs out. Each capture buys more time.`;
 	} else delete button.dataset.raid;
 	const ring = button.querySelector('.longship-ring');

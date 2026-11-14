@@ -195,7 +195,14 @@ export function raidClock(gameState, playerId, now = shipServerNow(gameState)) {
 	if (!soonest) return null;
 	const msLeft = Math.max(0, soonest.deadline - now);
 	const type = String(soonest.piece.type || 'warrior').toLowerCase();
-	return { text: `⚔ ${type} ashore: ${Math.ceil(msLeft / 1000)} s`, msLeft, pieceId: String(soonest.piece.id) };
+	return { text: `⚔ ${type} ashore: ${formatRaidTime(msLeft)}`, msLeft, pieceId: String(soonest.piece.id) };
+}
+
+/** Raid time as "2:05", or "45 s" under a minute. */
+export function formatRaidTime(ms) {
+	const secs = Math.max(0, Math.ceil(Number(ms) / 1000) || 0);
+	if (secs < 60) return `${secs} s`;
+	return `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
 }
 
 // ── Ships on the board ──────────────────────────────────────────────────────

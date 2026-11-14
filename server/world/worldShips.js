@@ -43,8 +43,8 @@ const WORLD_SHIP = Object.freeze({
 	SAIL_MAX: rules.SHIP.WORLD_SAIL_MAX,
 	RESPAWN_MS: 2 * 60 * 1000,
 	MAX_PER_PLAYER: 3,
-	RAID_BASE_MS: 90 * 1000,
-	RAID_PER_CAPTURE_MS: 45 * 1000,
+	RAID_BASE_MS: 3 * 60 * 1000,
+	RAID_PER_CAPTURE_MS: 90 * 1000,
 	/** How far past the outermost land a ship may still sail. */
 	LAND_MARGIN: 12,
 	/** How long a land-bounds scan is reused. */

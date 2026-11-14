@@ -107,9 +107,11 @@ export function shipEventToast(detail, ctx = {}) {
 			const raid = move.ship?.raid;
 			if (same(move.playerId, me) && raid && Number.isFinite(Number(raid.deadline))) {
 				const secs = Math.max(1, Math.round((Number(raid.deadline) - Number(raid.startedAt || 0)) / 1000));
+				const mins = Math.floor(secs / 60), rest = secs % 60;
+				const time = !mins ? `${secs} s` : !rest ? `${mins} minutes` : `${mins}:${String(rest).padStart(2, '0')}`;
 				const captured = move.capturedPiece?.type ? ' The capture buys more time.' : '';
 				return {
-					text: `On a raid! Your ${pieceName(move.movedPiece?.type)} has ${secs} s ashore to get back aboard or join your land.${captured}`,
+					text: `On a raid! Your ${pieceName(move.movedPiece?.type)} has ${time} ashore to get back aboard or join your land.${captured}`,
 					variant: 'info',
 					icon: 'longship',
 				};
