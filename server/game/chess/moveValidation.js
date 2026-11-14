@@ -30,6 +30,8 @@
 const { log } = require('../GameUtilities');
 const shipRules = require('../../battle/shipRules');
 const { isVikingBattle } = require('../../battle/edition');
+const worldShips = require('../../world/worldShips');
+const Sessions = require('../../world/Sessions');
 
 const PAWN_FORWARD_BY_ORIENTATION = Object.freeze({
 	0: Object.freeze({ dx: 0, dz: 1 }),
@@ -55,15 +57,22 @@ function _isOwnerPaused(game, ownerId) {
 }
 
 /**
- * Do longship rules apply to this player's moves? Only seats of a
- * Viking battle — one O(1) lookup, so the shared world and standard
- * battles never touch a ship check (and couldn't meet a ship anyway).
- * Status isn't filtered: ship cells exist from arena build to cleanup.
+ * Do longship rules apply to this player's moves? Seats of a Viking
+ * battle, and main-world kingdoms once world longships are switched on
+ * (worldShips.enabled) — one O(1) lookup, so standard battles never
+ * touch a ship check. Status isn't filtered: ship cells exist from
+ * arena build to cleanup.
  */
 function _shipRulesApply(game, playerId) {
 	const record = game && game.players ? game.players[String(playerId)] : null;
-	if (!record || !record.battleId) return false;
+	if (!record) return false;
+	if (!record.battleId) return worldShips.appliesTo(game, playerId);
 	return isVikingBattle(game.battles ? game.battles[String(record.battleId)] : null);
+}
+
+/** World only: raiders take nothing from a kingdom whose ruler is away. */
+function _awayRulerVeto(game, piece, toX, toZ) {
+	return worldShips.awayRulerVeto(game, piece, toX, toZ, Sessions.isOnline);
 }
 
 /**
@@ -132,7 +141,8 @@ function validateChessMove(ctx, game, playerId, moveData) {
 		}
 
 		if (_shipRulesApply(game, playerId)) {
-			const veto = _shipVeto(ctx, game, piece, toX, toZ, targetPiece);
+			const veto = _shipVeto(ctx, game, piece, toX, toZ, targetPiece)
+				|| _awayRulerVeto(game, piece, toX, toZ);
 			if (veto) return { valid: false, error: veto.message, reason: veto.reason };
 			if (piece.type !== 'KNIGHT') {
 				const dx = Math.sign(toX - fromX);
@@ -357,6 +367,7 @@ function isValidChessMove(ctx, game, piece, toX, toZ) {
 		// no king attacks from aboard) and ships as non-path squares.
 		const shipsApply = _shipRulesApply(game, pieceOwner);
 		if (shipsApply && _shipVeto(ctx, game, piece, toX, toZ, targetChess)) return false;
+		if (shipsApply && _awayRulerVeto(game, piece, toX, toZ)) return false;
 		const isBoardSquare = (x, z) => {
 			const cell = ctx.boardManager.getCell(game.board, x, z);
 			if (shipsApply && shipRules.cellHasShip(cell)) return false;

@@ -7,9 +7,10 @@
  * (tests/ui/longshipControls.test.js) and the highlights a player sees
  * equal what the server's moveValidation / ships.sail will accept.
  *
- * Ship rules apply only inside a Viking battle, exactly like the
- * server's `_shipRulesApply`: the shared world and standard battles
- * never meet a ship, and their move lists are left untouched.
+ * Ship rules apply inside a Viking battle, and in the shared world once
+ * the server has world longships on (`gameState.worldShips`), exactly
+ * like the server's `_shipRulesApply`. Standard battles never meet a
+ * ship, and their move lists are left untouched.
  */
 
 import {
@@ -24,7 +25,7 @@ import {
 	classifyMove,
 	isMoored,
 } from '../viking/shipRulesClient.js';
-import { seaSinkAt, battlePlayRadius } from '../battle/battleRules.js';
+import { seaSinkAt, battlePlayRadius, isBattleRegionCell } from '../battle/battleRules.js';
 
 export { SHIP, SHIP_REJECTIONS };
 
@@ -65,7 +66,46 @@ export function shipServerNow(gameState, localMs = Date.now()) {
 
 /** Do the ship rules apply to the local player right now? */
 export function shipRulesActive(gameState) {
-	return gameState?.activeBattle?.edition === 'viking';
+	if (gameState?.activeBattle) return gameState.activeBattle.edition === 'viking';
+	return gameState?.worldShips === true;
+}
+
+/** Are we on the shared world's sea (not in a battle)? */
+export function inWorldSea(gameState) {
+	return !gameState?.activeBattle && gameState?.worldShips === true;
+}
+
+/** Mirrors server/world/worldShips.js WORLD_SHIP. */
+export const WORLD_SHIP = Object.freeze({ SAIL_MAX: SHIP.WORLD_SAIL_MAX || 8, LAND_MARGIN: 12 });
+
+let worldBoundsMemo = { cells: null, count: -1, bounds: null };
+
+function isLandItems(items) {
+	return Array.isArray(items) && items.length > 0 && !cellHasShip(items);
+}
+
+/** The world's land bounds, outside the arena region (memoised per board). */
+export function worldLandBounds(gameState) {
+	const cells = gameState?.board?.cells;
+	if (!cells) return null;
+	const keys = Object.keys(cells);
+	if (worldBoundsMemo.cells === cells && worldBoundsMemo.count === keys.length) return worldBoundsMemo.bounds;
+	let bounds = null;
+	for (const key of keys) {
+		const items = cellItems(gameState, ...key.split(',').map(Number));
+		if (!isLandItems(items)) continue;
+		const [x, z] = key.split(',').map(Number);
+		if (!Number.isFinite(x) || !Number.isFinite(z) || isBattleRegionCell(x, z)) continue;
+		if (!bounds) bounds = { minX: x, maxX: x, minZ: z, maxZ: z };
+		else {
+			if (x < bounds.minX) bounds.minX = x;
+			if (x > bounds.maxX) bounds.maxX = x;
+			if (z < bounds.minZ) bounds.minZ = z;
+			if (z > bounds.maxZ) bounds.maxZ = z;
+		}
+	}
+	worldBoundsMemo = { cells, count: keys.length, bounds };
+	return bounds;
 }
 
 /** A board cell as an item array (the client sees arrays, rarely {contents}). */
@@ -90,6 +130,7 @@ function radialBand(centre, x, z) {
  * `boardEnv`.
  */
 export function shipEnv(gameState, now = shipServerNow(gameState)) {
+	if (inWorldSea(gameState)) return worldShipEnv(gameState, now);
 	const battle = gameState?.activeBattle || null;
 	const radius = battlePlayRadius(battle);
 	let standing = null;
@@ -110,6 +151,51 @@ export function shipEnv(gameState, now = shipServerNow(gameState)) {
 			return standing.has(`${x},${z}`);
 		},
 	};
+}
+
+/** The shared world's sea: mirrors server/world/worldShips.js `worldEnv`. */
+function worldShipEnv(gameState, now) {
+	const bounds = worldLandBounds(gameState);
+	const m = WORLD_SHIP.LAND_MARGIN;
+	let standing = null;
+	return {
+		now,
+		sailMax: WORLD_SHIP.SAIL_MAX,
+		getCell: (x, z) => cellItems(gameState, x, z),
+		isInsidePlayArea: (x, z) => !!bounds && !isBattleRegionCell(x, z)
+			&& x >= bounds.minX - m && x <= bounds.maxX + m
+			&& z >= bounds.minZ - m && z <= bounds.maxZ + m,
+		isSunk: () => false,
+		hasPiece: (x, z) => {
+			if (!standing) {
+				standing = new Set();
+				for (const p of gameState?.chessPieces || []) {
+					const pos = p?.position;
+					if (pos) standing.add(`${Number(pos.x)},${Number(pos.z)}`);
+				}
+			}
+			return standing.has(`${x},${z}`);
+		},
+	};
+}
+
+/**
+ * World raids: the soonest-ending raid clock among `playerId`'s pieces
+ * ashore, as `{text, msLeft, pieceId}` — or null when none are raiding.
+ */
+export function raidClock(gameState, playerId, now = shipServerNow(gameState)) {
+	if (playerId == null) return null;
+	let soonest = null;
+	for (const p of gameState?.chessPieces || []) {
+		if (!p || String(p.player) !== String(playerId) || !p.raid) continue;
+		const deadline = Number(p.raid.deadline);
+		if (!Number.isFinite(deadline)) continue;
+		if (!soonest || deadline < soonest.deadline) soonest = { deadline, piece: p };
+	}
+	if (!soonest) return null;
+	const msLeft = Math.max(0, soonest.deadline - now);
+	const type = String(soonest.piece.type || 'warrior').toLowerCase();
+	return { text: `⚔ ${type} ashore: ${Math.ceil(msLeft / 1000)} s`, msLeft, pieceId: String(soonest.piece.id) };
 }
 
 // ── Ships on the board ──────────────────────────────────────────────────────
@@ -314,7 +400,8 @@ export const SHIP_REFUSAL_TEXT = Object.freeze({
 	passenger_cannot_sail: 'A king or pawn aboard cannot be rowed away: it must step ashore.',
 	not_your_ship: 'That is not your longship.',
 	no_ship: 'That longship is gone.',
-	bad_sail: 'A longship sails 1 to 5 squares in a straight line.',
+	bad_sail: 'A longship sails in a straight line, up to its range (5 in battles, 8 in the world).',
+	away_ruler: 'That kingdom\'s ruler is away. Raiders may visit, but take nothing.',
 	not_water: 'A longship can only sail across open water.',
 	not_viking: 'Longships only sail in Viking battles.',
 	not_registered: 'Not connected to the battle yet. Try again in a moment.',

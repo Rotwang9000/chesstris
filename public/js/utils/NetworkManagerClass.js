@@ -772,6 +772,24 @@ export default class NetworkManager {
 	}
 
 	/**
+	 * World longships: launch a frozen pawn beside open water as a
+	 * longship instead of deploying a captured piece.
+	 *
+	 * @param {string} pawnId
+	 * @param {Function} [callback]  Invoked with the server ack payload.
+	 */
+	launchPromotionShip(pawnId, callback) {
+		const socket = this.state.socket;
+		if (!this.isConnected() || !socket) {
+			if (typeof callback === 'function') callback({ success: false, error: 'Not connected' });
+			return;
+		}
+		socket.emit('launch_promotion_ship', { pawnId }, (ack) => {
+			if (typeof callback === 'function') callback(ack);
+		});
+	}
+
+	/**
 	 * Submit response to a King's Duel mini-game.
 	 * @param {string} duelId
 	 * @param {number} placement - Cell index where the player hid their king (0-7)

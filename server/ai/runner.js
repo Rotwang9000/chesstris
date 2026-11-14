@@ -104,7 +104,8 @@ function createAiRunner({
 		for (const cellContents of Object.values(cells)) {
 			if (!Array.isArray(cellContents)) continue;
 			if (cellContents.some(
-				item => item && String(item.player) === String(computerId) && item.type !== 'home'
+				item => item && String(item.player) === String(computerId)
+					&& item.type !== 'home' && item.type !== 'ship'
 			)) {
 				return true;
 			}

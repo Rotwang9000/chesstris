@@ -15,6 +15,9 @@
  *   built    a new keel at your mooring
  *   land     an enemy lands on your shore            (alert)
  *   raid     an enemy raids your shore               (alert)
+ *            your own raider comes ashore in the world: how long it has
+ *   launched a pawn of yours becomes a longship         (world)
+ *   raid_lost your raider's time ashore ran out         (world, alert)
  */
 
 import { displayNameOf } from '../paintings/paintingCaptions.js';
@@ -80,7 +83,19 @@ export function shipEventToast(detail, ctx = {}) {
 		}
 		case 'lost':
 			if (!same(detail.seatId, me) || detail.reason !== 'destroyed') return null;
-			return { text: 'Your longship is destroyed. A new keel is laid at your mooring in 45 s.', variant: 'alert' };
+			return {
+				text: `Your longship is destroyed. A new keel is laid at your mooring in ${detail.world ? '2 minutes' : '45 s'}.`,
+				variant: 'alert',
+			};
+		case 'launched':
+			if (!same(detail.playerId, me)) return null;
+			return { text: 'Your pawn’s long march ends at the shore: a new longship is launched!', variant: 'success', icon: 'longship' };
+		case 'raid_lost':
+			if (!same(detail.playerId, me)) return null;
+			return {
+				text: `Your ${pieceName(detail.type)} stayed ashore too long, cut off from home, and is lost.`,
+				variant: 'alert',
+			};
 		case 'built':
 			if (!same(detail.seatId, me)) return null;
 			return { text: 'A new longship is built at your mooring.', variant: 'success', icon: 'longship' };
@@ -88,6 +103,17 @@ export function shipEventToast(detail, ctx = {}) {
 		case 'raid': {
 			const move = detail.move || {};
 			const landOwner = move.ship?.landOwner;
+			// World: your own raider ashore, cut off from your king.
+			const raid = move.ship?.raid;
+			if (same(move.playerId, me) && raid && Number.isFinite(Number(raid.deadline))) {
+				const secs = Math.max(1, Math.round((Number(raid.deadline) - Number(raid.startedAt || 0)) / 1000));
+				const captured = move.capturedPiece?.type ? ' The capture buys more time.' : '';
+				return {
+					text: `On a raid! Your ${pieceName(move.movedPiece?.type)} has ${secs} s ashore to get back aboard or join your land.${captured}`,
+					variant: 'info',
+					icon: 'longship',
+				};
+			}
 			if (!same(landOwner, me) || same(move.playerId, me)) return null;
 			const whose = possessive(name(move.playerId));
 			const piece = pieceName(move.movedPiece?.type);

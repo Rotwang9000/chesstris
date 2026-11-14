@@ -58,6 +58,8 @@ const PIECE_TYPE_COLOURS = Object.freeze({
 	BISHOP: 0xb083ff,
 	ROOK: 0x4bd1a0,
 	QUEEN: 0xff84d8,
+	// World longships: a ship orb (sea-teal).
+	SHIP: 0x3fd0c9,
 });
 
 // Cached materials so we don't re-allocate on every spawn.
@@ -252,6 +254,19 @@ function buildSilhouette(THREE, pieceType) {
 			return new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.6, 16), material);
 		case 'ROOK':
 			return new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.5, 0.42), material);
+		case 'SHIP': {
+			// A little hull with a mast and a square sail.
+			const ship = new THREE.Group();
+			const hull = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.14, 0.24), material);
+			hull.position.y = -0.18;
+			const mast = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.46, 0.04), material);
+			mast.position.y = 0.06;
+			const sail = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.26, 0.02), material);
+			sail.position.y = 0.1;
+			sail.rotation.y = Math.PI / 2;
+			ship.add(hull, mast, sail);
+			return ship;
+		}
 		case 'QUEEN':
 		default:
 			return new THREE.Mesh(new THREE.ConeGeometry(0.32, 0.7, 16), material);

@@ -7,10 +7,12 @@
  * guard list mirrors chess_move's, in order:
  *
  *   1. the acting seat exists, isn't eliminated and isn't paused;
- *   2. it sits in an ACTIVE battle that plays the Viking edition;
+ *   2. it sits in an ACTIVE battle that plays the Viking edition, or
+ *      is a main-world kingdom with world longships on (worldShips.js);
  *   3. the ship exists and this seat controls it;
  *   4. the ship has finished rowing;
- *   5. the leg is integer, orthogonal, 1–5 squares, all open water.
+ *   5. the leg is integer, orthogonal, within range (battle 5, world 8),
+ *      all open water.
  *
  * (3–5 live in ships.sail so the bots and tests share them.)
  */
@@ -19,6 +21,7 @@
 
 const World = require('../world/World');
 const ships = require('../battle/ships');
+const worldShips = require('../world/worldShips');
 
 function registerBoatHandlers(socket, ctx) {
 	const { playerId: boundPlayerId, broadcaster, integrityService, persistence } = ctx;
@@ -40,17 +43,21 @@ function registerBoatHandlers(socket, ctx) {
 			if (player.eliminated) return refuse('eliminated', 'You have been eliminated — your king is gone.');
 			if (player.paused) return refuse('paused', 'You are paused — press Resume to play.');
 
-			// 2. Only seats of an active Viking battle have ships to sail.
+			// 2. Seats of an active Viking battle, or main-world kingdoms
+			// once world longships are on, have ships to sail.
 			const world = World.getWorld();
 			const battle = ships.vikingBattleOf(world, playerId);
-			if (!battle || battle.status !== 'active') {
+			const inWorld = !battle && worldShips.appliesTo(world, playerId);
+			if (!inWorld && (!battle || battle.status !== 'active')) {
 				return refuse('not_viking', 'There are no longships in this game.');
 			}
 
 			const shipId = data && typeof data === 'object' ? data.shipId : null;
 			const to = data && typeof data === 'object' ? data.to : null;
 			const now = Date.now();
-			const result = ships.sail(world, battle, playerId, { shipId, to }, { now });
+			const result = inWorld
+				? worldShips.sail(world, playerId, { shipId, to }, { now })
+				: ships.sail(world, battle, playerId, { shipId, to }, { now });
 			if (!result.success) return refuse(result.reason, result.error);
 
 			// Sailing is activity (for idle decay), not a chess move.
@@ -60,7 +67,8 @@ function registerBoatHandlers(socket, ctx) {
 			World.markDirty();
 			if (persistence && typeof persistence.markDirty === 'function') persistence.markDirty();
 			if (broadcaster) broadcaster.broadcastGameUpdate();
-			ships.emitToBattle(battle, 'ship_sailed', result.event);
+			if (inWorld) { if (ctx.io) ctx.io.to(world.id).emit('ship_sailed', result.event); }
+			else ships.emitToBattle(battle, 'ship_sailed', result.event);
 
 			return ack({ success: true, ...result.event });
 		} catch (err) {

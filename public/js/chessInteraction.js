@@ -466,7 +466,7 @@ export function performRaycast() {
 			const sq = waterSquareUnderPointer(raycaster);
 			const lanes = gameState.sailLanes || [];
 			if (sq && lanes.length && !lanes.some(l => l.x === sq.x && l.z === sq.z)) {
-				showToastMessage('A longship sails 1 to 5 squares in a straight line over open water: pick a tile.', { duration: 2500, aboveInfoCard: true });
+				showToastMessage(`A longship sails 1 to ${gameState?.worldShips && !gameState?.activeBattle ? 8 : 5} squares in a straight line over open water: pick a tile.`, { duration: 2500, aboveInfoCard: true });
 				return;
 			}
 		}

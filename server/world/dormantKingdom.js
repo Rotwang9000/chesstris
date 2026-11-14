@@ -42,7 +42,9 @@ function collectTerritory(world, playerId) {
 	const cells = {};
 	for (const [key, contents] of Object.entries(world.board?.cells || {})) {
 		if (!Array.isArray(contents) || contents.length === 0) continue;
-		const owned = contents.filter(item => item && String(item.player) === pid);
+		// Longships aren't stowed: they sink with the stow and the
+		// kingdom's ship is rebuilt at its new mooring (worldShips.js).
+		const owned = contents.filter(item => item && String(item.player) === pid && item.type !== 'ship');
 		if (owned.length > 0) cells[key] = deepClone(owned);
 	}
 	const chessPieces = (world.chessPieces || [])

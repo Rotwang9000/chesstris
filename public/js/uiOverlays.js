@@ -32,6 +32,21 @@ const FROZEN_OVERLAY_ID = 'frozen-pawn-promotion-overlay';
  * @param {Object} [opts.summary]   Optional pre-summarised `{ QUEEN: n, ... }`.
  *                                  Reads `gameState.capturedBasket` if omitted.
  */
+/** Is any of the 8 squares around `pos` empty (open water)? */
+function pawnTouchesWater(gameState, pos) {
+	if (!Number.isFinite(pos?.x) || !Number.isFinite(pos?.z)) return false;
+	const cells = gameState?.board?.cells || {};
+	for (let dx = -1; dx <= 1; dx++) {
+		for (let dz = -1; dz <= 1; dz++) {
+			if (!dx && !dz) continue;
+			const cell = cells[`${pos.x + dx},${pos.z + dz}`];
+			const items = Array.isArray(cell) ? cell : cell?.contents;
+			if (!Array.isArray(items) || items.length === 0) return true;
+		}
+	}
+	return false;
+}
+
 export function showFrozenPawnPromotionDialog(pawnId, opts = {}) {
 	const gameState = getGameState();
 	const pieces = Array.isArray(gameState?.chessPieces) ? gameState.chessPieces : [];
@@ -128,6 +143,29 @@ export function showFrozenPawnPromotionDialog(pawnId, opts = {}) {
 			row.appendChild(btn);
 		});
 		dialog.appendChild(row);
+	}
+
+	// World longships: a pawn whose march ends on the coast may become a
+	// longship instead (no captured piece needed; server checks the rest).
+	if (gameState?.worldShips === true && !gameState?.activeBattle && pawnTouchesWater(gameState, pos)) {
+		const ship = document.createElement('button');
+		ship.textContent = '⛵ Launch a longship';
+		ship.title = 'The pawn becomes a longship on the water beside it (up to 3 ships per kingdom).';
+		ship.style.cssText = 'padding:10px 16px;margin-bottom:14px;background:#13394a;color:#9fe8f0;border:1px solid #3fd0c9;border-radius:6px;cursor:pointer;font-size:15px;font-family:inherit;';
+		ship.addEventListener('click', () => {
+			ship.disabled = true;
+			ship.style.opacity = '0.6';
+			NetworkManager.launchPromotionShip(pawnId, (result) => {
+				if (result && result.success) {
+					overlay.remove();
+				} else {
+					showToastMessage((result && result.error) || 'No longship can be launched here.', 3500);
+					ship.disabled = false;
+					ship.style.opacity = '1';
+				}
+			});
+		});
+		dialog.appendChild(ship);
 	}
 
 	const buttons = document.createElement('div');

@@ -30,6 +30,8 @@ const rules = require('./shipRules');
 const { isVikingBattle } = require('./edition');
 const { isInsidePlayArea, playRadiusForSeats } = require('./geometry');
 const { isSunk } = require('./sea');
+// Lazy: worldShips → geometry/shipRules only, but keep the load order loose.
+const worldShips = () => require('../world/worldShips');
 
 // Mirrors moveValidation's pawn-forward table (see geometry.js header):
 // the mooring is one square BEHIND the queen, i.e. against forward.
@@ -305,7 +307,7 @@ function canSailAnyFor(world, playerId, now = Date.now()) {
 /** Does the player have a chess-phase action: a legal chess move or a sail? */
 function hasChessPhaseAction(world, playerId, chessManager, now = Date.now()) {
 	if (chessManager.hasValidChessMoves(world, playerId)) return true;
-	return canSailAnyFor(world, playerId, now);
+	return canSailAnyFor(world, playerId, now) || worldShips().canSailAnyFor(world, playerId, now);
 }
 
 // ── Chess moves that touch a ship ────────────────────────────────────
@@ -320,7 +322,7 @@ function hasChessPhaseAction(world, playerId, chessManager, now = Date.now()) {
 function planChessMove(world, piece, toX, toZ) {
 	if (!piece || !piece.position) return null;
 	const battle = vikingBattleOf(world, piece.player);
-	if (!battle) return null;
+	if (!battle) return worldShips().planChessMove(world, piece, toX, toZ);
 	const cells = world.board.cells || {};
 	const fromCell = cells[keyOf(piece.position.x, piece.position.z)];
 	const toCell = cells[keyOf(toX, toZ)];
@@ -340,8 +342,9 @@ function planChessMove(world, piece, toX, toZ) {
  *
  * @returns {null | {kind:string, shipId:string}} The `chess_move.ship` field.
  */
-function afterPieceMoved(world, piece, from, to, captured, plan) {
+function afterPieceMoved(world, piece, from, to, captured, plan, hooks = {}) {
 	if (!plan || !piece) return null;
+	if (plan.world) return afterWorldPieceMoved(world, piece, to, captured, plan, hooks);
 	const battle = world.battles ? world.battles[String(plan.battleId)] : null;
 	if (!battle) return null;
 	const info = { kind: plan.kind, shipId: plan.shipId };
@@ -365,6 +368,41 @@ function afterPieceMoved(world, piece, from, to, captured, plan) {
 			capturedPieceId: captured && captured.id != null ? String(captured.id) : null,
 		});
 	}
+	return info;
+}
+
+/**
+ * The shared world's half of `afterPieceMoved`: announce seizures to
+ * everyone watching the world, and run the mover's raid clock.
+ *
+ * @param {{hasPathToKing?: Function, emitAll?: Function, now?: number}} hooks
+ */
+function afterWorldPieceMoved(world, piece, to, captured, plan, hooks) {
+	const ws = worldShips();
+	const raid = ws.afterWorldMove(world, piece, to, plan, captured, {
+		now: hooks.now || Date.now(),
+		hasPathToKing: hooks.hasPathToKing,
+	});
+	const emitAll = typeof hooks.emitAll === 'function' ? hooks.emitAll : () => {};
+	const nowAt = rules.shipAt(world.board.cells[keyOf(to.x, to.z)]);
+	const changedHands = !!nowAt && String(nowAt.player) === String(piece.player);
+	if ((plan.kind === 'seize' || plan.kind === 'boarded') && changedHands) {
+		emitAll('ship_seized', {
+			shipId: plan.shipId,
+			from: plan.previousController,
+			to: String(piece.player),
+			byPieceId: String(piece.id),
+			kind: plan.kind,
+			at: { x: to.x, z: to.z },
+			capturedPieceId: captured && captured.id != null ? String(captured.id) : null,
+			world: true,
+		});
+	}
+	if (plan.kind === 'raid_step' && !raid) return null;
+	const info = { kind: plan.kind, shipId: plan.shipId, world: true };
+	if (plan.landOwner != null) info.landOwner = plan.landOwner;
+	if (raid && raid.raid) info.raid = raid.raid;
+	if (raid && raid.raidEnded) info.raidEnded = true;
 	return info;
 }
 

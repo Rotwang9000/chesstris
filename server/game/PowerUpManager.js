@@ -47,6 +47,7 @@ const { randomUUID: uuidv4 } = require('crypto');
 const World = require('../world/World');
 const pieces = require('./pieces');
 const { cellHasShip } = require('../battle/shipRules');
+const worldShips = require('../world/worldShips');
 
 const SPAWN_TICK_MS = 45 * 1000;
 const ORB_LIFETIME_MS = 4 * 60 * 1000;
@@ -70,6 +71,10 @@ const PIECE_TYPE_WEIGHTS = Object.freeze({
 	ROOK: 8,
 	QUEEN: 5,
 });
+
+// World longships (worldShips.enabled): a rare orb holds a longship,
+// launched on the nearest open water when claimed.
+const SHIP_ORB_WEIGHT = 6;
 
 // Soft caps so long-running AI bots don't vacuum every pawn orb into
 // a 100-piece army. Humans are uncapped — power-ups are their reward
@@ -152,9 +157,12 @@ function createPowerUpManager({
 		return weightedItems[weightedItems.length - 1];
 	}
 
-	function pickPieceType() {
+	function pickPieceType(world = null, targetPlayerId = null) {
 		const items = Object.entries(PIECE_TYPE_WEIGHTS)
 			.map(([type, weight]) => ({ type, weight }));
+		if (world && targetPlayerId != null && worldShips.appliesTo(world, targetPlayerId)) {
+			items.push({ type: 'SHIP', weight: SHIP_ORB_WEIGHT });
+		}
 		return pickWeighted(items).type;
 	}
 
@@ -290,7 +298,7 @@ function createPowerUpManager({
 			id: `orb-${uuidv4().substring(0, 8)}`,
 			x: location.x,
 			z: location.z,
-			pieceType: pickPieceType(),
+			pieceType: pickPieceType(world, target.id),
 			spawnedAt: now,
 			expiresAt: now + ORB_LIFETIME_MS,
 			// Recorded so the client can highlight orbs that lean
@@ -369,6 +377,10 @@ function createPowerUpManager({
 
 		orbs.splice(idx, 1);
 
+		if (String(orb.pieceType).toUpperCase() === 'SHIP') {
+			return claimShipOrb(world, playerId, orb, idx, cellX, cellZ);
+		}
+
 		const piece = pieces.addPiece(world, {
 			type: orb.pieceType,
 			player: playerId,
@@ -410,6 +422,50 @@ function createPowerUpManager({
 
 		persistence.markDirty();
 		return { orb, piece };
+	}
+
+	/**
+	 * A ship orb: launch a longship for the claimant on the nearest open
+	 * water. With the fleet full (or no water near), the orb gives a
+	 * knight instead, so a claim is never wasted.
+	 */
+	function claimShipOrb(world, playerId, orb, idx, cellX, cellZ) {
+		const launched = worldShips.launchShipNear(world, playerId, { x: cellX, z: cellZ }, { radius: 3 });
+		if (!launched || launched.refused) {
+			const piece = pieces.addPiece(world, {
+				type: 'KNIGHT', player: playerId, x: cellX, z: cellZ, reason: 'powerup', activityLog,
+			});
+			if (!piece) {
+				ensurePowerUps(world).splice(idx, 0, orb);
+				return null;
+			}
+			emitClaim(world, playerId, orb, { pieceType: 'KNIGHT', pieceId: piece.id, x: cellX, z: cellZ });
+			persistence.markDirty();
+			return { orb, piece };
+		}
+		emitClaim(world, playerId, orb, {
+			pieceType: 'SHIP', shipId: launched.shipId, x: cellX, z: cellZ, shipAt: { x: launched.x, z: launched.z },
+		});
+		try {
+			io.to(World.getWorldId()).emit('ship_launched', {
+				playerId, shipId: launched.shipId, x: launched.x, z: launched.z, from: { x: cellX, z: cellZ }, orb: true, world: true,
+			});
+		} catch (_e) { /* best-effort */ }
+		persistence.markDirty();
+		return { orb, piece: null, ship: launched };
+	}
+
+	function emitClaim(world, playerId, orb, extra) {
+		try {
+			const player = world.players ? world.players[playerId] : null;
+			const playerName = (player && (player.username || player.name)) || playerId;
+			io.to(World.getWorldId()).emit('powerup_claimed', { orbId: orb.id, playerId, playerName, ...extra });
+			if (activityLog && typeof activityLog.recordPowerupClaimed === 'function') {
+				activityLog.recordPowerupClaimed({ playerId, playerName, orbId: orb.id, ...extra });
+			}
+		} catch (err) {
+			console.warn('[PowerUp] claim emit failed:', err.message);
+		}
 	}
 
 	/**

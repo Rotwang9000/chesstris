@@ -20,6 +20,8 @@ const { markPawnAwaitingPromotion } = require('../game/promotion');
 // Viking longships: shared with the AI so both classify ship moves alike.
 const ships = require('../battle/ships');
 const shipRules = require('../battle/shipRules');
+const worldShips = require('../world/worldShips');
+const Sessions = require('../world/Sessions');
 
 /**
  * Legacy credit-banking flow — kept so persisted worlds that still
@@ -152,6 +154,7 @@ function registerChessHandlers(socket, ctx) {
 		checkService,
 		spectatorRegistry,
 		activityLog,
+		persistence,
 	} = ctx;
 	// While in an active battle the socket acts as its SEAT id.
 	const actingPlayerId = typeof ctx.resolveActingPlayerId === 'function'
@@ -581,7 +584,13 @@ function registerChessHandlers(socket, ctx) {
 					previousOwners.add(String(item.player));
 				}
 			}
-			cells.transferOwnership(targetCellContents, playerId, playerColor, world.players);
+			// World raiders visiting an away ruler's land take nothing,
+			// not even the ground (worldShips: away rulers are safe).
+			const keepGround = !!(shipPlan && shipPlan.world) && worldShips.keepsGroundOwner(
+				world, piece, shipRules.landOwnerOf(targetCellContents), Sessions.isOnline,
+			);
+			if (keepGround) previousOwners.clear();
+			else cells.transferOwnership(targetCellContents, playerId, playerColor, world.players);
 			targetCellContents.push({ ...chessPieceObj, position: targetPosition, player: playerId });
 			gameManager.boardManager.setCell(world.board, targetPosition.x, targetPosition.z, targetCellContents);
 
@@ -674,6 +683,10 @@ function registerChessHandlers(socket, ctx) {
 				world, piece, originalPosition,
 				{ x: targetPosition.x, z: targetPosition.z },
 				capturedPieceSnapshot, shipPlan,
+				{
+					hasPathToKing: (x, z, pid) => gameManager.islandManager.hasPathToKing(world, x, z, pid),
+					emitAll: (event, payload) => io.to(world.id).emit(event, payload),
+				},
 			);
 			io.to(world.id).emit('chess_move', {
 				playerId,
@@ -955,6 +968,63 @@ function registerChessHandlers(socket, ctx) {
 	// a frozen pawn (awaitingPromotion) with the chosen piece type
 	// in-place. The frozen pawn must still be on the board; deploying
 	// keeps the same cell (which is locked as home-like while frozen).
+	// launch_promotion_ship {pawnId}: World longships — a frozen pawn
+	// that finished its march beside open water may become a longship
+	// instead of a captured piece. The pawn goes; its square stays (it is
+	// home-like ground); the ship is moored on the touching water. No
+	// basket entry is spent. Capped by worldShips.WORLD_SHIP.MAX_PER_PLAYER.
+	socket.on('launch_promotion_ship', (data, callback) => {
+		const playerId = actingPlayerId();
+		const reply = typeof callback === 'function' ? callback : () => {};
+		try {
+			const world = World.getWorld();
+			const player = World.getPlayer(playerId);
+			if (!player) return reply({ success: false, error: 'Not registered' });
+			const blocked = inactiveReason(player);
+			if (blocked) return reply({ success: false, ...blocked });
+			if (!worldShips.appliesTo(world, playerId)) {
+				return reply({ success: false, reason: 'not_viking', error: 'There are no longships here.' });
+			}
+			const pawnId = data && data.pawnId;
+			const pawn = (world.chessPieces || []).find(p =>
+				p && String(p.id) === String(pawnId)
+				&& String(p.player) === String(playerId)
+				&& p.type === 'PAWN'
+				&& p.awaitingPromotion === true,
+			);
+			if (!pawn || !pawn.position) return reply({ success: false, error: 'Frozen pawn not found' });
+
+			const launched = worldShips.launchShipNear(world, playerId, pawn.position, { radius: 1 });
+			if (!launched || launched.refused) {
+				const why = launched && launched.refused;
+				const error = why === 'fleet_full'
+					? `You already have ${worldShips.WORLD_SHIP.MAX_PER_PLAYER} longships.`
+					: why === 'no_water'
+						? 'A longship needs open water right beside the pawn.'
+						: 'No longship can be launched here.';
+				return reply({ success: false, reason: why || 'refused', error });
+			}
+			const at = { x: pawn.position.x, z: pawn.position.z };
+			pieces.removePiece(world, pawn.id, { reason: 'promoted_to_ship', activityLog, silent: true });
+			World.markDirty();
+			if (persistence && typeof persistence.markDirty === 'function') persistence.markDirty();
+			broadcaster.broadcastGameUpdate();
+			io.to(world.id).emit('ship_launched', {
+				playerId,
+				pawnId: String(pawn.id),
+				from: at,
+				shipId: launched.shipId,
+				x: launched.x,
+				z: launched.z,
+				world: true,
+			});
+			return reply({ success: true, shipId: launched.shipId, x: launched.x, z: launched.z });
+		} catch (error) {
+			console.error('Error processing launch_promotion_ship:', error);
+			return reply({ success: false, error: 'Server error' });
+		}
+	});
+
 	socket.on('deploy_promotion', (data, callback) => {
 		const playerId = actingPlayerId();
 		try {
@@ -1433,13 +1503,15 @@ function classifyMoveRejection(gameManager, world, piece, targetPosition, destEx
  * over a ship), or null so the generic reasons apply.
  */
 function classifyShipRejection(gameManager, world, piece, targetPosition, targetCell) {
-	if (!ships.vikingBattleOf(world, piece.player)) return null;
+	const inWorld = worldShips.appliesTo(world, piece.player);
+	if (!inWorld && !ships.vikingBattleOf(world, piece.player)) return null;
 	const getCell = (x, z) => gameManager.boardManager.getCell(world.board, x, z);
 	const from = { x: piece.position.x, z: piece.position.z };
 	const to = { x: targetPosition.x, z: targetPosition.z };
 	const marker = Array.isArray(targetCell)
 		? targetCell.find(it => it && it.type === 'chess') : null;
-	const veto = shipRules.chessMoveVeto({ getCell, now: Date.now() }, piece, from, to, marker || null);
+	const veto = shipRules.chessMoveVeto({ getCell, now: Date.now() }, piece, from, to, marker || null)
+		|| (inWorld ? worldShips.awayRulerVeto(world, piece, to.x, to.z, Sessions.isOnline) : null);
 	if (veto) return veto;
 	const type = String(piece.type || '').toUpperCase();
 	if (type === 'KNIGHT') return null;

@@ -16,7 +16,8 @@
  * After a sail the ship rows for 3 s: its own side can't step on or
  * off (enemies still can), and it can't sail again yet.
  *
- * Ship rules are only live in Viking battles (shipEnv.shipRulesActive);
+ * Ship rules are live in Viking battles and, once the server switches
+ * them on, in the shared world (shipEnv.shipRulesActive);
  * outside them every entry point here is a no-op, so the standard game
  * is untouched.
  */
@@ -31,6 +32,7 @@ import { getSocket } from '../utils/networkManager.js';
 import { ensureActionStack, positionUnderNextPiece } from '../skipChessButton.js';
 import {
 	shipRulesActive, shipServerNow, noteSailReadyAt, listShips, shipsControlledBy, shipEntryAt,
+	inWorldSea, raidClock,
 	findShip, laneTargets, checkSail, rowingMsLeft, shipRefusalText, cellItems,
 } from './shipEnv.js';
 import { shipButtonState, updateFleetMemo } from './shipHudState.js';
@@ -738,10 +740,11 @@ export async function sailTo(x, z) {
 // ── HUD button ───────────────────────────────────────────────────────────────
 
 function buttonState(gameState) {
-	const active = shipRulesActive(gameState) && !!gameState?.activeBattle;
-	if (active && fleetMemoBattle !== gameState.activeBattle.id) {
+	const active = shipRulesActive(gameState);
+	const where = gameState?.activeBattle ? gameState.activeBattle.id : 'world';
+	if (active && fleetMemoBattle !== where) {
 		fleetMemo = null;
-		fleetMemoBattle = gameState.activeBattle.id;
+		fleetMemoBattle = where;
 	}
 	return shipButtonState({
 		active,
@@ -836,7 +839,15 @@ function renderButton() {
 	button.dataset.mode = state.mode;
 	button.title = state.title;
 	button.querySelector('.longship-label').textContent = state.label;
-	button.querySelector('.longship-detail').textContent = state.detail;
+	// World raids: the raider's time ashore beats the ship's own detail.
+	const raid = inWorldSea(gameState) ? raidClock(gameState, mySeat(gameState)) : null;
+	const detailEl = button.querySelector('.longship-detail');
+	detailEl.textContent = raid ? raid.text : state.detail;
+	detailEl.style.color = raid && raid.msLeft < 20000 ? '#ff6a4d' : '';
+	if (raid) {
+		button.dataset.raid = raid.msLeft < 20000 ? 'urgent' : '1';
+		button.title = `${state.title} | Raider ashore: get back aboard or join your land before the time runs out. Each capture buys more time.`;
+	} else delete button.dataset.raid;
 	const ring = button.querySelector('.longship-ring');
 	const deg = Math.round(state.progress * 360);
 	// (retro draws its ring in phosphor green, like the rest of its HUD)
@@ -950,7 +961,7 @@ function onShipEvent(e) {
 	// Until one of our own sails has been acked, any sail news sets the clock.
 	if (detail.kind === 'sailed' && !ackClockLearnt) noteSailReadyAt(detail.readyAt);
 	fleetMemo = updateFleetMemo(fleetMemo, detail, mySeat(gameState));
-	if (gameState.activeBattle) fleetMemoBattle = gameState.activeBattle.id;
+	fleetMemoBattle = gameState.activeBattle ? gameState.activeBattle.id : 'world';
 	if (selection.shipId) {
 		// Let the board diff land first.
 		setTimeout(() => refreshShipSelection(), 60);

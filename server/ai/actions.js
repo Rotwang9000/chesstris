@@ -1011,6 +1011,10 @@ function createAiActions({
 		const shipMove = ships.afterPieceMoved(
 			world, movedPiece, originalPosition, { x: targetX, z: targetZ },
 			capturedPieceSnapshot, shipPlan,
+			{
+				hasPathToKing: (x, z, pid) => gameManager.islandManager.hasPathToKing(world, x, z, pid),
+				emitAll: (event, payload) => io.to(world.id).emit(event, payload),
+			},
 		);
 
 		return {

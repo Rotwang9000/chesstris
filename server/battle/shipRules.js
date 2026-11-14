@@ -42,8 +42,10 @@
 const SHIP = Object.freeze({
 	/** Cell item type. */
 	TYPE: 'ship',
-	/** Furthest a ship sails in one leg. */
+	/** Furthest a ship sails in one leg (battles; the world passes `env.sailMax`). */
 	SAIL_MAX: 5,
+	/** Furthest a ship sails in one leg in the shared world: kingdoms sit far apart. */
+	WORLD_SAIL_MAX: 8,
 	/** How long a ship rows after sailing before it may sail or be used. */
 	ROW_LOCK_MS: 3000,
 	/** A seat with no ship gets a new one at its mooring after this long. */
@@ -74,12 +76,18 @@ const SHIP_REJECTIONS = Object.freeze({
 	path_blocked_by_ship: 'A longship blocks the way — pieces cannot slide over it.',
 	not_your_ship: 'That is not your longship.',
 	no_ship: 'There is no longship there.',
-	bad_sail: 'A longship sails 1-5 squares in a straight line.',
+	bad_sail: 'A longship sails in a straight line, up to its range.',
+	away_ruler: 'That kingdom\'s ruler is away — raiders may visit, but take nothing.',
 	not_water: 'A longship can only sail across open water.',
 });
 
 function isShipItem(item) {
 	return !!(item && item.type === SHIP.TYPE);
+}
+
+/** A longship of the shared world (not of a battle). */
+function isWorldShipItem(item) {
+	return isShipItem(item) && item.world === true && item.battleId == null;
 }
 
 /** The ship item in a cell's contents, or null. */
@@ -158,12 +166,19 @@ function isMoored(getCell, x, z) {
 	return false;
 }
 
+/** How far a ship may sail in one leg under this env. */
+function sailMaxOf(env) {
+	const n = Number(env && env.sailMax);
+	return Number.isInteger(n) && n > 0 ? n : SHIP.SAIL_MAX;
+}
+
 /** Every square a ship at `from` can reach this leg, nearest first per direction. */
 function sailTargets(env, from) {
 	const out = [];
 	if (!from) return out;
+	const max = sailMaxOf(env);
 	for (const [dx, dz] of ORTHOGONAL) {
-		for (let step = 1; step <= SHIP.SAIL_MAX; step++) {
+		for (let step = 1; step <= max; step++) {
 			const x = from.x + dx * step;
 			const z = from.z + dz * step;
 			if (!isWater(env, x, z)) break;
@@ -174,7 +189,7 @@ function sailTargets(env, from) {
 }
 
 /**
- * Validate one sail leg: integer, orthogonal, 1–SAIL_MAX squares, every
+ * Validate one sail leg: integer, orthogonal, 1–sailMax squares, every
  * square crossed (destination included) open water, and not rowing.
  *
  * @returns {{ok: true} | {ok: false, reason: string, message: string}}
@@ -188,7 +203,7 @@ function validateSail(env, ship, from, to, now) {
 	const dz = to.z - from.z;
 	if ((dx !== 0) === (dz !== 0)) return refuse('bad_sail'); // diagonal or no move
 	const distance = Math.abs(dx) + Math.abs(dz);
-	if (distance > SHIP.SAIL_MAX) return refuse('bad_sail');
+	if (distance > sailMaxOf(env)) return refuse('bad_sail');
 	const sx = Math.sign(dx);
 	const sz = Math.sign(dz);
 	for (let step = 1; step <= distance; step++) {
@@ -310,16 +325,20 @@ function classifyMove(fromCell, toCell, moverId, captures) {
 	return null;
 }
 
-/** A fresh ship item. */
-function makeShipItem({ shipId, player, battleId, homeSeatId, color = null, readyAt = 0 }) {
+/**
+ * A fresh ship item. A battle ship carries its `battleId`; a ship of the
+ * shared world has none and is marked `world: true` instead.
+ */
+function makeShipItem({ shipId, player, battleId = null, homeSeatId, color = null, readyAt = 0 }) {
 	const item = {
 		type: SHIP.TYPE,
 		shipId: String(shipId),
 		player: String(player),
-		battleId: String(battleId),
 		homeSeatId: String(homeSeatId),
 		readyAt: Number(readyAt) || 0,
 	};
+	if (battleId != null) item.battleId = String(battleId);
+	else item.world = true;
 	if (color != null) item.color = color;
 	return item;
 }
@@ -328,6 +347,7 @@ module.exports = {
 	SHIP,
 	SHIP_REJECTIONS,
 	isShipItem,
+	isWorldShipItem,
 	shipAt,
 	cellHasShip,
 	isLandCell,
@@ -336,6 +356,7 @@ module.exports = {
 	controls,
 	isWater,
 	isMoored,
+	sailMaxOf,
 	sailTargets,
 	validateSail,
 	canSailAny,
