@@ -909,6 +909,10 @@ export function setupNetworkEvents(hooks = {}) {
 			const clientVersion = String(window.__BUNDLE_VERSION__ || '');
 			if (!serverVersion || !clientVersion) return;
 			if (serverVersion === clientVersion) return;
+			// Battles lazy-load the Viking chunk from the server's
+			// current build; battleMode reloads a stale page into the
+			// battle rather than mixing two builds.
+			window.__TETCHES_STALE_BUILD__ = serverVersion;
 			showVersionMismatchBanner({ serverVersion, clientVersion });
 		} catch (err) {
 			console.warn('server_version handler failed:', err);

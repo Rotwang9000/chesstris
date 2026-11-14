@@ -164,10 +164,35 @@ function emitFocus(battleId) {
 }
 
 /** Adopt the battle seat as the local identity (switching views). */
+/**
+ * A page left open across a server update runs the old app bundle, but
+ * the lazily loaded Viking chunk (and the battle rules) come from the
+ * new build — the mix left battles blank. Reload once, straight back
+ * into the battle (`?battle=CODE`), instead. Returns true if reloading.
+ */
+function reloadIfStaleBuild(battle) {
+	if (isOffline() || typeof window === 'undefined') return false;
+	const stale = window.__TETCHES_STALE_BUILD__;
+	if (!stale || !battle?.code) return false;
+	try {
+		const key = 'tetches_stale_reload';
+		if (window.sessionStorage.getItem(key) === String(stale)) return false;  // once per build
+		window.sessionStorage.setItem(key, String(stale));
+		const url = new URL(window.location);
+		url.searchParams.set('battle', battle.code);
+		url.searchParams.delete('gameId');
+		window.location.replace(url.toString());
+		return true;
+	} catch (_e) {
+		return false;
+	}
+}
+
 function adoptSeat(battle, { announce = true } = {}) {
 	if (!gameStateRef) return;
 	const seat = mySeat(battle);
 	if (!seat) return;
+	if (gameStateRef.activeBattle?.id !== battle.id && reloadIfStaleBuild(battle)) return;
 	// Lite (2D) mode cannot show longships: refuse Viking battles.
 	if (gameStateRef.liteMode && isVikingBattle(battle)) {
 		showToastMessage(VIKING_LITE_REFUSAL, { variant: 'alert', duration: 8000 });
