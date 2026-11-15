@@ -12,6 +12,7 @@
 import { getShape, getColourCss } from './shapes.js';
 import { isTouchPrimary } from '../utils/inputMode.js';
 import { avoidRect } from '../showToastMessage.js';
+import { attachHudLayout } from '../hudLayout.js';
 
 const HUD_ID = 'next-tetromino-display';
 const CANVAS_ID = 'next-tetromino-canvas';
@@ -93,6 +94,8 @@ function createWidget() {
 	});
 
 	document.body.appendChild(widget);
+	// Size switch (full / compact / collapsed) and the announcements feed.
+	attachHudLayout(widget);
 	return widget;
 }
 

@@ -788,12 +788,17 @@ function handleKingEliminated(payload) {
 
 function handleSuicidalPawn(payload) {
 	try {
-		const { x, z, remaining } = payload || {};
+		const { x, z, remaining, captorId, defeatedId } = payload || {};
 		if (x === undefined || z === undefined) return;
 		if (typeof window.showExplosionAnimation === 'function') {
 			window.showExplosionAnimation(x, z, gameState);
 		}
-		if (remaining === 0) {
+		// Only the two kingdoms it concerns are told; everyone else can
+		// read it in the announcements feed.
+		const me = gameState.localPlayerId;
+		const involvesUs = me != null
+			&& (String(captorId) === String(me) || String(defeatedId) === String(me));
+		if (remaining === 0 && involvesUs) {
 			showToastMessage('All inherited pawns have self-destructed!');
 		}
 	} catch (e) {
