@@ -8,6 +8,7 @@ jest.mock('../../public/js/skipChessButton.js', () => ({
 	ensureActionStack: () => null, positionUnderNextPiece: () => {},
 }));
 jest.mock('../../public/js/showToastMessage.js', () => ({ showToastMessage: () => {} }));
+jest.mock('../../public/js/viewStick.js', () => ({ setViewStick: () => {} }));
 jest.mock('../../public/js/activityLog.js', () => ({
 	describeEvent: () => ({ icon: '', color: '', text: '', target: null }),
 	flyTo: () => {},

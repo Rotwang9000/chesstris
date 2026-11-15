@@ -5,6 +5,7 @@
  *   Panel size   full       as it always was (preview, turn hint, key legend)
  *                compact    small preview and turn hint, no key legend
  *                collapsed  a thumbnail only
+ *   View stick   off | on   an on-screen joystick for the camera (viewStick.js)
  *   Feed         off | on   one line per notable thing OTHER players do
  *                           (king captures, piece captures, arrivals, …),
  *                           each fading after a few seconds
@@ -17,12 +18,14 @@
 import { isTouchPrimary } from './utils/inputMode.js';
 import { ensureActionStack, positionUnderNextPiece } from './skipChessButton.js';
 import { showToastMessage } from './showToastMessage.js';
+import { setViewStick } from './viewStick.js';
 import {
 	describeEvent, flyTo, isLocalPlayerEvent, isEventInView, onLiveActivityEvent,
 } from './activityLog.js';
 
 const MODE_KEY = 'tetches.hud.rightPanel';
 const FEED_KEY = 'tetches.hud.announceFeed';
+const STICK_KEY = 'tetches.hud.viewStick';
 const FEED_ID = 'announce-feed';
 const FEED_MAX = 5;
 const FEED_LINGER_MS = 12000;
@@ -74,6 +77,8 @@ export function feedText(text) {
 
 let mode = 'full';
 let feedOn = false;
+let stickOn = false;
+let stickBtn = null;
 let widgetEl = null;
 let modeBtn = null;
 let feedBtn = null;
@@ -167,7 +172,23 @@ export function setAnnounceFeed(on) {
 	applyFeed();
 }
 
-export function hudLayoutState() { return { mode, feedOn }; }
+function applyStickPref() {
+	if (stickBtn) {
+		stickBtn.setAttribute('aria-pressed', stickOn ? 'true' : 'false');
+		stickBtn.title = stickOn
+			? 'View joystick: on. Click to hide it.'
+			: 'View joystick: off. Click for an on-screen stick that moves the camera.';
+	}
+	setViewStick(stickOn);
+}
+
+export function setViewStickPref(on) {
+	stickOn = !!on;
+	writePref(STICK_KEY, stickOn ? '1' : '0');
+	applyStickPref();
+}
+
+export function hudLayoutState() { return { mode, feedOn, stickOn }; }
 
 function toolButton(label) {
 	const button = document.createElement('button');
@@ -187,6 +208,7 @@ export function attachHudLayout(widget) {
 	widgetEl = widget;
 	mode = normaliseMode(readPref(MODE_KEY));
 	feedOn = readPref(FEED_KEY) === '1';
+	stickOn = readPref(STICK_KEY) === '1';
 
 	const tools = document.createElement('div');
 	tools.className = 'tx-hud-tools';
@@ -200,9 +222,18 @@ export function attachHudLayout(widget) {
 			? 'World announcements on: news of other players shows here on the right.'
 			: 'World announcements off.', { duration: 2600 });
 	});
-	tools.append(modeBtn, feedBtn);
+	stickBtn = toolButton('\uD83D\uDD79\uFE0F');
+	stickBtn.setAttribute('aria-label', 'View joystick');
+	stickBtn.addEventListener('click', () => {
+		setViewStickPref(!stickOn);
+		showToastMessage(stickOn
+			? 'View joystick on: drag the stick (bottom right) to move the view. Its Move / Turn label switches what it does.'
+			: 'View joystick off.', { duration: stickOn ? 4200 : 2200 });
+	});
+	tools.append(modeBtn, feedBtn, stickBtn);
 	widget.appendChild(tools);
 
 	applyMode();
 	applyFeed();
+	applyStickPref();
 }
