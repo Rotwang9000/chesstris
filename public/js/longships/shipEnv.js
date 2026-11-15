@@ -417,6 +417,7 @@ export const SHIP_REFUSAL_TEXT = Object.freeze({
 	server_error: 'The longship could not sail. Please try again.',
 	no_water: 'No open water to sail to from here.',
 	timeout: 'No answer from the server. Try again.',
+	rate_limited: 'Too quick: wait a moment, then sail.',
 });
 
 /** The words for a refusal reason (or the server's own message). */

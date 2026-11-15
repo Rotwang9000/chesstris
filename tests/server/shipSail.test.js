@@ -105,6 +105,7 @@ describe('guards, in order', () => {
 		expect(await sail({ shipId: 'drakkar', to: to(0, -2) })).toMatchObject({ reason: 'not_water' });
 		World.getWorld().chessPieces = World.getWorld().chessPieces.filter(p => p.id !== 'floating');
 		expect(await sail({ shipId: 'drakkar', to: to(0, -3) })).toMatchObject({ success: true });
+		World.getPlayer('s0').lastChessMoveAt = 0; // that sail was the chess move
 		// Beyond the ring wall (play radius 14).
 		World.getWorld().board.cells = {};
 		ship(0, 13, { shipId: 'edge' });
@@ -136,8 +137,8 @@ describe('a clean sail', () => {
 		expect(moved.map(i => i.type).sort()).toEqual(['chess', 'ship']);
 		expect(moved.find(i => i.type === 'ship').readyAt).toBe(ack.readyAt);
 		expect(queen.position).toEqual(dest);
-		// Not a chess move: the cooldown stamp is untouched.
-		expect(seat.lastChessMoveAt).toBe(1234);
+		// The sail is the turn's chess move: it stamps the cooldown.
+		expect(seat.lastChessMoveAt).toBeGreaterThanOrEqual(before);
 		expect(broadcasts).toBe(1);
 		expect(integrityPasses).toBe(1);
 	});
@@ -162,6 +163,17 @@ describe('a clean sail', () => {
 		} finally {
 			Date.now = realNow;
 		}
+	});
+
+	test('a sail spends the chess move: straight after a move (or a sail) it waits out the cooldown', async () => {
+		const seat = World.getPlayer('s0');
+		seat.lastChessMoveAt = Date.now();
+		expect(await sail({ shipId: 'drakkar', to: to(0, 2) })).toMatchObject({ success: false, reason: 'rate_limited' });
+		expect(cellAt(0, 0)).not.toBeNull();
+		seat.lastChessMoveAt = 0;
+		const moves = seat.moveCount || 0;
+		expect((await sail({ shipId: 'drakkar', to: to(0, 2) })).success).toBe(true);
+		expect(seat.moveCount).toBe(moves + 1);
 	});
 
 	test('sailing during your own check is allowed (it cannot affect the check)', async () => {

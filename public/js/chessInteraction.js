@@ -907,22 +907,7 @@ export function moveChessPieceToCell(x, z) {
 			// spend the player's chess move for this turn, so the follow-up
 			// — advance to the tetris phase and spawn the next piece — is
 			// identical. Factored out so the two success paths can't drift.
-			const advanceToTetrisPhase = () => {
-				gameState._forceUpdate = true;
-				gameState.turnPhase = 'tetris';
-				cancelSkipChessTimer();
-				updateGameStatusDisplay();
-				updateNextPieceHint(gameState);
-
-				if (!gameState.currentTetromino) {
-					const spawned = tetrominoModule.initializeNextTetromino(gameState);
-					if (spawned) {
-						gameState.currentTetromino = spawned;
-						gameState.currentTetromino.heightAboveBoard = gameState.TETROMINO_START_HEIGHT;
-						tetrominoModule.renderTetromino(gameState);
-					}
-				}
-			};
+			const advanceToTetrisPhase = () => endChessMove(gameState);
 
 			// Deferred king capture — the server started a "check" and the
 			// attacker did NOT move (the king gets a grace window to
@@ -1699,4 +1684,26 @@ export function showTemporaryMessage(message, type = 'info') {
 
 	if (window.messageTimeout) clearTimeout(window.messageTimeout);
 	window.messageTimeout = setTimeout(() => { messageElement.style.opacity = '0'; }, 3000);
+}
+
+/**
+ * The chess move is spent (a piece moved, a check was committed, or a
+ * longship sailed): hand over to the tetris phase and deal the next piece.
+ */
+export function endChessMove(gameState) {
+	if (!gameState) return;
+	gameState._forceUpdate = true;
+	gameState.turnPhase = 'tetris';
+	cancelSkipChessTimer();
+	updateGameStatusDisplay();
+	updateNextPieceHint(gameState);
+
+	if (!gameState.currentTetromino) {
+		const spawned = tetrominoModule.initializeNextTetromino(gameState);
+		if (spawned) {
+			gameState.currentTetromino = spawned;
+			gameState.currentTetromino.heightAboveBoard = gameState.TETROMINO_START_HEIGHT;
+			tetrominoModule.renderTetromino(gameState);
+		}
+	}
 }

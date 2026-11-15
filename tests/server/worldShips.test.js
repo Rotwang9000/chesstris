@@ -188,6 +188,7 @@ describe('sailing', () => {
 		expect(ack).toMatchObject({ success: true, to: { x: 3, z: -9 } });
 		expect(shipAt(cellAt(3, -9))).toMatchObject({ player: 'p0' });
 		expect(cellAt(3, -1)).toBeNull();
+		World.getPlayer('p0').lastChessMoveAt = 0; // the sail was the chess move
 		expect(sail('p0', 'w-a', 3, -8)).toMatchObject({ success: false, reason: 'ship_rowing' });
 		expect(io.emitted.some(e => e.event === 'ship_sailed')).toBe(true);
 	});

@@ -38,7 +38,7 @@ import {
 import { shipButtonState, updateFleetMemo } from './shipHudState.js';
 import { SHIP_EVENT } from './shipEvents.js';
 import { shipEventToast } from './shipEventToasts.js';
-import { clearChessSelection, showValidMoves } from '../chessInteraction.js';
+import { clearChessSelection, showValidMoves, endChessMove } from '../chessInteraction.js';
 import {
 	shipObjects, seaHeightAt, shipPose, setShipFrameHook, prepareShips,
 } from '../viking/shipRenderer.js';
@@ -729,7 +729,9 @@ export async function sailTo(x, z) {
 		clearChessSelection();
 		clearShipSelection();
 		const dist = Math.abs(x - entry.x) + Math.abs(z - entry.z);
-		toast(`Sailed ${dist} square${dist === 1 ? '' : 's'}. Rowing for 3 s: your crew can't step on or off until it steadies.`, { duration: 3000 });
+		// A sail is the turn's chess move: on to the tetris phase.
+		endChessMove(gameState);
+		toast(`Sailed ${dist} square${dist === 1 ? '' : 's'}. That was your chess move: now place your piece.`, { duration: 3000 });
 		return true;
 	}
 	toast(shipRefusalText(ack?.reason, ack?.error), { variant: 'alert' });

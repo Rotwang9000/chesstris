@@ -2,9 +2,10 @@
  * Viking longship socket handlers:
  *   • ship_sail {shipId, to:{x,z}} → ack {success, error?, reason?, readyAt?}
  *
- * Sailing is not a chess move: it doesn't stamp the chess cooldown or
- * change phase. The ship's own 3 s rowing lock is the throttle. The
- * guard list mirrors chess_move's, in order:
+ * A sail IS the turn's chess move (owner, 2026-11-15): it honours and
+ * stamps the chess cooldown like chess_move, and the client moves on to
+ * the tetris phase on success. The guard list mirrors chess_move's, in
+ * order:
  *
  *   1. the acting seat exists, isn't eliminated and isn't paused;
  *   2. it sits in an ACTIVE battle that plays the Viking edition, or
@@ -20,6 +21,8 @@
 'use strict';
 
 const World = require('../world/World');
+const { PLAYER_SETTINGS } = require('../game/Constants');
+const { getCooldownRemainingMs } = require('../utils/cooldowns');
 const ships = require('../battle/ships');
 const worldShips = require('../world/worldShips');
 
@@ -43,6 +46,9 @@ function registerBoatHandlers(socket, ctx) {
 			if (player.eliminated) return refuse('eliminated', 'You have been eliminated — your king is gone.');
 			if (player.paused) return refuse('paused', 'You are paused — press Resume to play.');
 
+			const cooldown = getCooldownRemainingMs(player, 'lastChessMoveAt', PLAYER_SETTINGS.CHESS_MOVE_COOLDOWN_MS);
+			if (cooldown > 0) return ack({ success: false, reason: 'rate_limited', error: 'rate_limited', retryAfterMs: cooldown });
+
 			// 2. Seats of an active Viking battle, or main-world kingdoms
 			// once world longships are on, have ships to sail.
 			const world = World.getWorld();
@@ -60,8 +66,10 @@ function registerBoatHandlers(socket, ctx) {
 				: ships.sail(world, battle, playerId, { shipId, to }, { now });
 			if (!result.success) return refuse(result.reason, result.error);
 
-			// Sailing is activity (for idle decay), not a chess move.
+			// The sail spends the turn's chess move.
 			player.lastActiveAt = now;
+			player.lastChessMoveAt = now;
+			player.moveCount = (player.moveCount || 0) + 1;
 			// A ship sailing off (or in) re-anchors landing parties.
 			if (integrityService) integrityService.runIslandIntegrityPass({ emitAnimation: true });
 			World.markDirty();
