@@ -452,7 +452,7 @@ export function selectShip(entry, { withPiece = false, quiet = false } = {}) {
 			const chosen = selection.shipId;
 			toast(entry.passenger
 				? `Longship with your ${String(entry.passenger.type || 'piece').toLowerCase()} aboard: ${verb} a glowing tile to sail.`
-				: `Empty longship: ${verb} a glowing tile to sail.`, { duration: 2600, stillTrue: () => selection.shipId === chosen });
+				: `Your oarsmen are ready, no warrior aboard: ${verb} a glowing tile to sail.`, { duration: 2600, stillTrue: () => selection.shipId === chosen });
 		}
 	}
 	return true;
@@ -669,8 +669,8 @@ export function handleShipClick(entry, moveTo) {
 		return true;
 	}
 	const owner = gameState.players?.[entry.ship.player]?.name || 'An enemy';
-	const aboard = entry.passenger ? ` with a ${String(entry.passenger.type || 'piece').toLowerCase()} aboard` : ', empty';
-	toast(`${owner}’s longship${aboard}. Step onto it, or take its passenger, to make it yours.`, { duration: 4000 });
+	const aboard = entry.passenger ? ` with a ${String(entry.passenger.type || 'piece').toLowerCase()} aboard` : ', with no warrior aboard';
+	toast(`${owner}’s longship${aboard}. Board it, or take the warrior aboard, and its oarsmen row for you.`, { duration: 4000 });
 	return true;
 }
 
@@ -848,7 +848,7 @@ function renderButton() {
 	detailEl.style.color = raid && raid.msLeft < 30000 ? '#ff6a4d' : '';
 	if (raid) {
 		button.dataset.raid = raid.msLeft < 30000 ? 'urgent' : '1';
-		button.title = `${state.title} | Raider ashore: get back aboard or join your land before the time runs out. Each capture buys more time.`;
+		button.title = `${state.title} | Raider ashore: get back to a longship (its oarsmen wait) or reach your own land before the time runs out. Each capture buys more time.`;
 	} else delete button.dataset.raid;
 	const ring = button.querySelector('.longship-ring');
 	const deg = Math.round(state.progress * 360);
@@ -950,7 +950,7 @@ function noticeFor(detail, gameState) {
 			return p?.type || live?.passenger?.type || seen?.passengerType || null;
 		},
 	});
-	if (note) toast(note.text, { variant: note.variant, icon: note.icon, duration: note.variant === 'alert' ? 4500 : 3500 });
+	if (note) toast(note.text, { variant: note.variant, icon: note.icon, duration: note.duration || (note.variant === 'alert' ? 4500 : 3500) });
 }
 
 function onShipEvent(e) {

@@ -58,7 +58,7 @@ export function shipEventToast(detail, ctx = {}) {
 				return {
 					text: boarded
 						? `${name(detail.to)} boards your longship and takes it!`
-						: `${name(detail.to)} seizes your empty longship!`,
+						: `${name(detail.to)} seizes your unguarded longship! Its oarsmen row for them now.`,
 					variant: 'alert',
 				};
 			}
@@ -79,7 +79,7 @@ export function shipEventToast(detail, ctx = {}) {
 				const type = typeof ctx.pieceTypeOf === 'function' ? ctx.pieceTypeOf(String(detail.passengerId)) : null;
 				return { text: `The sea takes your longship, and your ${pieceName(type)} with her!`, variant: 'alert' };
 			}
-			return { text: 'The sea takes your empty longship.', variant: 'alert' };
+			return { text: 'The sea takes your longship and its oarsmen.', variant: 'alert' };
 		}
 		case 'lost':
 			if (!same(detail.seatId, me) || detail.reason !== 'destroyed') return null;
@@ -87,6 +87,17 @@ export function shipEventToast(detail, ctx = {}) {
 				text: `Your longship is destroyed. A new keel is laid at your mooring in ${detail.world ? '2 minutes' : '45 s'}.`,
 				variant: 'alert',
 			};
+		case 'trapped': {
+			// World: land closed in on all four sides of one of your ships.
+			if (!same(detail.playerId, me)) return null;
+			const warrior = detail.passengerId != null ? `, and your ${pieceName(detail.passengerType)} aboard is taken with her` : '';
+			return {
+				text: `Your longship is hemmed in by land on every side and is captured${warrior}. `
+					+ 'No new keel at the mooring this time: march a pawn to the shore, or win a ship bonus, for a new one.',
+				variant: 'alert',
+				duration: 7000,
+			};
+		}
 		case 'launched':
 			if (!same(detail.playerId, me)) return null;
 			return { text: 'Your pawn’s long march ends at the shore: a new longship is launched!', variant: 'success', icon: 'longship' };
@@ -111,7 +122,7 @@ export function shipEventToast(detail, ctx = {}) {
 				const time = !mins ? `${secs} s` : !rest ? `${mins} minutes` : `${mins}:${String(rest).padStart(2, '0')}`;
 				const captured = move.capturedPiece?.type ? ' The capture buys more time.' : '';
 				return {
-					text: `On a raid! Your ${pieceName(move.movedPiece?.type)} has ${time} ashore to get back aboard or join your land.${captured}`,
+					text: `On a raid! Your ${pieceName(move.movedPiece?.type)} has ${time} ashore to get back to a longship, where the oarsmen wait, or reach your own land.${captured}`,
 					variant: 'info',
 					icon: 'longship',
 				};

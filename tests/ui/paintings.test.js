@@ -714,7 +714,7 @@ describe('longship moments', () => {
 		expect(caption(lost)).toBe('Your longship is lost with all hands');
 		const empty = new ShipMoments().fromShipEvent({ kind: 'sunk', shipId: 's1', x: 3, z: 4, passengerId: null }, ctx({ cells }));
 		expect(slotOf(empty)).toBe('ship.emptysunk');
-		expect(caption(empty)).toBe('The sea swallows your empty longship');
+		expect(caption(empty)).toBe('The sea swallows your longship and its oarsmen');
 		// Someone else's ship going down is not ours to paint.
 		const theirs = { '3,4': [{ type: 'ship', shipId: 's2', player: BOT }] };
 		expect(new ShipMoments().fromShipEvent({ kind: 'sunk', shipId: 's2', x: 3, z: 4, passengerId: null }, ctx({ cells: theirs }))).toBeNull();

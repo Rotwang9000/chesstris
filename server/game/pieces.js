@@ -61,6 +61,9 @@ const REMOVAL_REASONS = Object.freeze({
 	// World longships: a raider ashore with no route home ran out of
 	// time before getting back aboard (world/worldShips.js).
 	RAID_EXPIRED: 'raid_expired',
+	// ...or was aboard a world longship when land closed in on all four
+	// sides of it.
+	SHIP_TRAPPED: 'ship_trapped',
 });
 
 const KING_TYPE = 'KING';

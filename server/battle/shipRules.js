@@ -69,7 +69,7 @@ const NEIGHBOURS_8 = Object.freeze([
 const SHIP_REJECTIONS = Object.freeze({
 	cannot_board: 'Kings and pawns cannot board a longship.',
 	passenger_cannot_sail: 'A king or pawn aboard cannot be rowed away — it must step ashore.',
-	ship_rowing: 'That longship is still rowing — its crew cannot step on or off until it steadies.',
+	ship_rowing: 'That longship is still rowing — pieces cannot step on or off until it steadies.',
 	ship_not_moored: 'A longship must be touching land to step on or off.',
 	aboard_no_king_attack: 'A piece aboard a longship cannot attack a king — land first.',
 	ship_to_ship: 'You cannot step from one longship straight onto another.',

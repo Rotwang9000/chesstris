@@ -25,6 +25,8 @@ export const SHIP_SOCKET_EVENTS = Object.freeze({
 	// time ashore ran out.
 	ship_launched: 'launched',
 	raid_expired: 'raid_lost',
+	// A world ship boxed in by land on all four sides is lost.
+	ship_trapped: 'trapped',
 });
 
 const MOVE_KINDS = new Set(['embark', 'land', 'raid', 'boarded', 'seize']);

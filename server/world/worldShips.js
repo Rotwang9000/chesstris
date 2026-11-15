@@ -168,7 +168,7 @@ function ensureFleet(world) {
 	if (!world.worldFleet || typeof world.worldFleet !== 'object') world.worldFleet = {};
 	const fleet = world.worldFleet;
 	if (!Number.isInteger(fleet.nextShipId) || fleet.nextShipId < 1) fleet.nextShipId = 1;
-	for (const field of ['moorings', 'respawnAt', 'known']) {
+	for (const field of ['moorings', 'respawnAt', 'known', 'noRebuild']) {
 		if (!fleet[field] || typeof fleet[field] !== 'object') fleet[field] = {};
 	}
 	return fleet;
@@ -216,12 +216,27 @@ function queenStartSquare(zone) {
  * Where a kingdom's ship is built: behind the queen's starting square,
  * or the nearest open water around the back rank.
  */
+/**
+ * Is a ship at (x, z) hemmed in: real land (not water, not another
+ * ship) on all four sides it could sail? Such a ship can never move
+ * again, so it counts as captured (reconcile).
+ */
+function isTrapped(getCell, x, z) {
+	return [[1, 0], [-1, 0], [0, 1], [0, -1]]
+		.every(([dx, dz]) => rules.isLandCell(getCell(x + dx, z + dz)));
+}
+
+/** Open water a new ship can actually sail out of. */
+function isLaunchWater(env, x, z) {
+	return rules.isWater(env, x, z) && !isTrapped(env.getCell, x, z);
+}
+
 function homeMooring(world, zone, env) {
 	if (!zone) return null;
 	const fwd = FORWARD_BY_ORIENTATION[Number(zone.orientation) || 0] || FORWARD_BY_ORIENTATION[0];
 	const queen = queenStartSquare(zone);
 	const behind = { x: queen.x - fwd.dx, z: queen.z - fwd.dz };
-	if (rules.isWater(env, behind.x, behind.z)) return behind;
+	if (isLaunchWater(env, behind.x, behind.z)) return behind;
 	// Search outward from the square behind the queen, preferring squares
 	// touching land (moored), so the ship is usable where it's built.
 	let best = null;
@@ -231,7 +246,7 @@ function homeMooring(world, zone, env) {
 				if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
 				const x = behind.x + dx;
 				const z = behind.z + dz;
-				if (!rules.isWater(env, x, z) || !rules.isMoored(env.getCell, x, z)) continue;
+				if (!isLaunchWater(env, x, z) || !rules.isMoored(env.getCell, x, z)) continue;
 				const d = Math.abs(dx) + Math.abs(dz);
 				if (!best || d < best.d) best = { x, z, d };
 			}
@@ -247,7 +262,7 @@ function nearestWater(env, at, radius = 3) {
 		for (let dx = -radius; dx <= radius; dx++) {
 			const x = at.x + dx;
 			const z = at.z + dz;
-			if (!rules.isWater(env, x, z)) continue;
+			if (!isLaunchWater(env, x, z)) continue;
 			const moored = rules.isMoored(env.getCell, x, z);
 			const score = Math.abs(dx) + Math.abs(dz) + (moored ? 0 : 10);
 			if (!best || score < best.score) best = { x, z, score };
@@ -287,6 +302,9 @@ function launchShipNear(world, playerId, near, { now = Date.now(), radius = 1 } 
 	const at = nearestWater(env, near, radius);
 	if (!at) return { refused: 'no_water' };
 	const built = spawnShip(world, playerId, at, now);
+	// A new ship from a pawn or a bonus: the free rebuild at the mooring
+	// (lost to a trap) is back too.
+	delete ensureFleet(world).noRebuild[playerId];
 	return { shipId: built.shipId, x: at.x, z: at.z };
 }
 
@@ -453,7 +471,7 @@ function afterWorldMove(world, piece, to, plan, captured, { now = Date.now(), ha
  * @returns {{changed: boolean, built: Array, lost: Array, expired: Array}}
  */
 function reconcile(world, hooks = {}) {
-	const out = { changed: false, built: [], lost: [], expired: [] };
+	const out = { changed: false, built: [], lost: [], expired: [], trapped: [] };
 	if (!enabled() || !world || !world.board || !world.board.cells) return out;
 	const now = hooks.now || Date.now();
 	const emitTo = hooks.emitTo || (() => {});
@@ -478,6 +496,31 @@ function reconcile(world, hooks = {}) {
 		else delete cells[keyOf(entry.x, entry.z)];
 		out.changed = true;
 	}
+
+	// Hemmed in by land on all four sides: the ship can never sail again,
+	// so it counts as captured, with any warrior aboard. No free rebuild
+	// at the mooring after that: a new ship comes from a pawn's march or
+	// a ship bonus.
+	for (const entry of current) {
+		const key = keyOf(entry.x, entry.z);
+		if (!cells[key] || !isTrapped((x, z) => cells[keyOf(x, z)] || null, entry.x, entry.z)) continue;
+		const owner = String(entry.ship.player);
+		const passenger = pieceAt(world, entry.x, entry.z);
+		const rest = cells[key].filter(item => !rules.isWorldShipItem(item));
+		if (rest.length > 0) cells[key] = rest;
+		else delete cells[key];
+		if (passenger && typeof hooks.removePiece === 'function') hooks.removePiece(passenger, 'ship_trapped');
+		fleet.noRebuild[owner] = true;
+		delete fleet.known[String(entry.ship.shipId)];
+		const report = {
+			shipId: String(entry.ship.shipId), playerId: owner, x: entry.x, z: entry.z,
+			passengerId: passenger ? String(passenger.id) : null,
+			passengerType: passenger ? passenger.type : null,
+		};
+		out.trapped.push(report);
+		emitAll('ship_trapped', report);
+		out.changed = true;
+	}
 	if (out.changed) current = worldShips(world);
 
 	const controlled = new Map();
@@ -493,12 +536,15 @@ function reconcile(world, hooks = {}) {
 			// Away (stowed) or out: a returning kingdom gets its ship at once.
 			delete fleet.respawnAt[pid];
 			delete fleet.moorings[pid];
+			delete fleet.noRebuild[pid];
 			continue;
 		}
 		if ((controlled.get(pid) || 0) > 0) {
 			delete fleet.respawnAt[pid];
 			continue;
 		}
+		// Lost to a trap: no free rebuild (see above).
+		if (fleet.noRebuild[pid]) continue;
 		const firstShip = !fleet.moorings[pid];
 		if (!firstShip && !Number.isFinite(fleet.respawnAt[pid])) {
 			const rebuildAt = now + WORLD_SHIP.RESPAWN_MS;
@@ -518,7 +564,7 @@ function reconcile(world, hooks = {}) {
 		let at = fleet.moorings[pid];
 		// Rebuilt at the same mooring unless the kingdom moved (a stowed
 		// kingdom relocated) or the water there is gone.
-		if (!at || at.zone !== zoneKey || !rules.isWater(env, at.x, at.z)) {
+		if (!at || at.zone !== zoneKey || !isLaunchWater(env, at.x, at.z)) {
 			const found = homeMooring(world, zone, env);
 			at = found ? { x: found.x, z: found.z, zone: zoneKey } : null;
 		}
@@ -541,6 +587,9 @@ function reconcile(world, hooks = {}) {
 	fleet.known = known;
 	for (const pid of Object.keys(fleet.moorings)) {
 		if (!players[pid]) delete fleet.moorings[pid];
+	}
+	for (const pid of Object.keys(fleet.noRebuild)) {
+		if (!players[pid]) delete fleet.noRebuild[pid];
 	}
 
 	// Raid clocks.
@@ -606,5 +655,6 @@ module.exports = {
 	keepsGroundOwner,
 	afterWorldMove,
 	reconcile,
+	isTrapped,
 	stripWorldShips,
 };

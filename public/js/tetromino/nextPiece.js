@@ -214,9 +214,9 @@ function showFirstLongshipHint() {
 	const verb = touch ? 'Tap' : 'Click';
 	const key = touch ? '' : ` (or press <kbd>L</kbd>)`;
 	return showOneTimeTip(FIRST_LONGSHIP_HINT_KEY,
-		`<span class="tx-longship-icon" aria-hidden="true"></span><b>Longships.</b> Move a knight, bishop, rook or queen onto the gold ring on your ship, `
-		+ `then ${verb.toLowerCase()} <b>Longship</b>${key} and a glowing sea tile to sail.<br>`
-		+ 'Land beside an enemy shore to raid it.', [], 14000);
+		`<span class="tx-longship-icon" aria-hidden="true"></span><b>Longships.</b> Your ship has its own oarsmen: ${verb.toLowerCase()} <b>Longship</b>${key} `
+		+ `and a glowing sea tile to sail it as your chess move.<br>`
+		+ 'Put a knight, bishop, rook or queen aboard (the gold ring) to carry a warrior. Land it on an enemy shore to raid; the oarsmen wait to bring it home.', [], 14000);
 }
 
 /**

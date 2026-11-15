@@ -457,7 +457,7 @@ export function noMoveShipTip(gameState, piece, {
 
 	if (entry && rowingMsLeft(entry.ship, now) > 0) {
 		const secs = Math.max(1, Math.ceil(rowingMsLeft(entry.ship, now) / 1000));
-		const crew = String(piece.type || '').toLowerCase() || 'crew';
+		const crew = String(piece.type || '').toLowerCase() || 'warrior';
 		// Once it steadies, can it sail on? (A king or pawn aboard can't
 		// be rowed away; and it needs open water beside it.)
 		const sailsOn = !SHIP.NO_BOARD.includes(String(piece.type || '').toUpperCase())

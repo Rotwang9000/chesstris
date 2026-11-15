@@ -331,6 +331,7 @@ describe("'tetches:ship' events", () => {
 		expect(SHIP_SOCKET_EVENTS).toEqual({
 			ship_sailed: 'sailed', ship_sunk: 'sunk', ship_seized: 'seized', ship_lost: 'lost', ship_built: 'built',
 			ship_launched: 'launched', raid_expired: 'raid_lost',
+			ship_trapped: 'trapped',
 		});
 		expect(shipSocketDetail('ship_sailed', { shipId: 's', readyAt: 5 })).toEqual({ shipId: 's', readyAt: 5, kind: 'sailed' });
 		expect(shipSocketDetail('ship_built', null)).toEqual({ kind: 'built' });

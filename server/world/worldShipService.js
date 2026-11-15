@@ -22,8 +22,8 @@ function createWorldShipService({ gameManager, broadcaster, persistence, io, act
 		const result = worldShips.reconcile(world, {
 			now,
 			hasPathToKing: (x, z, pid) => gameManager.islandManager.hasPathToKing(world, x, z, pid),
-			removePiece: piece => pieces.removePiece(world, piece, {
-				reason: pieces.REMOVAL_REASONS.RAID_EXPIRED,
+			removePiece: (piece, why) => pieces.removePiece(world, piece, {
+				reason: why === 'ship_trapped' ? pieces.REMOVAL_REASONS.SHIP_TRAPPED : pieces.REMOVAL_REASONS.RAID_EXPIRED,
 				activityLog,
 			}),
 			emitTo: (pid, event, payload) => {

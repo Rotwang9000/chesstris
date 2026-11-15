@@ -328,6 +328,54 @@ describe('away rulers', () => {
 	});
 });
 
+describe('a ship hemmed in by land', () => {
+	const trap = () => { land(2, -1, 'p1'); land(4, -1, 'p1'); land(3, -2, 'p1'); };
+
+	test('three sides of land are not a trap', () => {
+		const svc = service();
+		svc.tick(1000);
+		land(2, -1, 'p1'); land(4, -1, 'p1');
+		expect(svc.tick(2000).trapped).toEqual([]);
+		expect(shipAt(cellAt(3, -1))).toMatchObject({ player: 'p0' });
+	});
+
+	test('land on all four sides captures it, with its warrior, and there is no free rebuild', () => {
+		const svc = service();
+		svc.tick(1000);
+		piece('r', 'ROOK', 3, -1, 'p0');
+		trap();
+		const result = svc.tick(2000);
+		expect(result.trapped).toEqual([expect.objectContaining({ playerId: 'p0', passengerId: 'r', passengerType: 'ROOK' })]);
+		expect(shipAt(cellAt(3, -1))).toBeNull();
+		expect(pieceById('r')).toBeNull();
+		expect(io.emitted.some(e => e.event === 'ship_trapped')).toBe(true);
+		// Long after the usual rebuild time: still no ship, and no "lost" note.
+		svc.tick(2000 + WORLD_SHIP.RESPAWN_MS * 3);
+		expect(worldShips.shipsOf(World.getWorld(), 'p0')).toHaveLength(0);
+		expect(personal.some(e => e.event === 'ship_lost' && e.playerId === 'p0')).toBe(false);
+	});
+
+	test('a pawn launch brings ships back, and the mooring rebuild with them', () => {
+		const svc = service();
+		svc.tick(1000);
+		trap();
+		svc.tick(2000);
+		expect(World.getWorld().worldFleet.noRebuild.p0).toBe(true);
+		piece('pw', 'PAWN', 7, 1, 'p0', { awaitingPromotion: true });
+		expect(call('p0', registerChessHandlers, 'launch_promotion_ship', { pawnId: 'pw' })).toMatchObject({ success: true });
+		expect(World.getWorld().worldFleet.noRebuild.p0).toBeUndefined();
+	});
+
+	test('a new ship is never built in a trap', () => {
+		trap();
+		service().tick(1000);
+		const mine = worldShips.shipsOf(World.getWorld(), 'p0');
+		expect(mine).toHaveLength(1);
+		const getCell = (x, z) => cellAt(x, z);
+		expect(worldShips.isTrapped(getCell, mine[0].x, mine[0].z)).toBe(false);
+	});
+});
+
 describe('pawn launches a longship', () => {
 	test('a frozen pawn beside water becomes a ship; no water, no launch', () => {
 		piece('pw', 'PAWN', 0, 1, 'p0', { awaitingPromotion: true });
