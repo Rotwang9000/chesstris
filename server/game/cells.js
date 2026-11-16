@@ -188,12 +188,29 @@ function getHomeOwner(items) {
 	return home && home.player != null ? String(home.player) : null;
 }
 
-function getChessPieceId(items) {
-	const chess = findChess(items);
-	if (!chess) return null;
-	const id = chess.pieceId != null ? chess.pieceId
-		: (chess.chessPiece && chess.chessPiece.id != null ? chess.chessPiece.id : null);
+/** The piece id a chess marker names (`pieceId`, else `chessPiece.id`), or null. */
+function markerPieceId(item) {
+	if (!item) return null;
+	const id = item.pieceId != null ? item.pieceId
+		: (item.chessPiece && item.chessPiece.id != null ? item.chessPiece.id : null);
 	return id != null ? String(id) : null;
+}
+
+function getChessPieceId(items) {
+	return markerPieceId(findChess(items));
+}
+
+/**
+ * Can a chess piece stand on this item? Terrain, home overlays,
+ * degraded-home remnants, ring floor and ship decks can carry one;
+ * another chess marker and the centre / special markers are not
+ * ground (the client draws no tile for them).
+ */
+function isStandableItem(item) {
+	if (!item) return false;
+	return item.type !== CHESS_TYPE
+		&& item.type !== SPECIAL_TYPE
+		&& item.type !== CENTRE_TYPE;
 }
 
 function getChessOwner(items) {
@@ -413,6 +430,8 @@ module.exports = {
 	isPausedOwner,
 	stripClearable,
 	stripForLineClear,
+	markerPieceId,
+	isStandableItem,
 	stripAllChessMarkers,
 	hasAwaitingPromotion,
 };
