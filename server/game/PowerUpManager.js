@@ -46,6 +46,7 @@ const { randomUUID: uuidv4 } = require('crypto');
 
 const World = require('../world/World');
 const pieces = require('./pieces');
+const territory = require('./territory');
 const { cellHasShip } = require('../battle/shipRules');
 const worldShips = require('../world/worldShips');
 
@@ -455,6 +456,74 @@ function createPowerUpManager({
 		return { orb, piece: null, ship: launched };
 	}
 
+	/**
+	 * A longship sails over orbs: its oarsmen haul them aboard (owner,
+	 * 2026-11-16). Every orb on the squares the ship crossed, its
+	 * destination included, is claimed. The ship can't carry a new
+	 * warrior home, so the piece lands on the claimant's nearest free
+	 * square to their king (as a promotion credit would deploy); a ship
+	 * orb launches a ship near where it was hauled in. Bots follow the
+	 * same soft cap as on land.
+	 *
+	 * @param {Object} world
+	 * @param {string} playerId
+	 * @param {{x:number,z:number}} from  the square the ship left
+	 * @param {{x:number,z:number}} to    the square it reached
+	 * @returns {Array} claim outcomes
+	 */
+	function claimBySail(world, playerId, from, to) {
+		if (!world || !playerId || !from || !to) return [];
+		const fx = normalizeCoord(from.x), fz = normalizeCoord(from.z);
+		const tx = normalizeCoord(to.x), tz = normalizeCoord(to.z);
+		if (![fx, fz, tx, tz].every(Number.isFinite)) return [];
+		if (fx !== tx && fz !== tz) return [];
+		const path = new Set();
+		const steps = Math.max(Math.abs(tx - fx), Math.abs(tz - fz));
+		const sx = Math.sign(tx - fx), sz = Math.sign(tz - fz);
+		for (let i = 1; i <= steps; i++) path.add(`${fx + sx * i},${fz + sz * i}`);
+		const orbs = ensurePowerUps(world);
+		const hit = orbs.filter(o => o && path.has(`${normalizeCoord(o.x)},${normalizeCoord(o.z)}`));
+		const out = [];
+		for (const orb of hit) {
+			const idx = orbs.indexOf(orb);
+			if (idx < 0) continue;
+			const ox = normalizeCoord(orb.x), oz = normalizeCoord(orb.z);
+			if (aiShouldSkipOrb(world, playerId, orb.pieceType)) {
+				orbs.splice(idx, 1);
+				out.push({ orb, piece: null, skipped: true });
+				continue;
+			}
+			if (String(orb.pieceType).toUpperCase() === 'SHIP') {
+				orbs.splice(idx, 1);
+				const r = claimShipOrb(world, playerId, orb, idx, ox, oz);
+				if (r) out.push({ ...r, bySea: true });
+				continue;
+			}
+			const spot = territory.findNearestOwnedCell(world, playerId, {
+				skip: (x, z) => territory.cellHasChessPiece(world, x, z) || cellHasShip(world.board?.cells?.[`${x},${z}`]),
+			});
+			if (!spot) continue;   // nowhere to put it: leave the orb floating
+			orbs.splice(idx, 1);
+			const piece = pieces.addPiece(world, {
+				type: orb.pieceType,
+				player: playerId,
+				x: spot.x,
+				z: spot.z,
+				orientation: world.homeZones?.[playerId]?.orientation || 0,
+				reason: 'powerup',
+				activityLog,
+			});
+			if (!piece) { orbs.splice(idx, 0, orb); continue; }
+			emitClaim(world, playerId, orb, {
+				pieceType: orb.pieceType, pieceId: piece.id, x: spot.x, z: spot.z,
+				bySea: true, orbAt: { x: ox, z: oz },
+			});
+			out.push({ orb, piece, bySea: true });
+		}
+		if (out.length) persistence.markDirty();
+		return out;
+	}
+
 	function emitClaim(world, playerId, orb, extra) {
 		try {
 			const player = world.players ? world.players[playerId] : null;
@@ -518,6 +587,7 @@ function createPowerUpManager({
 		tick,
 		tryClaimAtCell,
 		claimAcrossPlacement,
+		claimBySail,
 		listOrbs,
 		reset,
 		// Exposed for tests / inspection.

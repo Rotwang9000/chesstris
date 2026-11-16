@@ -24,9 +24,13 @@
  */
 
 import { SOUND_CUES } from './cues.js';
+import { VIKING_CUES } from './vikingCues.js';
+import { createSynth, brownNoise } from './synth.js';
+import { vikingActive } from '../edition.js';
 
 const MUTE_STORAGE_KEY = 'tetches.audio.muted';
 const VOLUME_STORAGE_KEY = 'tetches.audio.volume';
+const SEA_STORAGE_KEY = 'tetches.audio.sea';
 
 let _audioContext = null;
 let _masterGain = null;
@@ -56,10 +60,11 @@ function savePreferences() {
  * we're called before any user gesture).
  */
 export function initSoundManager() {
-	if (_audioContext) return _audioContext;
+	if (_audioContext) { startSea(); return _audioContext; }
 	if (_initAttempted && !_audioContext) return null;
 	_initAttempted = true;
 	loadPreferences();
+loadSeaPreference();
 	try {
 		const AC = window.AudioContext || window.webkitAudioContext;
 		if (!AC) return null;
@@ -71,6 +76,7 @@ export function initSoundManager() {
 		console.warn('[soundManager] AudioContext init failed:', err.message);
 		_audioContext = null;
 	}
+	if (_audioContext) startSea();
 	return _audioContext;
 }
 
@@ -198,9 +204,15 @@ function scheduleSequence(notes, startTime, gap = 0) {
  */
 export function playSound(cueName, opts = {}) {
 	if (_muted) return;
+	// The Viking edition has its own set (vikingCues.js), with a few cues
+	// the standard game doesn't play at all (they stay silent there).
+	if (vikingSoundsActive() && VIKING_CUES[cueName]) {
+		playVikingCue(cueName, opts);
+		return;
+	}
 	const cue = SOUND_CUES[cueName];
 	if (!cue) {
-		console.warn('[soundManager] Unknown cue:', cueName);
+		if (!VIKING_CUES[cueName]) console.warn('[soundManager] Unknown cue:', cueName);
 		return;
 	}
 	const ctx = ensureRunning();
@@ -226,7 +238,159 @@ export function playSound(cueName, opts = {}) {
 	}
 }
 
+/* ------------------------------------------------ the Viking set */
+
+let _synth = null;
+const _lastPlayed = new Map();
+// The same cue twice within this window is one sound (a seizure arrives
+// both as the chess move and as ship_seized; a cascade clears in bursts).
+const CUE_GAP_MS = 120;
+const SHIP_CUE_GAP_MS = 450;
+
+/** Is the Viking sound set wanted now (the page edition, or a Viking battle)? */
+export function vikingSoundsActive() {
+	try {
+		const gs = typeof window !== 'undefined' ? window.gameState : null;
+		return !!vikingActive(gs);
+	} catch (_e) {
+		return false;
+	}
+}
+
+function synth() {
+	const ctx = ensureRunning();
+	if (!ctx || !_masterGain) return null;
+	if (!_synth || _synth.ctx !== ctx) _synth = createSynth(ctx, _masterGain);
+	return _synth;
+}
+
+/** Should this cue play now, or is it the echo of one just played? */
+export function cueDue(name, now, last = _lastPlayed) {
+	const gap = String(name).startsWith('ship') || name === 'raidLost' ? SHIP_CUE_GAP_MS : CUE_GAP_MS;
+	const prev = last.get(name);
+	if (prev != null && now - prev < gap) return false;
+	last.set(name, now);
+	return true;
+}
+
+function playVikingCue(cueName, opts = {}) {
+	if (!cueDue(cueName, Date.now())) return;
+	const s = synth();
+	if (!s) return;
+	try {
+		VIKING_CUES[cueName](s, s.ctx.currentTime + 0.01, opts);
+	} catch (err) {
+		console.warn('[soundManager] Viking cue threw:', err.message);
+	}
+	startSea();
+}
+
+/* ------------------------------------------- the sea (Viking only) */
+
+let _sea = null;
+let _seaOn = true;
+
+function loadSeaPreference() {
+	try {
+		const v = localStorage.getItem(SEA_STORAGE_KEY);
+		if (v !== null) _seaOn = v === '1';
+	} catch (_e) { /* localStorage unavailable */ }
+}
+
+export function isSeaOn() {
+	return _seaOn;
+}
+
+/**
+ * The sea and the wind under a Viking game, very quiet: the roll of the
+ * waves (brown noise, its swell rising and falling every ~9 s) and a
+ * breath of wind (band noise whose pitch drifts). Follows the mute.
+ */
+export function setSeaOn(on) {
+	_seaOn = !!on;
+	try { localStorage.setItem(SEA_STORAGE_KEY, _seaOn ? '1' : '0'); } catch (_e) { /* ignored */ }
+	if (_seaOn) startSea();
+	else stopSea();
+}
+
+export function startSea() {
+	if (_sea || !_seaOn || !vikingSoundsActive()) return;
+	const ctx = ensureRunning();
+	if (!ctx || !_masterGain) return;
+	try {
+		const out = ctx.createGain();
+		out.gain.setValueAtTime(0.0001, ctx.currentTime);
+		out.gain.linearRampToValueAtTime(0.16, ctx.currentTime + 4);
+		out.connect(_masterGain);
+		const nodes = [];
+
+		const waves = ctx.createBufferSource();
+		waves.buffer = brownNoise(ctx, 6);
+		waves.loop = true;
+		const lp = ctx.createBiquadFilter();
+		lp.type = 'lowpass';
+		lp.frequency.value = 520;
+		const swell = ctx.createGain();
+		swell.gain.value = 0.55;
+		const swellLfo = ctx.createOscillator();
+		swellLfo.frequency.value = 0.11;
+		const swellDepth = ctx.createGain();
+		swellDepth.gain.value = 0.4;
+		swellLfo.connect(swellDepth);
+		swellDepth.connect(swell.gain);
+		waves.connect(lp);
+		lp.connect(swell);
+		swell.connect(out);
+		nodes.push(waves, swellLfo);
+
+		const wind = ctx.createBufferSource();
+		const len = ctx.sampleRate * 4;
+		const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+		const d = buf.getChannelData(0);
+		for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+		wind.buffer = buf;
+		wind.loop = true;
+		const bp = ctx.createBiquadFilter();
+		bp.type = 'bandpass';
+		bp.frequency.value = 650;
+		bp.Q.value = 0.9;
+		const windLfo = ctx.createOscillator();
+		windLfo.frequency.value = 0.045;
+		const windDepth = ctx.createGain();
+		windDepth.gain.value = 260;
+		windLfo.connect(windDepth);
+		windDepth.connect(bp.frequency);
+		const windGain = ctx.createGain();
+		windGain.gain.value = 0.05;
+		wind.connect(bp);
+		bp.connect(windGain);
+		windGain.connect(out);
+		nodes.push(wind, windLfo);
+
+		for (const n of nodes) n.start();
+		_sea = { out, nodes };
+	} catch (err) {
+		console.warn('[soundManager] sea failed:', err.message);
+		_sea = null;
+	}
+}
+
+export function stopSea() {
+	if (!_sea) return;
+	const { out, nodes } = _sea;
+	_sea = null;
+	try {
+		const ctx = out.context;
+		out.gain.cancelScheduledValues(ctx.currentTime);
+		out.gain.setValueAtTime(out.gain.value, ctx.currentTime);
+		out.gain.linearRampToValueAtTime(0.0001, ctx.currentTime + 1);
+		for (const n of nodes) n.stop(ctx.currentTime + 1.1);
+		setTimeout(() => { try { out.disconnect(); } catch (_e) { /* gone */ } }, 1300);
+	} catch (_e) { /* best-effort */ }
+}
+
 // Initialise eagerly so localStorage preferences are loaded. The
 // AudioContext itself still waits for a user gesture inside
 // `ensureRunning`.
 loadPreferences();
+loadSeaPreference();

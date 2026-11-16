@@ -20,6 +20,7 @@ import {
 import { showToastMessage } from './showToastMessage.js';
 import { playSound, initSoundManager } from './audio/soundManager.js';
 import { setupKeyboardChess } from './keyboardChess.js';
+import { skipTetrisMove } from './skipTetris.js';
 import { installShipControls } from './longships/shipControls.js';
 import { setupTouchGestures } from './touchGestures.js';
 import { setupTouchControlPad } from './touchControlPad.js';
@@ -288,6 +289,12 @@ function handleKeyDown(event) {
 	}
 
 	switch (event.key) {
+		// C: skip the drop, straight to the chess move (skipTetris.js)
+		case 'c': case 'C':
+			if (event.ctrlKey || event.metaKey || event.altKey) break;
+			event.preventDefault();
+			skipTetrisMove(gameState);
+			break;
 		case 'z': case 'Z':
 		case 'q': case 'Q':
 			tetrominoModule.rotateTetromino(-1);

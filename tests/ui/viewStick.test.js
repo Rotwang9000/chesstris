@@ -51,3 +51,14 @@ describe('Turn', () => {
 		expect(right).toBeLessThan(1);
 	});
 });
+
+describe('Zoom', () => {
+	const { zoomDistance } = require('../../public/js/viewStick.js');
+	test('+ comes closer, − goes further, within the limits', () => {
+		expect(zoomDistance(20, 1, 1)).toBeLessThan(20);
+		expect(zoomDistance(20, -1, 1)).toBeGreaterThan(20);
+		expect(zoomDistance(20, 1, 100, 8, 60)).toBe(8);
+		expect(zoomDistance(20, -1, 100, 8, 60)).toBe(60);
+		expect(zoomDistance(20, 0, 1)).toBe(20);
+	});
+});

@@ -731,7 +731,9 @@ export async function sailTo(x, z) {
 		const dist = Math.abs(x - entry.x) + Math.abs(z - entry.z);
 		// A sail is the turn's chess move: on to the tetris phase.
 		endChessMove(gameState);
-		toast(`Sailed ${dist} square${dist === 1 ? '' : 's'}. That was your chess move: now place your piece.`, { duration: 3000 });
+		const hauled = sailOrbText(ack.orbs);
+		toast(`Sailed ${dist} square${dist === 1 ? '' : 's'}.${hauled ? ` ${hauled}` : ''} That was your chess move: now place your piece.`,
+			{ duration: hauled ? 5000 : 3000 });
 		return true;
 	}
 	toast(shipRefusalText(ack?.reason, ack?.error), { variant: 'alert' });
@@ -999,4 +1001,20 @@ export function installShipControls() {
 		button: longshipButtonState,
 		cellItems: (x, z) => cellItems(gs(), x, z),
 	};
+}
+
+/**
+ * What the oarsmen hauled aboard on a sail (orbs on the squares it
+ * crossed), or '' for nothing. A piece goes to the free square nearest
+ * the king; a ship orb launches a ship near where it floated.
+ */
+export function sailOrbText(orbs) {
+	const list = Array.isArray(orbs) ? orbs.filter(Boolean) : [];
+	if (list.length === 0) return '';
+	const names = { PAWN: 'a pawn', KNIGHT: 'a knight', BISHOP: 'a bishop', ROOK: 'a rook', QUEEN: 'a queen', KING: 'a king', SHIP: 'a new longship' };
+	const words = list.map(o => names[String(o.pieceType || '').toUpperCase()] || 'a bonus');
+	const joined = words.length === 1 ? words[0] : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
+	const ship = list.some(o => String(o.pieceType || '').toUpperCase() === 'SHIP');
+	const home = list.some(o => String(o.pieceType || '').toUpperCase() !== 'SHIP');
+	return `Your oarsmen hauled in an orb: ${joined}${home ? (ship ? ' (the warriors wait by your king)' : ', waiting by your king') : ''}.`;
 }

@@ -6,6 +6,7 @@ import { showLoginDialog } from './auth/loginDialog.js';
 import { isLoggedIn as isKingdomLoggedIn, getLoggedInName as getKingdomName } from './auth/kingdomKey.js';
 import { enterBattleFlow, isBattleFirstEntry } from './battle/battleMode.js';
 import { isOffline } from './offline/offlineMode.js';
+import { isViking } from './edition.js';
 import { isInstalledApp, canReachServer, onlineUrl, offlineUrl } from './offline/appShell.js';
 import { getSocket } from './utils/networkManager.js';
 
@@ -529,12 +530,16 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 				<li><strong>Tetris controls:</strong>
 					<kbd>Arrow keys</kbd> move,
 					<kbd>Z</kbd>/<kbd>X</kbd> rotate,
-					<kbd>Space</kbd> drop
+					<kbd>Space</kbd> drop,
+					<kbd>C</kbd> skip the drop and go to your chess move
 				</li>
 				<li><strong>Landing guide:</strong> the outline under your piece shows where it lands —
 					<span style="color: #66ff88;">green will stick</span>,
 					<span style="color: #ff6666;">red will dissolve</span>
 					(pieces must touch your territory)
+				</li>
+				<li><strong>Lines:</strong> 8 block squares in a row clear away.
+					Home squares (${isViking() ? 'the flagstone hall floor' : 'striped'}) don't count and break the row.
 				</li>
 				<li><strong>On touch devices:</strong> on-screen buttons &amp; swipes move/rotate/drop the piece</li>
 				<li><strong>Chess:</strong> click (or tap) a piece → click the green circle to move</li>

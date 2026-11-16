@@ -27,14 +27,12 @@ import { translatePosition } from './centreBoardMarker.js';
 import { clearChessSelection, clearStaleChessSelection } from './chessInteraction.js';
 import { showToastMessage, topHudBottom } from './showToastMessage.js';
 import { updateGameStatusDisplay } from './createLoadingIndicator.js';
+import { playSound } from './audio/soundManager.js';
 
 function playCheckSound(name) {
-	// `playSound` is a global (non-module) helper attached by the
-	// legacy sound bootstrapper. Use it if it's there; otherwise
-	// stay silent — the banner pulse is already a strong cue.
-	if (typeof window !== 'undefined' && typeof window.playSound === 'function') {
-		try { window.playSound(name); } catch (_e) { /* best-effort */ }
-	}
+	// (the Viking set has an alarm; the standard set stays silent here —
+	// the banner pulse is already a strong cue)
+	try { playSound(name); } catch (_e) { /* best-effort */ }
 }
 
 const BANNER_ID = 'check-alert-banner';

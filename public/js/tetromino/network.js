@@ -12,7 +12,9 @@
 import NetworkManager from '../utils/networkManager.js';
 import gameStateSingleton from '../utils/gameState.js';
 import { showToastMessage } from '../showToastMessage.js';
-import { highlightClearedLines, showPlacementEffect } from './animations.js';
+import { highlightClearedLines, showPlacementEffect, pulseHomeSquares } from './animations.js';
+import { noteOwnPlacement } from './lineHint.js';
+import { vikingActive } from '../edition.js';
 import { validatePlacementLocally } from './validation.js';
 import { cleanupCurrentTetromino, cleanupGhostPiece } from './rendering.js';
 import { armSkipDropTimer } from '../skipChessButton.js';
@@ -167,6 +169,14 @@ export function sendTetrominoPlacementToServer(tetrominoData, gameState) {
 			// The player now has something worth keeping — arm the
 			// "save your kingdom before you leave" reminder for guests.
 			markKingdomProgress();
+			// A line that only home squares kept from clearing: show which.
+			try {
+				noteOwnPlacement(gameState, tetrominoData, {
+					pulse: pulseHomeSquares,
+					toast: showToastMessage,
+					viking: vikingActive(gameState),
+				});
+			} catch (_e) { /* a hint is best-effort */ }
 		}
 		if (serverAccepted !== isLocallyValid) {
 			console.warn('Client/server validation mismatch — server:', serverAccepted, 'local:', isLocallyValid);

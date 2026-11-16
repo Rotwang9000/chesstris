@@ -9,6 +9,7 @@
 
 import { getTHREE, getPlayerColors } from '../gameContext.js';
 import { translatePosition } from '../centreBoardMarker.js';
+import { playSound } from '../audio/soundManager.js';
 
 const PLAYER_COLORS = getPlayerColors();
 
@@ -16,9 +17,7 @@ const MAX_ACTIVE_EXPLOSIONS = 6;
 const activeExplosionIds = new Set();
 
 function safePlaySound(name) {
-	if (typeof playSound === 'function') {
-		try { playSound(name); } catch (_e) { /* sound is best-effort */ }
-	}
+	try { playSound(name); } catch (_e) { /* sound is best-effort */ }
 }
 
 export function showDropAnimation() {
@@ -463,7 +462,7 @@ export function highlightClearedRows(rowIndices, gameState) {
  * @param {number} durationMs
  * @param {Object} gameState
  */
-export function flashCellsBeforeClear(cells, durationMs, gameState) {
+export function flashCellsBeforeClear(cells, durationMs, gameState, style = {}) {
 	const THREE = getTHREE();
 	const scene = gameState?.scene;
 	if (!THREE || !scene || !Array.isArray(cells) || cells.length === 0) return;
@@ -481,15 +480,18 @@ export function flashCellsBeforeClear(cells, durationMs, gameState) {
 		const px = translated?.x ?? x;
 		const pz = translated?.z ?? z;
 
-		const geometry = new THREE.BoxGeometry(0.95, 0.6, 0.95);
+		// (a flat plate on the deck when style.flat: "this square", not "this block")
+		const geometry = style.flat
+			? new THREE.BoxGeometry(0.9, 0.04, 0.9)
+			: new THREE.BoxGeometry(0.95, 0.6, 0.95);
 		const material = new THREE.MeshBasicMaterial({
-			color: 0xffe066,
+			color: style.color ?? 0xffe066,
 			transparent: true,
 			opacity: 0.65,
 			depthWrite: false,
 		});
 		const mesh = new THREE.Mesh(geometry, material);
-		mesh.position.set(px, 0.55, pz);
+		mesh.position.set(px, style.flat ? 0.5 : 0.55, pz);
 		scene.add(mesh);
 		meshes.push({ mesh, geometry, material });
 	}
@@ -497,7 +499,7 @@ export function flashCellsBeforeClear(cells, durationMs, gameState) {
 	if (meshes.length === 0) return;
 
 	const startTime = Date.now();
-	const pulses = 3;
+	const pulses = style.pulses ?? 3;
 	let disposed = false;
 
 	// Cleanup is GUARANTEED by wall-clock, not by the rAF loop reaching
@@ -532,7 +534,7 @@ export function flashCellsBeforeClear(cells, durationMs, gameState) {
 
 		for (const { material, mesh } of meshes) {
 			material.opacity = opacity;
-			mesh.scale.y = 0.6 + 0.6 * pulse;
+			if (!style.flat) mesh.scale.y = 0.6 + 0.6 * pulse;
 		}
 
 		requestAnimationFrame(tick);
@@ -541,6 +543,14 @@ export function flashCellsBeforeClear(cells, durationMs, gameState) {
 	// Safety net: dispose ~250 ms after the animation should have ended
 	// even if not a single rAF tick ran.
 	setTimeout(cleanup, duration + 250);
+}
+
+/**
+ * Home squares that just stopped a line from clearing (see lineHint.js):
+ * flat orange plates that pulse a few times on the deck.
+ */
+export function pulseHomeSquares(cells, gameState) {
+	flashCellsBeforeClear(cells, 1800, gameState, { color: 0xff7a3d, flat: true, pulses: 3 });
 }
 
 /**
@@ -576,7 +586,7 @@ export function showChessCaptureAnimation(x, z, gameState, options = {}) {
 	const cx = absolute?.x ?? x;
 	const cz = absolute?.z ?? z;
 
-	safePlaySound('capture');
+	// (the capture sound plays from networkEvents' chess_capture handler)
 
 	const group = new THREE.Group();
 	group.name = `chess-capture-${Date.now()}`;

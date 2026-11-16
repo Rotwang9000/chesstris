@@ -65,7 +65,23 @@ export function turnAngles(stick, theta, phi, maxPolar, seconds) {
 	};
 }
 
+/** Zoom speed: the distance changes by this fraction per second held. */
+const ZOOM_PER_SECOND = 0.9;
+
+/**
+ * Zoom: the camera's new distance from its target after `seconds` of
+ * holding + (dir 1, closer) or − (dir -1, further), within the
+ * controls' limits.
+ */
+export function zoomDistance(distance, dir, seconds, min = 1, max = 1000) {
+	const k = Math.exp(-dir * ZOOM_PER_SECOND * seconds);
+	return Math.min(max, Math.max(min, distance * k));
+}
+
 let root = null;
+let zoomDir = 0;
+let zoomFrame = 0;
+let zoomLast = 0;
 let knob = null;
 let modeButton = null;
 let mode = 'move';
@@ -126,6 +142,62 @@ function tick(now) {
 	frame = requestAnimationFrame(tick);
 }
 
+function applyZoom(seconds) {
+	const camera = getCamera();
+	const controls = getControls();
+	if (!camera || !controls?.target) return;
+	const t = controls.target;
+	const ox = camera.position.x - t.x, oy = camera.position.y - t.y, oz = camera.position.z - t.z;
+	const d = Math.hypot(ox, oy, oz);
+	if (!(d > 0)) return;
+	const min = Number.isFinite(controls.minDistance) ? controls.minDistance : 1;
+	const max = Number.isFinite(controls.maxDistance) ? controls.maxDistance : 1000;
+	const k = zoomDistance(d, zoomDir, seconds, min, max) / d;
+	camera.position.set(t.x + ox * k, t.y + oy * k, t.z + oz * k);
+	try { controls.update(); } catch (_e) { /* best-effort */ }
+}
+
+function zoomTick(now) {
+	zoomFrame = 0;
+	if (!zoomDir) return;
+	const seconds = Math.min(0.05, Math.max(0, (now - zoomLast) / 1000));
+	zoomLast = now;
+	applyZoom(seconds);
+	zoomFrame = requestAnimationFrame(zoomTick);
+}
+
+function stopZoom() {
+	zoomDir = 0;
+	if (zoomFrame) { cancelAnimationFrame(zoomFrame); zoomFrame = 0; }
+	if (root) delete root.dataset.zooming;
+}
+
+/** A hold-to-zoom button: + closer, − further. */
+function zoomButton(dir) {
+	const b = document.createElement('button');
+	b.type = 'button';
+	b.className = 'view-stick-zoom-btn';
+	b.textContent = dir > 0 ? '+' : '\u2212';
+	b.setAttribute('aria-label', dir > 0 ? 'Zoom in' : 'Zoom out');
+	b.title = dir > 0 ? 'Hold to zoom in' : 'Hold to zoom out';
+	b.addEventListener('pointerdown', (event) => {
+		event.preventDefault();
+		try { b.setPointerCapture(event.pointerId); } catch (_e) { /* older browsers */ }
+		zoomDir = dir;
+		if (root) root.dataset.zooming = dir > 0 ? 'in' : 'out';
+		zoomLast = performance.now();
+		// a tap is a step, a hold keeps going
+		applyZoom(0.18);
+		if (!zoomFrame) zoomFrame = requestAnimationFrame(zoomTick);
+	});
+	for (const type of ['pointerup', 'pointercancel', 'lostpointercapture', 'pointerleave']) {
+		b.addEventListener(type, stopZoom);
+	}
+	b.addEventListener('contextmenu', event => event.preventDefault());
+	b.addEventListener('click', () => b.blur());
+	return b;
+}
+
 function release() {
 	pointerId = null;
 	stick = { x: 0, y: 0 };
@@ -183,7 +255,14 @@ function build() {
 	}
 	base.addEventListener('contextmenu', event => event.preventDefault());
 
-	root.append(modeButton, base);
+	const zoom = document.createElement('div');
+	zoom.className = 'view-stick-zoom';
+	zoom.append(zoomButton(1), zoomButton(-1));
+	const row = document.createElement('div');
+	row.className = 'view-stick-row';
+	row.append(zoom, base);
+
+	root.append(modeButton, row);
 	document.body.appendChild(root);
 	mode = readMode();
 	paintMode();
@@ -196,6 +275,7 @@ export function setViewStick(on) {
 		return;
 	}
 	release();
+	stopZoom();
 	if (root) root.remove();
 	root = null; knob = null; modeButton = null;
 }

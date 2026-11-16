@@ -64,6 +64,7 @@ function createWidget() {
 		'<div class="tx-hud-key"><kbd>\u2190\u2192\u2191\u2193</kbd><span>move</span></div>',
 		'<div class="tx-hud-key"><kbd>Z</kbd><kbd>X</kbd><span>rotate</span></div>',
 		'<div class="tx-hud-key"><kbd>Space</kbd><span>drop</span></div>',
+		'<div class="tx-hud-key"><kbd>C</kbd><span>skip to chess</span></div>',
 	].join('');
 	// Phones: the on-screen pad already labels its buttons, and screen
 	// space is scarce — skip the keyboard legend and shrink the panel.

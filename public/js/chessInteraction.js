@@ -27,6 +27,7 @@ import {
 } from './skipChessButton.js';
 import { updateNextPieceHint } from './tetromino/nextPiece.js';
 import { showToastMessage } from './showToastMessage.js';
+import { playSound } from './audio/soundManager.js';
 import { showFrozenPawnPromotionDialog } from './uiOverlays.js';
 import { displaySponsorInfo } from '../utils/sponsors.js';
 import { shipRulesActive, cellItems, shipEntryAt, SHIP_REFUSAL_TEXT, noMoveShipTip } from './longships/shipEnv.js';
@@ -933,6 +934,8 @@ export function moveChessPieceToCell(x, z) {
 			}
 
 			if (success) {
+				// (Viking set only: the piece set down; silent in standard)
+				try { playSound('move'); } catch (_e) { /* sound is best-effort */ }
 				clearChessSelection();
 				updateGameStateAfterChessMove(pieceData, x, z);
 				removeChessMeshesAtCell(x, z, pieceId);

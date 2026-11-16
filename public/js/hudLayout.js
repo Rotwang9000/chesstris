@@ -19,6 +19,8 @@ import { isTouchPrimary } from './utils/inputMode.js';
 import { ensureActionStack, positionUnderNextPiece } from './skipChessButton.js';
 import { showToastMessage } from './showToastMessage.js';
 import { setViewStick } from './viewStick.js';
+import { isSeaOn, setSeaOn } from './audio/soundManager.js';
+import { isViking } from './edition.js';
 import {
 	describeEvent, flyTo, isLocalPlayerEvent, isEventInView, onLiveActivityEvent,
 } from './activityLog.js';
@@ -172,7 +174,38 @@ export function setAnnounceFeed(on) {
 	applyFeed();
 }
 
+const STICK_TOGGLE_ID = 'view-stick-toggle';
+
+/**
+ * The joystick's own round button, with mute and the activity log
+ * (owner: the small panel tool was too easy to miss). Lit while on.
+ */
+function ensureStickToggle() {
+	if (typeof document === 'undefined' || !document.body) return null;
+	let btn = document.getElementById(STICK_TOGGLE_ID);
+	if (btn) return btn;
+	btn = document.createElement('button');
+	btn.id = STICK_TOGGLE_ID;
+	btn.type = 'button';
+	btn.className = 'tx-round-btn';
+	btn.setAttribute('aria-label', 'View joystick');
+	btn.addEventListener('click', () => {
+		setViewStickPref(!stickOn);
+		btn.blur(); // Space must stay the game's drop key
+		showToastMessage(stickOn
+			? 'View joystick on: drag the stick to move the view, hold + or \u2212 to zoom. Its Move / Turn label switches what the stick does.'
+			: 'View joystick off.', { duration: stickOn ? 4200 : 2200 });
+	});
+	document.body.appendChild(btn);
+	return btn;
+}
+
 function applyStickPref() {
+	const toggle = ensureStickToggle();
+	if (toggle) {
+		toggle.setAttribute('aria-pressed', stickOn ? 'true' : 'false');
+		toggle.title = stickOn ? 'Hide the view joystick' : 'Show a view joystick: move, turn and zoom the camera';
+	}
 	if (stickBtn) {
 		stickBtn.setAttribute('aria-pressed', stickOn ? 'true' : 'false');
 		stickBtn.title = stickOn
@@ -227,10 +260,23 @@ export function attachHudLayout(widget) {
 	stickBtn.addEventListener('click', () => {
 		setViewStickPref(!stickOn);
 		showToastMessage(stickOn
-			? 'View joystick on: drag the stick (bottom right) to move the view. Its Move / Turn label switches what it does.'
+			? 'View joystick on: drag the stick (bottom right) to move the view, hold + or \u2212 to zoom. Its Move / Turn label switches what it does.'
 			: 'View joystick off.', { duration: stickOn ? 4200 : 2200 });
 	});
 	tools.append(modeBtn, feedBtn, stickBtn);
+	// Viking: the sound of the sea and the wind under the game.
+	if (isViking()) {
+		const seaBtn = toolButton('\uD83C\uDF0A');
+		seaBtn.setAttribute('aria-label', 'Sea sounds');
+		const paintSea = () => seaBtn.setAttribute('aria-pressed', isSeaOn() ? 'true' : 'false');
+		seaBtn.addEventListener('click', () => {
+			setSeaOn(!isSeaOn());
+			paintSea();
+			showToastMessage(isSeaOn() ? 'Sea and wind on (quietly, under the game).' : 'Sea and wind off.', { duration: 2200 });
+		});
+		paintSea();
+		tools.append(seaBtn);
+	}
 	widget.appendChild(tools);
 
 	applyMode();

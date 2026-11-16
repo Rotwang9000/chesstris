@@ -70,6 +70,15 @@ function registerBoatHandlers(socket, ctx) {
 			player.lastActiveAt = now;
 			player.lastChessMoveAt = now;
 			player.moveCount = (player.moveCount || 0) + 1;
+			// Orbs on the squares it crossed are hauled aboard.
+			let orbClaims = [];
+			if (ctx.powerUpManager && typeof ctx.powerUpManager.claimBySail === 'function' && result.event) {
+				try {
+					orbClaims = ctx.powerUpManager.claimBySail(world, playerId, result.event.from, result.event.to) || [];
+				} catch (orbErr) {
+					console.warn('[Ships] orb claim on sail failed:', orbErr.message);
+				}
+			}
 			// A ship sailing off (or in) re-anchors landing parties.
 			if (integrityService) integrityService.runIslandIntegrityPass({ emitAnimation: true });
 			World.markDirty();
@@ -78,7 +87,13 @@ function registerBoatHandlers(socket, ctx) {
 			if (inWorld) { if (ctx.io) ctx.io.to(world.id).emit('ship_sailed', result.event); }
 			else ships.emitToBattle(battle, 'ship_sailed', result.event);
 
-			return ack({ success: true, ...result.event });
+			return ack({
+				success: true,
+				...result.event,
+				orbs: orbClaims.filter(c => c && !c.skipped).map(c => ({
+					pieceType: c.piece ? c.piece.type : (c.ship ? 'SHIP' : c.orb?.pieceType),
+				})),
+			});
 		} catch (err) {
 			console.error('[Ships] ship_sail failed:', err);
 			return refuse('server_error', 'Server error');

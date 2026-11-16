@@ -318,6 +318,9 @@
 			#activity-log-toggle {
 				bottom: calc(174px + env(safe-area-inset-bottom, 0px)) !important;
 			}
+			#view-stick-toggle {
+				bottom: calc(270px + env(safe-area-inset-bottom, 0px)) !important;
+			}
 		}
 
 		/* Small screens: keep only the essentials down there. The Player
@@ -515,6 +518,7 @@
 		   PLAY NOW / BATTLE buttons on phones. */
 		body:has(#tutorial-message) #audio-mute-toggle,
 		body:has(#tutorial-message) #activity-log-toggle,
+		body:has(#tutorial-message) #view-stick-toggle,
 		body:has(#tutorial-message) #player-bar-tab,
 		body:has(#tutorial-message) #unified-player-bar,
 		body:has(#tutorial-message) #next-tetromino-display,
@@ -539,6 +543,8 @@
 		body:has(#paintings-setting-menu) #player-bar-tab,
 		body:has(#unified-player-bar[style*="translateX(0"]) #audio-mute-toggle,
 		body:has(#unified-player-bar[style*="translateX(0"]) #activity-log-toggle,
+		body:has(#unified-player-bar[style*="translateX(0"]) #view-stick-toggle,
+		body:has(#activity-log-panel[data-open]) #view-stick-toggle,
 		body:has(#activity-log-panel[data-open]) #audio-mute-toggle {
 			visibility: hidden;
 		}
@@ -1636,6 +1642,23 @@
 			pointer-events: none; transition: transform 120ms ease-out;
 		}
 		#view-stick[data-held] .view-stick-knob { transition: none; }
+		#view-stick .view-stick-row { display: flex; align-items: center; gap: 6px; }
+		#view-stick .view-stick-zoom { display: flex; flex-direction: column; gap: 6px; }
+		#view-stick .view-stick-zoom-btn {
+			width: 34px; height: 34px; padding: 0; border: 1px solid var(--tx-trim); border-radius: 50%;
+			background: var(--tx-hud-bg); color: var(--tx-gold);
+			font: 700 20px/1 var(--tx-font-ui); cursor: pointer; touch-action: none;
+			box-shadow: var(--tx-edge), var(--tx-shadow-sm); -webkit-tap-highlight-color: transparent;
+		}
+		#view-stick .view-stick-zoom-btn:hover { border-color: var(--tx-gold-hi); color: var(--tx-gold-hi); }
+		#view-stick .view-stick-zoom-btn:active { background: var(--tx-gold); color: var(--tx-hud-bg); }
+		html[data-render-profile="cute"]:not([data-edition="viking"]) #view-stick .view-stick-zoom-btn {
+			border: 2px solid transparent; background: var(--tx-hud-bg) padding-box, var(--tx-frame) border-box;
+		}
+		html[data-render-profile="retro"] #view-stick .view-stick-zoom-btn { border-radius: 0; box-shadow: none; background: #000; }
+		/* The joystick's own round button sits on the mute button. */
+		#view-stick-toggle { position: fixed; right: 16px; bottom: 112px; z-index: 11600; }
+		#view-stick-toggle[aria-pressed="true"] { background: var(--tx-gold); color: var(--tx-hud-bg); border-color: var(--tx-gold-hi); }
 		#view-stick .view-stick-mode {
 			min-width: 52px; padding: 3px 9px; border: 1px solid var(--tx-trim); border-radius: 999px;
 			background: var(--tx-hud-bg); color: var(--tx-gold);
@@ -1734,8 +1757,8 @@
 		@media (pointer: coarse) { .tx-round-btn { width: 44px; height: 44px; } }
 		/* The round buttons draw their icons in the theme's ink (the
 		   colour emoji ignored the profile: gold, phosphor, wood). */
-		#audio-mute-toggle, #activity-log-toggle { font-size: 0 !important; }
-		#audio-mute-toggle::before, #activity-log-toggle::before {
+		#audio-mute-toggle, #activity-log-toggle, #view-stick-toggle { font-size: 0 !important; }
+		#audio-mute-toggle::before, #activity-log-toggle::before, #view-stick-toggle::before {
 			content: '';
 			display: block;
 			width: 21px;
@@ -1748,6 +1771,7 @@
 		#audio-mute-toggle[data-muted="1"] { --tx-icon: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22%3E%3Cpath d=%22M3.5 9.2h4.2l5.3-4.4v14.4l-5.3-4.4H3.5z%22/%3E%3Cpath d=%22M16 9.2l5 5.6M21 9.2l-5 5.6%22 fill=%22none%22 stroke=%22%23000%22 stroke-width=%222%22 stroke-linecap=%22round%22/%3E%3C/svg%3E"); }
 		#activity-log-toggle { --tx-icon: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22%3E%3Cg fill=%22none%22 stroke=%22%23000%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22%3E%3Cpath d=%22M4.3 13.5A8 8 0 1 0 6.6 6.2%22/%3E%3Cpath d=%22M3.6 3.8v4.6h4.6%22/%3E%3Cpath d=%22M12 7.6V12l3.1 2%22/%3E%3C/g%3E%3C/svg%3E"); }
 		#activity-log-toggle > span { font-size: 10px; }
+		#view-stick-toggle { --tx-icon: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22%3E%3Cpath d=%22M12.2 15.5l3.2-8%22 stroke=%22%23000%22 stroke-width=%222.2%22 stroke-linecap=%22round%22/%3E%3Ccircle cx=%2216.2%22 cy=%225.6%22 r=%223.2%22/%3E%3Cpath d=%22M3 18.2c0-1.6 1.3-2.7 3-2.7h12c1.7 0 3 1.1 3 2.7v.6c0 .9-.7 1.6-1.6 1.6H4.6c-.9 0-1.6-.7-1.6-1.6z%22/%3E%3Ccircle cx=%227%22 cy=%2213.6%22 r=%221.3%22/%3E%3C/svg%3E"); }
 		#tetches-sea-hud {
 			padding: 7px 16px !important;
 			border: 1px solid rgba(120, 190, 255, 0.6) !important;
@@ -2103,6 +2127,7 @@
 			#tetches-sea-hud { top: 8px !important; font-size: 12px !important; max-width: calc(100vw - 480px) !important; }
 			#audio-mute-toggle { bottom: calc(68px + env(safe-area-inset-bottom, 0px)) !important; }
 			#activity-log-toggle { bottom: calc(16px + env(safe-area-inset-bottom, 0px)) !important; }
+			#view-stick-toggle { bottom: calc(120px + env(safe-area-inset-bottom, 0px)) !important; }
 		}
 		/* A phone upright: the round buttons join the top HUD, a pair
 		   just under the button strip (they sat on the player's own board,
@@ -2113,6 +2138,7 @@
 			#audio-mute-toggle, #activity-log-toggle { right: auto !important; bottom: auto !important; top: var(--tx-phone-round-top, 110px) !important; }
 			#audio-mute-toggle { left: 10px !important; }
 			#activity-log-toggle { left: 62px !important; }
+			#view-stick-toggle { right: auto !important; bottom: auto !important; top: var(--tx-phone-round-top, 110px) !important; left: 114px !important; }
 			/* The sea banner leaves the centre, where the tetromino falls,
 			   for the left column under the round buttons. */
 			#tetches-sea-hud {

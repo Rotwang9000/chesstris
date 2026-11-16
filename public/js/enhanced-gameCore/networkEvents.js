@@ -58,6 +58,7 @@ import {
 } from '../uiOverlays.js';
 import { playSound } from '../audio/soundManager.js';
 import { mountMuteButton } from '../audio/muteButton.js';
+import { attachShipSounds } from '../audio/shipSounds.js';
 import { applyServerPieces, syncDealtPieces } from '../tetromino/dealer.js';
 import { expandPieceDelta, expandPlayerDelta, expandDisconnectedDelta } from '../utils/pieceDelta.js';
 import { vikingActive } from '../edition.js';
@@ -1219,6 +1220,7 @@ export function setupNetworkEvents(hooks = {}) {
 	try {
 		ensureActivityLogUI();
 		mountMuteButton();
+		attachShipSounds();
 		window.gameCore = window.gameCore || {};
 		window.gameCore.toggleActivityLog = toggleActivityLog;
 	} catch (error) {
