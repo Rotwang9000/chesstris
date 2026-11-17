@@ -137,9 +137,10 @@ function createAiRunner({
 			return;
 		}
 
-		// Viking battles: captain the ships first (flee the sea, raid
-		// legs, bring an empty ship home). Like a human's, a sail is the
-		// bot's chess move: after one it only builds this tick.
+		// Viking battles and world longships: captain the ships first
+		// (flee the sea, raid legs, pick up raiders, bring an empty ship
+		// home). Like a human's, a sail is the bot's chess move: after one
+		// it only builds this tick.
 		const sailed = typeof aiActions.maybeSail === 'function'
 			? aiActions.maybeSail(computerId) > 0
 			: false;
@@ -214,6 +215,13 @@ function createAiRunner({
 			actionType = Math.random() < 0.55 ? 'tetromino' : 'chess';
 		} else {
 			actionType = Math.random() < strategy.buildSpeed ? 'tetromino' : 'chess';
+		}
+
+		// World longships: a raider ashore (its clock runs) or a passenger
+		// moored off an enemy coast moves this tick instead of building.
+		if (!sailed && typeof aiActions.prefersChessMove === 'function'
+			&& aiActions.prefersChessMove(computerId)) {
+			actionType = 'chess';
 		}
 
 		// If the preferred action finds nothing legal, fall back to the

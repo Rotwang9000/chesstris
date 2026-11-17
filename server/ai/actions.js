@@ -19,6 +19,11 @@ const { activeBattleForSeat } = require('../battle/rules');
 const ships = require('../battle/ships');
 const shipRules = require('../battle/shipRules');
 const shipPlanner = require('./shipPlanner');
+// World longships (TETCHES_WORLD_SHIPS): the shared world's captain.
+const worldShips = require('../world/worldShips');
+const worldShipPlanner = require('./worldShipPlanner');
+const { afterSail } = require('../world/sailEffects');
+const Sessions = require('../world/Sessions');
 const { SEA, hasSea, sinkAtMs } = require('../battle/sea');
 const {
 	nearestEnemyFocus,
@@ -530,6 +535,14 @@ function createAiActions({
 		const sea = triageForSea(activeBattleForSeat(world, computerId), captures, quiet, seaOptions);
 		({ captures, quiet } = sea);
 		if (viking) captures = orderShipCaptures(world, captures);
+		// World longships: raiders, passengers and harbour boarding.
+		const worldFleet = !viking && worldShips.appliesTo(world, computerId);
+		let worldShipMoves = null;
+		if (worldFleet) {
+			worldShipMoves = shapeWorldShipMoves(world, computerId, computerPlayer, quiet, now);
+			quiet = worldShipMoves.quiet;
+			captures = orderShipCaptures(world, captures);
+		}
 
 		// Prefer captures (proportional to aggressiveness). Quiet moves
 		// that close distance to the nearest enemy are ranked ahead of
@@ -563,6 +576,20 @@ function createAiActions({
 			if (boardings.length > 0) {
 				pool = boardings.concat(pool.filter(c => !boardings.includes(c)));
 				priorityCount = boardings.length;
+			}
+		}
+
+		// World longships: a raider ashore steps back aboard when its clock
+		// runs low (always) or when nothing better is on (no capture
+		// preferred); otherwise, now and then, a knight, rook or bishop
+		// steps aboard an empty ship for a raid (worldShipPlanner).
+		if (worldShipMoves) {
+			const front = worldShipMoves.urgentReturns.length > 0 ? worldShipMoves.urgentReturns
+				: (!preferCaptures && worldShipMoves.returns.length > 0 ? worldShipMoves.returns
+					: (!preferCaptures ? worldShipMoves.boardings : []));
+			if (front.length > 0) {
+				pool = front.concat(pool.filter(c => !front.includes(c)));
+				priorityCount = front.length;
 			}
 		}
 
@@ -715,6 +742,67 @@ function createAiActions({
 			.map(e => e.c);
 	}
 
+	/**
+	 * World longships: shape a bot's quiet moves around its ships.
+	 *
+	 *   • A raider ashore (piece.raid) makes no quiet move except stepping
+	 *     back aboard one of its own ships — it waits for the pickup
+	 *     rather than wander off on enemy soil (its captures stay).
+	 *   • A piece aboard steps off quietly only onto ground joined to its
+	 *     king (home); elsewhere it lands with a capture or not at all.
+	 *   • Our own empty ships are boarded only by a returning raider, or
+	 *     — at `worldShipPlanner.boardingChance` per move, one raider at a
+	 *     time, with the home guard kept and an online kingdom in reach —
+	 *     by a knight, rook or bishop setting out on a raid.
+	 *
+	 * @returns {{quiet:Array, returns:Array, urgentReturns:Array, boardings:Array}}
+	 */
+	function shapeWorldShipMoves(world, computerId, computerPlayer, quiet, now) {
+		const boardCells = world.board?.cells || {};
+		const getCell = (x, z) => boardCells[`${x},${z}`] || null;
+		const ownShipAt = (x, z) => {
+			const ship = shipRules.shipAt(getCell(x, z));
+			return !!ship && String(ship.player) === String(computerId);
+		};
+		let mayRaid = null;
+		const raidAllowed = () => {
+			if (mayRaid === null) {
+				mayRaid = Math.random() < worldShipPlanner.boardingChance(computerPlayer.difficulty)
+					&& worldShipPlanner.mayLaunchRaid(world, computerId, getCell)
+					&& worldShipPlanner.hasRaidTarget(
+						worldShipPlanner.worldContext(world, computerId, { now, isOnline: Sessions.isOnline }),
+						worldShipPlanner.shipsOf(world, computerId),
+					);
+			}
+			return mayRaid;
+		};
+		const homeward = new Map();
+		const joinsKing = (x, z) => {
+			const key = `${x},${z}`;
+			if (!homeward.has(key)) {
+				homeward.set(key, !!gameManager.islandManager?.hasPathToKing?.(world, x, z, computerId));
+			}
+			return homeward.get(key);
+		};
+		const returns = [];
+		const boardings = [];
+		const kept = quiet.filter(c => {
+			const from = c.piece.position;
+			const type = String(c.piece.type || '').toUpperCase();
+			if (ownShipAt(c.target.x, c.target.z)) {
+				if (c.piece.raid) { returns.push(c); return true; }
+				if (worldShipPlanner.RAIDER_TYPES.includes(type) && raidAllowed()) { boardings.push(c); return true; }
+				return false;
+			}
+			if (c.piece.raid) return false;
+			if (ownShipAt(from.x, from.z)) return joinsKing(c.target.x, c.target.z);
+			return true;
+		});
+		const urgentReturns = returns.filter(c =>
+			Number(c.piece.raid.deadline) - now < worldShipPlanner.RAID_RETURN_MS);
+		return { quiet: kept, returns, urgentReturns, boardings };
+	}
+
 	/** A knight or rook stepping aboard its own empty ship. */
 	function isHarbourBoarding(world, candidate, computerId) {
 		const type = String(candidate.piece.type || '').toUpperCase();
@@ -730,14 +818,21 @@ function createAiActions({
 	 * Like a human's sail it is the bot's chess move, so a tick that
 	 * sails makes no chess move (runner.js).
 	 *
-	 * @returns {number} How many ships sailed (0 outside Viking battles).
+	 * In the shared world (world longships on) see `maybeSailWorld`.
+	 *
+	 * @param {string} computerId
+	 * @param {{now?:number, random?:Function, isOnline?:Function}} [opts]
+	 *   `random` and `isOnline` only matter in the world (tests inject them).
+	 * @returns {number} How many ships sailed (0 outside Viking battles
+	 *   and the world's longships).
 	 */
-	function maybeSail(computerId, { now = Date.now() } = {}) {
+	function maybeSail(computerId, { now = Date.now(), random = Math.random, isOnline = Sessions.isOnline } = {}) {
 		const world = World.getWorld();
 		const computerPlayer = World.getPlayer(computerId);
 		if (!world || !computerPlayer || computerPlayer.eliminated || computerPlayer.paused) return 0;
 		const battle = ships.vikingBattleOf(world, computerId);
-		if (!battle || battle.status !== 'active') return 0;
+		if (!battle) return maybeSailWorld(world, computerPlayer, computerId, { now, random, isOnline });
+		if (battle.status !== 'active') return 0;
 		const moveIntervalMs = Number(computerPlayer.minMoveInterval) || 10000;
 		const own = ships.shipsInBattle(world, battle)
 			.filter(entry => String(entry.ship.player) === String(computerId)
@@ -776,6 +871,95 @@ function createAiActions({
 		World.markDirty();
 		broadcaster.broadcastGameUpdate();
 		return sailed;
+	}
+
+	/**
+	 * Where each world ship was heading (worldShipPlanner memory), keyed
+	 * by shipId. Kept in memory only: losing it on a restart costs one
+	 * fresh plan.
+	 */
+	const worldVoyages = {};
+
+	/**
+	 * World longships: plan every ship of this bot (worldShipPlanner) and
+	 * sail at most ONE leg — like a human, a sail is the turn's chess
+	 * move. Pickups of raiders and escapes from a near-trap always sail;
+	 * raid and homeward legs sail at `worldShipPlanner.sailChance`, so a
+	 * long voyage doesn't freeze the bot's pieces at home. The sail is
+	 * followed by exactly what follows a human's (`afterSail`: cooldown
+	 * stamp, orbs crossed, integrity, broadcast, `ship_sailed`).
+	 *
+	 * @returns {number} 1 if a ship sailed, else 0.
+	 */
+	function maybeSailWorld(world, computerPlayer, computerId, { now, random, isOnline }) {
+		if (!worldShips.appliesTo(world, computerId)) return 0;
+		// Forget voyages of ships that are gone (sunk, trapped, stripped).
+		const known = world.worldFleet && world.worldFleet.known;
+		if (known) {
+			for (const shipId of Object.keys(worldVoyages)) {
+				if (!known[shipId]) delete worldVoyages[shipId];
+			}
+		}
+		const own = worldShipPlanner.shipsOf(world, computerId)
+			.filter(entry => !shipRules.isRowing(entry.ship, now));
+		if (own.length === 0) return 0;
+		let plans = [];
+		try {
+			const ctx = worldShipPlanner.worldContext(world, computerId, { now, isOnline });
+			for (const entry of own) {
+				const plan = worldShipPlanner.planWorldVoyage(world, entry, computerId, { now, memory: worldVoyages, ctx });
+				if (plan) plans.push({ entry, plan });
+			}
+		} catch (err) {
+			console.warn(`[AI] ${computerId} world voyage planning failed:`, err.message);
+			return 0;
+		}
+		const chance = worldShipPlanner.sailChance(computerPlayer.difficulty);
+		plans = plans.filter(p => p.plan.urgent || random() < chance);
+		if (plans.length === 0) return 0;
+		plans.sort((a, b) => Number(b.plan.urgent) - Number(a.plan.urgent));
+		for (const { entry, plan } of plans) {
+			const shipId = String(entry.ship.shipId);
+			const result = worldShips.sail(world, computerId, { shipId, to: plan.to }, { now });
+			if (!result.success) {
+				delete worldVoyages[shipId];
+				continue;
+			}
+			worldVoyages[shipId] = plan.memo;
+			afterSail({
+				world, playerId: computerId, player: computerPlayer, result, now,
+				powerUpManager, integrityService, broadcaster, io,
+			});
+			return 1;
+		}
+		return 0;
+	}
+
+	/**
+	 * World longships: does this bot have a chess move it shouldn't put
+	 * off for a build? A raider ashore (its clock is running, and it
+	 * must step back aboard or capture again), or a passenger aboard a
+	 * moored ship with a worthwhile landing right there.
+	 */
+	function prefersChessMove(computerId, { now = Date.now(), isOnline = Sessions.isOnline } = {}) {
+		const world = World.getWorld();
+		if (!world || ships.vikingBattleOf(world, computerId) || !worldShips.appliesTo(world, computerId)) return false;
+		const boardCells = world.board?.cells || {};
+		const getCell = (x, z) => boardCells[`${x},${z}`] || null;
+		let ctx = null;
+		for (const p of world.chessPieces || []) {
+			if (!p || !p.position || String(p.player) !== String(computerId)) continue;
+			const ship = shipRules.shipAt(getCell(p.position.x, p.position.z));
+			if (!ship) {
+				if (p.raid) return true;
+				continue;
+			}
+			if (String(ship.player) !== String(computerId) || shipRules.isRowing(ship, now)
+				|| !shipRules.isMoored(getCell, p.position.x, p.position.z)) continue;
+			ctx = ctx || worldShipPlanner.worldContext(world, computerId, { now, isOnline });
+			if (worldShipPlanner.landingValue(ctx, p.position, p) > 0) return true;
+		}
+		return false;
 	}
 
 	function pushCaptureToBasket(world, captorRecord, capturedPieceSnapshot) {
@@ -923,7 +1107,13 @@ function createAiActions({
 				aiPreviousOwners.add(String(item.player));
 			}
 		}
-		cells.transferOwnership(targetCellContents, computerId, aiColor, world.players);
+		// World raiders visiting an away ruler's land take nothing, not
+		// even the ground — as for a human (sockets/chess.js).
+		const keepGround = !!(shipPlan && shipPlan.world) && worldShips.keepsGroundOwner(
+			world, piece, shipRules.landOwnerOf(targetCellContents), Sessions.isOnline,
+		);
+		if (keepGround) aiPreviousOwners.clear();
+		else cells.transferOwnership(targetCellContents, computerId, aiColor, world.players);
 		targetCellContents.push({
 			...chessPieceObj,
 			position: { x: targetX, z: targetZ },
@@ -1032,6 +1222,7 @@ function createAiActions({
 		performStrategicChessMove,
 		performCheckEscape,
 		maybeSail,
+		prefersChessMove,
 	};
 }
 
