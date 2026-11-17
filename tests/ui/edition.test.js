@@ -8,7 +8,7 @@
 import fs from 'fs';
 import path from 'path';
 import {
-	resolveEdition, edition, isViking, EDITION_STORAGE_KEY, standardEditionHref, returnToStandardEdition,
+	resolveEdition, edition, isViking, EDITION_STORAGE_KEY, standardEditionHref, returnToStandardEdition, switchToVikingEdition,
 } from '../../public/js/edition.js';
 
 const INDEX = fs.readFileSync(path.join(__dirname, '../../public/index.html'), 'utf8');
@@ -31,33 +31,35 @@ afterEach(() => {
 });
 
 describe('resolveEdition', () => {
-	test('standard by default', () => {
-		expect(resolveEdition()).toEqual({ edition: null, store: null });
+	test('the Viking edition by default (owner, 2026-11-17)', () => {
+		expect(resolveEdition()).toEqual({ edition: 'viking', store: null });
 	});
 
-	test('?edition=viking turns it on and asks to remember it', () => {
-		expect(resolveEdition({ query: 'viking' })).toEqual({ edition: 'viking', store: 'set' });
+	test('?edition=standard picks the standard game and asks to remember it', () => {
+		expect(resolveEdition({ query: 'standard' })).toEqual({ edition: null, store: 'standard' });
+		expect(resolveEdition({ query: 'standard', stored: 'viking', injected: 'viking' }))
+			.toEqual({ edition: null, store: 'standard' });
 	});
 
-	test('a remembered choice holds on a plain visit', () => {
+	test('a remembered choice holds on a plain visit, either way', () => {
+		expect(resolveEdition({ stored: 'standard' })).toEqual({ edition: null, store: null });
 		expect(resolveEdition({ stored: 'viking' })).toEqual({ edition: 'viking', store: null });
 	});
 
-	test('?edition=standard forgets it, even over a stored or injected choice', () => {
-		expect(resolveEdition({ query: 'standard', stored: 'viking', injected: 'viking' }))
-			.toEqual({ edition: null, store: 'clear' });
+	test('?edition=viking picks it again', () => {
+		expect(resolveEdition({ query: 'viking', stored: 'standard' })).toEqual({ edition: 'viking', store: 'viking' });
 	});
 
-	test('a packaged build can inject it', () => {
-		expect(resolveEdition({ injected: 'viking' })).toEqual({ edition: 'viking', store: null });
+	test('a packaged build can inject either, under the player\'s own choice', () => {
+		expect(resolveEdition({ injected: 'standard' }).edition).toBeNull();
+		expect(resolveEdition({ injected: 'standard', stored: 'viking' }).edition).toBe('viking');
 	});
 
-	test('unknown names are the standard game', () => {
-		expect(resolveEdition({ query: 'pirate' }).edition).toBeNull();
-		expect(resolveEdition({ stored: '<script>' }).edition).toBeNull();
-		expect(resolveEdition({ injected: { toString: () => 'viking' } }).edition).toBeNull();
-		// An unknown query leaves the remembered choice alone.
-		expect(resolveEdition({ query: 'pirate', stored: 'viking' })).toEqual({ edition: 'viking', store: null });
+	test('unknown names are ignored', () => {
+		expect(resolveEdition({ query: 'pirate' })).toEqual({ edition: 'viking', store: null });
+		expect(resolveEdition({ stored: '<script>' }).edition).toBe('viking');
+		expect(resolveEdition({ injected: { toString: () => 'standard' } }).edition).toBe('viking');
+		expect(resolveEdition({ query: 'pirate', stored: 'standard' })).toEqual({ edition: null, store: null });
 	});
 });
 
@@ -74,43 +76,43 @@ describe('edition() / isViking()', () => {
 });
 
 describe('index.html pre-paint script', () => {
-	test('no query, nothing stored: standard, nothing written', () => {
-		expect(runInlineScript('')).toBeNull();
+	test('no query, nothing stored: the Viking edition, nothing written', () => {
+		expect(runInlineScript('')).toBe('viking');
 		expect(localStorage.getItem(EDITION_STORAGE_KEY)).toBeNull();
 	});
 
-	test('?edition=viking sets the attribute and persists', () => {
+	test('?edition=standard picks the standard game and keeps it', () => {
+		expect(runInlineScript('?edition=standard')).toBeNull();
+		expect(localStorage.getItem(EDITION_STORAGE_KEY)).toBe('standard');
+		// A later plain visit (or the installed app) keeps it.
+		expect(runInlineScript('')).toBeNull();
+	});
+
+	test('?edition=viking picks it back', () => {
+		runInlineScript('?edition=standard');
 		expect(runInlineScript('?edition=viking')).toBe('viking');
 		expect(localStorage.getItem(EDITION_STORAGE_KEY)).toBe('viking');
-		// A later plain visit (or the installed app) keeps it.
 		expect(runInlineScript('')).toBe('viking');
-	});
-
-	test('?edition=standard clears it', () => {
-		runInlineScript('?edition=viking');
-		expect(runInlineScript('?edition=standard')).toBeNull();
-		expect(localStorage.getItem(EDITION_STORAGE_KEY)).toBeNull();
-		expect(runInlineScript('')).toBeNull();
 	});
 
 	test('unknown values are ignored', () => {
-		expect(runInlineScript('?edition=pirate')).toBeNull();
+		expect(runInlineScript('?edition=pirate')).toBe('viking');
 		expect(localStorage.getItem(EDITION_STORAGE_KEY)).toBeNull();
 		localStorage.setItem(EDITION_STORAGE_KEY, 'pirate');
-		expect(runInlineScript('')).toBeNull();
+		expect(runInlineScript('')).toBe('viking');
 	});
 
-	test('window.__TETCHES_EDITION__ switches it on without persisting', () => {
-		window.__TETCHES_EDITION__ = 'viking';
-		expect(runInlineScript('')).toBe('viking');
+	test('window.__TETCHES_EDITION__ = standard: the standard game, not persisted', () => {
+		window.__TETCHES_EDITION__ = 'standard';
+		expect(runInlineScript('')).toBeNull();
 		expect(localStorage.getItem(EDITION_STORAGE_KEY)).toBeNull();
 	});
 
 	test('blocked storage still honours the query', () => {
 		const spy = jest.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked'); });
 		const spySet = jest.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('blocked'); });
-		expect(runInlineScript('?edition=viking')).toBe('viking');
-		expect(runInlineScript('')).toBeNull();
+		expect(runInlineScript('?edition=standard')).toBeNull();
+		expect(runInlineScript('')).toBe('viking');
 		spy.mockRestore();
 		spySet.mockRestore();
 	});
@@ -130,13 +132,23 @@ describe('the way back to the standard game', () => {
 		expect(standardEditionHref({ pathname: '/play', search: '' })).toBe('/play?edition=standard');
 	});
 
-	test('forgets the stored edition and reloads', () => {
+	test('remembers the standard game and reloads', () => {
 		localStorage.setItem(EDITION_STORAGE_KEY, 'viking');
 		const loc = { pathname: '/', search: '?offline=1&app=1', replace: jest.fn() };
 		returnToStandardEdition(loc);
-		expect(localStorage.getItem(EDITION_STORAGE_KEY)).toBeNull();
+		expect(localStorage.getItem(EDITION_STORAGE_KEY)).toBe('standard');
 		expect(loc.replace).toHaveBeenCalledWith('/?offline=1&app=1&edition=standard');
 		// And the reloaded page is the standard game.
 		expect(runInlineScript('?offline=1&app=1&edition=standard')).toBeNull();
+		// …and stays it on the next plain visit.
+		expect(runInlineScript('')).toBeNull();
+	});
+
+	test('and the way back to the Viking edition', () => {
+		localStorage.setItem(EDITION_STORAGE_KEY, 'standard');
+		const loc = { pathname: '/', search: '?app=1&edition=standard', replace: jest.fn() };
+		switchToVikingEdition(loc);
+		expect(localStorage.getItem(EDITION_STORAGE_KEY)).toBe('viking');
+		expect(loc.replace).toHaveBeenCalledWith('/?app=1&edition=viking');
 	});
 });

@@ -12,36 +12,48 @@
  *
  * The switch is read by an inline script in index.html before first
  * paint (like portal mode, js/portal.js), which sets
- * `<html data-edition>`:
- *   • `?edition=viking` turns it on and remembers it in localStorage,
- *     so the installed app and later visits keep it;
- *   • `?edition=standard` forgets it;
- *   • a packaged build may set `window.__TETCHES_EDITION__` instead.
- * Only allow-listed names count, so a made-up value is the standard
- * game. `resolveEdition` below is that same rule as a pure function,
- * kept for tests and for any code that needs to reason about it.
+ * `<html data-edition>`. Since 2026-11-17 the Viking edition is the
+ * DEFAULT (owner's call); the standard game is an opt-out:
+ *   • a plain visit is the Viking edition;
+ *   • `?edition=standard` picks the standard game and remembers it in
+ *     localStorage, so the installed app and later visits keep it;
+ *   • `?edition=viking` picks the Viking edition again (remembered);
+ *   • a packaged build may set `window.__TETCHES_EDITION__` ('viking'
+ *     or 'standard') instead, which wins over the default but not over
+ *     the player's own remembered choice.
+ * Only allow-listed names count; anything else is ignored.
+ * `resolveEdition` below is that same rule as a pure function, kept for
+ * tests and for any code that needs to reason about it.
  */
 
 export const EDITIONS = new Set(['viking']);
 export const EDITION_STORAGE_KEY = 'tetches_edition';
-const CLEAR_VALUE = 'standard';
+/** The edition a visitor gets when nothing says otherwise. */
+export const DEFAULT_EDITION = 'viking';
+const STANDARD = 'standard';
+
+/** 'viking' | 'standard' for a name we know, else null. */
+function known(name) {
+	if (typeof name !== 'string') return null;
+	if (name === STANDARD || EDITIONS.has(name)) return name;
+	return null;
+}
 
 /**
- * Which edition a page load gets, and what to do with the stored choice.
+ * Which edition a page load gets, and what to remember.
  *
  * @param {Object} input
  * @param {string|null} [input.query]    the `?edition=` value
  * @param {*} [input.injected]           `window.__TETCHES_EDITION__`
  * @param {string|null} [input.stored]   the remembered choice
- * @returns {{ edition: string|null, store: 'set'|'clear'|null }}
- *   `edition` is null for the standard game.
+ * @returns {{ edition: string|null, store: string|null }}
+ *   `edition` is null for the standard game; `store` is the choice to
+ *   remember ('viking' | 'standard'), or null to leave storage alone.
  */
 export function resolveEdition({ query = null, injected = null, stored = null } = {}) {
-	if (query === CLEAR_VALUE) return { edition: null, store: 'clear' };
-	if (EDITIONS.has(query)) return { edition: query, store: 'set' };
-	if (typeof injected === 'string' && EDITIONS.has(injected)) return { edition: injected, store: null };
-	if (EDITIONS.has(stored)) return { edition: stored, store: null };
-	return { edition: null, store: null };
+	const q = known(query);
+	const pick = q || known(stored) || known(injected) || DEFAULT_EDITION;
+	return { edition: pick === STANDARD ? null : pick, store: q };
 }
 
 /** 'viking' | null (the standard game) — from <html data-edition>. */
@@ -85,19 +97,32 @@ export function requestedBattleEdition() {
 /**
  * This page's address with `?edition=standard`, keeping its other
  * switches (offline, app, portal): the way out of an edition, which is
- * otherwise remembered for good — an installed app has no address bar.
+ * otherwise the default — an installed app has no address bar.
  *
  * @param {{ pathname?: string, search?: string }} [loc]
  * @returns {string}
  */
 export function standardEditionHref({ pathname = '/', search = '' } = {}) {
 	const params = new URLSearchParams(search);
-	params.set('edition', CLEAR_VALUE);
+	params.set('edition', STANDARD);
 	return `${pathname}?${params.toString()}`;
 }
 
-/** Forget the edition and reload as the standard game. */
+/** Remember the standard game and reload as it. */
 export function returnToStandardEdition(loc = window.location) {
-	try { localStorage.removeItem(EDITION_STORAGE_KEY); } catch (_e) { /* the URL clears it too */ }
+	try { localStorage.setItem(EDITION_STORAGE_KEY, STANDARD); } catch (_e) { /* the URL says it too */ }
 	loc.replace(standardEditionHref(loc));
+}
+
+/** This page's address with `?edition=viking`, keeping its other switches. */
+export function vikingEditionHref({ pathname = '/', search = '' } = {}) {
+	const params = new URLSearchParams(search);
+	params.set('edition', 'viking');
+	return `${pathname}?${params.toString()}`;
+}
+
+/** Remember the Viking edition and reload as it. */
+export function switchToVikingEdition(loc = window.location) {
+	try { localStorage.setItem(EDITION_STORAGE_KEY, 'viking'); } catch (_e) { /* the URL says it too */ }
+	loc.replace(vikingEditionHref(loc));
 }

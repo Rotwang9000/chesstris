@@ -65,8 +65,14 @@ afterEach(() => {
 });
 
 describe('standard edition: no change, nothing more fetched', () => {
-	test('a plain visit preloads no rune fonts and keeps the title', () => {
+	test('a plain visit is the Viking edition (the default since 2026-11-17)', () => {
 		const page = boot('');
+		expect(page.edition).toBe('viking');
+		expect(page.preloads.length).toBeGreaterThan(0);
+	});
+
+	test('a remembered standard choice preloads no rune fonts and keeps the title', () => {
+		const page = boot('', 'standard');
 		expect(page.edition).toBeNull();
 		expect(page.preloads).toEqual([]);
 		expect(page.title).toBe('Tetches — Chess meets Tetris, live multiplayer');
@@ -79,8 +85,8 @@ describe('standard edition: no change, nothing more fetched', () => {
 		expect(page.title).toMatch(/^Tetches — Chess meets Tetris/);
 	});
 
-	test('an unknown edition name is the standard game', () => {
-		const page = boot('?edition=pirate');
+	test('an unknown edition name is ignored (a remembered standard choice holds)', () => {
+		const page = boot('?edition=pirate', 'standard');
 		expect(page.preloads).toEqual([]);
 	});
 

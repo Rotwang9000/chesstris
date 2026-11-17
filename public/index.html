@@ -21,24 +21,18 @@
 					document.documentElement.dataset.offline = '1';
 				}
 			} catch (e) { /* no URL params */ }
-			// Edition (see js/edition.js): `?edition=viking` switches it on
-			// and is remembered across visits (so the installed app keeps
-			// it); `?edition=standard` forgets it. A packaged build can set
-			// `window.__TETCHES_EDITION__` instead. Allow-listed: anything
-			// else is the standard game.
+			// Edition (see js/edition.js resolveEdition): the Viking edition
+			// is the default; `?edition=standard` (or `=viking`) picks one
+			// and remembers it (so the installed app keeps it); a packaged
+			// build can set `window.__TETCHES_EDITION__`. Allow-listed.
 			try {
-				var KEY = 'tetches_edition', ed = null, q = null;
-				try { q = new URLSearchParams(location.search).get('edition'); } catch (e) { /* no URL params */ }
-				if (q === 'viking') {
-					ed = q;
-					try { localStorage.setItem(KEY, q); } catch (e) { /* storage blocked */ }
-				} else if (q === 'standard') {
-					try { localStorage.removeItem(KEY); } catch (e) { /* storage blocked */ }
-				}
-				if (!ed && q !== 'standard' && window.__TETCHES_EDITION__ === 'viking') ed = 'viking';
-				if (!ed && q !== 'standard') {
-					try { if (localStorage.getItem(KEY) === 'viking') ed = 'viking'; } catch (e) { /* storage blocked */ }
-				}
+				var KEY = 'tetches_edition', ed = null, q = null, st = null, inj = window.__TETCHES_EDITION__;
+				var ok = function (v) { return v === 'viking' || v === 'standard' ? v : null; };
+				try { q = ok(new URLSearchParams(location.search).get('edition')); } catch (e) { /* no URL params */ }
+				if (q) { try { localStorage.setItem(KEY, q); } catch (e) { /* storage blocked */ } }
+				try { st = ok(localStorage.getItem(KEY)); } catch (e) { /* storage blocked */ }
+				ed = q || st || ok(inj) || 'viking';
+				if (ed === 'standard') ed = null;
 				if (ed) document.documentElement.dataset.edition = ed;
 				// The Viking wordmark's carved mark and the Futhark face
 				// (see the viking-brand style below): fetched early, and

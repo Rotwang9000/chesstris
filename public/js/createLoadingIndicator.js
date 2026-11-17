@@ -6,7 +6,7 @@ import { showLoginDialog } from './auth/loginDialog.js';
 import { isLoggedIn as isKingdomLoggedIn, getLoggedInName as getKingdomName } from './auth/kingdomKey.js';
 import { enterBattleFlow, isBattleFirstEntry } from './battle/battleMode.js';
 import { isOffline } from './offline/offlineMode.js';
-import { isViking } from './edition.js';
+import { isViking, switchToVikingEdition } from './edition.js';
 import { isInstalledApp, canReachServer, onlineUrl, offlineUrl } from './offline/appShell.js';
 import { getSocket } from './utils/networkManager.js';
 
@@ -663,6 +663,16 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 		`;
 	}
 
+	// The Viking edition is the default; a player who chose the standard
+	// game gets a way back to it here.
+	if (!isViking()) {
+		buttonHTML += `
+			<div class="tx-caption">
+				⚓ <a href="#" id="welcome-viking-link">Play the Viking edition</a>: longships, raids and paintings.
+			</div>
+		`;
+	}
+
 	if (ENABLE_WORLD_KEY) {
 		buttonHTML += `
 			<div class="tutorial-divider"><span>OR ENTER SPECIFIC WORLD KEY</span></div>
@@ -740,6 +750,14 @@ export function showTutorialMessage(startGameFunction, options = {}) {
 			if (!isOpen && typeof howtoToggle.scrollIntoView === 'function') {
 				try { howtoToggle.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (_e) { /* old browser */ }
 			}
+		});
+	}
+
+	const vikingLink = tutorialElement.querySelector('#welcome-viking-link');
+	if (vikingLink) {
+		vikingLink.addEventListener('click', (event) => {
+			event.preventDefault();
+			switchToVikingEdition();
 		});
 	}
 
