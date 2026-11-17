@@ -434,6 +434,49 @@ function noteSinking(world, battle, x, z) {
 // ── Sweep: losses and rebuilds ───────────────────────────────────────
 
 /**
+ * Hemmed in: real land (not water, not another ship) on all four sides
+ * it could sail. Such a ship can never move again (same rule as the
+ * shared world, worldShips.isTrapped).
+ */
+function isTrapped(world, x, z) {
+	const cells = world.board.cells;
+	return [[1, 0], [-1, 0], [0, 1], [0, -1]]
+		.every(([dx, dz]) => rules.isLandCell(cells[keyOf(x + dx, z + dz)] || null));
+}
+
+/**
+ * A ship boxed in by land is captured, with any warrior aboard
+ * (`ship_trapped`). Unlike the world, a battle seat still gets its
+ * usual rebuild at the mooring (reconcileShips): battles are short.
+ *
+ * @returns {Set<string>} the shipIds taken
+ */
+function captureTrappedShips(world, battle, fleet, removePiece) {
+	const taken = new Set();
+	const cells = world.board.cells;
+	for (const entry of shipsInBattle(world, battle)) {
+		if (!isTrapped(world, entry.x, entry.z)) continue;
+		const key = keyOf(entry.x, entry.z);
+		const passenger = pieceAt(world, entry.x, entry.z);
+		const rest = (cells[key] || []).filter(item => !(rules.isShipItem(item)
+			&& String(item.shipId) === String(entry.ship.shipId)));
+		if (rest.length > 0) cells[key] = rest;
+		else delete cells[key];
+		if (passenger && typeof removePiece === 'function') removePiece(passenger, 'ship_trapped');
+		const shipId = String(entry.ship.shipId);
+		taken.add(shipId);
+		delete fleet.voyages[shipId];
+		emitToBattle(battle, 'ship_trapped', {
+			shipId, playerId: String(entry.ship.player), seatId: String(entry.ship.player),
+			x: entry.x, z: entry.z, battleId: String(battle.id),
+			passengerId: passenger ? String(passenger.id) : null,
+			passengerType: passenger ? passenger.type : null,
+		});
+	}
+	return taken;
+}
+
+/**
  * Run from the battle sweep. For each seat:
  *   • controls a ship → nothing to rebuild;
  *   • just lost its last one → `ship_lost` (sunk / seized / destroyed)
@@ -448,9 +491,10 @@ function noteSinking(world, battle, x, z) {
  * @param {{now?: number, seatIsAlive?: (seat:Object) => boolean}} [opts]
  * @returns {boolean} Whether the board changed (a ship was built).
  */
-function reconcileShips(world, battle, { now = Date.now(), seatIsAlive = () => true } = {}) {
+function reconcileShips(world, battle, { now = Date.now(), seatIsAlive = () => true, removePiece = null } = {}) {
 	if (!isVikingBattle(battle) || battle.status !== 'active') return false;
 	const fleet = ensureFleet(battle);
+	const trapped = captureTrappedShips(world, battle, fleet, removePiece);
 	const current = shipsInBattle(world, battle);
 	const byShipId = new Map(current.map(e => [String(e.ship.shipId), e]));
 	const controlled = new Map();
@@ -459,7 +503,7 @@ function reconcileShips(world, battle, { now = Date.now(), seatIsAlive = () => t
 		controlled.set(owner, (controlled.get(owner) || 0) + 1);
 	}
 
-	let changed = false;
+	let changed = trapped.size > 0;
 	for (const seat of battle.seats || []) {
 		const seatId = String(seat.seatId);
 		if ((controlled.get(seatId) || 0) > 0) {
@@ -474,6 +518,7 @@ function reconcileShips(world, battle, { now = Date.now(), seatIsAlive = () => t
 				let reason = 'destroyed';
 				if (byShipId.has(shipId)) reason = 'seized';
 				else if (fleet.sunk[shipId]) reason = 'sunk';
+				else if (trapped.has(shipId)) reason = 'trapped';
 				emitToBattle(battle, 'ship_lost', { shipId, seatId, reason, rebuildAt });
 			}
 			continue;
@@ -514,6 +559,7 @@ module.exports = {
 	shipsInBattle,
 	findShip,
 	emitToBattle,
+	isTrapped,
 	mooringBehind,
 	spawnShip,
 	spawnFleet,

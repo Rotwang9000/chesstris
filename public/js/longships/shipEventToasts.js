@@ -88,12 +88,15 @@ export function shipEventToast(detail, ctx = {}) {
 				variant: 'alert',
 			};
 		case 'trapped': {
-			// World: land closed in on all four sides of one of your ships.
+			// Land closed in on all four sides of one of your ships.
 			if (!same(detail.playerId, me)) return null;
+			// Battles: the usual new keel follows in 45 s.
 			const warrior = detail.passengerId != null ? `, and your ${pieceName(detail.passengerType)} aboard is taken with her` : '';
 			return {
 				text: `Your longship is hemmed in by land on every side and is captured${warrior}. `
-					+ 'No new keel at the mooring this time: march a pawn to the shore, or win a ship bonus, for a new one.',
+					+ (detail.battleId != null
+						? 'A new keel is laid at your mooring in 45 s.'
+						: 'No new keel at the mooring this time: march a pawn to the shore, or win a ship bonus, for a new one.'),
 				variant: 'alert',
 				duration: 7000,
 			};
