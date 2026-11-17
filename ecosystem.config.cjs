@@ -44,6 +44,9 @@ module.exports = {
 				NODE_ENV: 'production',
 				PORT: 3666,
 				ALLOWED_ORIGIN: 'https://tetches.com,https://www.tetches.com',
+				// Longships in the shared world (server/world/worldShips.js);
+				// on since 2026-11-17 at the owner's word.
+				TETCHES_WORLD_SHIPS: '1',
 			},
 			instances: 1,
 			autorestart: true,
