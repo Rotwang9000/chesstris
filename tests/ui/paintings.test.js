@@ -64,8 +64,9 @@ describe('slot chain', () => {
 			slot: 'capture.knight.bishop',
 			src: '/img/paintings/capture.knight.bishop.v1.webp',
 		}));
-		// King takes knight: no pair painting (yet) → the king's own capture.
-		expect(resolvePainting(MANIFEST, slotCandidates(capture({ attackerType: 'king', victimType: 'knight' }))).slot)
+		// A pairing with no painting of its own → the attacker's capture
+		// (every attacker-victim pair is painted now; an unknown victim isn't).
+		expect(resolvePainting(MANIFEST, slotCandidates(capture({ attackerType: 'king', victimType: null }))).slot)
 			.toBe('capture.king');
 		// King takes queen: the owner saw a queen-less picture; now it has its own.
 		expect(resolvePainting(MANIFEST, slotCandidates(capture({ attackerType: 'king', victimType: 'queen' }))).slot)
@@ -139,13 +140,13 @@ describe('slot chain', () => {
 			'capture.knight.bishop', 'capture.pawn.queen', 'capture.knight.rook', 'capture.knight.queen',
 			'capture.queen.knight', 'capture.bishop.knight', 'capture.rook.pawn',
 			'capture.rook.bishop', 'capture.queen.rook',
-			// 2026-11-17: every pairing but king takes knight
+			// 2026-11-17: every pairing
 			'capture.pawn.pawn', 'capture.pawn.knight', 'capture.pawn.bishop', 'capture.pawn.rook',
 			'capture.knight.pawn', 'capture.knight.knight',
 			'capture.bishop.pawn', 'capture.bishop.bishop', 'capture.bishop.rook', 'capture.bishop.queen',
 			'capture.rook.knight', 'capture.rook.rook', 'capture.rook.queen',
 			'capture.queen.pawn', 'capture.queen.bishop', 'capture.queen.queen',
-			'capture.king.pawn', 'capture.king.bishop', 'capture.king.rook', 'capture.king.queen',
+			'capture.king.pawn', 'capture.king.knight', 'capture.king.bishop', 'capture.king.rook', 'capture.king.queen',
 			...SHIP_SCENES.map(scene => `ship.${scene}`),
 		].sort());
 		for (const [slot, entry] of entries) {

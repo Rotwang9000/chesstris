@@ -221,6 +221,10 @@
 		"capture.king.queen": {
 			"file": "capture.king.queen.v1.webp",
 			"alt": "Before the snowy steps of a carved timber hall a grey-bearded king in a fur mantle and gold crown seizes the sword hand of a queen with a long braid, a silver circlet and a green cloak, who falls back on the steps as her red shield slides away in the falling snow."
+		},
+		"capture.king.knight": {
+			"file": "capture.king.knight.v1.webp",
+			"alt": "In the snow before a timber hall, a grey-bearded king in a gold circlet and fur mantle sits astride a black horse with his sword raised high, while its unhorsed rider in a dark blue cloak kneels with his hands up in surrender, his broken spear beside him."
 		}
 	}
 }
