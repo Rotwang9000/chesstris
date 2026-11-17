@@ -23,7 +23,11 @@ import {
 	validateSail,
 	chessMoveVeto,
 	classifyMove,
-	isMoored,
+	isShipMoored,
+	isLandCell,
+	mayBoard,
+	deckSquare,
+	deckMove,
 } from '../viking/shipRulesClient.js';
 import { seaSinkAt, battlePlayRadius, isBattleRegionCell } from '../battle/battleRules.js';
 
@@ -345,11 +349,12 @@ export function shipMoveRefusal(gameState, piece, move, { now = shipServerNow(ga
 		p => p?.position && Number(p.position.x) === x && Number(p.position.z) === z) || null);
 	const occupant = lookup(to.x, to.z);
 	const target = occupant ? { pieceType: occupant.type, player: occupant.player } : null;
-	const env = { getCell: (x, z) => cellItems(gameState, x, z), now };
+	const env = shipEnv(gameState, now);
 	const veto = chessMoveVeto(env, piece, from, to, target);
 	if (veto) return veto;
 	const type = String(piece.type || '').toUpperCase();
-	if (type === 'KNIGHT') return null;
+	// A deck move's path was walked from the deck square (deckMove).
+	if (type === 'KNIGHT' || move.viaDeck) return null;
 	const castle = type === 'KING' && (Math.abs(to.x - from.x) === 2 || Math.abs(to.z - from.z) === 2);
 	const blocked = castle
 		? castleWalkHitsShip(gameState, from, to, lookup)
@@ -391,7 +396,87 @@ export function applyShipRules(gameState, piece, moves, options = {}) {
 			kept.push(kind ? { ...move, ship: kind.kind } : move);
 		}
 	}
+	addDeckMoves(gameState, piece, kept, refused, { now, pieceAt });
 	return { moves: kept, refused };
+}
+
+/** The deck square of the ship at (x, z) under the rules, or null. */
+export function shipDeckSquare(gameState, x, z, now = shipServerNow(gameState)) {
+	const ship = shipAt(cellItems(gameState, x, z));
+	return ship ? deckSquare(shipEnv(gameState, now), ship, x, z) : null;
+}
+
+/** Board squares a boarding-type piece on `at` could reach (geometry only). */
+function reachFrom(gameState, type, at) {
+	const t = String(type || '').toUpperCase();
+	const out = [];
+	if (t === 'KNIGHT') {
+		for (const [dx, dz] of [[1, 2], [2, 1], [-1, 2], [-2, 1], [1, -2], [2, -1], [-1, -2], [-2, -1]]) {
+			out.push({ x: at.x + dx, z: at.z + dz });
+		}
+		return out;
+	}
+	const dirs = [];
+	if (t === 'ROOK' || t === 'QUEEN') dirs.push([1, 0], [-1, 0], [0, 1], [0, -1]);
+	if (t === 'BISHOP' || t === 'QUEEN') dirs.push([1, 1], [1, -1], [-1, 1], [-1, -1]);
+	for (const [dx, dz] of dirs) {
+		for (let k = 1; k <= 64; k++) {
+			const x = at.x + dx * k;
+			const z = at.z + dz * k;
+			const items = cellItems(gameState, x, z);
+			if (!items || items.length === 0) break;
+			out.push({ x, z });
+			if (!isLandCell(items)) break;
+		}
+	}
+	return out;
+}
+
+/**
+ * A hull lies over two squares, its own and the open water its prow
+ * points at, and both are deck (shipRules rule 8): add the moves that
+ * only work through the deck square, mirroring the server's
+ * moveValidation._isValidViaDeck. Boarding moves target the ship's own
+ * square (the server's square for it); landings come off the deck
+ * square. Each carries `viaDeck: {x, z}`.
+ */
+function addDeckMoves(gameState, piece, kept, refused, { now, pieceAt }) {
+	if (!mayBoard(piece.type)) return;
+	const from = { x: Number(piece.position.x), z: Number(piece.position.z) };
+	const env = shipEnv(gameState, now);
+	const have = new Set(kept.map(m => `${m.x},${m.z}`));
+	const candidates = [];
+	const aboard = shipAt(cellItems(gameState, from.x, from.z));
+	if (aboard) {
+		const deck = deckSquare(env, aboard, from.x, from.z);
+		if (deck) candidates.push(...reachFrom(gameState, piece.type, deck));
+	} else {
+		for (const e of listShips(gameState)) {
+			if (Math.abs(e.x - from.x) > 66 || Math.abs(e.z - from.z) > 66) continue;
+			candidates.push({ x: e.x, z: e.z });
+		}
+	}
+	for (const to of candidates) {
+		const key = `${to.x},${to.z}`;
+		if (have.has(key)) continue;
+		const occupant = pieceAt(to.x, to.z);
+		if (occupant && String(occupant.player) === String(piece.player)) continue;
+		const via = deckMove(env, piece, from, to, pieceAt);
+		if (!via) continue;
+		have.add(key);
+		const target = occupant ? { pieceType: occupant.type, player: occupant.player } : null;
+		const veto = chessMoveVeto(env, piece, from, to, target);
+		const at = refused.findIndex(m => m.x === to.x && m.z === to.z);
+		if (veto) {
+			if (at < 0) refused.push({ x: to.x, z: to.z, reason: veto.reason, message: veto.message });
+			continue;
+		}
+		if (at >= 0) refused.splice(at, 1);
+		const kind = classifyMove(
+			cellItems(gameState, from.x, from.z), cellItems(gameState, to.x, to.z), piece.player, !!occupant,
+		);
+		kept.push({ x: to.x, z: to.z, viaDeck: via.via, ...(kind ? { ship: kind.kind } : {}) });
+	}
 }
 
 // ── Words ────────────────────────────────────────────────────────────────────
@@ -453,7 +538,6 @@ export function noMoveShipTip(gameState, piece, {
 	const x = Number(pos?.x);
 	const z = Number(pos?.z);
 	const entry = pos && Number.isFinite(x) && Number.isFinite(z) ? shipEntryAt(gameState, x, z) : null;
-	const getCell = (a, b) => cellItems(gameState, a, b);
 
 	if (entry && rowingMsLeft(entry.ship, now) > 0) {
 		const secs = Math.max(1, Math.ceil(rowingMsLeft(entry.ship, now) / 1000));
@@ -462,7 +546,7 @@ export function noMoveShipTip(gameState, piece, {
 		// be rowed away; and it needs open water beside it.)
 		const sailsOn = !SHIP.NO_BOARD.includes(String(piece.type || '').toUpperCase())
 			&& sailTargets(shipEnv(gameState, now), { x, z }).length > 0;
-		if (isMoored(getCell, x, z)) {
+		if (isShipMoored(shipEnv(gameState, now), entry.ship, x, z)) {
 			return `Your longship is still rowing: your ${crew} can step off in ${secs} s${sailsOn ? ', or sail on' : ''}.`;
 		}
 		return sailsOn
@@ -477,7 +561,7 @@ export function noMoveShipTip(gameState, piece, {
 		return lanes > 0 ? `${text} ${sailHint}` : text;
 	}
 	if (lanes > 0) {
-		return entry && !isMoored(getCell, x, z)
+		return entry && !isShipMoored(shipEnv(gameState, now), entry.ship, x, z)
 			? `Out at sea: sail next to land to step off. ${sailHint}`
 			: `No square to step onto from here. ${sailHint}`;
 	}

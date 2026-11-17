@@ -242,6 +242,31 @@ describe('chess moves under the longship rules', () => {
 	});
 });
 
+describe('the hull\'s second deck square (rule 8)', () => {
+	const point = (a, dx, dz, dir) => { a.gameState.board.cells[key(dx, dz)][0].dir = dir; };
+
+	test('a rook that reaches the deck square may board (move targets the ship\'s own square)', () => {
+		const a = arena().land(2, 1).land(4, 1).ship(1, 0);
+		point(a, 1, 0, { dx: 0, dz: 1 });
+		const rook = a.piece('r', 'ROOK', 3, 1);
+		const moves = getChessPieceMoveSets(a.gameState, rook);
+		const board = moves.find(m => m.x === C.x + 1 && m.z === C.z);
+		expect(board).toMatchObject({ ship: 'embark', viaDeck: { x: C.x + 1, z: C.z + 1 } });
+
+		point(a, 1, 0, { dx: 0, dz: -1 });
+		const away = getChessPieceMoveSets(a.gameState, rook);
+		expect(away.find(m => m.x === C.x + 1 && m.z === C.z)).toBeUndefined();
+	});
+
+	test('a knight aboard may also land from the deck square', () => {
+		const a = arena().land(-1, 0).land(2, 2).ship(0, 0);
+		point(a, 0, 0, { dx: 0, dz: 1 });
+		const knight = a.piece('n', 'KNIGHT', 0, 0);
+		const moves = getChessPieceMoveSets(a.gameState, knight);
+		expect(moves.find(m => m.x === C.x + 2 && m.z === C.z + 2)).toMatchObject({ ship: 'land' });
+	});
+});
+
 describe('Longship HUD button', () => {
 	const ship = (readyAt, shipId = 'a') => ({ ship: { shipId, readyAt } });
 

@@ -31,7 +31,7 @@ import { showToastMessage } from '../showToastMessage.js';
 import { getSocket } from '../utils/networkManager.js';
 import { ensureActionStack, positionUnderNextPiece } from '../skipChessButton.js';
 import {
-	shipRulesActive, shipServerNow, noteSailReadyAt, listShips, shipsControlledBy, shipEntryAt,
+	shipRulesActive, shipServerNow, noteSailReadyAt, listShips, shipsControlledBy, shipEntryAt, shipDeckSquare,
 	inWorldSea, raidClock,
 	findShip, laneTargets, checkSail, rowingMsLeft, shipRefusalText, cellItems,
 } from './shipEnv.js';
@@ -564,8 +564,19 @@ export function pickShipEntry(raycaster, { landHit = false, landDistance = Infin
 		plane.constant = -y;
 		if (!raycaster.ray.intersectPlane(plane, point)) continue;
 		const sq = gridXZ(gameState, point.x, point.z);
-		const entry = shipEntryAt(gameState, sq.x, sq.z);
+		const entry = shipEntryAt(gameState, sq.x, sq.z) || shipByDeckSquare(gameState, sq.x, sq.z);
 		if (entry) return entry;
+	}
+	return null;
+}
+
+/** The ship whose second deck square (open water under its prow) is (x, z). */
+export function shipByDeckSquare(gameState, x, z) {
+	for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+		const entry = shipEntryAt(gameState, x + dx, z + dz);
+		if (!entry) continue;
+		const deck = shipDeckSquare(gameState, entry.x, entry.z);
+		if (deck && deck.x === x && deck.z === z) return entry;
 	}
 	return null;
 }
@@ -601,9 +612,15 @@ export function nearestOccluderDistance(raycaster) {
 	}
 	const board = getBoardGroup();
 	if (board) {
+		const selected = selection.shipId != null ? String(selection.shipId) : null;
 		consider(raycaster.intersectObjects([board], true), (h) => {
 			const o = h.object;
 			if (o.userData?.type === 'shipHitbox') return false;
+			// The selected ship's own hull overhangs the squares fore and
+			// aft: a lane tile it covers is still where the player aims
+			// ("the boat can't move to that cell as it is in the way").
+			if (selected && hasAncestor(o, n => n.userData?.shipId != null
+				&& String(n.userData.shipId) === selected)) return false;
 			if (o.userData?.type === 'instancedCells') return h.instanceId != null;
 			if (!o.visible || hasAncestor(o, n => n.visible === false)) return false;
 			// Anything drawn on the board: cells, hulls, sails, foam.
@@ -1000,6 +1017,7 @@ export function installShipControls() {
 		lanes: currentSailLanes,
 		button: longshipButtonState,
 		cellItems: (x, z) => cellItems(gs(), x, z),
+		deck: (x, z) => shipDeckSquare(gs(), x, z),
 	};
 }
 

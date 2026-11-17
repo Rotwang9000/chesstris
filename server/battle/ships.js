@@ -271,6 +271,9 @@ function sail(world, battle, playerId, { shipId, to } = {}, { now = Date.now() }
 	}
 	if (passenger) passenger.position = { x: target.x, z: target.z };
 	entry.ship.readyAt = now + rules.SHIP.ROW_LOCK_MS;
+	// Its prow keeps pointing the way it went (shipRules.headingAt): the
+	// hull's second deck square is read from it.
+	entry.ship.dir = { dx: Math.sign(target.x - entry.x), dz: Math.sign(target.z - entry.z) };
 	const fleet = ensureFleet(battle);
 	fleet.known[String(entry.ship.shipId)] = { player: String(entry.ship.player), x: target.x, z: target.z };
 
