@@ -15,12 +15,14 @@ const path = require('path');
 describe('visitor funnel', () => {
 	let tempDir;
 	let funnel;
+	let loaded = [];
 
 	function loadFunnel() {
 		let mod;
 		jest.isolateModules(() => {
 			mod = require('../../server/observability/funnel');
 		});
+		loaded.push(mod);
 		return mod;
 	}
 
@@ -31,6 +33,9 @@ describe('visitor funnel', () => {
 	});
 
 	afterEach(() => {
+		// A throttled save still pending would recreate the temp dir later.
+		for (const mod of loaded) mod._resetForTests();
+		loaded = [];
 		delete process.env.TETCHES_DATA_DIR;
 		fs.rmSync(tempDir, { recursive: true, force: true });
 	});
