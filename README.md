@@ -7,6 +7,10 @@
 *(Tetris + chess. The game was called **Shaktris** for a while — "Schack" is
 the Swedish word for chess — before the rebrand to **Tetches**.)*
 
+![Tetches: Viking edition trailer](docs/media/tetches-viking-advert.gif)
+
+*The Viking edition in 30 seconds ([sharper MP4](docs/media/tetches-viking-advert.mp4)).*
+
 ---
 
 ## How it works (in one paragraph)
