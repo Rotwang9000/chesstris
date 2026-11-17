@@ -726,10 +726,9 @@ function createAiActions({
 	/**
 	 * Viking: captain this bot's ships for one tick — flee the sea, sail
 	 * a raid leg, or bring an empty ship home (see shipPlanner). Runs
-	 * after the check escape and BEFORE the bot's chess or tetromino
-	 * action, and doesn't use that action up: like a human's sail it is
-	 * not a chess move. The 3 s rowing lock means the same tick can't
-	 * also land from the ship that just sailed.
+	 * after the check escape and BEFORE the bot's tetromino action.
+	 * Like a human's sail it is the bot's chess move, so a tick that
+	 * sails makes no chess move (runner.js).
 	 *
 	 * @returns {number} How many ships sailed (0 outside Viking battles).
 	 */
@@ -1011,6 +1010,10 @@ function createAiActions({
 		const shipMove = ships.afterPieceMoved(
 			world, movedPiece, originalPosition, { x: targetX, z: targetZ },
 			capturedPieceSnapshot, shipPlan,
+			{
+				hasPathToKing: (x, z, pid) => gameManager.islandManager.hasPathToKing(world, x, z, pid),
+				emitAll: (event, payload) => io.to(world.id).emit(event, payload),
+			},
 		);
 
 		return {

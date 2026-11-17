@@ -484,15 +484,17 @@ class BoardManager {
 		const airbornePieces = [];
 		const rowRuns = options.rowRuns instanceof Map ? options.rowRuns : null;
 		const colRuns = options.colRuns instanceof Map ? options.colRuns : null;
+		const clearedKeys = new Set();
 
 		for (const z of rows || []) {
-			const n = this._clearLine(game, 'z', z, airbornePieces, rowRuns?.get(z) || null);
+			const n = this._clearLine(game, 'z', z, airbornePieces, rowRuns?.get(z) || null, clearedKeys);
 			if (n > 0) { clearedRows.push(z); totalCellsCleared += n; }
 		}
 		for (const x of cols || []) {
-			const n = this._clearLine(game, 'x', x, airbornePieces, colRuns?.get(x) || null);
+			const n = this._clearLine(game, 'x', x, airbornePieces, colRuns?.get(x) || null, clearedKeys);
 			if (n > 0) { clearedCols.push(x); totalCellsCleared += n; }
 		}
+		this._liftPiecesStandingOnClearedCells(game, clearedKeys, airbornePieces);
 
 		// Both axes shift together — moving a cell once with the
 		// combined delta avoids overshoot when a clear happens on a row
@@ -735,7 +737,7 @@ class BoardManager {
 	 * @returns {number} number of cells actually modified
 	 * @private
 	 */
-	_clearLine(game, axis, index, airbornePieces, runs = null) {
+	_clearLine(game, axis, index, airbornePieces, runs = null, clearedKeys = null) {
 		// Iterate the qualifying run ranges directly when we have them
 		// (the normal path via `findClearableLines`); fall back to the
 		// board bounding box for legacy callers that pass no runs. The
@@ -770,6 +772,7 @@ class BoardManager {
 			if (preserved.length === cellContents.length && !lifted) return;
 
 			modified++;
+			if (clearedKeys) clearedKeys.add(key);
 
 			if (lifted && Array.isArray(airbornePieces)) {
 				const pieceId = lifted.pieceId != null
@@ -805,6 +808,59 @@ class BoardManager {
 		}
 
 		return modified;
+	}
+
+	/**
+	 * A piece stands on the square named by its record, so when that
+	 * square is cleared the piece has to take off, whether or not its
+	 * board marker was on it. `_clearLine` only lifts pieces through the
+	 * marker it strips; a piece whose record and marker had drifted
+	 * apart (or whose marker was missing) was left behind with nothing
+	 * under it, hovering over the water until the integrity sweep's
+	 * grace ran out. Lift those too, and drop the stray marker so it
+	 * can't later pass for a piece on the wrong square.
+	 *
+	 * @param {Object} game
+	 * @param {Set<string>} clearedKeys  "x,z" of every cell the clear modified.
+	 * @param {Array} airbornePieces  Out-parameter shared with `_clearLine`.
+	 * @private
+	 */
+	_liftPiecesStandingOnClearedCells(game, clearedKeys, airbornePieces) {
+		if (!clearedKeys || clearedKeys.size === 0) return;
+		if (!Array.isArray(game.chessPieces) || !Array.isArray(airbornePieces)) return;
+		const alreadyAirborne = new Set(airbornePieces.map(a => String(a.pieceId)));
+		for (const piece of game.chessPieces) {
+			if (!piece || !piece.position || piece.id == null) continue;
+			const id = String(piece.id);
+			if (alreadyAirborne.has(id)) continue;
+			const { x, z } = piece.position;
+			if (!clearedKeys.has(`${x},${z}`)) continue;
+			this._stripStrayChessMarkers(game, id);
+			airbornePieces.push({
+				pieceId: id,
+				x,
+				z,
+				player: piece.player != null ? String(piece.player) : null,
+			});
+			alreadyAirborne.add(id);
+		}
+	}
+
+	/**
+	 * Remove every board marker that names `pieceId`. Used only on the
+	 * rare desync path above, so the full-board walk is acceptable.
+	 * @private
+	 */
+	_stripStrayChessMarkers(game, pieceId) {
+		for (const [key, contents] of Object.entries(game.board.cells)) {
+			if (!Array.isArray(contents)) continue;
+			const kept = contents.filter(item => !(item
+				&& item.type === cells.CHESS_TYPE
+				&& cells.markerPieceId(item) === pieceId));
+			if (kept.length === contents.length) continue;
+			if (kept.length > 0) game.board.cells[key] = kept;
+			else delete game.board.cells[key];
+		}
 	}
 
 	/**
@@ -865,7 +921,11 @@ class BoardManager {
 			const key = `${targetX},${targetZ}`;
 			const cellContents = game.board.cells[key];
 
-			if (!Array.isArray(cellContents) || cellContents.length === 0) {
+			// Only real ground counts: a square holding nothing but chess
+			// / centre / special markers is open water to the player (the
+			// client draws no tile for it), and "landing" there left the
+			// piece hovering.
+			if (!Array.isArray(cellContents) || !cellContents.some(cells.isStandableItem)) {
 				// No cell beneath — fall into the water.  Kings get a
 				// chance to spend a life and respawn at home first.
 				pieceLifecycle.removePiece(game, piece, {
@@ -884,32 +944,33 @@ class BoardManager {
 			}
 
 			// Look for an existing chess marker that ISN'T us. If
-			// found, that piece is knocked off.
-			const blockerMarker = cellContents.find(item =>
-				item && item.type === cells.CHESS_TYPE
-				&& String(item.pieceId || item?.chessPiece?.id || '') !== String(piece.id)
-			);
-
+			// found, that piece is knocked off — but only if the piece
+			// really stands here. A marker whose piece is recorded on
+			// another square is a leftover; knocking "it" off would
+			// delete a piece somewhere else on the board. Drop the
+			// leftover marker instead.
 			let bumpedPieceId = null;
-			if (blockerMarker) {
-				const blockerId = blockerMarker.pieceId != null
-					? String(blockerMarker.pieceId)
-					: (blockerMarker.chessPiece && blockerMarker.chessPiece.id != null
-						? String(blockerMarker.chessPiece.id)
-						: null);
-				if (blockerId) {
-					const blockerPiece = game.chessPieces.find(
-						p => p && String(p.id) === blockerId
-					);
-					if (blockerPiece) {
-						pieceLifecycle.removePiece(game, blockerPiece, {
-							reason: pieceLifecycle.REMOVAL_REASONS.KNOCKED_OFF,
-							activityLog,
-							kingLifeService: this.kingLifeService || null,
-							note: `knocked off by ${piece.id}`,
-						});
-						bumpedPieceId = blockerId;
-					}
+			for (const blockerMarker of cellContents.slice()) {
+				if (!blockerMarker || blockerMarker.type !== cells.CHESS_TYPE) continue;
+				const blockerId = cells.markerPieceId(blockerMarker);
+				if (blockerId === String(piece.id)) continue;
+				const blockerPiece = blockerId
+					? game.chessPieces.find(p => p && String(p.id) === blockerId)
+					: null;
+				const blockerIsHere = !!(blockerPiece && blockerPiece.position
+					&& blockerPiece.position.x === targetX
+					&& blockerPiece.position.z === targetZ);
+				if (blockerIsHere) {
+					pieceLifecycle.removePiece(game, blockerPiece, {
+						reason: pieceLifecycle.REMOVAL_REASONS.KNOCKED_OFF,
+						activityLog,
+						kingLifeService: this.kingLifeService || null,
+						note: `knocked off by ${piece.id}`,
+					});
+					bumpedPieceId = blockerId;
+				} else if (blockerId) {
+					const live = game.board.cells[key];
+					if (Array.isArray(live)) game.board.cells[key] = live.filter(item => item !== blockerMarker);
 				}
 			}
 
@@ -1100,6 +1161,24 @@ class BoardManager {
 		// it was on just moved, not cleared, it should have been OK."
 		const successfulMoves = new Map();
 
+		// Where each piece stood BEFORE any cell slid. The loop below
+		// updates `item.chessPiece.position` in place for markers that
+		// carry a live reference to the piece (every marker written by
+		// `relocatePiece` does), so by the time the mirror pass runs a
+		// piece's position may already be its destination. Looking that
+		// destination up in `successfulMoves` would find the cell that
+		// slid OUT of it and move the piece a second square, leaving its
+		// record a square away from its marker. Player report: "placed
+		// my rook on some enemy's squares which disappeared as they
+		// made a row. Rook was left hovering".
+		const startKeyByPiece = new Map();
+		if (Array.isArray(game.chessPieces)) {
+			for (const piece of game.chessPieces) {
+				if (!piece || !piece.position) continue;
+				startKeyByPiece.set(piece, `${piece.position.x},${piece.position.z}`);
+			}
+		}
+
 		for (const cell of moves) {
 			const oldKey = `${cell.x},${cell.z}`;
 			const newX = cell.x + cell.dx;
@@ -1144,11 +1223,14 @@ class BoardManager {
 		// (cells that really did slide) rather than `eligibleChess`
 		// (cells that COULD have slid) — see the comment above
 		// `successfulMoves`. Pieces in collision-skipped cells stay
-		// put with their supporting terrain.
+		// put with their supporting terrain. Keyed by the square the
+		// piece started on (see `startKeyByPiece`), so each piece moves
+		// at most once.
 		if (Array.isArray(game.chessPieces)) {
 			for (const piece of game.chessPieces) {
 				if (!piece || !piece.position) continue;
-				const pieceKey = `${piece.position.x},${piece.position.z}`;
+				const pieceKey = startKeyByPiece.get(piece);
+				if (!pieceKey) continue;
 				const dest = successfulMoves.get(pieceKey);
 				if (!dest) continue;
 				piece.position.x = dest.x;

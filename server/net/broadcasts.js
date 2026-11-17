@@ -8,6 +8,7 @@
  */
 
 const World = require('../world/World');
+const worldShips = require('../world/worldShips');
 const { checksOf, allChecks } = require('../king/pendingChecks');
 const Sessions = require('../world/Sessions');
 const { getLatestPlayerActionAt } = require('../utils/cooldowns');
@@ -291,6 +292,9 @@ function createBroadcaster({ io, persistence }) {
 			// is tiny (a handful of orbs at most) and clients need it
 			// to draw glowing floating spheres at the right cells.
 			powerUps: Array.isArray(world.powerUps) ? world.powerUps : [],
+			// World longships on? Clients turn on ship rules, lanes and
+			// the hull renderer outside battles (world/worldShips.js).
+			worldShips: worldShips.enabled(),
 			// Outstanding Check (deferred king capture). Clients use this
 			// to render the warning banner, freeze the defender's
 			// tetromino auto-fall, and lock the attacker piece.
@@ -343,6 +347,7 @@ function createBroadcaster({ io, persistence }) {
 			boardBounds: delta.boardBounds,
 			lastAction: world.lastAction,
 			powerUps: Array.isArray(world.powerUps) ? world.powerUps : [],
+			worldShips: worldShips.enabled(),
 			// One open check per defender; clients pick the one that
 			// involves them. `pendingCheck` stays for cached old clients.
 			pendingChecks: checksOf(world),

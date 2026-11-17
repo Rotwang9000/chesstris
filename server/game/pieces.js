@@ -58,6 +58,12 @@ const REMOVAL_REASONS = Object.freeze({
 	// (historically the king-capture transfer bug). The extra kings are
 	// retired to restore the one-king-per-player invariant.
 	DUPLICATE_KING: 'duplicate_king',
+	// World longships: a raider ashore with no route home ran out of
+	// time before getting back aboard (world/worldShips.js).
+	RAID_EXPIRED: 'raid_expired',
+	// ...or was aboard a world longship when land closed in on all four
+	// sides of it.
+	SHIP_TRAPPED: 'ship_trapped',
 });
 
 const KING_TYPE = 'KING';

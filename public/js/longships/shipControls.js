@@ -16,7 +16,8 @@
  * After a sail the ship rows for 3 s: its own side can't step on or
  * off (enemies still can), and it can't sail again yet.
  *
- * Ship rules are only live in Viking battles (shipEnv.shipRulesActive);
+ * Ship rules are live in Viking battles and, once the server switches
+ * them on, in the shared world (shipEnv.shipRulesActive);
  * outside them every entry point here is a no-op, so the standard game
  * is untouched.
  */
@@ -30,13 +31,14 @@ import { showToastMessage } from '../showToastMessage.js';
 import { getSocket } from '../utils/networkManager.js';
 import { ensureActionStack, positionUnderNextPiece } from '../skipChessButton.js';
 import {
-	shipRulesActive, shipServerNow, noteSailReadyAt, listShips, shipsControlledBy, shipEntryAt,
+	shipRulesActive, shipServerNow, noteSailReadyAt, listShips, shipsControlledBy, shipEntryAt, shipDeckSquare,
+	inWorldSea, raidClock,
 	findShip, laneTargets, checkSail, rowingMsLeft, shipRefusalText, cellItems,
 } from './shipEnv.js';
 import { shipButtonState, updateFleetMemo } from './shipHudState.js';
 import { SHIP_EVENT } from './shipEvents.js';
 import { shipEventToast } from './shipEventToasts.js';
-import { clearChessSelection, showValidMoves } from '../chessInteraction.js';
+import { clearChessSelection, showValidMoves, endChessMove } from '../chessInteraction.js';
 import {
 	shipObjects, seaHeightAt, shipPose, setShipFrameHook, prepareShips,
 } from '../viking/shipRenderer.js';
@@ -450,7 +452,7 @@ export function selectShip(entry, { withPiece = false, quiet = false } = {}) {
 			const chosen = selection.shipId;
 			toast(entry.passenger
 				? `Longship with your ${String(entry.passenger.type || 'piece').toLowerCase()} aboard: ${verb} a glowing tile to sail.`
-				: `Empty longship: ${verb} a glowing tile to sail.`, { duration: 2600, stillTrue: () => selection.shipId === chosen });
+				: `Your oarsmen are ready, no warrior aboard: ${verb} a glowing tile to sail.`, { duration: 2600, stillTrue: () => selection.shipId === chosen });
 		}
 	}
 	return true;
@@ -562,8 +564,19 @@ export function pickShipEntry(raycaster, { landHit = false, landDistance = Infin
 		plane.constant = -y;
 		if (!raycaster.ray.intersectPlane(plane, point)) continue;
 		const sq = gridXZ(gameState, point.x, point.z);
-		const entry = shipEntryAt(gameState, sq.x, sq.z);
+		const entry = shipEntryAt(gameState, sq.x, sq.z) || shipByDeckSquare(gameState, sq.x, sq.z);
 		if (entry) return entry;
+	}
+	return null;
+}
+
+/** The ship whose second deck square (open water under its prow) is (x, z). */
+export function shipByDeckSquare(gameState, x, z) {
+	for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+		const entry = shipEntryAt(gameState, x + dx, z + dz);
+		if (!entry) continue;
+		const deck = shipDeckSquare(gameState, entry.x, entry.z);
+		if (deck && deck.x === x && deck.z === z) return entry;
 	}
 	return null;
 }
@@ -599,9 +612,15 @@ export function nearestOccluderDistance(raycaster) {
 	}
 	const board = getBoardGroup();
 	if (board) {
+		const selected = selection.shipId != null ? String(selection.shipId) : null;
 		consider(raycaster.intersectObjects([board], true), (h) => {
 			const o = h.object;
 			if (o.userData?.type === 'shipHitbox') return false;
+			// The selected ship's own hull overhangs the squares fore and
+			// aft: a lane tile it covers is still where the player aims
+			// ("the boat can't move to that cell as it is in the way").
+			if (selected && hasAncestor(o, n => n.userData?.shipId != null
+				&& String(n.userData.shipId) === selected)) return false;
 			if (o.userData?.type === 'instancedCells') return h.instanceId != null;
 			if (!o.visible || hasAncestor(o, n => n.visible === false)) return false;
 			// Anything drawn on the board: cells, hulls, sails, foam.
@@ -667,8 +686,8 @@ export function handleShipClick(entry, moveTo) {
 		return true;
 	}
 	const owner = gameState.players?.[entry.ship.player]?.name || 'An enemy';
-	const aboard = entry.passenger ? ` with a ${String(entry.passenger.type || 'piece').toLowerCase()} aboard` : ', empty';
-	toast(`${owner}’s longship${aboard}. Step onto it, or take its passenger, to make it yours.`, { duration: 4000 });
+	const aboard = entry.passenger ? ` with a ${String(entry.passenger.type || 'piece').toLowerCase()} aboard` : ', with no warrior aboard';
+	toast(`${owner}’s longship${aboard}. Board it, or take the warrior aboard, and its oarsmen row for you.`, { duration: 4000 });
 	return true;
 }
 
@@ -727,7 +746,11 @@ export async function sailTo(x, z) {
 		clearChessSelection();
 		clearShipSelection();
 		const dist = Math.abs(x - entry.x) + Math.abs(z - entry.z);
-		toast(`Sailed ${dist} square${dist === 1 ? '' : 's'}. Rowing for 3 s: your crew can't step on or off until it steadies.`, { duration: 3000 });
+		// A sail is the turn's chess move: on to the tetris phase.
+		endChessMove(gameState);
+		const hauled = sailOrbText(ack.orbs);
+		toast(`Sailed ${dist} square${dist === 1 ? '' : 's'}.${hauled ? ` ${hauled}` : ''} That was your chess move: now place your piece.`,
+			{ duration: hauled ? 5000 : 3000 });
 		return true;
 	}
 	toast(shipRefusalText(ack?.reason, ack?.error), { variant: 'alert' });
@@ -738,10 +761,11 @@ export async function sailTo(x, z) {
 // ── HUD button ───────────────────────────────────────────────────────────────
 
 function buttonState(gameState) {
-	const active = shipRulesActive(gameState) && !!gameState?.activeBattle;
-	if (active && fleetMemoBattle !== gameState.activeBattle.id) {
+	const active = shipRulesActive(gameState);
+	const where = gameState?.activeBattle ? gameState.activeBattle.id : 'world';
+	if (active && fleetMemoBattle !== where) {
 		fleetMemo = null;
-		fleetMemoBattle = gameState.activeBattle.id;
+		fleetMemoBattle = where;
 	}
 	return shipButtonState({
 		active,
@@ -836,7 +860,15 @@ function renderButton() {
 	button.dataset.mode = state.mode;
 	button.title = state.title;
 	button.querySelector('.longship-label').textContent = state.label;
-	button.querySelector('.longship-detail').textContent = state.detail;
+	// World raids: the raider's time ashore beats the ship's own detail.
+	const raid = inWorldSea(gameState) ? raidClock(gameState, mySeat(gameState)) : null;
+	const detailEl = button.querySelector('.longship-detail');
+	detailEl.textContent = raid ? raid.text : state.detail;
+	detailEl.style.color = raid && raid.msLeft < 30000 ? '#ff6a4d' : '';
+	if (raid) {
+		button.dataset.raid = raid.msLeft < 30000 ? 'urgent' : '1';
+		button.title = `${state.title} | Raider ashore: get back to a longship (its oarsmen wait) or reach your own land before the time runs out. Each capture buys more time.`;
+	} else delete button.dataset.raid;
 	const ring = button.querySelector('.longship-ring');
 	const deg = Math.round(state.progress * 360);
 	// (retro draws its ring in phosphor green, like the rest of its HUD)
@@ -937,7 +969,7 @@ function noticeFor(detail, gameState) {
 			return p?.type || live?.passenger?.type || seen?.passengerType || null;
 		},
 	});
-	if (note) toast(note.text, { variant: note.variant, icon: note.icon, duration: note.variant === 'alert' ? 4500 : 3500 });
+	if (note) toast(note.text, { variant: note.variant, icon: note.icon, duration: note.duration || (note.variant === 'alert' ? 4500 : 3500) });
 }
 
 function onShipEvent(e) {
@@ -950,7 +982,7 @@ function onShipEvent(e) {
 	// Until one of our own sails has been acked, any sail news sets the clock.
 	if (detail.kind === 'sailed' && !ackClockLearnt) noteSailReadyAt(detail.readyAt);
 	fleetMemo = updateFleetMemo(fleetMemo, detail, mySeat(gameState));
-	if (gameState.activeBattle) fleetMemoBattle = gameState.activeBattle.id;
+	fleetMemoBattle = gameState.activeBattle ? gameState.activeBattle.id : 'world';
 	if (selection.shipId) {
 		// Let the board diff land first.
 		setTimeout(() => refreshShipSelection(), 60);
@@ -985,5 +1017,22 @@ export function installShipControls() {
 		lanes: currentSailLanes,
 		button: longshipButtonState,
 		cellItems: (x, z) => cellItems(gs(), x, z),
+		deck: (x, z) => shipDeckSquare(gs(), x, z),
 	};
+}
+
+/**
+ * What the oarsmen hauled aboard on a sail (orbs on the squares it
+ * crossed), or '' for nothing. A piece goes to the free square nearest
+ * the king; a ship orb launches a ship near where it floated.
+ */
+export function sailOrbText(orbs) {
+	const list = Array.isArray(orbs) ? orbs.filter(Boolean) : [];
+	if (list.length === 0) return '';
+	const names = { PAWN: 'a pawn', KNIGHT: 'a knight', BISHOP: 'a bishop', ROOK: 'a rook', QUEEN: 'a queen', KING: 'a king', SHIP: 'a new longship' };
+	const words = list.map(o => names[String(o.pieceType || '').toUpperCase()] || 'a bonus');
+	const joined = words.length === 1 ? words[0] : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
+	const ship = list.some(o => String(o.pieceType || '').toUpperCase() === 'SHIP');
+	const home = list.some(o => String(o.pieceType || '').toUpperCase() !== 'SHIP');
+	return `Your oarsmen hauled in an orb: ${joined}${home ? (ship ? ' (the warriors wait by your king)' : ', waiting by your king') : ''}.`;
 }

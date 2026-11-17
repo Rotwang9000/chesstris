@@ -84,8 +84,9 @@ describe('the knight snipe and mooring', () => {
 	test('nor leap off a ship that is out at sea', () => {
 		ship(5, 5);
 		const knight = piece('n', 'KNIGHT', 5, 5);
-		land(6, 7);
-		expect(valid(knight, 6, 7)).toBe(false);
+		// clear of the ship's square and of its deck square (5,6) ahead
+		land(7, 4);
+		expect(valid(knight, 7, 4)).toBe(false);
 	});
 });
 

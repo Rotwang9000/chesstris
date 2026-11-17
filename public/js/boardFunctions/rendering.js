@@ -18,6 +18,7 @@ import { extractChessPiecesFromCells } from './pieces.js';
 import { getPlayerColor } from './colours.js';
 import { createCellInstancer } from './cellInstancer.js';
 import { createCloudPuffs } from './cloudPuffs.js';
+import { createHomeMarks } from './homeMarks.js';
 import { createRoundedCellGeometry } from './roundedCellGeometry.js';
 import { isCellVisibleInCurrentView } from '../battle/battleRules.js';
 import { cellHasShip } from '../viking/shipLayout.js';
@@ -318,6 +319,24 @@ export function renderBoard(gameState, boardGroup, _createFloatingIsland, THREE)
 		gameState.__cloudPuffs = null;
 	}
 	const puffCellList = [];
+	// Home squares don't count toward a line: striped in every look but
+	// the Viking land one, which lays flagstones instead (homeMarks.js).
+	let homeMarks = null;
+	if (!vikingLand) {
+		const liveMesh = gameState.__homeMarks && gameState.__homeMarks.getMesh();
+		if (!gameState.__homeMarks || gameState.__homeMarksOwner !== boardGroup
+			|| gameState.__homeMarks.profile !== renderProfile
+			|| (liveMesh && liveMesh.parent !== boardGroup)) {
+			if (gameState.__homeMarks) gameState.__homeMarks.dispose();
+			gameState.__homeMarks = createHomeMarks(THREE, boardGroup, renderProfile);
+			gameState.__homeMarksOwner = boardGroup;
+		}
+		homeMarks = gameState.__homeMarks;
+	} else if (gameState.__homeMarks) {
+		gameState.__homeMarks.dispose();
+		gameState.__homeMarks = null;
+	}
+	const homeMarkList = [];
 
 	// ── Instanced terrain ────────────────────────────────────────────
 	// Plain opaque cells collapse into a single InstancedMesh (one draw
@@ -407,6 +426,8 @@ export function renderBoard(gameState, boardGroup, _createFloatingIsland, THREE)
 			let appearance = chooseAppearance(classification, gameState, x, z);
 			if (vikingLand) appearance = vikingAppearance(appearance, x, z);
 			const absPos = translatePosition({ x, z }, gameState, true);
+			const notCounted = appearance.kind === 'home' || appearance.kind === 'exhome';
+			if (homeMarks && notCounted) homeMarkList.push({ absX: absPos.x, absZ: absPos.z });
 
 			// Route each cell to the right bucket. Sponsored cells always
 			// stay individual (an ad decal is parented to the mesh). Decaying
@@ -424,8 +445,10 @@ export function renderBoard(gameState, boardGroup, _createFloatingIsland, THREE)
 					absX: absPos.x,
 					absZ: absPos.z,
 					color: appearance.color,
-					// (Viking land only: a player's land, not the arena's granite)
+					// (Viking land only: a player's land, not the arena's granite;
+					// home land is hall floor, not deck)
 					own: vikingLand && appearance.kind !== 'ring' && appearance.kind !== 'default',
+					home: notCounted,
 				});
 			} else if (canInstanceExhome) {
 				exhomeCellList.push({
@@ -434,6 +457,7 @@ export function renderBoard(gameState, boardGroup, _createFloatingIsland, THREE)
 					absZ: absPos.z,
 					color: appearance.color,
 					own: vikingLand,
+					home: true,
 				});
 			} else {
 				individualKeys[cellKey] = true;
@@ -482,6 +506,7 @@ export function renderBoard(gameState, boardGroup, _createFloatingIsland, THREE)
 	if (opaqueInstancer) opaqueInstancer.rebuild(opaqueCellList);
 	if (exhomeInstancer) exhomeInstancer.rebuild(exhomeCellList);
 	if (cloudPuffs) cloudPuffs.rebuild(puffCellList);
+	if (homeMarks) homeMarks.rebuild(homeMarkList);
 	if (vikingBase) vikingBase.rebuild(puffCellList);
 	// The instanced cells' finish: matte, mottled in Viking; the standard
 	// material otherwise (a no-op for a board never dressed).

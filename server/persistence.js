@@ -217,6 +217,9 @@ function buildSnapshot() {
 			players: persistablePlayers,
 			powerUps: Array.isArray(world.powerUps) ? world.powerUps.slice() : [],
 			battles: (world.battles && typeof world.battles === 'object') ? world.battles : {},
+			// World longships' bookkeeping (world/worldShips.js); the ships
+			// themselves are board cells.
+			worldFleet: (world.worldFleet && typeof world.worldFleet === 'object') ? world.worldFleet : null,
 		},
 	};
 }

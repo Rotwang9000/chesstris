@@ -80,6 +80,11 @@ const SIMPLE_FORWARD_EVENTS = Object.freeze([
 	'ship_seized',
 	'ship_lost',
 	'ship_built',
+	// World longships: a pawn launched, a raider's time run out, a ship
+	// hemmed in by land.
+	'ship_launched',
+	'raid_expired',
+	'ship_trapped',
 	// Battle arenas (lobby refresh, seat adoption, results). These MUST
 	// be forwarded or the battle UI never hears the server: the host
 	// would "start" a battle and nothing would happen client-side.

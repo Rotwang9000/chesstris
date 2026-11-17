@@ -104,7 +104,8 @@ function createAiRunner({
 		for (const cellContents of Object.values(cells)) {
 			if (!Array.isArray(cellContents)) continue;
 			if (cellContents.some(
-				item => item && String(item.player) === String(computerId) && item.type !== 'home'
+				item => item && String(item.player) === String(computerId)
+					&& item.type !== 'home' && item.type !== 'ship'
 			)) {
 				return true;
 			}
@@ -137,8 +138,8 @@ function createAiRunner({
 		}
 
 		// Viking battles: captain the ships first (flee the sea, raid
-		// legs, bring an empty ship home). A sail isn't a chess move, so
-		// the bot still takes its normal action this tick.
+		// legs, bring an empty ship home). Like a human's, a sail is the
+		// bot's chess move: after one it only builds this tick.
 		const sailed = typeof aiActions.maybeSail === 'function'
 			? aiActions.maybeSail(computerId) > 0
 			: false;
@@ -220,7 +221,9 @@ function createAiRunner({
 		// between the seats, so "chess" ticks used to burn the bot's whole
 		// move interval doing nothing — half its game vanished into no-ops.
 		let acted = false;
-		if (actionType === 'tetromino') {
+		if (sailed) {
+			acted = !!aiActions.performStrategicTetrominoPlacement(computerId);
+		} else if (actionType === 'tetromino') {
 			acted = !!aiActions.performStrategicTetrominoPlacement(computerId)
 				|| !!aiActions.performStrategicChessMove(computerId, kingCaptureService, checkService);
 		} else {

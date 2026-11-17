@@ -308,6 +308,13 @@ export const HULL_FORE = (MODEL_LENGTH / 2 - CENTRE_MODEL_Z) * SHIP_SCALE;  // ~
 export const HULL_HALF_BEAM = 0.75 * SHIP_SCALE;                              // ~0.33
 /** How far the layout may slide a hull along its keel / across its beam. */
 export const LAYOUT_SLIDE = Object.freeze({ min: -0.7, max: 1.3 });
+/**
+ * The slide that centres a hull over its own square and the one ahead:
+ * the hull box's middle sits (HULL_FORE - HULL_AFT) / 2 ahead of the
+ * float origin, and the two squares' middle is half a square ahead.
+ * On the layout's 0.15 grid from LAYOUT_SLIDE.min.
+ */
+export const DECK_SLIDE = 0.35;
 export const LAYOUT_ACROSS = 0.75;
 /** A moored hull lies this far off the land along its beam. */
 export const LAYOUT_MOOR = 0.45;
@@ -398,7 +405,8 @@ export function boxOverlap(a, b) {
  * Pure: the caller passes the land test and the preferences.
  *
  * @param {Array<{id:string, x:number, z:number, prefer:{dx,dz}, fixedDir?:{dx,dz}|null,
- *   moving?:boolean, prev?:{d:{dx,dz}, s:number, c:number}|null}>} ships
+ *   moving?:boolean, slide0?:number, prev?:{d:{dx,dz}, s:number, c:number}|null}>} ships
+ *   slide0: the slide the ship would rather have (DECK_SLIDE: centred on its two deck squares)
  * @param {(x:number,z:number)=>boolean} isLand a square holding land (not a ship, not water)
  * @returns {Map<string, {d:{dx,dz}, s:number, c:number, dx:number, dz:number, land:number}>}
  *   d heading, s/c the slide and the shift, dx/dz the offset on the board
@@ -431,7 +439,7 @@ export function layoutFleet(ships, isLand) {
 				for (const c of cs) {
 					const box = hullBox(sh.x, sh.z, d, s, c, LAND_MARGIN, LAND_MARGIN);
 					const land = landOverlap(box, isLand);
-					let cost = land * 60 + headCost + 2.2 * Math.abs(s) + 2.6 * Math.abs(c - c0);
+					let cost = land * 60 + headCost + 2.2 * Math.abs(s - (sh.slide0 || 0)) + 2.6 * Math.abs(c - c0);
 					if (sh.prev) cost += prev ? 0.8 * (Math.abs(s - prev.s) + Math.abs(c - prev.c)) : 1.2;
 					list.push({ d, s, c, cost, land });
 				}
@@ -468,9 +476,10 @@ export function layoutFleet(ships, isLand) {
 		const landA = isLand(sh.x + b.dx, sh.z + b.dz);
 		const landB = isLand(sh.x - b.dx, sh.z - b.dz);
 		const c = landA === landB ? 0 : (landA ? -LAYOUT_MOOR : LAYOUT_MOOR);
-		const land = landOverlap(hullBox(sh.x, sh.z, d, 0, c, LAND_MARGIN, LAND_MARGIN), isLand);
+		const s0 = sh.slide0 || 0;
+		const land = landOverlap(hullBox(sh.x, sh.z, d, s0, c, LAND_MARGIN, LAND_MARGIN), isLand);
 		if (land > 0) return null;
-		return { d, s: 0, c, cost: 0, land: 0, total: 0, box: hullBox(sh.x, sh.z, d, 0, c, SHIP_HALF_GAP, SHIP_HALF_GAP) };
+		return { d, s: s0, c, cost: 0, land: 0, total: 0, box: hullBox(sh.x, sh.z, d, s0, c, SHIP_HALF_GAP, SHIP_HALF_GAP) };
 	};
 	const choose = (sh, others) => {
 		let best = null;

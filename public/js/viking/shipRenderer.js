@@ -32,10 +32,12 @@ import { buildRetroLongship } from './longshipRetro.js';
 import {
 	SHIP_SCALE, SHIP_STRETCH_Y, CENTRE_MODEL_Z, MODEL_LENGTH,
 	collectShips, chooseHeading, headingAngle, chooseDetail, glideDuration,
-	diffFleet, isRowing, sailDirection, shipItemOf, layoutFleet, beamOf,
+	diffFleet, isRowing, sailDirection, shipItemOf, layoutFleet, beamOf, DECK_SLIDE,
 	shipStyleFor, shipFit, sailColoursFor,
 } from './shipLayout.js';
 import { SEA_SURFACE_Y } from '../seaLevel.js';
+import { shipHeading, deckSquare } from './shipRulesClient.js';
+import { shipEnv } from '../longships/shipEnv.js';
 import { translatePosition } from '../centreBoardMarker.js';
 import { getPlayerColor } from '../boardFunctions/colours.js';
 import { getChessPiecesGroup } from '../gameContext.js';
@@ -523,13 +525,20 @@ function layoutShips(gameState) {
 	for (const e of state.ships.values()) {
 		if (e.sink) continue;
 		const moving = !!e.glide;
-		const fixedDir = moving && e.glide.dir ? e.glide.dir : null;
-		const prefer = fixedDir || headingFor(gameState, { shipId: e.shipId, x: e.x, z: e.z });
+		const at = { shipId: e.shipId, x: e.x, z: e.z, item: e.item };
+		const deck = !moving && hasDeck(gameState, at);
+		// Under way it points where it goes; at rest, the rules' heading,
+		// held fixed while it has a deck square so the hull covers it.
+		const ruled = moving ? null : headingFor(gameState, at);
+		const fixedDir = moving && e.glide.dir ? e.glide.dir : (deck ? ruled : null);
+		const prefer = fixedDir || ruled || headingFor(gameState, at);
 		let bits = '';
 		for (let dz = -4; dz <= 4; dz++) for (let dx = -4; dx <= 4; dx++) bits += isLand(e.x + dx, e.z + dz) ? '1' : '0';
-		key += `${e.shipId}@${e.x},${e.z}:${prefer.dx},${prefer.dz}:${fixedDir ? 'f' : ''}:${bits}|`;
+		key += `${e.shipId}@${e.x},${e.z}:${prefer.dx},${prefer.dz}:${fixedDir ? 'f' : ''}${deck ? 'd' : ''}:${bits}|`;
 		specs.push({
 			id: e.shipId, x: e.x, z: e.z, prefer, fixedDir, moving,
+			// a hull with a deck square lies centred over its two squares
+			slide0: deck ? DECK_SLIDE : 0,
 			prev: e.layout ? { d: e.layout.d, s: e.layout.s, c: e.layout.c } : null,
 		});
 	}
@@ -571,14 +580,33 @@ function berthShore(isLand, x, z, lay) {
 	return { a: touches(1), b: touches(-1), ax: b.dx, az: b.dz };
 }
 
-function headingFor(gameState, ship, dirOverride) {
-	const lastDir = dirOverride || state.lastDir.get(ship.shipId) || null;
+/**
+ * The rules' heading for a ship (shipRules.headingAt): the same one the
+ * server reads the hull's second deck square from, so the hull lies
+ * over the two squares a piece can board from. Falls back to the old
+ * look-only choice when the rules can't be bound (no env).
+ */
+function headingFor(gameState, ship) {
+	const item = ship.item || shipItemOf(gameState?.board?.cells?.[`${ship.x},${ship.z}`]);
+	try {
+		if (item) return shipHeading(shipEnv(gameState), item, ship.x, ship.z);
+	} catch (_e) { /* fall through */ }
 	return chooseHeading({
 		x: ship.x, z: ship.z,
 		isWater: isWaterFn(gameState),
-		lastDir,
+		lastDir: state.lastDir.get(ship.shipId) || null,
 		centre: arenaCentre(gameState) || { x: ship.x, z: ship.z },
 	});
+}
+
+/** Has this ship a second deck square (so its hull should straddle the two)? */
+function hasDeck(gameState, ship) {
+	const item = ship.item || shipItemOf(gameState?.board?.cells?.[`${ship.x},${ship.z}`]);
+	try {
+		return !!(item && deckSquare(shipEnv(gameState), item, ship.x, ship.z));
+	} catch (_e) {
+		return false;
+	}
 }
 
 function makeEntry(THREE, gameState, ship, boardGroup) {

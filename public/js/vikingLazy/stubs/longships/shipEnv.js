@@ -12,7 +12,8 @@
 import { vk, loadViking } from '../../runtime.js';
 
 export function shipRulesActive(gameState) {
-	return gameState?.activeBattle?.edition === 'viking';
+	if (gameState?.activeBattle) return gameState.activeBattle.edition === 'viking';
+	return gameState?.worldShips === true;
 }
 
 export function cellItems(gameState, x, z) {

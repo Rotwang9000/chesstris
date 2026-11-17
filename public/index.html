@@ -318,6 +318,9 @@
 			#activity-log-toggle {
 				bottom: calc(174px + env(safe-area-inset-bottom, 0px)) !important;
 			}
+			#view-stick-toggle {
+				bottom: calc(270px + env(safe-area-inset-bottom, 0px)) !important;
+			}
 		}
 
 		/* Small screens: keep only the essentials down there. The Player
@@ -515,6 +518,7 @@
 		   PLAY NOW / BATTLE buttons on phones. */
 		body:has(#tutorial-message) #audio-mute-toggle,
 		body:has(#tutorial-message) #activity-log-toggle,
+		body:has(#tutorial-message) #view-stick-toggle,
 		body:has(#tutorial-message) #player-bar-tab,
 		body:has(#tutorial-message) #unified-player-bar,
 		body:has(#tutorial-message) #next-tetromino-display,
@@ -539,6 +543,8 @@
 		body:has(#paintings-setting-menu) #player-bar-tab,
 		body:has(#unified-player-bar[style*="translateX(0"]) #audio-mute-toggle,
 		body:has(#unified-player-bar[style*="translateX(0"]) #activity-log-toggle,
+		body:has(#unified-player-bar[style*="translateX(0"]) #view-stick-toggle,
+		body:has(#activity-log-panel[data-open]) #view-stick-toggle,
 		body:has(#activity-log-panel[data-open]) #audio-mute-toggle {
 			visibility: hidden;
 		}
@@ -1584,6 +1590,119 @@
 		#tetromino-controls-hint .tx-hud-sub { margin-bottom: 5px; font: 700 9.5px/1 var(--tx-font-ui); letter-spacing: 0.16em; text-transform: uppercase; color: var(--tx-gold); }
 		#tetromino-controls-hint .tx-hud-key { display: flex; align-items: center; gap: 3px; margin-top: 3px; }
 		#tetromino-controls-hint .tx-hud-key span { margin-left: 4px; }
+		/* Panel size + announcements feed (hudLayout.js). */
+		#next-tetromino-display .tx-hud-tools { display: flex; justify-content: center; gap: 4px; margin-top: 6px; }
+		#next-tetromino-display .tx-hud-tool {
+			width: 22px; height: 18px; padding: 0; border: 0; border-radius: 4px;
+			background: transparent; color: var(--tx-ink-2); font: 400 11px/18px var(--tx-font-ui);
+			cursor: pointer; opacity: 0.6; -webkit-tap-highlight-color: transparent;
+		}
+		#next-tetromino-display .tx-hud-tool:hover, #next-tetromino-display .tx-hud-tool:focus-visible { opacity: 1; background: rgba(255, 255, 255, 0.1); outline: none; }
+		#next-tetromino-display .tx-hud-tool[aria-pressed="false"] { filter: grayscale(1); }
+		#next-tetromino-display .tx-hud-tool[aria-pressed="true"] { opacity: 1; background: rgba(255, 204, 51, 0.18); }
+		@media (pointer: coarse) { #next-tetromino-display .tx-hud-tool { width: 28px; height: 24px; line-height: 24px; } }
+		#next-tetromino-display[data-hud="compact"] #tetromino-controls-hint,
+		#next-tetromino-display[data-hud="collapsed"] :is(.tx-hud-title, #next-piece-hint, #tetromino-controls-hint) { display: none; }
+		#next-tetromino-display[data-hud="compact"] #next-tetromino-canvas { width: 56px; height: 56px; }
+		#next-tetromino-display[data-hud="compact"] #next-piece-hint { max-width: 118px; }
+		#next-tetromino-display[data-hud="collapsed"] { display: flex; align-items: center; gap: 4px; padding: 4px 5px; }
+		#next-tetromino-display[data-hud="collapsed"] #next-tetromino-canvas { width: 28px !important; height: 28px !important; margin: 0; }
+		#next-tetromino-display[data-hud="collapsed"] .tx-hud-tools { margin-top: 0; gap: 2px; }
+		/* View joystick (viewStick.js): the theme's own panel, trim and
+		   gold, so each render mode gets its stick. */
+		#view-stick {
+			position: fixed; right: 76px; bottom: 16px; z-index: 960;
+			display: flex; flex-direction: column; align-items: center; gap: 5px;
+			user-select: none; -webkit-user-select: none;
+		}
+		#view-stick .view-stick-base {
+			position: relative; width: 92px; height: 92px; border-radius: 50%;
+			border: 1px solid var(--tx-trim);
+			background: radial-gradient(circle at 50% 50%, transparent 0 34%, var(--tx-well-line) 35% 36%, transparent 37%), var(--tx-hud-bg);
+			box-shadow: var(--tx-edge), var(--tx-shadow-sm), var(--tx-inner);
+			cursor: grab; touch-action: none; opacity: 0.82; transition: opacity 140ms ease;
+		}
+		#view-stick[data-held] .view-stick-base, #view-stick .view-stick-base:hover { opacity: 1; }
+		#view-stick[data-held] .view-stick-base { cursor: grabbing; }
+		/* Four ticks: where the stick leans. */
+		#view-stick .view-stick-base::before {
+			content: ''; position: absolute; inset: 7px; border-radius: 50%; pointer-events: none;
+			background:
+				linear-gradient(var(--tx-gold), var(--tx-gold)) 50% 0 / 2px 7px no-repeat,
+				linear-gradient(var(--tx-gold), var(--tx-gold)) 50% 100% / 2px 7px no-repeat,
+				linear-gradient(var(--tx-gold), var(--tx-gold)) 0 50% / 7px 2px no-repeat,
+				linear-gradient(var(--tx-gold), var(--tx-gold)) 100% 50% / 7px 2px no-repeat;
+			opacity: 0.55;
+		}
+		#view-stick .view-stick-knob {
+			position: absolute; left: 50%; top: 50%; width: 38px; height: 38px; margin: -19px 0 0 -19px;
+			border-radius: 50%; border: 1px solid var(--tx-gold-hi);
+			background: radial-gradient(circle at 35% 30%, var(--tx-gold-hi), var(--tx-gold) 55%, rgba(0, 0, 0, 0.35) 130%);
+			box-shadow: 0 3px 8px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+			pointer-events: none; transition: transform 120ms ease-out;
+		}
+		#view-stick[data-held] .view-stick-knob { transition: none; }
+		#view-stick .view-stick-row { display: flex; align-items: center; gap: 6px; }
+		#view-stick .view-stick-zoom { display: flex; flex-direction: column; gap: 6px; }
+		#view-stick .view-stick-zoom-btn {
+			width: 34px; height: 34px; padding: 0; border: 1px solid var(--tx-trim); border-radius: 50%;
+			background: var(--tx-hud-bg); color: var(--tx-gold);
+			font: 700 20px/1 var(--tx-font-ui); cursor: pointer; touch-action: none;
+			box-shadow: var(--tx-edge), var(--tx-shadow-sm); -webkit-tap-highlight-color: transparent;
+		}
+		#view-stick .view-stick-zoom-btn:hover { border-color: var(--tx-gold-hi); color: var(--tx-gold-hi); }
+		#view-stick .view-stick-zoom-btn:active { background: var(--tx-gold); color: var(--tx-hud-bg); }
+		html[data-render-profile="cute"]:not([data-edition="viking"]) #view-stick .view-stick-zoom-btn {
+			border: 2px solid transparent; background: var(--tx-hud-bg) padding-box, var(--tx-frame) border-box;
+		}
+		html[data-render-profile="retro"] #view-stick .view-stick-zoom-btn { border-radius: 0; box-shadow: none; background: #000; }
+		/* The joystick's own round button sits on the mute button. */
+		#view-stick-toggle { position: fixed; right: 16px; bottom: 112px; z-index: 11600; }
+		#view-stick-toggle[aria-pressed="true"] { background: var(--tx-gold); color: var(--tx-hud-bg); border-color: var(--tx-gold-hi); }
+		#view-stick .view-stick-mode {
+			min-width: 52px; padding: 3px 9px; border: 1px solid var(--tx-trim); border-radius: 999px;
+			background: var(--tx-hud-bg); color: var(--tx-gold);
+			font: 700 9.5px/1.2 var(--tx-font-ui); letter-spacing: 0.14em; text-transform: uppercase;
+			cursor: pointer; -webkit-tap-highlight-color: transparent;
+		}
+		#view-stick .view-stick-mode:hover, #view-stick .view-stick-mode:focus-visible { border-color: var(--tx-gold-hi); color: var(--tx-gold-hi); outline: none; }
+		/* Cute: the candy frame of its other HUD panels, a soft round knob. */
+		html[data-render-profile="cute"]:not([data-edition="viking"]) #view-stick :is(.view-stick-base, .view-stick-mode) {
+			border: 2px solid transparent;
+			background: var(--tx-hud-bg) padding-box, var(--tx-frame) border-box;
+		}
+		html[data-render-profile="cute"]:not([data-edition="viking"]) #view-stick .view-stick-knob {
+			border: 2px solid #fff; background: radial-gradient(circle at 35% 30%, #fff, var(--tx-gold) 70%);
+		}
+		/* Retro: a flat phosphor outline, square like the rest of its HUD. */
+		html[data-render-profile="retro"] #view-stick :is(.view-stick-base, .view-stick-knob, .view-stick-mode) { border-radius: 0; box-shadow: none; }
+		html[data-render-profile="retro"] #view-stick .view-stick-base { background: rgba(0, 8, 2, 0.88); opacity: 1; }
+		html[data-render-profile="retro"] #view-stick .view-stick-knob { background: #000; border: 2px solid var(--tx-gold); }
+		html[data-render-profile="retro"] #view-stick[data-held] .view-stick-knob { background: var(--tx-gold); }
+		html[data-render-profile="retro"] #view-stick .view-stick-mode { background: #000; }
+		/* Phones: clear of the touch pad (bottom centre), smaller. */
+		@media (pointer: coarse) and (max-width: 820px) {
+			#view-stick { right: 8px; bottom: calc(150px + env(safe-area-inset-bottom, 0px)); }
+			#view-stick .view-stick-base { width: 78px; height: 78px; }
+			#view-stick .view-stick-knob { width: 32px; height: 32px; margin: -16px 0 0 -16px; }
+		}
+		body:has(#tutorial-message) #view-stick,
+		body:has(.tx-scrim:not([style*="display: none"])) #view-stick,
+		body:has(#tetches-battle-results) #view-stick,
+		body:has(#activity-log-panel[data-open]) #view-stick { visibility: hidden; }
+		#announce-feed { order: 99; display: flex; flex-direction: column; gap: 4px; pointer-events: none; }
+		#announce-feed .tx-feed-item {
+			display: flex; align-items: flex-start; gap: 6px; box-sizing: border-box; width: 100%;
+			margin: 0; padding: 5px 8px; border: 0; border-left: 2px solid var(--tx-trim); border-radius: 4px;
+			background: rgba(8, 10, 14, 0.66); color: #f1ead8; text-align: left;
+			font: 500 10.5px/1.3 var(--tx-font-ui); text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+			transition: opacity 400ms ease; animation: txFeedIn 220ms ease-out;
+		}
+		#announce-feed button.tx-feed-item { pointer-events: auto; cursor: pointer; }
+		#announce-feed button.tx-feed-item:hover { background: rgba(30, 30, 20, 0.85); }
+		#announce-feed .tx-feed-icon { flex: 0 0 auto; font-size: 12px; line-height: 1.1; }
+		@keyframes txFeedIn { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: none; } }
+		@media (prefers-reduced-motion: reduce) { #announce-feed .tx-feed-item { animation: none; } }
 		/* Skip / detonate buttons in the action stack under Next piece. */
 		.tx-turn-btn, #turn-action-stack > #pawn-detonate-btn {
 			display: block;
@@ -1638,8 +1757,8 @@
 		@media (pointer: coarse) { .tx-round-btn { width: 44px; height: 44px; } }
 		/* The round buttons draw their icons in the theme's ink (the
 		   colour emoji ignored the profile: gold, phosphor, wood). */
-		#audio-mute-toggle, #activity-log-toggle { font-size: 0 !important; }
-		#audio-mute-toggle::before, #activity-log-toggle::before {
+		#audio-mute-toggle, #activity-log-toggle, #view-stick-toggle { font-size: 0 !important; }
+		#audio-mute-toggle::before, #activity-log-toggle::before, #view-stick-toggle::before {
 			content: '';
 			display: block;
 			width: 21px;
@@ -1652,6 +1771,7 @@
 		#audio-mute-toggle[data-muted="1"] { --tx-icon: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22%3E%3Cpath d=%22M3.5 9.2h4.2l5.3-4.4v14.4l-5.3-4.4H3.5z%22/%3E%3Cpath d=%22M16 9.2l5 5.6M21 9.2l-5 5.6%22 fill=%22none%22 stroke=%22%23000%22 stroke-width=%222%22 stroke-linecap=%22round%22/%3E%3C/svg%3E"); }
 		#activity-log-toggle { --tx-icon: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22%3E%3Cg fill=%22none%22 stroke=%22%23000%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22%3E%3Cpath d=%22M4.3 13.5A8 8 0 1 0 6.6 6.2%22/%3E%3Cpath d=%22M3.6 3.8v4.6h4.6%22/%3E%3Cpath d=%22M12 7.6V12l3.1 2%22/%3E%3C/g%3E%3C/svg%3E"); }
 		#activity-log-toggle > span { font-size: 10px; }
+		#view-stick-toggle { --tx-icon: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22%3E%3Cpath d=%22M12.2 15.5l3.2-8%22 stroke=%22%23000%22 stroke-width=%222.2%22 stroke-linecap=%22round%22/%3E%3Ccircle cx=%2216.2%22 cy=%225.6%22 r=%223.2%22/%3E%3Cpath d=%22M3 18.2c0-1.6 1.3-2.7 3-2.7h12c1.7 0 3 1.1 3 2.7v.6c0 .9-.7 1.6-1.6 1.6H4.6c-.9 0-1.6-.7-1.6-1.6z%22/%3E%3Ccircle cx=%227%22 cy=%2213.6%22 r=%221.3%22/%3E%3C/svg%3E"); }
 		#tetches-sea-hud {
 			padding: 7px 16px !important;
 			border: 1px solid rgba(120, 190, 255, 0.6) !important;
@@ -2007,6 +2127,7 @@
 			#tetches-sea-hud { top: 8px !important; font-size: 12px !important; max-width: calc(100vw - 480px) !important; }
 			#audio-mute-toggle { bottom: calc(68px + env(safe-area-inset-bottom, 0px)) !important; }
 			#activity-log-toggle { bottom: calc(16px + env(safe-area-inset-bottom, 0px)) !important; }
+			#view-stick-toggle { bottom: calc(120px + env(safe-area-inset-bottom, 0px)) !important; }
 		}
 		/* A phone upright: the round buttons join the top HUD, a pair
 		   just under the button strip (they sat on the player's own board,
@@ -2017,6 +2138,7 @@
 			#audio-mute-toggle, #activity-log-toggle { right: auto !important; bottom: auto !important; top: var(--tx-phone-round-top, 110px) !important; }
 			#audio-mute-toggle { left: 10px !important; }
 			#activity-log-toggle { left: 62px !important; }
+			#view-stick-toggle { right: auto !important; bottom: auto !important; top: var(--tx-phone-round-top, 110px) !important; left: 114px !important; }
 			/* The sea banner leaves the centre, where the tetromino falls,
 			   for the left column under the round buttons. */
 			#tetches-sea-hud {

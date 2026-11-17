@@ -145,7 +145,7 @@ describe('ship event notices', () => {
 
 	test('your ship seized or boarded is an alert naming the taker; taking theirs is good news', () => {
 		expect(shipEventToast({ kind: 'seized', from: 'me', to: 'bot', seizeKind: 'seize' }, ctxFor()))
-			.toEqual({ text: 'Bot 2 seizes your empty longship!', variant: 'alert' });
+			.toEqual({ text: 'Bot 2 seizes your unguarded longship! Its oarsmen row for them now.', variant: 'alert' });
 		expect(shipEventToast({ kind: 'seized', from: 'me', to: 'bot', seizeKind: 'boarded' }, ctxFor()).text)
 			.toBe('Bot 2 boards your longship and takes it!');
 		expect(shipEventToast({ kind: 'seized', from: 'bot', to: 'me', seizeKind: 'seize' }, ctxFor()))
@@ -158,7 +158,7 @@ describe('ship event notices', () => {
 		expect(shipEventToast({ kind: 'sunk', shipId: 's', passengerId: 'p' }, ctxFor(owner('me'))).text)
 			.toBe('The sea takes your longship, and your rook with her!');
 		expect(shipEventToast({ kind: 'sunk', shipId: 's', passengerId: null }, ctxFor(owner('me'))).text)
-			.toBe('The sea takes your empty longship.');
+			.toBe('The sea takes your longship and its oarsmen.');
 		expect(shipEventToast({ kind: 'sunk', shipId: 's' }, ctxFor(owner('bot')))).toBeNull();
 		expect(shipEventToast({ kind: 'lost', seatId: 'me', reason: 'destroyed' }, ctxFor()).variant).toBe('alert');
 		// 'seized' and 'sunk' were told when they happened: no second notice

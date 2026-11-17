@@ -561,6 +561,7 @@ function restoreWorldFromSnapshot(snapshot) {
 		_activityLogNextId: Number.isFinite(snapshot._activityLogNextId) ? snapshot._activityLogNextId : 1,
 		powerUps: Array.isArray(snapshot.powerUps) ? snapshot.powerUps : [],
 		battles: (snapshot.battles && typeof snapshot.battles === 'object') ? snapshot.battles : {},
+		worldFleet: (snapshot.worldFleet && typeof snapshot.worldFleet === 'object') ? snapshot.worldFleet : null,
 	};
 	// If we mutated the snapshot to fix legacy red colours, mark
 	// the world dirty so the next persistence cycle flushes the

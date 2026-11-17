@@ -15,6 +15,9 @@
  *   built    a new keel at your mooring
  *   land     an enemy lands on your shore            (alert)
  *   raid     an enemy raids your shore               (alert)
+ *            your own raider comes ashore in the world: how long it has
+ *   launched a pawn of yours becomes a longship         (world)
+ *   raid_lost your raider's time ashore ran out         (world, alert)
  */
 
 import { displayNameOf } from '../paintings/paintingCaptions.js';
@@ -55,7 +58,7 @@ export function shipEventToast(detail, ctx = {}) {
 				return {
 					text: boarded
 						? `${name(detail.to)} boards your longship and takes it!`
-						: `${name(detail.to)} seizes your empty longship!`,
+						: `${name(detail.to)} seizes your unguarded longship! Its oarsmen row for them now.`,
 					variant: 'alert',
 				};
 			}
@@ -76,11 +79,34 @@ export function shipEventToast(detail, ctx = {}) {
 				const type = typeof ctx.pieceTypeOf === 'function' ? ctx.pieceTypeOf(String(detail.passengerId)) : null;
 				return { text: `The sea takes your longship, and your ${pieceName(type)} with her!`, variant: 'alert' };
 			}
-			return { text: 'The sea takes your empty longship.', variant: 'alert' };
+			return { text: 'The sea takes your longship and its oarsmen.', variant: 'alert' };
 		}
 		case 'lost':
 			if (!same(detail.seatId, me) || detail.reason !== 'destroyed') return null;
-			return { text: 'Your longship is destroyed. A new keel is laid at your mooring in 45 s.', variant: 'alert' };
+			return {
+				text: `Your longship is destroyed. A new keel is laid at your mooring in ${detail.world ? '2 minutes' : '45 s'}.`,
+				variant: 'alert',
+			};
+		case 'trapped': {
+			// World: land closed in on all four sides of one of your ships.
+			if (!same(detail.playerId, me)) return null;
+			const warrior = detail.passengerId != null ? `, and your ${pieceName(detail.passengerType)} aboard is taken with her` : '';
+			return {
+				text: `Your longship is hemmed in by land on every side and is captured${warrior}. `
+					+ 'No new keel at the mooring this time: march a pawn to the shore, or win a ship bonus, for a new one.',
+				variant: 'alert',
+				duration: 7000,
+			};
+		}
+		case 'launched':
+			if (!same(detail.playerId, me)) return null;
+			return { text: 'Your pawn’s long march ends at the shore: a new longship is launched!', variant: 'success', icon: 'longship' };
+		case 'raid_lost':
+			if (!same(detail.playerId, me)) return null;
+			return {
+				text: `Your ${pieceName(detail.type)} stayed ashore too long, cut off from home, and is lost.`,
+				variant: 'alert',
+			};
 		case 'built':
 			if (!same(detail.seatId, me)) return null;
 			return { text: 'A new longship is built at your mooring.', variant: 'success', icon: 'longship' };
@@ -88,6 +114,19 @@ export function shipEventToast(detail, ctx = {}) {
 		case 'raid': {
 			const move = detail.move || {};
 			const landOwner = move.ship?.landOwner;
+			// World: your own raider ashore, cut off from your king.
+			const raid = move.ship?.raid;
+			if (same(move.playerId, me) && raid && Number.isFinite(Number(raid.deadline))) {
+				const secs = Math.max(1, Math.round((Number(raid.deadline) - Number(raid.startedAt || 0)) / 1000));
+				const mins = Math.floor(secs / 60), rest = secs % 60;
+				const time = !mins ? `${secs} s` : !rest ? `${mins} minutes` : `${mins}:${String(rest).padStart(2, '0')}`;
+				const captured = move.capturedPiece?.type ? ' The capture buys more time.' : '';
+				return {
+					text: `On a raid! Your ${pieceName(move.movedPiece?.type)} has ${time} ashore to get back to a longship, where the oarsmen wait, or reach your own land.${captured}`,
+					variant: 'info',
+					icon: 'longship',
+				};
+			}
 			if (!same(landOwner, me) || same(move.playerId, me)) return null;
 			const whose = possessive(name(move.playerId));
 			const piece = pieceName(move.movedPiece?.type);

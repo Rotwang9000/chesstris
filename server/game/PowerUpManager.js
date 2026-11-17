@@ -46,7 +46,9 @@ const { randomUUID: uuidv4 } = require('crypto');
 
 const World = require('../world/World');
 const pieces = require('./pieces');
+const territory = require('./territory');
 const { cellHasShip } = require('../battle/shipRules');
+const worldShips = require('../world/worldShips');
 
 const SPAWN_TICK_MS = 45 * 1000;
 const ORB_LIFETIME_MS = 4 * 60 * 1000;
@@ -70,6 +72,10 @@ const PIECE_TYPE_WEIGHTS = Object.freeze({
 	ROOK: 8,
 	QUEEN: 5,
 });
+
+// World longships (worldShips.enabled): a rare orb holds a longship,
+// launched on the nearest open water when claimed.
+const SHIP_ORB_WEIGHT = 6;
 
 // Soft caps so long-running AI bots don't vacuum every pawn orb into
 // a 100-piece army. Humans are uncapped — power-ups are their reward
@@ -152,9 +158,12 @@ function createPowerUpManager({
 		return weightedItems[weightedItems.length - 1];
 	}
 
-	function pickPieceType() {
+	function pickPieceType(world = null, targetPlayerId = null) {
 		const items = Object.entries(PIECE_TYPE_WEIGHTS)
 			.map(([type, weight]) => ({ type, weight }));
+		if (world && targetPlayerId != null && worldShips.appliesTo(world, targetPlayerId)) {
+			items.push({ type: 'SHIP', weight: SHIP_ORB_WEIGHT });
+		}
 		return pickWeighted(items).type;
 	}
 
@@ -290,7 +299,7 @@ function createPowerUpManager({
 			id: `orb-${uuidv4().substring(0, 8)}`,
 			x: location.x,
 			z: location.z,
-			pieceType: pickPieceType(),
+			pieceType: pickPieceType(world, target.id),
 			spawnedAt: now,
 			expiresAt: now + ORB_LIFETIME_MS,
 			// Recorded so the client can highlight orbs that lean
@@ -369,6 +378,10 @@ function createPowerUpManager({
 
 		orbs.splice(idx, 1);
 
+		if (String(orb.pieceType).toUpperCase() === 'SHIP') {
+			return claimShipOrb(world, playerId, orb, idx, cellX, cellZ);
+		}
+
 		const piece = pieces.addPiece(world, {
 			type: orb.pieceType,
 			player: playerId,
@@ -410,6 +423,118 @@ function createPowerUpManager({
 
 		persistence.markDirty();
 		return { orb, piece };
+	}
+
+	/**
+	 * A ship orb: launch a longship for the claimant on the nearest open
+	 * water. With the fleet full (or no water near), the orb gives a
+	 * knight instead, so a claim is never wasted.
+	 */
+	function claimShipOrb(world, playerId, orb, idx, cellX, cellZ) {
+		const launched = worldShips.launchShipNear(world, playerId, { x: cellX, z: cellZ }, { radius: 3 });
+		if (!launched || launched.refused) {
+			const piece = pieces.addPiece(world, {
+				type: 'KNIGHT', player: playerId, x: cellX, z: cellZ, reason: 'powerup', activityLog,
+			});
+			if (!piece) {
+				ensurePowerUps(world).splice(idx, 0, orb);
+				return null;
+			}
+			emitClaim(world, playerId, orb, { pieceType: 'KNIGHT', pieceId: piece.id, x: cellX, z: cellZ });
+			persistence.markDirty();
+			return { orb, piece };
+		}
+		emitClaim(world, playerId, orb, {
+			pieceType: 'SHIP', shipId: launched.shipId, x: cellX, z: cellZ, shipAt: { x: launched.x, z: launched.z },
+		});
+		try {
+			io.to(World.getWorldId()).emit('ship_launched', {
+				playerId, shipId: launched.shipId, x: launched.x, z: launched.z, from: { x: cellX, z: cellZ }, orb: true, world: true,
+			});
+		} catch (_e) { /* best-effort */ }
+		persistence.markDirty();
+		return { orb, piece: null, ship: launched };
+	}
+
+	/**
+	 * A longship sails over orbs: its oarsmen haul them aboard (owner,
+	 * 2026-11-16). Every orb on the squares the ship crossed, its
+	 * destination included, is claimed. The ship can't carry a new
+	 * warrior home, so the piece lands on the claimant's nearest free
+	 * square to their king (as a promotion credit would deploy); a ship
+	 * orb launches a ship near where it was hauled in. Bots follow the
+	 * same soft cap as on land.
+	 *
+	 * @param {Object} world
+	 * @param {string} playerId
+	 * @param {{x:number,z:number}} from  the square the ship left
+	 * @param {{x:number,z:number}} to    the square it reached
+	 * @returns {Array} claim outcomes
+	 */
+	function claimBySail(world, playerId, from, to) {
+		if (!world || !playerId || !from || !to) return [];
+		const fx = normalizeCoord(from.x), fz = normalizeCoord(from.z);
+		const tx = normalizeCoord(to.x), tz = normalizeCoord(to.z);
+		if (![fx, fz, tx, tz].every(Number.isFinite)) return [];
+		if (fx !== tx && fz !== tz) return [];
+		const path = new Set();
+		const steps = Math.max(Math.abs(tx - fx), Math.abs(tz - fz));
+		const sx = Math.sign(tx - fx), sz = Math.sign(tz - fz);
+		for (let i = 1; i <= steps; i++) path.add(`${fx + sx * i},${fz + sz * i}`);
+		const orbs = ensurePowerUps(world);
+		const hit = orbs.filter(o => o && path.has(`${normalizeCoord(o.x)},${normalizeCoord(o.z)}`));
+		const out = [];
+		for (const orb of hit) {
+			const idx = orbs.indexOf(orb);
+			if (idx < 0) continue;
+			const ox = normalizeCoord(orb.x), oz = normalizeCoord(orb.z);
+			if (aiShouldSkipOrb(world, playerId, orb.pieceType)) {
+				orbs.splice(idx, 1);
+				out.push({ orb, piece: null, skipped: true });
+				continue;
+			}
+			if (String(orb.pieceType).toUpperCase() === 'SHIP') {
+				orbs.splice(idx, 1);
+				const r = claimShipOrb(world, playerId, orb, idx, ox, oz);
+				if (r) out.push({ ...r, bySea: true });
+				continue;
+			}
+			const spot = territory.findNearestOwnedCell(world, playerId, {
+				skip: (x, z) => territory.cellHasChessPiece(world, x, z) || cellHasShip(world.board?.cells?.[`${x},${z}`]),
+			});
+			if (!spot) continue;   // nowhere to put it: leave the orb floating
+			orbs.splice(idx, 1);
+			const piece = pieces.addPiece(world, {
+				type: orb.pieceType,
+				player: playerId,
+				x: spot.x,
+				z: spot.z,
+				orientation: world.homeZones?.[playerId]?.orientation || 0,
+				reason: 'powerup',
+				activityLog,
+			});
+			if (!piece) { orbs.splice(idx, 0, orb); continue; }
+			emitClaim(world, playerId, orb, {
+				pieceType: orb.pieceType, pieceId: piece.id, x: spot.x, z: spot.z,
+				bySea: true, orbAt: { x: ox, z: oz },
+			});
+			out.push({ orb, piece, bySea: true });
+		}
+		if (out.length) persistence.markDirty();
+		return out;
+	}
+
+	function emitClaim(world, playerId, orb, extra) {
+		try {
+			const player = world.players ? world.players[playerId] : null;
+			const playerName = (player && (player.username || player.name)) || playerId;
+			io.to(World.getWorldId()).emit('powerup_claimed', { orbId: orb.id, playerId, playerName, ...extra });
+			if (activityLog && typeof activityLog.recordPowerupClaimed === 'function') {
+				activityLog.recordPowerupClaimed({ playerId, playerName, orbId: orb.id, ...extra });
+			}
+		} catch (err) {
+			console.warn('[PowerUp] claim emit failed:', err.message);
+		}
 	}
 
 	/**
@@ -462,6 +587,7 @@ function createPowerUpManager({
 		tick,
 		tryClaimAtCell,
 		claimAcrossPlacement,
+		claimBySail,
 		listOrbs,
 		reset,
 		// Exposed for tests / inspection.

@@ -53,7 +53,7 @@ function getLocalPlayerId() {
  * Captures the obvious `playerId` plus the cross-player flavours
  * (`territory_captured`'s from/to, `chess_piece_captured`'s captor).
  */
-function isLocalPlayerEvent(ev) {
+export function isLocalPlayerEvent(ev) {
 	const localId = getLocalPlayerId();
 	if (!localId) return false;
 	const me = String(localId);
@@ -77,6 +77,20 @@ function eventParticipantIds(ev) {
 		p.attackerId, p.defenderId,
 		p.capturedBy?.playerId,
 	].filter(v => v != null);
+}
+
+/** View isolation alone (no "mine only"): is this event part of the view we're in? */
+export function isEventInView(ev) {
+	const gs = typeof window !== 'undefined' ? window.gameState : null;
+	return !gs || isEventInCurrentView(gs, eventParticipantIds(ev));
+}
+
+const liveListeners = new Set();
+/** Hear every live event as it arrives (not the backlog). Returns an unsubscribe. */
+export function onLiveActivityEvent(fn) {
+	if (typeof fn !== 'function') return () => {};
+	liveListeners.add(fn);
+	return () => liveListeners.delete(fn);
 }
 
 function passesFilter(ev) {
@@ -118,7 +132,7 @@ function resolvePlayerName(playerId, fallbackName) {
 	return rec?.name || String(playerId);
 }
 
-function describeEvent(ev) {
+export function describeEvent(ev) {
 	const who = ev.payload && ev.payload.playerName
 		? ev.payload.playerName
 		: resolvePlayerName(ev.payload?.playerId, null);
@@ -426,7 +440,7 @@ function formatPos(p) {
 	return `(${p.x}, ${p.z})`;
 }
 
-function flyTo(target) {
+export function flyTo(target) {
 	if (!target || !Number.isFinite(target.x) || !Number.isFinite(target.z)) return;
 	if (window.gameCore && typeof window.gameCore.flyToCell === 'function') {
 		window.gameCore.flyToCell(target.x, target.z);
@@ -555,6 +569,9 @@ export function pushActivityEvent(event) {
 
 	if (panelElement) renderEvent(event);
 	updateUnreadBadge();
+	for (const fn of liveListeners) {
+		try { fn(event); } catch (_e) { /* a listener must never break the log */ }
+	}
 }
 
 export function loadActivityLogSnapshot(snapshot) {

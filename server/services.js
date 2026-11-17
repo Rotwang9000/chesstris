@@ -40,6 +40,7 @@ const { createPowerUpManager } = require('./game/PowerUpManager');
 const { createAiActions } = require('./ai/actions');
 const { createAiRunner } = require('./ai/runner');
 const { createBattleManager } = require('./battle/BattleManager');
+const { createWorldShipService } = require('./world/worldShipService');
 const { createConnectionHandler } = require('./sockets/connection');
 
 const HOME_ZONE_DEGRADATION_CHECK_MS = 30000;
@@ -250,6 +251,14 @@ function createServices({ io, persistence, boatManager = null, getBundleVersion 
 		io,
 	});
 
+	const worldShipService = createWorldShipService({
+		gameManager,
+		broadcaster,
+		persistence,
+		io,
+		activityLog,
+	});
+
 	// ── Sockets ───────────────────────────────────────────────────────────
 	const handleConnection = createConnectionHandler({
 		io,
@@ -299,6 +308,7 @@ function createServices({ io, persistence, boatManager = null, getBundleVersion 
 		ghostPlayerSweep,
 		dormantKingdom,
 		battleManager,
+		worldShipService,
 		handleConnection,
 	};
 }
@@ -308,7 +318,7 @@ function startServiceTimers(services) {
 	const {
 		homeZoneDegradation, integrityService, worldGravity, loneKingSweep,
 		ghostPlayerSweep, dormantKingdom, aiRunner, missingKingSweep,
-		powerUpManager, battleManager,
+		powerUpManager, battleManager, worldShipService,
 	} = services;
 	return [
 	setInterval(() => homeZoneDegradation.tick(), HOME_ZONE_DEGRADATION_CHECK_MS),
@@ -348,6 +358,10 @@ function startServiceTimers(services) {
 		try { battleManager.seaTick(); }
 		catch (err) { logger.warn({ err: err.message }, 'battle sea tick failed'); }
 	}, battleManager.SEA_TICK_MS),
+	setInterval(() => {
+		try { if (worldShipService) worldShipService.tick(); }
+		catch (err) { logger.warn({ err: err.message }, 'world ship tick failed'); }
+	}, worldShipService ? worldShipService.WORLD_SHIP_TICK_MS : 2000),
 	setInterval(() => {
 		try { metrics.refreshWorldGauges(World.getWorld()); }
 		catch (err) { logger.warn({ err: err.message }, 'metrics tick failed'); }

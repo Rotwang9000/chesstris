@@ -231,7 +231,7 @@ function createKingCaptureService({ io, gameManager, broadcaster, activityLog = 
 
 		if (inheritedPawnIds.length > 0) {
 			const pawnDelay = GAME_RULES.SUICIDAL_PAWN_DELAY_MS || 3000;
-			setTimeout(() => detonateInheritedPawns(inheritedPawnIds), pawnDelay);
+			setTimeout(() => detonateInheritedPawns(inheritedPawnIds, { captorId, defeatedId }), pawnDelay);
 		} else {
 			gameManager.islandManager.checkForIslandsAfterRowClear(World.getWorld());
 		}
@@ -239,7 +239,7 @@ function createKingCaptureService({ io, gameManager, broadcaster, activityLog = 
 		broadcaster.broadcastGameUpdate();
 	}
 
-	function detonateInheritedPawns(pawnIds) {
+	function detonateInheritedPawns(pawnIds, { captorId = null, defeatedId = null } = {}) {
 		let index = 0;
 		const step = () => {
 			const world = World.getWorld();
@@ -286,6 +286,9 @@ function createKingCaptureService({ io, gameManager, broadcaster, activityLog = 
 					x: px,
 					z: pz,
 					remaining: pawnIds.length - index,
+					// Who it concerns, so bystanders aren't told.
+					captorId,
+					defeatedId,
 				});
 
 				World.markDirty();

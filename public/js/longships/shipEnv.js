@@ -7,9 +7,10 @@
  * (tests/ui/longshipControls.test.js) and the highlights a player sees
  * equal what the server's moveValidation / ships.sail will accept.
  *
- * Ship rules apply only inside a Viking battle, exactly like the
- * server's `_shipRulesApply`: the shared world and standard battles
- * never meet a ship, and their move lists are left untouched.
+ * Ship rules apply inside a Viking battle, and in the shared world once
+ * the server has world longships on (`gameState.worldShips`), exactly
+ * like the server's `_shipRulesApply`. Standard battles never meet a
+ * ship, and their move lists are left untouched.
  */
 
 import {
@@ -22,9 +23,13 @@ import {
 	validateSail,
 	chessMoveVeto,
 	classifyMove,
-	isMoored,
+	isShipMoored,
+	isLandCell,
+	mayBoard,
+	deckSquare,
+	deckMove,
 } from '../viking/shipRulesClient.js';
-import { seaSinkAt, battlePlayRadius } from '../battle/battleRules.js';
+import { seaSinkAt, battlePlayRadius, isBattleRegionCell } from '../battle/battleRules.js';
 
 export { SHIP, SHIP_REJECTIONS };
 
@@ -65,7 +70,46 @@ export function shipServerNow(gameState, localMs = Date.now()) {
 
 /** Do the ship rules apply to the local player right now? */
 export function shipRulesActive(gameState) {
-	return gameState?.activeBattle?.edition === 'viking';
+	if (gameState?.activeBattle) return gameState.activeBattle.edition === 'viking';
+	return gameState?.worldShips === true;
+}
+
+/** Are we on the shared world's sea (not in a battle)? */
+export function inWorldSea(gameState) {
+	return !gameState?.activeBattle && gameState?.worldShips === true;
+}
+
+/** Mirrors server/world/worldShips.js WORLD_SHIP. */
+export const WORLD_SHIP = Object.freeze({ SAIL_MAX: SHIP.WORLD_SAIL_MAX || 8, LAND_MARGIN: 12 });
+
+let worldBoundsMemo = { cells: null, count: -1, bounds: null };
+
+function isLandItems(items) {
+	return Array.isArray(items) && items.length > 0 && !cellHasShip(items);
+}
+
+/** The world's land bounds, outside the arena region (memoised per board). */
+export function worldLandBounds(gameState) {
+	const cells = gameState?.board?.cells;
+	if (!cells) return null;
+	const keys = Object.keys(cells);
+	if (worldBoundsMemo.cells === cells && worldBoundsMemo.count === keys.length) return worldBoundsMemo.bounds;
+	let bounds = null;
+	for (const key of keys) {
+		const items = cellItems(gameState, ...key.split(',').map(Number));
+		if (!isLandItems(items)) continue;
+		const [x, z] = key.split(',').map(Number);
+		if (!Number.isFinite(x) || !Number.isFinite(z) || isBattleRegionCell(x, z)) continue;
+		if (!bounds) bounds = { minX: x, maxX: x, minZ: z, maxZ: z };
+		else {
+			if (x < bounds.minX) bounds.minX = x;
+			if (x > bounds.maxX) bounds.maxX = x;
+			if (z < bounds.minZ) bounds.minZ = z;
+			if (z > bounds.maxZ) bounds.maxZ = z;
+		}
+	}
+	worldBoundsMemo = { cells, count: keys.length, bounds };
+	return bounds;
 }
 
 /** A board cell as an item array (the client sees arrays, rarely {contents}). */
@@ -90,6 +134,7 @@ function radialBand(centre, x, z) {
  * `boardEnv`.
  */
 export function shipEnv(gameState, now = shipServerNow(gameState)) {
+	if (inWorldSea(gameState)) return worldShipEnv(gameState, now);
 	const battle = gameState?.activeBattle || null;
 	const radius = battlePlayRadius(battle);
 	let standing = null;
@@ -110,6 +155,58 @@ export function shipEnv(gameState, now = shipServerNow(gameState)) {
 			return standing.has(`${x},${z}`);
 		},
 	};
+}
+
+/** The shared world's sea: mirrors server/world/worldShips.js `worldEnv`. */
+function worldShipEnv(gameState, now) {
+	const bounds = worldLandBounds(gameState);
+	const m = WORLD_SHIP.LAND_MARGIN;
+	let standing = null;
+	return {
+		now,
+		sailMax: WORLD_SHIP.SAIL_MAX,
+		getCell: (x, z) => cellItems(gameState, x, z),
+		isInsidePlayArea: (x, z) => !!bounds && !isBattleRegionCell(x, z)
+			&& x >= bounds.minX - m && x <= bounds.maxX + m
+			&& z >= bounds.minZ - m && z <= bounds.maxZ + m,
+		isSunk: () => false,
+		hasPiece: (x, z) => {
+			if (!standing) {
+				standing = new Set();
+				for (const p of gameState?.chessPieces || []) {
+					const pos = p?.position;
+					if (pos) standing.add(`${Number(pos.x)},${Number(pos.z)}`);
+				}
+			}
+			return standing.has(`${x},${z}`);
+		},
+	};
+}
+
+/**
+ * World raids: the soonest-ending raid clock among `playerId`'s pieces
+ * ashore, as `{text, msLeft, pieceId}` — or null when none are raiding.
+ */
+export function raidClock(gameState, playerId, now = shipServerNow(gameState)) {
+	if (playerId == null) return null;
+	let soonest = null;
+	for (const p of gameState?.chessPieces || []) {
+		if (!p || String(p.player) !== String(playerId) || !p.raid) continue;
+		const deadline = Number(p.raid.deadline);
+		if (!Number.isFinite(deadline)) continue;
+		if (!soonest || deadline < soonest.deadline) soonest = { deadline, piece: p };
+	}
+	if (!soonest) return null;
+	const msLeft = Math.max(0, soonest.deadline - now);
+	const type = String(soonest.piece.type || 'warrior').toLowerCase();
+	return { text: `⚔ ${type} ashore: ${formatRaidTime(msLeft)}`, msLeft, pieceId: String(soonest.piece.id) };
+}
+
+/** Raid time as "2:05", or "45 s" under a minute. */
+export function formatRaidTime(ms) {
+	const secs = Math.max(0, Math.ceil(Number(ms) / 1000) || 0);
+	if (secs < 60) return `${secs} s`;
+	return `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
 }
 
 // ── Ships on the board ──────────────────────────────────────────────────────
@@ -252,11 +349,12 @@ export function shipMoveRefusal(gameState, piece, move, { now = shipServerNow(ga
 		p => p?.position && Number(p.position.x) === x && Number(p.position.z) === z) || null);
 	const occupant = lookup(to.x, to.z);
 	const target = occupant ? { pieceType: occupant.type, player: occupant.player } : null;
-	const env = { getCell: (x, z) => cellItems(gameState, x, z), now };
+	const env = shipEnv(gameState, now);
 	const veto = chessMoveVeto(env, piece, from, to, target);
 	if (veto) return veto;
 	const type = String(piece.type || '').toUpperCase();
-	if (type === 'KNIGHT') return null;
+	// A deck move's path was walked from the deck square (deckMove).
+	if (type === 'KNIGHT' || move.viaDeck) return null;
 	const castle = type === 'KING' && (Math.abs(to.x - from.x) === 2 || Math.abs(to.z - from.z) === 2);
 	const blocked = castle
 		? castleWalkHitsShip(gameState, from, to, lookup)
@@ -298,7 +396,87 @@ export function applyShipRules(gameState, piece, moves, options = {}) {
 			kept.push(kind ? { ...move, ship: kind.kind } : move);
 		}
 	}
+	addDeckMoves(gameState, piece, kept, refused, { now, pieceAt });
 	return { moves: kept, refused };
+}
+
+/** The deck square of the ship at (x, z) under the rules, or null. */
+export function shipDeckSquare(gameState, x, z, now = shipServerNow(gameState)) {
+	const ship = shipAt(cellItems(gameState, x, z));
+	return ship ? deckSquare(shipEnv(gameState, now), ship, x, z) : null;
+}
+
+/** Board squares a boarding-type piece on `at` could reach (geometry only). */
+function reachFrom(gameState, type, at) {
+	const t = String(type || '').toUpperCase();
+	const out = [];
+	if (t === 'KNIGHT') {
+		for (const [dx, dz] of [[1, 2], [2, 1], [-1, 2], [-2, 1], [1, -2], [2, -1], [-1, -2], [-2, -1]]) {
+			out.push({ x: at.x + dx, z: at.z + dz });
+		}
+		return out;
+	}
+	const dirs = [];
+	if (t === 'ROOK' || t === 'QUEEN') dirs.push([1, 0], [-1, 0], [0, 1], [0, -1]);
+	if (t === 'BISHOP' || t === 'QUEEN') dirs.push([1, 1], [1, -1], [-1, 1], [-1, -1]);
+	for (const [dx, dz] of dirs) {
+		for (let k = 1; k <= 64; k++) {
+			const x = at.x + dx * k;
+			const z = at.z + dz * k;
+			const items = cellItems(gameState, x, z);
+			if (!items || items.length === 0) break;
+			out.push({ x, z });
+			if (!isLandCell(items)) break;
+		}
+	}
+	return out;
+}
+
+/**
+ * A hull lies over two squares, its own and the open water its prow
+ * points at, and both are deck (shipRules rule 8): add the moves that
+ * only work through the deck square, mirroring the server's
+ * moveValidation._isValidViaDeck. Boarding moves target the ship's own
+ * square (the server's square for it); landings come off the deck
+ * square. Each carries `viaDeck: {x, z}`.
+ */
+function addDeckMoves(gameState, piece, kept, refused, { now, pieceAt }) {
+	if (!mayBoard(piece.type)) return;
+	const from = { x: Number(piece.position.x), z: Number(piece.position.z) };
+	const env = shipEnv(gameState, now);
+	const have = new Set(kept.map(m => `${m.x},${m.z}`));
+	const candidates = [];
+	const aboard = shipAt(cellItems(gameState, from.x, from.z));
+	if (aboard) {
+		const deck = deckSquare(env, aboard, from.x, from.z);
+		if (deck) candidates.push(...reachFrom(gameState, piece.type, deck));
+	} else {
+		for (const e of listShips(gameState)) {
+			if (Math.abs(e.x - from.x) > 66 || Math.abs(e.z - from.z) > 66) continue;
+			candidates.push({ x: e.x, z: e.z });
+		}
+	}
+	for (const to of candidates) {
+		const key = `${to.x},${to.z}`;
+		if (have.has(key)) continue;
+		const occupant = pieceAt(to.x, to.z);
+		if (occupant && String(occupant.player) === String(piece.player)) continue;
+		const via = deckMove(env, piece, from, to, pieceAt);
+		if (!via) continue;
+		have.add(key);
+		const target = occupant ? { pieceType: occupant.type, player: occupant.player } : null;
+		const veto = chessMoveVeto(env, piece, from, to, target);
+		const at = refused.findIndex(m => m.x === to.x && m.z === to.z);
+		if (veto) {
+			if (at < 0) refused.push({ x: to.x, z: to.z, reason: veto.reason, message: veto.message });
+			continue;
+		}
+		if (at >= 0) refused.splice(at, 1);
+		const kind = classifyMove(
+			cellItems(gameState, from.x, from.z), cellItems(gameState, to.x, to.z), piece.player, !!occupant,
+		);
+		kept.push({ x: to.x, z: to.z, viaDeck: via.via, ...(kind ? { ship: kind.kind } : {}) });
+	}
 }
 
 // ── Words ────────────────────────────────────────────────────────────────────
@@ -314,7 +492,8 @@ export const SHIP_REFUSAL_TEXT = Object.freeze({
 	passenger_cannot_sail: 'A king or pawn aboard cannot be rowed away: it must step ashore.',
 	not_your_ship: 'That is not your longship.',
 	no_ship: 'That longship is gone.',
-	bad_sail: 'A longship sails 1 to 5 squares in a straight line.',
+	bad_sail: 'A longship sails in a straight line, up to its range (5 in battles, 8 in the world).',
+	away_ruler: 'That kingdom\'s ruler is away. Raiders may visit, but take nothing.',
 	not_water: 'A longship can only sail across open water.',
 	not_viking: 'Longships only sail in Viking battles.',
 	not_registered: 'Not connected to the battle yet. Try again in a moment.',
@@ -323,6 +502,7 @@ export const SHIP_REFUSAL_TEXT = Object.freeze({
 	server_error: 'The longship could not sail. Please try again.',
 	no_water: 'No open water to sail to from here.',
 	timeout: 'No answer from the server. Try again.',
+	rate_limited: 'Too quick: wait a moment, then sail.',
 });
 
 /** The words for a refusal reason (or the server's own message). */
@@ -358,16 +538,15 @@ export function noMoveShipTip(gameState, piece, {
 	const x = Number(pos?.x);
 	const z = Number(pos?.z);
 	const entry = pos && Number.isFinite(x) && Number.isFinite(z) ? shipEntryAt(gameState, x, z) : null;
-	const getCell = (a, b) => cellItems(gameState, a, b);
 
 	if (entry && rowingMsLeft(entry.ship, now) > 0) {
 		const secs = Math.max(1, Math.ceil(rowingMsLeft(entry.ship, now) / 1000));
-		const crew = String(piece.type || '').toLowerCase() || 'crew';
+		const crew = String(piece.type || '').toLowerCase() || 'warrior';
 		// Once it steadies, can it sail on? (A king or pawn aboard can't
 		// be rowed away; and it needs open water beside it.)
 		const sailsOn = !SHIP.NO_BOARD.includes(String(piece.type || '').toUpperCase())
 			&& sailTargets(shipEnv(gameState, now), { x, z }).length > 0;
-		if (isMoored(getCell, x, z)) {
+		if (isShipMoored(shipEnv(gameState, now), entry.ship, x, z)) {
 			return `Your longship is still rowing: your ${crew} can step off in ${secs} s${sailsOn ? ', or sail on' : ''}.`;
 		}
 		return sailsOn
@@ -382,7 +561,7 @@ export function noMoveShipTip(gameState, piece, {
 		return lanes > 0 ? `${text} ${sailHint}` : text;
 	}
 	if (lanes > 0) {
-		return entry && !isMoored(getCell, x, z)
+		return entry && !isShipMoored(shipEnv(gameState, now), entry.ship, x, z)
 			? `Out at sea: sail next to land to step off. ${sailHint}`
 			: `No square to step onto from here. ${sailHint}`;
 	}

@@ -30,6 +30,8 @@
 const { log } = require('../GameUtilities');
 const shipRules = require('../../battle/shipRules');
 const { isVikingBattle } = require('../../battle/edition');
+const worldShips = require('../../world/worldShips');
+const Sessions = require('../../world/Sessions');
 
 const PAWN_FORWARD_BY_ORIENTATION = Object.freeze({
 	0: Object.freeze({ dx: 0, dz: 1 }),
@@ -55,15 +57,22 @@ function _isOwnerPaused(game, ownerId) {
 }
 
 /**
- * Do longship rules apply to this player's moves? Only seats of a
- * Viking battle — one O(1) lookup, so the shared world and standard
- * battles never touch a ship check (and couldn't meet a ship anyway).
- * Status isn't filtered: ship cells exist from arena build to cleanup.
+ * Do longship rules apply to this player's moves? Seats of a Viking
+ * battle, and main-world kingdoms once world longships are switched on
+ * (worldShips.enabled) — one O(1) lookup, so standard battles never
+ * touch a ship check. Status isn't filtered: ship cells exist from
+ * arena build to cleanup.
  */
 function _shipRulesApply(game, playerId) {
 	const record = game && game.players ? game.players[String(playerId)] : null;
-	if (!record || !record.battleId) return false;
+	if (!record) return false;
+	if (!record.battleId) return worldShips.appliesTo(game, playerId);
 	return isVikingBattle(game.battles ? game.battles[String(record.battleId)] : null);
+}
+
+/** World only: raiders take nothing from a kingdom whose ruler is away. */
+function _awayRulerVeto(game, piece, toX, toZ) {
+	return worldShips.awayRulerVeto(game, piece, toX, toZ, Sessions.isOnline);
 }
 
 /**
@@ -73,12 +82,46 @@ function _shipRulesApply(game, playerId) {
 function _shipVeto(ctx, game, piece, toX, toZ, targetPiece) {
 	const pos = piece.position || piece;
 	return shipRules.chessMoveVeto(
-		{ getCell: (x, z) => ctx.boardManager.getCell(game.board, x, z), now: Date.now() },
+		_fullShipEnv(game, piece.player),
 		piece,
 		{ x: pos.x, z: pos.z },
 		{ x: toX, z: toZ },
 		targetPiece || null,
 	);
+}
+
+/**
+ * The full board env the ship rules read open water through (play area,
+ * sea, pieces): a battle's arena, or the shared world's sea. Needed to
+ * find a hull's second deck square (shipRules rule 8).
+ */
+function _fullShipEnv(game, playerId, now = Date.now()) {
+	const record = game && game.players ? game.players[String(playerId)] : null;
+	if (record && record.battleId) {
+		const battle = game.battles ? game.battles[String(record.battleId)] : null;
+		return require('../../battle/ships').boardEnv(game, battle, now);
+	}
+	return worldShips.worldEnv(game, now);
+}
+
+/**
+ * A move that only works through a ship's deck square: geometry to the
+ * deck square of the ship at (toX, toZ), or from the deck square of the
+ * ship the piece is on. Ship rules must already apply. The ordinary
+ * veto runs on top with the real squares.
+ */
+function _isValidViaDeck(ctx, game, piece, toX, toZ) {
+	const pos = piece.position || piece;
+	const env = _fullShipEnv(game, piece.player);
+	const pieceAt = ctx.buildPieceLocator(game);
+	const from = { x: pos.x, z: pos.z };
+	const to = { x: toX, z: toZ };
+	const target = pieceAt(toX, toZ);
+	if (target && String(target.player) === String(piece.player)) return false;
+	if (target && _isOwnerPaused(game, target.player)) return false;
+	if (!shipRules.deckMove(env, piece, from, to, pieceAt)) return false;
+	if (shipRules.chessMoveVeto(env, piece, from, to, target || null)) return false;
+	return !_awayRulerVeto(game, piece, toX, toZ);
 }
 
 /** Is (x, z) a longship? Ships are not path squares. */
@@ -124,15 +167,26 @@ function validateChessMove(ctx, game, playerId, moveData) {
 		}
 
 		const typeValidation = validateMoveByPieceType(ctx, game, piece, toX, toZ, pieceAt);
-		if (!typeValidation.valid) return typeValidation;
+		if (!typeValidation.valid) {
+			if (_shipRulesApply(game, playerId) && _isValidViaDeck(ctx, game, piece, toX, toZ)) {
+				return { valid: true, piece, fromX, fromZ, toX, toZ, targetCell, castling: null, viaDeck: true };
+			}
+			return typeValidation;
+		}
 
 		if (piece.type !== 'KNIGHT') {
 			const pathValidation = checkPathObstruction(piece, toX, toZ, pieceAt);
-			if (!pathValidation.valid) return pathValidation;
+			if (!pathValidation.valid) {
+				if (_shipRulesApply(game, playerId) && _isValidViaDeck(ctx, game, piece, toX, toZ)) {
+					return { valid: true, piece, fromX, fromZ, toX, toZ, targetCell, castling: null, viaDeck: true };
+				}
+				return pathValidation;
+			}
 		}
 
 		if (_shipRulesApply(game, playerId)) {
-			const veto = _shipVeto(ctx, game, piece, toX, toZ, targetPiece);
+			const veto = _shipVeto(ctx, game, piece, toX, toZ, targetPiece)
+				|| _awayRulerVeto(game, piece, toX, toZ);
 			if (veto) return { valid: false, error: veto.message, reason: veto.reason };
 			if (piece.type !== 'KNIGHT') {
 				const dx = Math.sign(toX - fromX);
@@ -327,6 +381,19 @@ function checkPathObstruction(piece, toX, toZ, pieceAt) {
  * @param {ValidationCtx} ctx
  */
 function isValidChessMove(ctx, game, piece, toX, toZ) {
+	if (_isValidDirect(ctx, game, piece, toX, toZ)) return true;
+	// Longships: a hull's second deck square (shipRules rule 8).
+	try {
+		if (!game || !game.board || !piece || !Number.isFinite(toX) || !Number.isFinite(toZ)) return false;
+		if (!shipRules.mayBoard(piece.type) || !_shipRulesApply(game, piece.player)) return false;
+		return _isValidViaDeck(ctx, game, piece, toX, toZ);
+	} catch (error) {
+		log(`Error validating a deck move: ${error.message}`);
+		return false;
+	}
+}
+
+function _isValidDirect(ctx, game, piece, toX, toZ) {
 	try {
 		if (!game || !game.board || !game.board.cells || !piece) return false;
 		const pos = piece.position || piece;
@@ -357,6 +424,7 @@ function isValidChessMove(ctx, game, piece, toX, toZ) {
 		// no king attacks from aboard) and ships as non-path squares.
 		const shipsApply = _shipRulesApply(game, pieceOwner);
 		if (shipsApply && _shipVeto(ctx, game, piece, toX, toZ, targetChess)) return false;
+		if (shipsApply && _awayRulerVeto(game, piece, toX, toZ)) return false;
 		const isBoardSquare = (x, z) => {
 			const cell = ctx.boardManager.getCell(game.board, x, z);
 			if (shipsApply && shipRules.cellHasShip(cell)) return false;
@@ -526,12 +594,52 @@ function hasValidChessMoves(ctx, game, playerId) {
 			}
 		}
 
+		// Longships: a piece aboard may also step off from the hull's
+		// deck square (shipRules rule 8).
+		if (_shipRulesApply(game, pid)) {
+			for (const piece of playerPieces) {
+				if (!shipRules.mayBoard(piece.type) || !piece.position) continue;
+				const ship = shipRules.shipAt(ctx.boardManager.getCell(game.board, piece.position.x, piece.position.z));
+				if (!ship) continue;
+				const deck = shipRules.deckSquare(_fullShipEnv(game, pid), ship, piece.position.x, piece.position.z);
+				if (!deck) continue;
+				for (const sq of _reachFrom(ctx, game, piece.type, deck)) {
+					if (isValidChessMove(ctx, game, piece, sq.x, sq.z)) return true;
+				}
+			}
+		}
+
 		log(`Player ${playerId} has no valid chess moves available`);
 		return false;
 	} catch (error) {
 		log(`Error checking for valid chess moves: ${error.message}`);
 		return true;
 	}
+}
+
+/** Squares a boarding-type piece standing on `at` could land on (geometry only). */
+function _reachFrom(ctx, game, type, at) {
+	const t = String(type || '').toUpperCase();
+	const out = [];
+	const isLand = (x, z) => shipRules.isLandCell(ctx.boardManager.getCell(game.board, x, z));
+	if (t === 'KNIGHT') {
+		for (const [dx, dz] of [[1, 2], [2, 1], [-1, 2], [-2, 1], [1, -2], [2, -1], [-1, -2], [-2, -1]]) {
+			out.push({ x: at.x + dx, z: at.z + dz });
+		}
+		return out;
+	}
+	const dirs = [];
+	if (t === 'ROOK' || t === 'QUEEN') dirs.push([1, 0], [-1, 0], [0, 1], [0, -1]);
+	if (t === 'BISHOP' || t === 'QUEEN') dirs.push([1, 1], [1, -1], [-1, 1], [-1, -1]);
+	for (const [dx, dz] of dirs) {
+		for (let k = 1; k <= 64; k++) {
+			const x = at.x + dx * k;
+			const z = at.z + dz * k;
+			if (!isLand(x, z)) break;
+			out.push({ x, z });
+		}
+	}
+	return out;
 }
 
 module.exports = {

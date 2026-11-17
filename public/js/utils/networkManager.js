@@ -100,6 +100,10 @@ export function deployPromotion(pawnId, capturedType, callback) {
 	return networkManagerInstance.deployPromotion(pawnId, capturedType, callback);
 }
 
+export function launchPromotionShip(pawnId, callback) {
+	return networkManagerInstance.launchPromotionShip(pawnId, callback);
+}
+
 export function submitDuelResponse(duelId, placement, guess) {
 	return networkManagerInstance.submitDuelResponse(duelId, placement, guess);
 }

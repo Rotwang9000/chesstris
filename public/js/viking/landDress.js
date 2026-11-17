@@ -180,8 +180,24 @@ ${cells ? `
 	float pv = vVkPos.z / 0.235;
 	float seamP = smoothstep(0.42, 0.5, abs(fract(pv) - 0.5));
 	float grain = vkNoise(vec3(vVkPos.x * 1.3, floor(pv) * 7.1, 0.0)) * 0.5 + vkNoise(vec3(vVkPos.x * 9.0, pv * 3.0, 1.0)) * 0.5;
-	float deck = top * isOwn;
+	float isHome = step(1.5, vVkOwn);
+	float deck = top * isOwn * (1.0 - isHome);
 	diffuseColor.rgb *= mix(1.0, (0.86 + 0.24 * grain) * (1.0 - 0.45 * seamP), deck);
+	// Home land is the hall's floor, not a deck: grey flagstones washed
+	// with the owner's colour, in two staggered courses, with dark joints
+	// and a sunken border, so a home row reads as a gap in any line.
+	float hall = top * isHome;
+	vec2 cu = fract(vVkPos.xz + 0.5);
+	float course = step(0.5, cu.y);
+	float sx = fract(cu.x * 2.0 + course * 0.5);
+	float sy = fract(cu.y * 2.0);
+	float joint = 1.0 - smoothstep(0.035, 0.07, min(min(sx, 1.0 - sx), min(sy, 1.0 - sy)));
+	float edgeD = min(min(cu.x, 1.0 - cu.x), min(cu.y, 1.0 - cu.y));
+	float border = 1.0 - smoothstep(0.075, 0.095, edgeD);
+	float stoneId = vkHash(vec3(floor(vVkPos.xz + 0.5), floor(cu.x * 2.0 + course * 0.5) + course * 7.0));
+	vec3 flag = mix(vec3(lum) * vec3(0.93, 0.94, 0.97), own, 0.4) * (0.82 + 0.3 * stoneId) * (0.9 + 0.2 * n);
+	diffuseColor.rgb = mix(diffuseColor.rgb, flag, hall);
+	diffuseColor.rgb *= 1.0 - hall * (0.5 * joint + 0.35 * border * (1.0 - joint));
 	// shields: a disc every 0.235 along the band, rim dark, boss pale
 	float along = vVkPos.x + vVkPos.z;
 	vec2 sp = vec2((fract(along / 0.2) - 0.5) * 0.2, vVkY - 0.385);
@@ -225,7 +241,7 @@ function vikingCellMaterial(THREE, from) {
 	});
 	m.name = 'viking-cells';
 	m.onBeforeCompile = mottle(6.0, -0.47, 0.3, 0.72, true);
-	m.customProgramCacheKey = () => 'viking-cells-v4';
+	m.customProgramCacheKey = () => 'viking-cells-v5';
 	return m;
 }
 
@@ -268,7 +284,9 @@ export function setVikingOwnership(mesh, cells) {
 	const a = mesh && mesh.geometry && mesh.geometry.getAttribute && mesh.geometry.getAttribute('vkOwn');
 	if (!a || !Array.isArray(cells)) return;
 	const n = Math.min(cells.length, a.count);
-	for (let i = 0; i < n; i++) a.setX(i, cells[i] && cells[i].own ? 1 : 0);
+	// 0 granite, 1 built land (a deck), 2 home land (hall floor: it
+	// doesn't count toward a line, see tetromino/lineHint.js)
+	for (let i = 0; i < n; i++) a.setX(i, cells[i] && cells[i].own ? (cells[i].home ? 2 : 1) : 0);
 	a.needsUpdate = true;
 }
 

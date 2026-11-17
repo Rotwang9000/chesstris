@@ -107,10 +107,12 @@ export function loadVikingModule(name) {
 	return loadViking().then(v => (v ? v[name] || null : null));
 }
 
-/** The stubs' trigger: fetch the chunk when the Viking edition is in force. */
+/** The stubs' trigger: fetch the chunk when the Viking edition is in force, or the world has ships. */
 export function wantViking(gameState) {
 	if (loading || api()) return;
-	try { if (vikingActive(gameState)) loadViking(); } catch (_e) { /* never in the way */ }
+	// World longships need the hull renderer and the sailing controls
+	// even in the standard edition (the ships are everyone's rules).
+	try { if (vikingActive(gameState) || gameState?.worldShips === true) loadViking(); } catch (_e) { /* never in the way */ }
 }
 
 /** Run `fn` when the chunk is here (now, if it is). */

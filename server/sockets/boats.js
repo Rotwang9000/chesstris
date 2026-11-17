@@ -2,15 +2,18 @@
  * Viking longship socket handlers:
  *   • ship_sail {shipId, to:{x,z}} → ack {success, error?, reason?, readyAt?}
  *
- * Sailing is not a chess move: it doesn't stamp the chess cooldown or
- * change phase. The ship's own 3 s rowing lock is the throttle. The
- * guard list mirrors chess_move's, in order:
+ * A sail IS the turn's chess move (owner, 2026-11-15): it honours and
+ * stamps the chess cooldown like chess_move, and the client moves on to
+ * the tetris phase on success. The guard list mirrors chess_move's, in
+ * order:
  *
  *   1. the acting seat exists, isn't eliminated and isn't paused;
- *   2. it sits in an ACTIVE battle that plays the Viking edition;
+ *   2. it sits in an ACTIVE battle that plays the Viking edition, or
+ *      is a main-world kingdom with world longships on (worldShips.js);
  *   3. the ship exists and this seat controls it;
  *   4. the ship has finished rowing;
- *   5. the leg is integer, orthogonal, 1–5 squares, all open water.
+ *   5. the leg is integer, orthogonal, within range (battle 5, world 8),
+ *      all open water.
  *
  * (3–5 live in ships.sail so the bots and tests share them.)
  */
@@ -18,7 +21,10 @@
 'use strict';
 
 const World = require('../world/World');
+const { PLAYER_SETTINGS } = require('../game/Constants');
+const { getCooldownRemainingMs } = require('../utils/cooldowns');
 const ships = require('../battle/ships');
+const worldShips = require('../world/worldShips');
 
 function registerBoatHandlers(socket, ctx) {
 	const { playerId: boundPlayerId, broadcaster, integrityService, persistence } = ctx;
@@ -40,29 +46,54 @@ function registerBoatHandlers(socket, ctx) {
 			if (player.eliminated) return refuse('eliminated', 'You have been eliminated — your king is gone.');
 			if (player.paused) return refuse('paused', 'You are paused — press Resume to play.');
 
-			// 2. Only seats of an active Viking battle have ships to sail.
+			const cooldown = getCooldownRemainingMs(player, 'lastChessMoveAt', PLAYER_SETTINGS.CHESS_MOVE_COOLDOWN_MS);
+			if (cooldown > 0) return ack({ success: false, reason: 'rate_limited', error: 'rate_limited', retryAfterMs: cooldown });
+
+			// 2. Seats of an active Viking battle, or main-world kingdoms
+			// once world longships are on, have ships to sail.
 			const world = World.getWorld();
 			const battle = ships.vikingBattleOf(world, playerId);
-			if (!battle || battle.status !== 'active') {
+			const inWorld = !battle && worldShips.appliesTo(world, playerId);
+			if (!inWorld && (!battle || battle.status !== 'active')) {
 				return refuse('not_viking', 'There are no longships in this game.');
 			}
 
 			const shipId = data && typeof data === 'object' ? data.shipId : null;
 			const to = data && typeof data === 'object' ? data.to : null;
 			const now = Date.now();
-			const result = ships.sail(world, battle, playerId, { shipId, to }, { now });
+			const result = inWorld
+				? worldShips.sail(world, playerId, { shipId, to }, { now })
+				: ships.sail(world, battle, playerId, { shipId, to }, { now });
 			if (!result.success) return refuse(result.reason, result.error);
 
-			// Sailing is activity (for idle decay), not a chess move.
+			// The sail spends the turn's chess move.
 			player.lastActiveAt = now;
+			player.lastChessMoveAt = now;
+			player.moveCount = (player.moveCount || 0) + 1;
+			// Orbs on the squares it crossed are hauled aboard.
+			let orbClaims = [];
+			if (ctx.powerUpManager && typeof ctx.powerUpManager.claimBySail === 'function' && result.event) {
+				try {
+					orbClaims = ctx.powerUpManager.claimBySail(world, playerId, result.event.from, result.event.to) || [];
+				} catch (orbErr) {
+					console.warn('[Ships] orb claim on sail failed:', orbErr.message);
+				}
+			}
 			// A ship sailing off (or in) re-anchors landing parties.
 			if (integrityService) integrityService.runIslandIntegrityPass({ emitAnimation: true });
 			World.markDirty();
 			if (persistence && typeof persistence.markDirty === 'function') persistence.markDirty();
 			if (broadcaster) broadcaster.broadcastGameUpdate();
-			ships.emitToBattle(battle, 'ship_sailed', result.event);
+			if (inWorld) { if (ctx.io) ctx.io.to(world.id).emit('ship_sailed', result.event); }
+			else ships.emitToBattle(battle, 'ship_sailed', result.event);
 
-			return ack({ success: true, ...result.event });
+			return ack({
+				success: true,
+				...result.event,
+				orbs: orbClaims.filter(c => c && !c.skipped).map(c => ({
+					pieceType: c.piece ? c.piece.type : (c.ship ? 'SHIP' : c.orb?.pieceType),
+				})),
+			});
 		} catch (err) {
 			console.error('[Ships] ship_sail failed:', err);
 			return refuse('server_error', 'Server error');

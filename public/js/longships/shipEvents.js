@@ -21,6 +21,12 @@ export const SHIP_SOCKET_EVENTS = Object.freeze({
 	ship_seized: 'seized',
 	ship_lost: 'lost',
 	ship_built: 'built',
+	// The shared world: a frozen pawn launched as a ship; a raider whose
+	// time ashore ran out.
+	ship_launched: 'launched',
+	raid_expired: 'raid_lost',
+	// A world ship boxed in by land on all four sides is lost.
+	ship_trapped: 'trapped',
 });
 
 const MOVE_KINDS = new Set(['embark', 'land', 'raid', 'boarded', 'seize']);

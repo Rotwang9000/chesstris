@@ -12,6 +12,7 @@
 import { getShape, getColourCss } from './shapes.js';
 import { isTouchPrimary } from '../utils/inputMode.js';
 import { avoidRect } from '../showToastMessage.js';
+import { attachHudLayout } from '../hudLayout.js';
 
 const HUD_ID = 'next-tetromino-display';
 const CANVAS_ID = 'next-tetromino-canvas';
@@ -63,6 +64,7 @@ function createWidget() {
 		'<div class="tx-hud-key"><kbd>\u2190\u2192\u2191\u2193</kbd><span>move</span></div>',
 		'<div class="tx-hud-key"><kbd>Z</kbd><kbd>X</kbd><span>rotate</span></div>',
 		'<div class="tx-hud-key"><kbd>Space</kbd><span>drop</span></div>',
+		'<div class="tx-hud-key"><kbd>C</kbd><span>skip to chess</span></div>',
 	].join('');
 	// Phones: the on-screen pad already labels its buttons, and screen
 	// space is scarce — skip the keyboard legend and shrink the panel.
@@ -93,6 +95,8 @@ function createWidget() {
 	});
 
 	document.body.appendChild(widget);
+	// Size switch (full / compact / collapsed) and the announcements feed.
+	attachHudLayout(widget);
 	return widget;
 }
 
@@ -211,9 +215,9 @@ function showFirstLongshipHint() {
 	const verb = touch ? 'Tap' : 'Click';
 	const key = touch ? '' : ` (or press <kbd>L</kbd>)`;
 	return showOneTimeTip(FIRST_LONGSHIP_HINT_KEY,
-		`<span class="tx-longship-icon" aria-hidden="true"></span><b>Longships.</b> Move a knight, bishop, rook or queen onto the gold ring on your ship, `
-		+ `then ${verb.toLowerCase()} <b>Longship</b>${key} and a glowing sea tile to sail.<br>`
-		+ 'Land beside an enemy shore to raid it.', [], 14000);
+		`<span class="tx-longship-icon" aria-hidden="true"></span><b>Longships.</b> Your ship has its own oarsmen: ${verb.toLowerCase()} <b>Longship</b>${key} `
+		+ `and a glowing sea tile to sail it as your chess move.<br>`
+		+ 'Put a knight, bishop, rook or queen aboard (the gold ring) to carry a warrior. Land it on an enemy shore to raid; the oarsmen wait to bring it home.', [], 14000);
 }
 
 /**

@@ -95,7 +95,7 @@ function whose(name, isYou) {
 
 /** A piece aboard, or the crew when we can't tell which. */
 function crewWord(type) {
-	return normalisePieceType(type) || 'crew';
+	return normalisePieceType(type) || 'warrior';
 }
 
 function queenAshoreCaption(m) {
@@ -153,7 +153,7 @@ function shipCaption(m) {
 		case 'lost':
 			return you ? 'Your longship is lost with all hands' : `${actor} longship is lost with all hands`;
 		case 'emptysunk':
-			return you ? 'The sea swallows your empty longship' : `The sea swallows ${whose(m.attackerName, false)} empty longship`;
+			return you ? 'The sea swallows your longship and its oarsmen' : `The sea swallows ${whose(m.attackerName, false)} longship and its oarsmen`;
 		case 'newkeel':
 			return you ? 'A new keel is laid for you' : `A new keel is laid for ${m.attackerName || 'a rival'}`;
 		default:

@@ -64,9 +64,12 @@ describe('slot chain', () => {
 			slot: 'capture.knight.bishop',
 			src: '/img/paintings/capture.knight.bishop.v1.webp',
 		}));
-		// Pawn takes bishop: no pair painting → the pawn's own capture.
-		expect(resolvePainting(MANIFEST, slotCandidates(capture({ attackerType: 'pawn', victimType: 'bishop' }))).slot)
-			.toBe('capture.pawn');
+		// King takes knight: no pair painting (yet) → the king's own capture.
+		expect(resolvePainting(MANIFEST, slotCandidates(capture({ attackerType: 'king', victimType: 'knight' }))).slot)
+			.toBe('capture.king');
+		// King takes queen: the owner saw a queen-less picture; now it has its own.
+		expect(resolvePainting(MANIFEST, slotCandidates(capture({ attackerType: 'king', victimType: 'queen' }))).slot)
+			.toBe('capture.king.queen');
 		// An attacker of unknown type → the generic capture.
 		expect(resolvePainting(MANIFEST, slotCandidates(capture({ attackerType: null }))).slot).toBe('capture');
 		expect(resolvePainting(MANIFEST, slotCandidates({ kind: 'kingfall', siege: true })).slot).toBe('kingfall.siege');
@@ -136,6 +139,13 @@ describe('slot chain', () => {
 			'capture.knight.bishop', 'capture.pawn.queen', 'capture.knight.rook', 'capture.knight.queen',
 			'capture.queen.knight', 'capture.bishop.knight', 'capture.rook.pawn',
 			'capture.rook.bishop', 'capture.queen.rook',
+			// 2026-11-17: every pairing but king takes knight
+			'capture.pawn.pawn', 'capture.pawn.knight', 'capture.pawn.bishop', 'capture.pawn.rook',
+			'capture.knight.pawn', 'capture.knight.knight',
+			'capture.bishop.pawn', 'capture.bishop.bishop', 'capture.bishop.rook', 'capture.bishop.queen',
+			'capture.rook.knight', 'capture.rook.rook', 'capture.rook.queen',
+			'capture.queen.pawn', 'capture.queen.bishop', 'capture.queen.queen',
+			'capture.king.pawn', 'capture.king.bishop', 'capture.king.rook', 'capture.king.queen',
 			...SHIP_SCENES.map(scene => `ship.${scene}`),
 		].sort());
 		for (const [slot, entry] of entries) {
@@ -714,7 +724,7 @@ describe('longship moments', () => {
 		expect(caption(lost)).toBe('Your longship is lost with all hands');
 		const empty = new ShipMoments().fromShipEvent({ kind: 'sunk', shipId: 's1', x: 3, z: 4, passengerId: null }, ctx({ cells }));
 		expect(slotOf(empty)).toBe('ship.emptysunk');
-		expect(caption(empty)).toBe('The sea swallows your empty longship');
+		expect(caption(empty)).toBe('The sea swallows your longship and its oarsmen');
 		// Someone else's ship going down is not ours to paint.
 		const theirs = { '3,4': [{ type: 'ship', shipId: 's2', player: BOT }] };
 		expect(new ShipMoments().fromShipEvent({ kind: 'sunk', shipId: 's2', x: 3, z: 4, passengerId: null }, ctx({ cells: theirs }))).toBeNull();

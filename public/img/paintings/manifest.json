@@ -141,6 +141,86 @@
 		"ship.newkeel": {
 			"file": "ship.newkeel.v1.webp",
 			"alt": "Under a boatshed roof shipwrights raise the tall curved stem of a new longship on the shore, while a woman holding a lantern looks on and others plane the planks."
+		},
+		"capture.pawn.pawn": {
+			"file": "capture.pawn.pawn.v1.webp",
+			"alt": "Beside a barley field above a fjord farm, a barefoot youth in an undyed tunic shoves his wicker shield into a rival in a dark blue tunic, who topples back over a split-rail fence with his spear flung up behind him."
+		},
+		"capture.pawn.knight": {
+			"file": "capture.pawn.knight.v1.webp",
+			"alt": "On a boggy shore by birch trees, a barefoot youth with a wicker shield braces his spear as a black horse rears high, and its blue-cloaked rider is pitched backward out of the saddle with the reins flying from his hand."
+		},
+		"capture.pawn.bishop": {
+			"file": "capture.pawn.bishop.v1.webp",
+			"alt": "In a misty pine wood beside carved wooden idols, a barefoot youth wrenches the crook staff from a white-robed, white-bearded seer, who reels backward with his arms flung out."
+		},
+		"capture.pawn.rook": {
+			"file": "capture.pawn.rook.v1.webp",
+			"alt": "On a grassy shore, a huge mail-clad champion with a Dane axe topples backward into a muddy ditch, arms flung wide, as a barefoot youth hooks his ankle with a spear shaft from behind a round red-and-white shield."
+		},
+		"capture.knight.pawn": {
+			"file": "capture.knight.pawn.v1.webp",
+			"alt": "Under a dark storm sky by the sea, a rider in a red cloak on a grey horse comes on through a pale barley field toward a barefoot youth sprawled back in the stalks with his wicker shield thrown up and his spear lying in the grass."
+		},
+		"capture.knight.knight": {
+			"file": "capture.knight.knight.v1.webp",
+			"alt": "On a heather moor by the sea, a red-cloaked rider on a rearing grey horse drives past a rival in a dark blue cloak, who tumbles headlong backward off his black horse with his spear flailing in the air."
+		},
+		"capture.bishop.pawn": {
+			"file": "capture.bishop.pawn.v1.webp",
+			"alt": "In a forest grove crossed by shafts of light, a white-robed seer with a carved crook staff points down at a barefoot youth, who has sunk to one knee beside his wicker shield and gazes up at him in awe."
+		},
+		"capture.bishop.bishop": {
+			"file": "capture.bishop.bishop.v1.webp",
+			"alt": "Within a ring of standing stones under green northern lights, a white-robed seer with a red sash raises his carved crook staff in a burst of pale light as a seer in dark blue robes is hurled backward off his feet, his plain staff flying."
+		},
+		"capture.bishop.rook": {
+			"file": "capture.bishop.rook.v1.webp",
+			"alt": "On a wave-battered clifftop a white-robed seer lifts his carved crook staff into a howling gale as a long-haired huscarl, buffeted behind his round shield, is driven down onto one knee with his axe swung wide."
+		},
+		"capture.bishop.queen": {
+			"file": "capture.bishop.queen.v1.webp",
+			"alt": "In a smoky, fire-lit timber hall a white-robed seer with a carved crook staff raises his hand over a braided queen in a green cloak and silver circlet, who sinks to her knees clutching her brow, her sword lowered to the floor."
+		},
+		"capture.rook.knight": {
+			"file": "capture.rook.knight.v1.webp",
+			"alt": "In a narrow mountain pass a towering bearded huscarl in mail and a conical helmet holds his red-rimmed round shield and long axe as a black horse rears against him and its rider in a dark blue cloak tumbles backward from the saddle, his sword spinning away."
+		},
+		"capture.rook.rook": {
+			"file": "capture.rook.rook.v1.webp",
+			"alt": "On a timber palisade above a grey sea two helmed huscarls clash shield to shield with axes raised, the one with a red-and-white quartered shield driving the other, behind a dark blue shield, back over the edge of the rampart."
+		},
+		"capture.rook.queen": {
+			"file": "capture.rook.queen.v1.webp",
+			"alt": "Before the carved doorway of a great timber hall a bearded huscarl in mail advances with his red-rimmed round shield and axe as a braided queen in a green cloak and silver circlet falls back down the wooden steps, her sword knocked from her hand."
+		},
+		"capture.queen.pawn": {
+			"file": "capture.queen.pawn.v1.webp",
+			"alt": "At the edge of a turf-roofed village by the sea a braided queen in a green cloak and silver circlet thrusts her sword forward as a barefoot young farmer with a wicker shield falls back onto the sand, his spear knocked aside."
+		},
+		"capture.queen.bishop": {
+			"file": "capture.queen.bishop.v1.webp",
+			"alt": "By torchlight at a lakeside grove a braided queen in a silver circlet and green cloak wrenches a carved crook staff from a white-robed old seer, who sinks back against a mossy altar stone."
+		},
+		"capture.queen.queen": {
+			"file": "capture.queen.queen.v1.webp",
+			"alt": "Under a red-striped sail a braided queen in a green cloak and silver circlet swings her sword as a rival queen in a blue gown and gold crown is flung back over the longship's side, her shield spinning into the spray."
+		},
+		"capture.king.pawn": {
+			"file": "capture.king.pawn.v1.webp",
+			"alt": "At the doorway of a timber hall a grey-bearded king in a fur mantle and gold circlet stands with sword drawn over a barefoot young levy who stumbles backward down the steps, his spear dropped and his wicker shield raised."
+		},
+		"capture.king.bishop": {
+			"file": "capture.king.bishop.v1.webp",
+			"alt": "In a smoky mead hall a grey-bearded king in a fur mantle and gold circlet splinters a carved crook staff as a white-robed old seer throws up his hands before the hearth fire while the household watches from the benches."
+		},
+		"capture.king.rook": {
+			"file": "capture.king.rook.v1.webp",
+			"alt": "On a shingle beach a grey-bearded king in a fur mantle and red tunic wrenches aside the great round shield of a bare-chested giant, whose long axe lies dropped in the surf behind him."
+		},
+		"capture.king.queen": {
+			"file": "capture.king.queen.v1.webp",
+			"alt": "Before the snowy steps of a carved timber hall a grey-bearded king in a fur mantle and gold crown seizes the sword hand of a queen with a long braid, a silver circlet and a green cloak, who falls back on the steps as her red shield slides away in the falling snow."
 		}
 	}
 }
