@@ -25,6 +25,7 @@ const { PLAYER_SETTINGS } = require('../game/Constants');
 const { getCooldownRemainingMs } = require('../utils/cooldowns');
 const ships = require('../battle/ships');
 const worldShips = require('../world/worldShips');
+const { afterSail } = require('../world/sailEffects');
 
 function registerBoatHandlers(socket, ctx) {
 	const { playerId: boundPlayerId, broadcaster, integrityService, persistence } = ctx;
@@ -66,26 +67,11 @@ function registerBoatHandlers(socket, ctx) {
 				: ships.sail(world, battle, playerId, { shipId, to }, { now });
 			if (!result.success) return refuse(result.reason, result.error);
 
-			// The sail spends the turn's chess move.
-			player.lastActiveAt = now;
-			player.lastChessMoveAt = now;
-			player.moveCount = (player.moveCount || 0) + 1;
-			// Orbs on the squares it crossed are hauled aboard.
-			let orbClaims = [];
-			if (ctx.powerUpManager && typeof ctx.powerUpManager.claimBySail === 'function' && result.event) {
-				try {
-					orbClaims = ctx.powerUpManager.claimBySail(world, playerId, result.event.from, result.event.to) || [];
-				} catch (orbErr) {
-					console.warn('[Ships] orb claim on sail failed:', orbErr.message);
-				}
-			}
-			// A ship sailing off (or in) re-anchors landing parties.
-			if (integrityService) integrityService.runIslandIntegrityPass({ emitAnimation: true });
-			World.markDirty();
-			if (persistence && typeof persistence.markDirty === 'function') persistence.markDirty();
-			if (broadcaster) broadcaster.broadcastGameUpdate();
-			if (inWorld) { if (ctx.io) ctx.io.to(world.id).emit('ship_sailed', result.event); }
-			else ships.emitToBattle(battle, 'ship_sailed', result.event);
+			// Exactly what follows every sail, bot or human (sailEffects).
+			const orbClaims = afterSail({
+				world, playerId, player, result, battle: inWorld ? null : battle, now,
+				powerUpManager: ctx.powerUpManager, integrityService, persistence, broadcaster, io: ctx.io,
+			});
 
 			return ack({
 				success: true,

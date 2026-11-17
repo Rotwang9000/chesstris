@@ -1157,7 +1157,10 @@ function createBattleManager({ gameManager, aiRunner, broadcaster, persistence, 
 				} else {
 					retuneAutoBots(battle, now);
 					// Viking: spot lost ships and rebuild at the moorings.
-					if (ships.reconcileShips(World.getWorld(), battle, { now, seatIsAlive })) {
+					const removePiece = (piece, why) => pieces.removePiece(World.getWorld(), piece, {
+						reason: why === 'ship_trapped' ? pieces.REMOVAL_REASONS.SHIP_TRAPPED : pieces.REMOVAL_REASONS.FELL_TO_WATER,
+					});
+					if (ships.reconcileShips(World.getWorld(), battle, { now, seatIsAlive, removePiece })) {
 						World.markDirty();
 						persistence.markDirty();
 						broadcaster.broadcastGameUpdate();

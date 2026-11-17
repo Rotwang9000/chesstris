@@ -143,14 +143,18 @@ function asGrid(envOrGrid) {
 }
 
 /**
- * One leg's targets from `from` — `rules.sailTargets` exactly, read
+ * One leg's targets from `from` — `rules.sailTargets` exactly (the
+ * env's own range), read
  * through the grid's memo. With `departs`, water the sea has taken by
  * then is gone (it blocks the slide, as a sunk square does).
  */
 function legsFrom(grid, from, departs = null) {
 	const out = [];
+	// A battle env has no `sailMax` (5); the shared world's says 8.
+	const max = Number.isInteger(grid.env && grid.env.sailMax) && grid.env.sailMax > 0
+		? grid.env.sailMax : rules.SHIP.SAIL_MAX;
 	for (const [dx, dz] of ORTHOGONAL) {
-		for (let step = 1; step <= rules.SHIP.SAIL_MAX; step++) {
+		for (let step = 1; step <= max; step++) {
 			const x = from.x + dx * step;
 			const z = from.z + dz * step;
 			if (!grid.isWaterAt(x, z)) break;
