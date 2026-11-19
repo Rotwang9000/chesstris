@@ -42,7 +42,7 @@ export function setToastAvoidExtra(fn) {
 // The top HUD (title, strip, Next piece and the stack under it, the
 // round buttons on a phone, the sea banner).
 const TOP_HUD = ['.game-title', '.debug-indicator', '#next-tetromino-display', '#turn-action-stack', '#longship-button',
-	'#hud-menu-toggle', '#audio-mute-toggle', '#activity-log-toggle', '#tetches-sea-hud'];
+	'#hud-menu-toggle', '#audio-mute-toggle', '#activity-log-toggle', '#tetches-sea-hud', '#selected-piece-card'];
 
 /**
  * "Up in the far side of the arena": just under the top HUD (on a phone

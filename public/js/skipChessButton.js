@@ -67,7 +67,10 @@ export function positionUnderNextPiece(container) {
 		const rect = next.getBoundingClientRect();
 		container.style.top = `${Math.round(rect.bottom + 12)}px`;
 		container.style.right = `${Math.round(window.innerWidth - rect.right)}px`;
-		container.style.width = `${Math.max(160, Math.round(rect.width))}px`;
+		// The panel's own width, so the panel and the buttons under it
+		// (Longship, Skip, Detonate) line up as one column. (A collapsed
+		// panel is only a thumbnail: then a width the labels fit.)
+		container.style.width = `${Math.round(rect.width >= 120 ? rect.width : 150)}px`;
 	} else {
 		container.style.top = '140px';
 		container.style.right = '20px';

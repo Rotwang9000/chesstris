@@ -65,3 +65,19 @@ describe('turn-action stack', () => {
 		expect(Number(stack.style.zIndex)).toBeGreaterThan(11700);
 	});
 });
+
+describe('piece card', () => {
+	test('a tap on the card runs the tap handler (deselect)', async () => {
+		const { setSelectedPiece, setCardTapHandler, getSelectedPieceCardElement } = await import('../../public/js/selectedPieceCard.js');
+		const onTap = jest.fn();
+		setCardTapHandler(onTap);
+		setSelectedPiece({ userData: { id: 'p1', pieceType: 'PAWN', player: 'me' } });
+		const card = getSelectedPieceCardElement();
+		expect(card.style.display).toBe('block');
+		expect(card.style.pointerEvents).toBe('auto');
+		card.click();
+		expect(onTap).toHaveBeenCalledTimes(1);
+		setSelectedPiece(null);
+		setCardTapHandler(null);
+	});
+});

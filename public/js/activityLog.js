@@ -13,6 +13,8 @@
  */
 
 import { showToastMessage } from './showToastMessage.js';
+import { placeLabel } from './placeNames.js';
+import { displayNameOf } from './playerNames.js';
 import { isEventInCurrentView } from './battle/battleRules.js';
 
 const MAX_EVENTS = 200;
@@ -128,8 +130,16 @@ function resolvePlayerName(playerId, fallbackName) {
 	if (fallbackName) return fallbackName;
 	if (playerId == null) return 'Unknown';
 	const gs = typeof window !== 'undefined' ? window.gameState : null;
-	const rec = gs?.players?.[playerId];
-	return rec?.name || String(playerId);
+	// (never the id itself: it is a UUID)
+	const name = displayNameOf(gs?.players, playerId);
+	if (name) return name;
+	return gs?.localPlayerId != null && String(gs.localPlayerId) === String(playerId) ? 'You' : 'A rival';
+}
+
+/** "Hrafnby 47" for a cell (placeNames.js). */
+function place(x, z) {
+	const gs = typeof window !== 'undefined' ? window.gameState : null;
+	return placeLabel(x, z, gs) || '?';
 }
 
 export function describeEvent(ev) {
@@ -138,7 +148,7 @@ export function describeEvent(ev) {
 		: resolvePlayerName(ev.payload?.playerId, null);
 	switch (ev.type) {
 		case 'tetromino_placed': {
-			const at = ev.payload && Number.isFinite(ev.payload.x) ? `(${ev.payload.x}, ${ev.payload.z})` : '';
+			const at = ev.payload && Number.isFinite(ev.payload.x) ? `at ${place(ev.payload.x, ev.payload.z)}` : '';
 			return {
 				icon: '\u25A0',
 				color: '#9bd',
@@ -147,7 +157,7 @@ export function describeEvent(ev) {
 			};
 		}
 		case 'tetromino_dissolved': {
-			const at = ev.payload && Number.isFinite(ev.payload.x) ? `(${ev.payload.x}, ${ev.payload.z})` : '';
+			const at = ev.payload && Number.isFinite(ev.payload.x) ? `at ${place(ev.payload.x, ev.payload.z)}` : '';
 			const dissolveReasonLabels = {
 				no_path_to_king: 'no path to king',
 				no_connection: 'no connection',
@@ -223,7 +233,7 @@ export function describeEvent(ev) {
 		}
 		case 'island_decayed': {
 			const sample = (ev.payload.sampleCells || [])[0];
-			const at = sample ? ` near (${sample.x}, ${sample.z})` : '';
+			const at = sample ? ` near ${place(sample.x, sample.z)}` : '';
 			return {
 				icon: '\u26A0',
 				color: '#fc6',
@@ -233,9 +243,9 @@ export function describeEvent(ev) {
 		}
 		case 'territory_captured': {
 			const sample = (ev.payload.sampleCells || [])[0];
-			const at = sample ? ` (${sample.x}, ${sample.z})` : '';
-			const taker = ev.payload.toPlayerName || ev.payload.toPlayerId || 'someone';
-			const loser = ev.payload.fromPlayerName || ev.payload.fromPlayerId || 'an opponent';
+			const at = sample ? ` at ${place(sample.x, sample.z)}` : '';
+			const taker = ev.payload.toPlayerName || resolvePlayerName(ev.payload.toPlayerId, null);
+			const loser = ev.payload.fromPlayerName || (ev.payload.fromPlayerId != null ? resolvePlayerName(ev.payload.fromPlayerId, null) : 'an opponent');
 			return {
 				icon: '\u2691',
 				color: '#fcc',
@@ -274,7 +284,7 @@ export function describeEvent(ev) {
 			};
 			const reason = reasonLabels[ev.payload.reason] || ev.payload.reason || 'lost';
 			const at = Number.isFinite(ev.payload.x)
-				? ` (${ev.payload.x}, ${ev.payload.z})` : '';
+				? ` at ${place(ev.payload.x, ev.payload.z)}` : '';
 			return {
 				icon: pieceIcon(ev.payload.pieceType) || '\u2620',
 				color: '#f99',
@@ -305,7 +315,7 @@ export function describeEvent(ev) {
 			const cap = ev.payload.capturedBy || {};
 			const capName = resolvePlayerName(cap.playerId, cap.playerName);
 			const at = Number.isFinite(ev.payload.x)
-				? ` (${ev.payload.x}, ${ev.payload.z})` : '';
+				? ` at ${place(ev.payload.x, ev.payload.z)}` : '';
 			return {
 				icon: pieceIcon(ev.payload.pieceType) || '\u2620',
 				color: '#f9a',
@@ -316,7 +326,7 @@ export function describeEvent(ev) {
 		}
 		case 'chess_piece_detonated': {
 			const at = Number.isFinite(ev.payload.x)
-				? ` (${ev.payload.x}, ${ev.payload.z})` : '';
+				? ` at ${place(ev.payload.x, ev.payload.z)}` : '';
 			const label = ev.payload.reason === 'suicidal_pawn'
 				? 'detonated (suicidal)' : 'detonated';
 			return {
@@ -329,7 +339,7 @@ export function describeEvent(ev) {
 		}
 		case 'chess_piece_promoted': {
 			const at = Number.isFinite(ev.payload.x)
-				? ` (${ev.payload.x}, ${ev.payload.z})` : '';
+				? ` at ${place(ev.payload.x, ev.payload.z)}` : '';
 			const viaBasket = ev.payload.fromBasket ? ' (from basket)' : '';
 			return {
 				icon: '\u2606',
@@ -341,7 +351,7 @@ export function describeEvent(ev) {
 		}
 		case 'chess_piece_spawned': {
 			const at = Number.isFinite(ev.payload.x)
-				? ` at (${ev.payload.x}, ${ev.payload.z})` : '';
+				? ` at ${place(ev.payload.x, ev.payload.z)}` : '';
 			const piece = String(ev.payload.pieceType || 'piece').toLowerCase();
 			const reasonLabel = ev.payload.reason === 'powerup' ? ' from a power-up' : '';
 			return {
@@ -354,7 +364,7 @@ export function describeEvent(ev) {
 		}
 		case 'powerup_spawned': {
 			const at = Number.isFinite(ev.payload.x)
-				? ` at (${ev.payload.x}, ${ev.payload.z})` : '';
+				? ` at ${place(ev.payload.x, ev.payload.z)}` : '';
 			const piece = String(ev.payload.pieceType || 'piece').toLowerCase();
 			const target = ev.payload.targetPlayerName
 				? ` (near ${ev.payload.targetPlayerName})` : '';
@@ -369,7 +379,7 @@ export function describeEvent(ev) {
 		case 'powerup_claimed': {
 			const piece = String(ev.payload.pieceType || 'piece').toLowerCase();
 			const at = Number.isFinite(ev.payload.x)
-				? ` at (${ev.payload.x}, ${ev.payload.z})` : '';
+				? ` at ${place(ev.payload.x, ev.payload.z)}` : '';
 			return {
 				icon: '\uD83C\uDF1F',
 				color: '#ffcc66',
@@ -390,7 +400,7 @@ export function describeEvent(ev) {
 		}
 		case 'pawn_promoted_to_credit': {
 			const at = Number.isFinite(ev.payload.x)
-				? ` at (${ev.payload.x}, ${ev.payload.z})` : '';
+				? ` at ${place(ev.payload.x, ev.payload.z)}` : '';
 			return {
 				icon: '\u2605',
 				color: '#a8e6a3',
@@ -402,7 +412,7 @@ export function describeEvent(ev) {
 		case 'promotion_redeemed': {
 			const piece = String(ev.payload.capturedType || 'piece').toLowerCase();
 			const at = Number.isFinite(ev.payload.x)
-				? ` at (${ev.payload.x}, ${ev.payload.z})` : '';
+				? ` at ${place(ev.payload.x, ev.payload.z)}` : '';
 			const fallback = ev.payload.fallback ? ' (original cell gone — placed near king)' : '';
 			return {
 				icon: '\u2654',
@@ -437,7 +447,7 @@ export function describeEvent(ev) {
 function formatPos(p) {
 	if (!p || typeof p !== 'object') return '?';
 	if (!Number.isFinite(p.x) || !Number.isFinite(p.z)) return '?';
-	return `(${p.x}, ${p.z})`;
+	return place(p.x, p.z);
 }
 
 export function flyTo(target) {
@@ -487,7 +497,7 @@ function renderEvent(ev) {
 	row.appendChild(body);
 
 	if (target) {
-		row.title = `Fly to (${target.x}, ${target.z})`;
+		row.title = `Fly to ${place(target.x, target.z)}`;
 		row.addEventListener('click', () => flyTo(target));
 		row.addEventListener('mouseenter', () => { row.style.backgroundColor = 'rgba(255, 204, 0, 0.15)'; });
 		row.addEventListener('mouseleave', () => { row.style.backgroundColor = ''; });
