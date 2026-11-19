@@ -293,7 +293,7 @@ function showOneTimeTip(storageKey, messageHtml, dismissKeys = [], lingerMs = 10
 // (and the turn buttons under Next piece: a phone's edge-to-edge tip
 // hid "Skip chess move")
 const TOP_HUD = ['.game-title', '.debug-indicator', '#next-tetromino-display', '#turn-action-stack', '#longship-button', '#tetches-sea-hud',
-	'#hud-menu-toggle', '#audio-mute-toggle', '#activity-log-toggle', '#view-stick-toggle'];
+	'#hud-menu-toggle', '#audio-mute-toggle', '#activity-log-toggle', '#view-stick-toggle', '#selected-piece-card'];
 
 /**
  * Where a tip goes: up top, out of the play. Mid-screen it sat on the

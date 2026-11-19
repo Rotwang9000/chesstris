@@ -15,6 +15,7 @@
  */
 
 import gameState from '../utils/gameState.js';
+import { placeLabel } from '../placeNames.js';
 import * as NetworkManager from '../utils/networkManager.js';
 import { showToastMessage } from '../showToastMessage.js';
 import {
@@ -90,16 +91,12 @@ const ISLAND_DECAY_LIMITS = Object.freeze({
 });
 
 /**
- * Human-readable board coordinate for toasts. Battle arenas live at
- * absolute cells like (2002, 1995) — meaningless to a player, so
- * inside a battle we report positions relative to the arena centre.
+ * Human-readable board position for toasts: a place name ("Hrafnby
+ * 47", placeNames.js), or inside a battle, coordinates from the arena
+ * centre.
  */
 function formatCellForToast(x, z) {
-	const centre = gameState.activeBattle?.centre;
-	if (centre && Number.isFinite(centre.x) && Number.isFinite(centre.z)) {
-		return `(${x - centre.x}, ${z - centre.z})`;
-	}
-	return `(${x}, ${z})`;
+	return placeLabel(x, z, gameState) || `(${x}, ${z})`;
 }
 
 // `"x,z"` → last-playback-ms map used to suppress overlapping replays.

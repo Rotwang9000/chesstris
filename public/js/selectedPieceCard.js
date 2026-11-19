@@ -2,7 +2,9 @@
  * Selected-piece info card.
  *
  * Sits in the bottom-right of the viewport whenever the local player
- * has a chess piece selected. Shows:
+ * has a chess piece selected (a phone held upright: top-left, over the
+ * title and round buttons, out of the play; index.html). Tapping it
+ * deselects the piece, which hides it. Shows:
  *
  *   • Piece type (Queen / Rook / Pawn …)
  *   • Owner name + colour stripe
@@ -40,6 +42,12 @@ const PIECE_LABELS = Object.freeze({
 
 let cardEl = null;
 let currentPieceId = null;
+let onTap = null;
+
+/** What a tap on the card does (chessInteraction: deselect the piece). */
+export function setCardTapHandler(fn) {
+	onTap = typeof fn === 'function' ? fn : null;
+}
 let refreshTimer = null;
 
 function colourToCss(value) {
@@ -81,11 +89,17 @@ function ensureCard() {
 		fontSize: '13px',
 		lineHeight: '1.35',
 		boxShadow: '0 4px 18px rgba(0, 0, 0, 0.45)',
-		pointerEvents: 'none',
+		pointerEvents: 'auto',
+		cursor: 'pointer',
 		zIndex: '9000',
 		display: 'none',
 		transition: 'opacity 120ms ease-out',
 		opacity: '0',
+	});
+	cardEl.title = 'Tap to deselect';
+	cardEl.addEventListener('click', (event) => {
+		event.stopPropagation();
+		if (onTap) onTap();
 	});
 	document.body.appendChild(cardEl);
 	return cardEl;
@@ -152,15 +166,16 @@ function renderCard(piece) {
 				background:${ownerColour}; box-shadow: 0 0 6px ${ownerColour};
 			"></div>
 			<div style="font-weight:700; font-size:14px; color:#ffcc00;">${label}</div>
+			<div class="spc-close" aria-hidden="true" style="margin-left:auto; color:#cbb; font-size:14px; line-height:1;">\u2715</div>
 		</div>
-		<div style="font-size:12px; color:#cbb;">${escapeText(ownerName)}</div>
-		<div style="margin-top:8px; display:grid; grid-template-columns: 1fr auto; gap:2px 8px;">
-			<div>Moves</div><div style="text-align:right; font-variant-numeric: tabular-nums;">${moves} ${moveLabel}</div>
-			<div>Travelled</div><div style="text-align:right; font-variant-numeric: tabular-nums;">${distance} ${cellLabel}</div>
-			<div>Captures</div><div style="text-align:right; font-variant-numeric: tabular-nums;">${captures} ${captureLabel}</div>
+		<div class="spc-owner" style="font-size:12px; color:#cbb;">${escapeText(ownerName)}</div>
+		<div class="spc-stats" style="margin-top:8px; display:grid; grid-template-columns: 1fr auto; gap:2px 8px;">
+			<div>Moves</div><div style="text-align:right; font-variant-numeric: tabular-nums;">${moves}<span class="spc-unit"> ${moveLabel}</span></div>
+			<div>Travelled</div><div style="text-align:right; font-variant-numeric: tabular-nums;">${distance}<span class="spc-unit"> ${cellLabel}</span></div>
+			<div>Captures</div><div style="text-align:right; font-variant-numeric: tabular-nums;">${captures}<span class="spc-unit"> ${captureLabel}</span></div>
 			${isPawn ? `
 				<div>Forward</div>
-				<div style="text-align:right; font-variant-numeric: tabular-nums;">${forward} ${forward === 1 ? 'cell' : 'cells'}</div>
+				<div style="text-align:right; font-variant-numeric: tabular-nums;">${forward}<span class="spc-unit"> ${forward === 1 ? 'cell' : 'cells'}</span></div>
 			` : ''}
 			${isKing && Number.isFinite(livesRemaining) ? `
 				<div>Lives</div>

@@ -9,6 +9,7 @@ import * as NetworkManager from './utils/networkManager.js';
 import { getGameState } from './gameContext.js';
 import { isEventInCurrentView } from './battle/battleRules.js';
 import { showToastMessage } from './showToastMessage.js';
+import { placeLabel } from './placeNames.js';
 
 // ── Frozen-pawn promotion: deploy a captured piece in place of the pawn ────
 
@@ -95,7 +96,7 @@ export function showFrozenPawnPromotionDialog(pawnId, opts = {}) {
 
 	const pos = pawn.position || {};
 	const cellLabel = (Number.isFinite(pos.x) && Number.isFinite(pos.z))
-		? `(${pos.x}, ${pos.z})`
+		? placeLabel(pos.x, pos.z, getGameState())
 		: 'this cell';
 	dialog.innerHTML = `
 		<h3 style="margin:0 0 8px;color:#d4af37;font-size:22px;">Frozen Pawn</h3>
@@ -232,7 +233,7 @@ export function showPromotionRedeemDialog(opts = {}) {
 
 	const oldest = credits[0];
 	const oldestPos = (Number.isFinite(oldest.originalX) && Number.isFinite(oldest.originalZ))
-		? `(${oldest.originalX}, ${oldest.originalZ})`
+		? placeLabel(oldest.originalX, oldest.originalZ, getGameState())
 		: 'an unrecorded cell';
 	dialog.innerHTML = `
 		<h3 style="margin:0 0 6px;color:#d4af37;">Redeem Promotion</h3>

@@ -14,7 +14,7 @@ import {
 import { boardFunctions } from './boardFunctions.js';
 import { highlightSinglePiece, clearSinglePieceHighlight } from './pieceHighlightManager.js';
 import { updateUnifiedPlayerBar } from './unifiedPlayerBar.js';
-import { setSelectedPiece as setInfoCardPiece } from './selectedPieceCard.js';
+import { setSelectedPiece as setInfoCardPiece, setCardTapHandler } from './selectedPieceCard.js';
 import { translatePosition } from './centreBoardMarker.js';
 import { setPieceMatrixStatic, bakePieceMatrixIfStatic } from './pieceMatrixState.js';
 import * as NetworkManager from './utils/networkManager.js';
@@ -39,6 +39,7 @@ import {
 } from './longships/shipControls.js';
 import { passengerPose } from './viking/shipRenderer.js';
 import { displayNameOf } from './playerNames.js';
+import { placeLabel } from './placeNames.js';
 
 /**
  * In-flight chess move tracker.
@@ -843,6 +844,9 @@ export function clearMoveHighlights() {
 	}
 }
 
+// A tap on the piece card deselects the piece (and so hides the card).
+setCardTapHandler(() => clearChessSelection());
+
 export function clearChessSelection() {
 	const gameState = getGameState();
 
@@ -1585,7 +1589,7 @@ export function showCellInfo(cellMesh) {
 	const pieceLine = piece
 		? ` ${capitalise(`${ownerLabel(gameState, piece.player)} ${String(piece.type || 'piece').toLowerCase()}`)}.`
 		: '';
-	showToastMessage(`Cell (${x}, ${z}): ${summary}.${pieceLine}`, { duration: 5000 });
+	showToastMessage(`${placeLabel(x, z, gameState) || `(${x}, ${z})`}: ${summary}.${pieceLine}`, { duration: 5000 });
 
 	// Sponsored cell — surface the ad popup. This is the only place
 	// in the UI that opens the ad now; the auto-show on placement
