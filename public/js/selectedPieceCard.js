@@ -25,6 +25,7 @@
 
 import { getGameState } from './gameContext.js';
 import { escapeText } from './uiOverlays.js';
+import { displayNameOf } from './playerNames.js';
 
 const CARD_ID = 'selected-piece-card';
 
@@ -102,13 +103,16 @@ function findCanonicalPiece(pieceId, fallback) {
 	return fallback || null;
 }
 
+/** The owner as the card shows them: their name, "You", or "A rival" (never an id). */
 function findOwnerName(playerId) {
 	const gameState = getGameState();
-	const players = gameState?.players;
-	if (!players) return playerId || 'Unknown';
-	const entry = players[playerId];
-	if (!entry) return playerId || 'Unknown';
-	return entry.username || entry.name || playerId || 'Unknown';
+	const localId = gameState?.localPlayerId;
+	const isYou = localId != null && playerId != null && String(localId) === String(playerId);
+	let saved = null;
+	try { saved = localStorage.getItem('playerName'); } catch (_e) { saved = null; }
+	const name = displayNameOf(gameState?.players, playerId, { localId, localName: saved });
+	if (name) return isYou ? `${name} (you)` : name;
+	return isYou ? 'You' : 'A rival';
 }
 
 function renderCard(piece) {

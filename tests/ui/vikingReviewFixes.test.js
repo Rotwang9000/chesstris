@@ -203,13 +203,13 @@ describe('toasts clear the selected piece card when asked', () => {
 	}
 	afterEach(() => jest.restoreAllMocks());
 
-	test('a longship hint moves above the card; other toasts stay put', () => {
+	test('every toast moves above the card (a phone\'s "Placing…" sat on its text)', () => {
 		phoneCard();
 		showToastMessage('Out at sea: sail next to land to step off.', { duration: 3000, aboveInfoCard: true });
 		const box = document.getElementById('toast-container');
 		expect(parseFloat(box.style.bottom)).toBeGreaterThanOrEqual(844 - 700);
 		showToastMessage('Line cleared!', 3000);
-		expect(box.style.bottom).toBe('20px');
+		expect(parseFloat(box.style.bottom)).toBeGreaterThanOrEqual(844 - 700);
 	});
 
 	test('with no card on screen the hint stays at the bottom', () => {

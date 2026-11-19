@@ -46,7 +46,9 @@ export function ensureActionStack() {
 		gap: '8px',
 		alignItems: 'stretch',
 		width: '160px',
-		zIndex: '4500',
+		// Above the one-time tips (11700): a tip placed before Detonate
+		// joined the stack covered it. Buttons are never under messages.
+		zIndex: '11800',
 		fontFamily: 'serif',
 		pointerEvents: 'none',
 	});
