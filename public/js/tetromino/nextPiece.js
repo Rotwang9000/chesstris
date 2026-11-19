@@ -290,8 +290,10 @@ function showOneTimeTip(storageKey, messageHtml, dismissKeys = [], lingerMs = 10
 
 // The top HUD a tip goes just under (title and button strip, Next
 // piece, the Longship card, the sea banner).
-const TOP_HUD = ['.game-title', '.debug-indicator', '#next-tetromino-display', '#longship-button', '#tetches-sea-hud',
-	'#audio-mute-toggle', '#activity-log-toggle'];
+// (and the turn buttons under Next piece: a phone's edge-to-edge tip
+// hid "Skip chess move")
+const TOP_HUD = ['.game-title', '.debug-indicator', '#next-tetromino-display', '#turn-action-stack', '#longship-button', '#tetches-sea-hud',
+	'#hud-menu-toggle', '#audio-mute-toggle', '#activity-log-toggle', '#view-stick-toggle'];
 
 /**
  * Where a tip goes: up top, out of the play. Mid-screen it sat on the

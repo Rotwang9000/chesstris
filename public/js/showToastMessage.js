@@ -1,3 +1,13 @@
+const UUID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+
+/**
+ * Last line of defence: a raw player or piece id (a UUID) never reaches
+ * the screen, whichever message let one through.
+ */
+export function scrubIds(text) {
+	return typeof text === 'string' ? text.replace(UUID_RE, 'a player') : text;
+}
+
 const DEDUP_WINDOW_MS = 2000;
 const MAX_VISIBLE_TOASTS = 2;
 let _recentMessages = [];
@@ -32,7 +42,7 @@ export function setToastAvoidExtra(fn) {
 // The top HUD (title, strip, Next piece and the stack under it, the
 // round buttons on a phone, the sea banner).
 const TOP_HUD = ['.game-title', '.debug-indicator', '#next-tetromino-display', '#turn-action-stack', '#longship-button',
-	'#audio-mute-toggle', '#activity-log-toggle', '#tetches-sea-hud'];
+	'#hud-menu-toggle', '#audio-mute-toggle', '#activity-log-toggle', '#tetches-sea-hud'];
 
 /**
  * "Up in the far side of the arena": just under the top HUD (on a phone
@@ -125,6 +135,7 @@ const TOAST_ICONS = { longship: true };
  *   "Your knight was captured" so the player can't miss them).
  */
 export function showToastMessage(message, optionsOrDuration, _since = Date.now()) {
+	message = scrubIds(message);
 	// Viking edition, portrait phone: while a painting is up at full size
 	// (paintingCard sets the flag for its first ~2 s) toasts wait their
 	// turn instead of landing on top of it. Never set in the standard game.
@@ -238,7 +249,9 @@ export function showToastMessage(message, optionsOrDuration, _since = Date.now()
 	toastContainer.appendChild(toast);
 	if (!toastContainer.classList.contains('toast-docked')) {
 		clearOfHud(toastContainer);
-		if (aboveInfoCard) liftAboveInfoCard(toastContainer);
+		// (always: on a phone the piece card is at the bottom, where
+		// toasts land, and "Placing…" sat on its text)
+		liftAboveInfoCard(toastContainer);
 		if (_avoider) keepClearOf(toastContainer);
 		clearOfTip(toastContainer);
 	}
@@ -267,7 +280,7 @@ export function showToastMessage(message, optionsOrDuration, _since = Date.now()
 // (and the Recent activity panel: a bottom sheet on a phone, where an
 // alert landed butting against its top edge)
 const BOTTOM_HUD = ['.debug-indicator', '.advertise-link', '#session-warning', '#audio-mute-toggle', '#activity-log-toggle',
-	'#activity-log-panel[data-open]'];
+	'#activity-log-panel[data-open]', '#view-stick'];
 
 /**
  * Toasts sit bottom-centre; a long one reached across the button strip

@@ -130,6 +130,22 @@ function resolveRedeemSpawnCell(world, playerId, credit) {
 }
 
 /**
+ * "Hans has 15s to escape" for the attacker's check reply. The defender's
+ * id is never shown: with no real name (none, "Guest", "Player_3fa2c1",
+ * or the id itself) it reads "They have 15s to escape".
+ */
+function checkEscapeMessage(defender, defenderId, deadlineMs) {
+	const seconds = Math.round(deadlineMs / 1000);
+	const raw = typeof defender?.name === 'string' ? defender.name.trim() : '';
+	const placeholder = !raw
+		|| raw.toLowerCase() === 'guest'
+		|| raw === String(defenderId)
+		|| /^(Dev)?Player_[a-z0-9-]{4,}$/i.test(raw)
+		|| /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(raw);
+	return placeholder ? `They have ${seconds}s to escape` : `${raw} has ${seconds}s to escape`;
+}
+
+/**
  * Why this player can't act right now, or null. Mirrors the gates on
  * chess_move: eliminated players are out, and paused players are
  * protected, so letting them act would make pause an invulnerability
@@ -485,7 +501,7 @@ function registerChessHandlers(socket, ctx) {
 								callback({
 									success: true,
 									check: true,
-									message: `${target.player} has ${Math.round(checkService.CHECK_DEADLINE_MS / 1000)}s to escape`,
+									message: checkEscapeMessage(World.getPlayer(target.player), target.player, checkService.CHECK_DEADLINE_MS),
 									updatedPiece: piece,
 								});
 							}
@@ -1565,4 +1581,4 @@ function logRejection(activityLog, world, player, piece, targetPosition, reason,
 	}
 }
 
-module.exports = { registerChessHandlers };
+module.exports = { registerChessHandlers, checkEscapeMessage };

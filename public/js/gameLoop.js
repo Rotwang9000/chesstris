@@ -22,6 +22,7 @@ import { updateAwaitingPromotionHalos } from './updateChessPieces.js';
 import { applyDistanceCulling } from './distanceCulling.js';
 import { animateShips } from './viking/shipRenderer.js';
 import { updateVikingTheme } from './viking/theme.js';
+import { adaptNearPlane } from './cameraNear.js';
 
 // ── Timing state ────────────────────────────────────────────────────────────
 
@@ -618,6 +619,7 @@ function animate(time) {
 				lastGroupCheck = now;
 			}
 
+			adaptNearPlane(camera, controls);
 			try { renderer.render(scene, camera); } catch (renderError) {
 				console.error('Error during render:', renderError);
 			}

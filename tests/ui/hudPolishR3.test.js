@@ -61,14 +61,50 @@ describe('phone HUD layout', () => {
 		document.body.appendChild(el);
 	};
 
-	test('upright phone: the round buttons go under the strip, the sea banner under them', async () => {
+	test('upright phone: the strip folds into ☰, the round buttons go under the title', async () => {
 		window.matchMedia = () => ({ matches: true });
 		strip(129);
+		const title = document.createElement('div');
+		title.className = 'game-title';
+		title.getBoundingClientRect = () => ({ left: 10, top: 10, right: 120, bottom: 42, width: 110, height: 32 });
+		document.body.appendChild(title);
 		const { layoutPhoneHud } = await import('../../public/js/phoneHudLayout.js');
 		layoutPhoneHud();
 		const root = document.documentElement.style;
-		expect(root.getPropertyValue('--tx-phone-round-top')).toBe('137px');
-		expect(root.getPropertyValue('--tx-phone-sea-top')).toBe('189px');
+		expect(root.getPropertyValue('--tx-phone-round-top')).toBe('50px');
+		expect(root.getPropertyValue('--tx-phone-sea-top')).toBe('102px');
+		expect(document.getElementById('hud-menu-toggle')).not.toBeNull();
+	});
+
+	test('☰ opens the strip as a menu; a choice, a tap elsewhere or Escape shuts it', async () => {
+		jest.useFakeTimers();
+		document.body.innerHTML = '';
+		delete document.documentElement.dataset.hudMenu;
+		const el = document.createElement('div');
+		el.className = 'debug-indicator';
+		el.innerHTML = '<button id="reset-camera-btn">Reset Camera</button><button id="paint" aria-haspopup="menu">Paintings</button>';
+		document.body.appendChild(el);
+		const { ensureMenuButton, isMenuOpen } = await import('../../public/js/phoneHudLayout.js');
+		ensureMenuButton(document);
+		const menu = document.getElementById('hud-menu-toggle');
+		expect(menu.getAttribute('aria-controls')).toBe(el.id);
+		menu.click();
+		expect(isMenuOpen(document)).toBe(true);
+		expect(menu.getAttribute('aria-expanded')).toBe('true');
+		// a button with its own menu keeps it open
+		document.getElementById('paint').click();
+		jest.runAllTimers();
+		expect(isMenuOpen(document)).toBe(true);
+		document.getElementById('reset-camera-btn').click();
+		jest.runAllTimers();
+		expect(isMenuOpen(document)).toBe(false);
+		menu.click();
+		document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+		expect(isMenuOpen(document)).toBe(false);
+		menu.click();
+		document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+		expect(isMenuOpen(document)).toBe(false);
+		jest.useRealTimers();
 	});
 
 	test('anywhere else: no variables (the theme placement stands)', async () => {

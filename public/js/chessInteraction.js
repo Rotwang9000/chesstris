@@ -26,7 +26,7 @@ import {
 	positionUnderNextPiece,
 } from './skipChessButton.js';
 import { updateNextPieceHint } from './tetromino/nextPiece.js';
-import { showToastMessage } from './showToastMessage.js';
+import { showToastMessage, scrubIds } from './showToastMessage.js';
 import { playSound } from './audio/soundManager.js';
 import { showFrozenPawnPromotionDialog } from './uiOverlays.js';
 import { displaySponsorInfo } from '../utils/sponsors.js';
@@ -38,6 +38,7 @@ import {
 	showLanesForPassenger, SHIP_DECK_Y, waterSquareUnderPointer, selectedShipId,
 } from './longships/shipControls.js';
 import { passengerPose } from './viking/shipRenderer.js';
+import { displayNameOf } from './playerNames.js';
 
 /**
  * In-flight chess move tracker.
@@ -949,7 +950,6 @@ export function moveChessPieceToCell(x, z) {
 				// PIN_SAFETY_MS timer in updateChessPieces releases it
 				// after 2s as a safety net, and any incoming snapshot
 				// that already has the piece at (x, z) is harmless.
-				showTemporaryMessage('Move successful.', 'success');
 				return;
 			}
 
@@ -1365,14 +1365,17 @@ function runDetonationCountdown(pieceMesh, onComplete) {
 	sprite.name = 'detonation-label';
 	pieceMesh.add(sprite);
 
+	// Cancel goes where the Detonate button was (the turn-action stack
+	// under Next piece), so the thumb that pressed Detonate finds it in
+	// the same spot. At the bottom of a phone screen, toasts and the piece
+	// card were drawn over it. While it shows, the stack sits above every
+	// message and tip.
 	const cancelBtn = document.createElement('button');
 	cancelBtn.id = 'pawn-detonate-cancel-btn';
+	cancelBtn.type = 'button';
 	Object.assign(cancelBtn.style, {
-		position: 'fixed',
-		bottom: '34px',
-		left: '50%',
-		transform: 'translateX(-50%)',
-		padding: '8px 18px',
+		padding: '10px 12px',
+		minHeight: '44px',
 		background: 'rgba(20,20,20,0.92)',
 		color: '#fff',
 		border: '2px solid #55ff55',
@@ -1380,12 +1383,18 @@ function runDetonationCountdown(pieceMesh, onComplete) {
 		fontSize: '14px',
 		fontWeight: 'bold',
 		cursor: 'pointer',
-		zIndex: '1002',
+		boxShadow: '0 0 12px rgba(85,255,85,0.5)',
+		fontFamily: 'serif',
 		letterSpacing: '1px',
-		textTransform: 'uppercase'
+		textTransform: 'uppercase',
+		pointerEvents: 'auto',
 	});
 	cancelBtn.textContent = 'Cancel Detonation';
-	document.body.appendChild(cancelBtn);
+	const actionStack = ensureActionStack();
+	positionUnderNextPiece(actionStack);
+	const stackZ = actionStack.style.zIndex;
+	actionStack.style.zIndex = '12700';
+	actionStack.prepend(cancelBtn);
 
 	function cleanupVisuals() {
 		if (finished) return;
@@ -1405,6 +1414,7 @@ function runDetonationCountdown(pieceMesh, onComplete) {
 		greenMat.dispose();
 		const existingCancel = document.getElementById('pawn-detonate-cancel-btn');
 		if (existingCancel) existingCancel.remove();
+		actionStack.style.zIndex = stackZ;
 	}
 
 	function drawLabel(text) {
@@ -1521,25 +1531,45 @@ function runDetonationExplosion(pieceMesh) {
 
 // ── Info popups ─────────────────────────────────────────────────────────────
 
-function describeCellContents(cellData) {
+/**
+ * "your" / "Hans’s" / "a rival’s" for a player id. A raw id never goes
+ * on screen (it is a UUID).
+ */
+function capitalise(text) {
+	return text ? text.charAt(0).toUpperCase() + text.slice(1) : text;
+}
+
+function ownerLabel(gameState, playerId) {
+	if (playerId == null || playerId === '') return 'unclaimed';
+	if (gameState?.localPlayerId != null && String(playerId) === String(gameState.localPlayerId)) return 'your';
+	let saved = null;
+	try { saved = localStorage.getItem('playerName'); } catch (_e) { saved = null; }
+	const name = displayNameOf(gameState?.players, playerId, { localId: gameState?.localPlayerId, localName: saved });
+	if (!name) return 'a rival’s';
+	return /s$/i.test(name) ? `${name}’` : `${name}’s`;
+}
+
+function describeCellContents(cellData, gameState) {
 	if (!cellData) return 'Empty cell';
 	const items = Array.isArray(cellData) ? cellData : [cellData];
 	const parts = [];
 	for (const item of items) {
 		if (!item || !item.type) continue;
 		if (item.type === 'tetromino' && item.fromHomeZone) {
-			parts.push(`ex-home terrain (${item.player || '?'})`);
+			parts.push(`${ownerLabel(gameState, item.player)} old home ground`);
 		} else if (item.type === 'tetromino') {
-			parts.push(`tetromino (${item.player || '?'})`);
+			parts.push(`${ownerLabel(gameState, item.player)} land`);
 		} else if (item.type === 'chess') {
 			parts.push(`chess marker: ${item.pieceType || 'piece'}`);
 		} else if (item.type === 'home') {
-			parts.push(`home zone (${item.player || '?'})`);
+			parts.push(`${ownerLabel(gameState, item.player)} home zone`);
 		} else {
 			parts.push(item.type);
 		}
 	}
-	return parts.length ? parts.join(', ') : 'Unknown cell contents';
+	if (!parts.length) return 'Unknown cell contents';
+	const text = parts.join(', ');
+	return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 export function showCellInfo(cellMesh) {
@@ -1548,12 +1578,12 @@ export function showCellInfo(cellMesh) {
 	const gameState = getGameState();
 	const key = `${x},${z}`;
 	const cellData = gameState?.board?.cells?.[key] || cellMesh.userData.data;
-	const summary = describeCellContents(cellData);
+	const summary = describeCellContents(cellData, gameState);
 	const piece = Array.isArray(gameState?.chessPieces)
 		? gameState.chessPieces.find(p => p?.position?.x === x && p?.position?.z === z)
 		: null;
 	const pieceLine = piece
-		? ` Piece: ${piece.type} (${piece.player}).`
+		? ` ${capitalise(`${ownerLabel(gameState, piece.player)} ${String(piece.type || 'piece').toLowerCase()}`)}.`
 		: '';
 	showToastMessage(`Cell (${x}, ${z}): ${summary}.${pieceLine}`, { duration: 5000 });
 
@@ -1659,34 +1689,14 @@ export function showPieceInfoPopup(piece) {
 
 // ── Temporary messages ──────────────────────────────────────────────────────
 
+/**
+ * A short message after a chess action. It goes through the toasts, the
+ * one place messages appear (it used to be its own box at the bottom
+ * centre, where it sat on top of other things).
+ */
 export function showTemporaryMessage(message, type = 'info') {
-	let messageElement = document.getElementById('game-message');
-	if (!messageElement) {
-		messageElement = document.createElement('div');
-		messageElement.id = 'game-message';
-		Object.assign(messageElement.style, {
-			position: 'absolute', bottom: '20px', left: '50%',
-			transform: 'translateX(-50%)', padding: '10px 20px',
-			borderRadius: '5px', fontSize: '16px', fontWeight: 'bold',
-			textAlign: 'center', zIndex: '1000',
-			transition: 'opacity 0.3s ease', pointerEvents: 'none', opacity: '0'
-		});
-		document.body.appendChild(messageElement);
-	}
-
-	const colours = {
-		error: 'rgba(220, 50, 50, 0.9)',
-		success: 'rgba(50, 180, 50, 0.9)',
-		info: 'rgba(50, 50, 220, 0.9)'
-	};
-
-	messageElement.style.backgroundColor = colours[type] || colours.info;
-	messageElement.style.color = '#ffffff';
-	messageElement.textContent = message;
-	messageElement.style.opacity = '1';
-
-	if (window.messageTimeout) clearTimeout(window.messageTimeout);
-	window.messageTimeout = setTimeout(() => { messageElement.style.opacity = '0'; }, 3000);
+	const variant = type === 'error' ? 'alert' : (type === 'success' ? 'success' : 'info');
+	showToastMessage(scrubIds(message), { duration: 3000, variant });
 }
 
 /**

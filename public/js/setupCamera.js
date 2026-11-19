@@ -1,3 +1,4 @@
+import { MIN_ORBIT_DISTANCE } from './cameraNear.js';
 import { getTHREE, getGameState } from './gameContext.js';
 import { findBoardCentreMarker, translatePosition } from './centreBoardMarker.js';
 import { boardFunctions } from './boardFunctions.js';
@@ -74,7 +75,7 @@ const CAMERA_DEFAULTS = {
 	// precise enough on 16-bit mobile depth buffers.
 	NEAR: 1,
 	FAR: 1000,
-	MIN_DISTANCE: 8,
+	MIN_DISTANCE: MIN_ORBIT_DISTANCE,
 	MAX_DISTANCE: 80,
 	DAMPING_FACTOR: 0.12,
 	FLY_DURATION_MS: 1800,

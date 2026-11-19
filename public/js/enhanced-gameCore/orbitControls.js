@@ -7,13 +7,14 @@
  */
 
 import { getTHREE } from '../gameContext.js';
+import { MIN_ORBIT_DISTANCE } from '../cameraNear.js';
 
 function configureOrbitControls(ctrl, THREE) {
 	if (!ctrl) return;
 	ctrl.enableDamping = true;
 	ctrl.dampingFactor = 0.15;
 	ctrl.screenSpacePanning = true;
-	ctrl.minDistance = 10;
+	ctrl.minDistance = MIN_ORBIT_DISTANCE;
 	ctrl.maxDistance = 80;
 	ctrl.maxPolarAngle = Math.PI / 2 - 0.1;
 	ctrl.target.set(8, 0, 8);
