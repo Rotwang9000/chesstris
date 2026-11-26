@@ -61,14 +61,33 @@ const {
 // fly-over + a thoughtful move, but punishes lazy defenders.
 const CHECK_DEADLINE_MS = 20000;
 
-// How many times the SAME attacker piece may grant the defender a
+// How many times the SAME attacker piece may grant the SAME defender a
 // grace move before subsequent attacks bypass the defer and capture
-// the king directly. The first two attacks from a given attacker
-// give the defender a 20s escape window; the third (or later) simply
-// takes the king. Resets implicitly when the attacker piece is
-// captured / removed (the property lives on the piece itself, so it
-// dies with it).
+// the king directly. The first two attacks from a given attacker on a
+// given king give that defender a 20s escape window; the third (or
+// later) simply takes the king. Counted per (attacker piece, defender)
+// pair: a piece that has used its warnings on one king still warns the
+// next (seen 2026-11-26, a raider spent both on a bot and then took a
+// new player's king unwarned). Resets implicitly when the attacker
+// piece is captured / removed (the counts live on the piece itself, so
+// they die with it).
 const MAX_CHECK_DEFERS_PER_PIECE = 2;
+
+/** Warnings `piece` has already given `defenderId`'s king. */
+function attemptsOn(piece, defenderId) {
+	const counts = piece && piece.checkAttempts;
+	if (!counts || typeof counts !== 'object') return 0;
+	return Number(counts[String(defenderId)]) || 0;
+}
+
+/** Count one more warning from `piece` to `defenderId`; returns the new count. */
+function bumpAttempts(piece, defenderId) {
+	// (an old save kept one number for every king: start afresh)
+	if (!piece.checkAttempts || typeof piece.checkAttempts !== 'object') piece.checkAttempts = {};
+	const n = attemptsOn(piece, defenderId) + 1;
+	piece.checkAttempts[String(defenderId)] = n;
+	return n;
+}
 
 function createCheckService({
 	io,
@@ -94,20 +113,21 @@ function createCheckService({
 		const existing = checkForDefender(world, kingPiece.player);
 		if (existing) return existing;
 
+		const defenderId = kingPiece.player;
+
 		// Anti-spam: a piece that has already burned through its
-		// grace attempts on the defender's king doesn't get to defer
+		// grace attempts on THIS defender's king doesn't get to defer
 		// again. The caller should capture the king directly when
 		// `startCheck` returns null with this reason.
-		const priorAttempts = Number(attackerPiece.checkAttempts) || 0;
+		const priorAttempts = attemptsOn(attackerPiece, defenderId);
 		if (priorAttempts >= MAX_CHECK_DEFERS_PER_PIECE) {
 			console.log(
 				`[Check] ${attackerPiece.player} (${attackerPiece.type} ${attackerPiece.id}) `
-				+ `exhausted check grace (${priorAttempts}/${MAX_CHECK_DEFERS_PER_PIECE}) — direct capture.`
+				+ `exhausted check grace on ${defenderId} (${priorAttempts}/${MAX_CHECK_DEFERS_PER_PIECE}) — direct capture.`
 			);
 			return null;
 		}
 
-		const defenderId = kingPiece.player;
 		const attackerId = attackerPiece.player;
 		const deadlineAt = Date.now() + CHECK_DEADLINE_MS;
 
@@ -115,7 +135,7 @@ function createCheckService({
 		// persistence snapshots without needing a parallel structure
 		// on the world. The count dies with the piece (capture /
 		// removal) — exactly the lifecycle we want.
-		attackerPiece.checkAttempts = priorAttempts + 1;
+		const attempt = bumpAttempts(attackerPiece, defenderId);
 
 		const check = {
 			defenderId,
@@ -127,7 +147,7 @@ function createCheckService({
 			kingPos: { x: kingPiece.position.x, z: kingPiece.position.z },
 			deadlineAt,
 			startedAt: Date.now(),
-			attempt: attackerPiece.checkAttempts,
+			attempt,
 			maxAttempts: MAX_CHECK_DEFERS_PER_PIECE,
 		};
 		checksOf(world)[String(defenderId)] = check;
@@ -421,8 +441,7 @@ function createCheckService({
 	function canDeferCapture(world, attackerPiece, defenderId) {
 		if (!world || !attackerPiece) return false;
 		if (defenderId != null && checkForDefender(world, defenderId)) return false;
-		const priorAttempts = Number(attackerPiece.checkAttempts) || 0;
-		return priorAttempts < MAX_CHECK_DEFERS_PER_PIECE;
+		return attemptsOn(attackerPiece, defenderId) < MAX_CHECK_DEFERS_PER_PIECE;
 	}
 
 	return {
