@@ -130,7 +130,36 @@ describe('checkService', () => {
 		// caller falls through to a direct capture.
 		const denied = openCheck();
 		expect(denied).toBeNull();
-		expect(world.attacker.checkAttempts).toBe(max);
+		expect(world.attacker.checkAttempts.def).toBe(max);
+	});
+
+	test('grace is counted per pair: a piece spent on one king still warns another', () => {
+		// 2026-11-26: a raiding knight used both warnings on a bot's king,
+		// then took a new player's king without a word.
+		const max = service.MAX_CHECK_DEFERS_PER_PIECE;
+		for (let i = 0; i < max; i++) {
+			openCheck();
+			service.cancelCheck(world, 'escaped', 'def');
+		}
+		expect(openCheck()).toBeNull();
+		const king2 = { id: 'k2', player: 'def2', type: 'KING', position: { x: 0, z: 6 } };
+		world.chessPieces.push(king2);
+		expect(service.canDeferCapture(world, world.attacker, 'def2')).toBe(true);
+		const pending = service.startCheck({
+			world, attackerPiece: world.attacker, kingPiece: king2,
+			queuedMove: { captorId: 'atk', defeatedId: 'def2', toX: 0, toZ: 6, attackerPieceId: 'a1' },
+		});
+		expect(pending).toBeTruthy();
+		expect(pending.attempt).toBe(1);
+		expect(world.attacker.checkAttempts).toEqual({ def: max, def2: 1 });
+	});
+
+	test('an old save\'s single count is dropped rather than read as every king\'s', () => {
+		world.attacker.checkAttempts = 2;
+		expect(service.canDeferCapture(world, world.attacker, 'def')).toBe(true);
+		const pending = openCheck();
+		expect(pending).toBeTruthy();
+		expect(world.attacker.checkAttempts).toEqual({ def: 1 });
 	});
 
 	test('only one outstanding check per defender', () => {

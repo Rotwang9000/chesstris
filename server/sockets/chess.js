@@ -450,7 +450,7 @@ function registerChessHandlers(socket, ctx) {
 					// (defender successfully moved out of danger).
 					//
 					// Anti-spam: the same attacker piece only gets to
-					// defer a few times. After
+					// defer a few times on each king. After
 					// `MAX_CHECK_DEFERS_PER_PIECE` deferrals, `startCheck`
 					// returns null and we fall through to the direct
 					// capture path below.

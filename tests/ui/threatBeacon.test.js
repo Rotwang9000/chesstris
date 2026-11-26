@@ -55,3 +55,27 @@ test('it goes when the mark runs out; a new capture renews it', () => {
 	expect(group.children[0].getObjectByName('threat-beacon')).toBeUndefined();
 	expect(activeThreats(20000 + THREAT_MS + 1)).toEqual([]);
 });
+
+test('when the piece that took yours steps back aboard, you are told once per boarding', () => {
+	const group = groupWith('n1');
+	const piece = group.children[0];
+	piece.userData.pieceType = 'KNIGHT';
+	const toast = jest.fn();
+	markThreat('n1', 0);
+	updateThreatBeacons(group, 10, { toast });
+	expect(toast).not.toHaveBeenCalled();
+	piece.userData.onShip = 'ship-1';
+	updateThreatBeacons(group, 20, { toast });
+	updateThreatBeacons(group, 30, { toast });
+	expect(toast).toHaveBeenCalledTimes(1);
+	expect(toast.mock.calls[0][0]).toMatch(/knight has stepped back aboard its longship/);
+	// ashore and back aboard the same ship: not told twice; a different ship: told
+	piece.userData.onShip = null;
+	updateThreatBeacons(group, 40, { toast });
+	piece.userData.onShip = 'ship-1';
+	updateThreatBeacons(group, 50, { toast });
+	expect(toast).toHaveBeenCalledTimes(1);
+	piece.userData.onShip = 'ship-2';
+	updateThreatBeacons(group, 60, { toast });
+	expect(toast).toHaveBeenCalledTimes(2);
+});

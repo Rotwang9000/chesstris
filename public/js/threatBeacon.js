@@ -8,16 +8,25 @@
  * (no depth test), until THREAT_MS after its last capture of yours, or
  * until it is gone.
  *
+ * A world raider often captures from its longship and steps straight
+ * back aboard, so the square it took is empty a moment later and the
+ * piece is a small figure on a deck offshore. The beacon rides along,
+ * and the first time a marked piece goes aboard the viewer is told
+ * where it went (it can still be taken there).
+ *
  * markThreat(pieceId) on a capture of the viewer's piece;
  * updateThreatBeacons(group, now) once a frame (gameLoop).
  */
 
 import { getTHREE } from './gameContext.js';
+import { showToastMessage } from './showToastMessage.js';
 
 export const THREAT_MS = 30000;
 
 /** pieceId → expiry (ms). */
 const threats = new Map();
+/** Marked pieces already announced as gone aboard (pieceId → shipId). */
+const announcedAboard = new Map();
 let parts = null;
 
 /** The enemy piece `pieceId` just took one of the viewer's: mark it. */
@@ -38,6 +47,22 @@ export function activeThreats(now = Date.now()) {
 
 export function clearThreats() {
 	threats.clear();
+	announcedAboard.clear();
+}
+
+/** What the viewer is told when the piece that took theirs goes aboard. */
+export function aboardMessage(pieceType) {
+	const name = String(pieceType || '').toLowerCase() || 'piece';
+	return `Their ${name} has stepped back aboard its longship: look for the red beacon. You can still take it there.`;
+}
+
+function noteAboard(piece, id, toast) {
+	const shipId = piece.userData.onShip;
+	if (!shipId) return;
+	if (announcedAboard.get(id) === shipId) return;
+	announcedAboard.set(id, shipId);
+	try { toast(aboardMessage(piece.userData.pieceType), { duration: 4500, variant: 'alert' }); }
+	catch (_e) { /* best-effort */ }
 }
 
 function sharedParts(THREE) {
@@ -80,7 +105,7 @@ function buildBeacon(THREE) {
  * Once a frame: give each marked piece in `group` its beacon, pulse the
  * rings, and take beacons off pieces no longer marked.
  */
-export function updateThreatBeacons(group, now = Date.now()) {
+export function updateThreatBeacons(group, now = Date.now(), { toast = showToastMessage } = {}) {
 	if (!group || !Array.isArray(group.children)) return;
 	const THREE = getTHREE();
 	if (!THREE) return;
@@ -100,8 +125,10 @@ export function updateThreatBeacons(group, now = Date.now()) {
 			beacon.scale.set(1 / (sc.x || 1), 1 / (sc.y || 1), 1 / (sc.z || 1));
 			const ring = beacon.getObjectByName('threat-ring');
 			if (ring) ring.scale.set(pulse, pulse, 1);
+			noteAboard(piece, String(id), toast);
 		} else if (beacon) {
 			piece.remove(beacon);
+			announcedAboard.delete(String(id));
 		}
 	}
 }
