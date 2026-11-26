@@ -15,6 +15,7 @@ const { PLAYER_SETTINGS, GAME_RULES } = require('../game/Constants');
 const { getCooldownRemainingMs } = require('../utils/cooldowns');
 const cells = require('../game/cells');
 const pieces = require('../game/pieces');
+const moveAudit = require('../game/moveAudit');
 const territory = require('../game/territory');
 // Shared with the AI so human and computer pawns freeze identically.
 const { markPawnAwaitingPromotion } = require('../game/promotion');
@@ -648,6 +649,10 @@ function registerChessHandlers(socket, ctx) {
 			piece.position = { x: targetPosition.x, z: targetPosition.z };
 			piece.hasMoved = true;
 			piece.moveCount = (piece.moveCount || 0) + 1;
+			moveAudit.chessMove(piece, originalPosition, piece.position, {
+				note: shipPlan ? shipPlan.kind : null,
+				loud: !!(shipPlan && shipPlan.world) || !!piece.raid,
+			});
 			world.chessPieces[pieceIndex] = piece;
 
 			// A capture or territory transfer may strand the previous owner's
