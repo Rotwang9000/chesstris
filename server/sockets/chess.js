@@ -8,6 +8,7 @@
  * mini-game are handled by the king/* services this module composes.
  */
 
+const captureShield = require('../world/captureShield');
 const World = require('../world/World');
 const { checkForDefender, checkForAttackerPiece } = require('../king/pendingChecks');
 const { PLAYER_SETTINGS, GAME_RULES } = require('../game/Constants');
@@ -1461,6 +1462,23 @@ function classifyMoveRejection(gameManager, world, piece, targetPosition, destEx
 			return {
 				reason: 'friendly_blocker',
 				message: `That square is occupied by your own ${(friendly.pieceType || 'piece')}.`,
+			};
+		}
+	}
+
+	// A fair chance to answer (world/captureShield.js).
+	if (Array.isArray(targetCell)) {
+		const enemy = targetCell.find(
+			it => it && it.type === 'chess' && String(it.player) !== String(piece.player)
+		);
+		const shield = enemy && captureShield.shieldVeto(world, piece.player, enemy.player);
+		if (shield) {
+			const secs = Math.max(1, Math.ceil(shield.waitMs / 1000));
+			return {
+				reason: shield.reason,
+				message: shield.reason === 'sheltered'
+					? `That kingdom has only just arrived: it is sheltered for ${secs}s more.`
+					: `Give them a chance to answer: you can take another of their pieces once they have moved, or in ${secs}s.`,
 			};
 		}
 	}

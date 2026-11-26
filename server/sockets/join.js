@@ -8,6 +8,8 @@ const World = require('../world/World');
 const { validatePlayerName } = require('../utils/validation');
 const { isWorldAdminAllowed } = require('../security/adminGate');
 const funnel = require('../observability/funnel');
+const Sessions = require('../world/Sessions');
+const captureShield = require('../world/captureShield');
 
 function registerJoinHandlers(socket, ctx) {
 	const {
@@ -92,6 +94,15 @@ function registerJoinHandlers(socket, ctx) {
 			persistence.markDirty();
 			if (isFirstWorldEntry && !player.isComputer) funnel.recordWorldJoin();
 
+			// A fair start (world/captureShield.js): a new kingdom, or one
+			// whose ruler has been away a while, can't be captured from
+			// for a moment. (A reload doesn't count as being away.)
+			const shelteredUntil = isFirstWorldEntry
+				? captureShield.shelter(World.getWorld(), playerId, captureShield.SHIELD.NEW_KINGDOM_MS)
+				: (Sessions.lastAwayMs(playerId) >= captureShield.SHIELD.RETURN_AWAY_MIN_MS
+					? captureShield.shelter(World.getWorld(), playerId, captureShield.SHIELD.RETURN_MS)
+					: 0);
+
 			socket.join(worldId);
 
 			const integrityResult = integrityService.runIslandIntegrityPass({ emitAnimation: false });
@@ -145,6 +156,7 @@ function registerJoinHandlers(socket, ctx) {
 					playerName: player.name,
 					gameState: broadcaster.buildGameStatePayload(),
 					players: playersList,
+					shelteredMs: shelteredUntil ? Math.max(0, shelteredUntil - Date.now()) : 0,
 					timestamp: Date.now(),
 				});
 			}

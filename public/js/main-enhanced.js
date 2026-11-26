@@ -645,6 +645,16 @@ async function joinGameAfterConnection(gameId = null) {
 				console.log('Local player ID set to:', gameState.localPlayerId);
 			}
 
+			// A fair start (server/world/captureShield.js): say so once
+			// the arrival has settled.
+			if (Number(result.shelteredMs) > 5000) {
+				const secs = Math.round(Number(result.shelteredMs) / 1000);
+				setTimeout(() => showToastNotification(
+					`Your kingdom is sheltered for ${secs}s: no one can take your pieces yet. Capturing ends the shelter.`,
+					{ duration: 6000, variant: 'success' },
+				), 3000);
+			}
+
 			if (result.playerName && result.playerName !== 'Guest') {
 				try { localStorage.setItem('playerName', result.playerName); } catch (_e) { /* ignore */ }
 				if (!gameState.players) gameState.players = {};

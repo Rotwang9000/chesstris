@@ -43,7 +43,19 @@ const aliasToPlayer = new Map();
  * @param {string} playerId
  * @returns {SocketSession}
  */
+/** playerId → when their last socket closed (ms). */
+const offlineSince = new Map();
+/** playerId → how long they had been away when they last came online (ms). */
+const lastAway = new Map();
+
 function bind(socket, playerId) {
+	if (!socketsByPlayer.has(playerId)) {
+		// Coming online: how long were they gone? (Not seen since this
+		// server started: a long time.)
+		const since = offlineSince.get(playerId);
+		lastAway.set(playerId, since == null ? Infinity : Date.now() - since);
+		offlineSince.delete(playerId);
+	}
 	const session = {
 		playerId,
 		isSpectator: false,
@@ -70,9 +82,22 @@ function unbind(socketId) {
 	const set = socketsByPlayer.get(session.playerId);
 	if (set) {
 		set.delete(socketId);
-		if (set.size === 0) socketsByPlayer.delete(session.playerId);
+		if (set.size === 0) {
+			socketsByPlayer.delete(session.playerId);
+			offlineSince.set(session.playerId, Date.now());
+		}
 	}
 	return session;
+}
+
+/**
+ * How long this player had been away when they last came online (ms;
+ * Infinity when not seen since the server started). captureShield's
+ * return shelter reads it, so a reload doesn't buy one.
+ */
+function lastAwayMs(playerId) {
+	const away = lastAway.get(playerId);
+	return away == null ? Infinity : away;
 }
 
 function bySocketId(socketId) {
@@ -173,9 +198,12 @@ function clearAll() {
 	bySocket.clear();
 	socketsByPlayer.clear();
 	aliasToPlayer.clear();
+	offlineSince.clear();
+	lastAway.clear();
 }
 
 module.exports = {
+	lastAwayMs,
 	bind,
 	unbind,
 	bySocketId,

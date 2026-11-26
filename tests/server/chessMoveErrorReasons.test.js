@@ -344,4 +344,30 @@ describe('server/sockets/chess — rejection reasons', () => {
 		expect(rook.position).toEqual({ x: 1, z: 3 });
 		expect(io._emitted.find(e => e.event === 'chess_move')).toBeDefined();
 	});
+
+	test('right of reply: a second capture from the same victim waits for their answer', () => {
+		const world = World.getWorld();
+		for (let x = 0; x <= 5; x++) {
+			for (let z = 1; z <= 5; z++) boardManager.setCell(world.board, x, z, [{ type: 'tetromino', player: 'p1' }]);
+		}
+		placePiece(world, boardManager, 'p1-R', 'ROOK', 'p1', 0, 2);
+		placePiece(world, boardManager, 'p2-P1', 'PAWN', 'p2', 3, 2);
+		placePiece(world, boardManager, 'p2-P2', 'PAWN', 'p2', 3, 4);
+		const socket = buildCtx('p1');
+		const move = (x, z) => {
+			let ack = null;
+			world.players.p1.lastChessMoveAt = 0; // (past the move cooldown)
+			socket.trigger('chess_move', { pieceId: 'p1-R', targetPosition: { x, z } }, (r) => { ack = r; });
+			return ack;
+		};
+
+		expect(move(3, 2)).toEqual(expect.objectContaining({ success: true }));
+		const refused = move(3, 4);
+		expect(refused).toEqual(expect.objectContaining({ success: false, reason: 'reply_turn' }));
+		expect(refused.error).toMatch(/chance to answer/);
+
+		// p2 answers with a move of their own: the rook may strike again
+		world.players.p2.lastChessMoveAt = Date.now() + 1;
+		expect(move(3, 4)).toEqual(expect.objectContaining({ success: true }));
+	});
 });

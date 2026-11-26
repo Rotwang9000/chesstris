@@ -16,6 +16,7 @@
 
 import gameState from '../utils/gameState.js';
 import { placeLabel } from '../placeNames.js';
+import { markThreat } from '../threatBeacon.js';
 import * as NetworkManager from '../utils/networkManager.js';
 import { showToastMessage } from '../showToastMessage.js';
 import {
@@ -325,8 +326,13 @@ function handleChessMoveBroadcast(payload) {
 			? ` at ${formatCellForToast(pos.x, pos.z)}`
 			: '';
 		if (localLost) {
+			// Mark the piece that did it (a red beacon: threatBeacon.js),
+			// and in the shared world say it's the player's turn to
+			// answer (server/world/captureShield.js).
+			markThreat(payload?.movedPiece?.id);
+			const answer = gameState.activeBattle ? '' : ' Your move: they must wait for your answer.';
 			showToastMessage(
-				`Your ${capturedType}${atSuffix} was captured!`,
+				`Your ${capturedType}${atSuffix} was captured!${answer}`,
 				{ variant: 'alert', duration: 5000 },
 			);
 		} else {
