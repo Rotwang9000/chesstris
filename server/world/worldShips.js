@@ -36,6 +36,8 @@
 
 'use strict';
 
+const moveAudit = require('../game/moveAudit');
+
 const rules = require('../battle/shipRules');
 const { isBattleRegionCell } = require('../battle/geometry');
 
@@ -336,7 +338,10 @@ function sail(world, playerId, { shipId, to } = {}, { now = Date.now() } = {}) {
 			item.position = { x: target.x, z: target.z };
 		}
 	}
-	if (passenger) passenger.position = { x: target.x, z: target.z };
+	if (passenger) {
+		passenger.position = { x: target.x, z: target.z };
+		moveAudit.sail(passenger, entry.ship.shipId, { x: entry.x, z: entry.z }, target);
+	}
 	entry.ship.readyAt = now + rules.SHIP.ROW_LOCK_MS;
 	// Its prow keeps pointing the way it went (shipRules.headingAt): the
 	// hull's second deck square is read from it.

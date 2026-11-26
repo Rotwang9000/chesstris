@@ -10,6 +10,7 @@ const World = require('../world/World');
 const { checkForDefender, checksByAttacker } = require('../king/pendingChecks');
 const cells = require('../game/cells');
 const pieces = require('../game/pieces');
+const moveAudit = require('../game/moveAudit');
 const { GAME_RULES } = require('../game/Constants');
 // Shared with the human chess handler so AI pawns freeze identically.
 const { markPawnAwaitingPromotion } = require('../game/promotion');
@@ -1157,6 +1158,10 @@ function createAiActions({
 			movedPiece.position = { x: targetX, z: targetZ };
 			movedPiece.hasMoved = true;
 			world.chessPieces[pieceIndex] = movedPiece;
+			moveAudit.chessMove(movedPiece, originalPosition, movedPiece.position, {
+				note: shipPlan ? shipPlan.kind : (capturedPiece ? 'capture' : null),
+				loud: !!(shipPlan && shipPlan.world) || !!movedPiece.raid,
+			});
 
 			// Freeze at the promotion threshold exactly like a human pawn
 			// (H5). Without this an AI pawn that completes the promotion

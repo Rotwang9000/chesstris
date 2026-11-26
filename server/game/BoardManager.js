@@ -6,6 +6,7 @@
 const { BOARD_SETTINGS, GAME_RULES } = require('./Constants');
 const { validateCoordinates, log } = require('./GameUtilities');
 const cells = require('./cells');
+const moveAudit = require('./moveAudit');
 const pieceLifecycle = require('./pieces');
 
 class BoardManager {
@@ -1233,8 +1234,10 @@ class BoardManager {
 				if (!pieceKey) continue;
 				const dest = successfulMoves.get(pieceKey);
 				if (!dest) continue;
+				const before = { x: piece.position.x, z: piece.position.z };
 				piece.position.x = dest.x;
 				piece.position.z = dest.z;
+				moveAudit.gravity(piece, before, dest);
 			}
 		}
 
