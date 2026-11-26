@@ -32,6 +32,7 @@ const shipRules = require('../../battle/shipRules');
 const { isVikingBattle } = require('../../battle/edition');
 const worldShips = require('../../world/worldShips');
 const Sessions = require('../../world/Sessions');
+const captureShield = require('../../world/captureShield');
 
 const PAWN_FORWARD_BY_ORIENTATION = Object.freeze({
 	0: Object.freeze({ dx: 0, dz: 1 }),
@@ -119,6 +120,7 @@ function _isValidViaDeck(ctx, game, piece, toX, toZ) {
 	const target = pieceAt(toX, toZ);
 	if (target && String(target.player) === String(piece.player)) return false;
 	if (target && _isOwnerPaused(game, target.player)) return false;
+	if (target && captureShield.shieldVeto(game, piece.player, target.player)) return false;
 	if (!shipRules.deckMove(env, piece, from, to, pieceAt)) return false;
 	if (shipRules.chessMoveVeto(env, piece, from, to, target || null)) return false;
 	return !_awayRulerVeto(game, piece, toX, toZ);
@@ -164,6 +166,12 @@ function validateChessMove(ctx, game, playerId, moveData) {
 		}
 		if (targetPiece && _isOwnerPaused(game, targetPiece.player)) {
 			return { valid: false, error: 'That player is paused — their pieces are temporarily protected' };
+		}
+		// A fair chance to answer (world/captureShield.js): sheltered
+		// newcomers, and one capture per reply.
+		if (targetPiece) {
+			const shield = captureShield.shieldVeto(game, playerId, targetPiece.player);
+			if (shield) return { valid: false, error: shield.message, reason: shield.reason, waitMs: shield.waitMs };
 		}
 
 		const typeValidation = validateMoveByPieceType(ctx, game, piece, toX, toZ, pieceAt);
@@ -413,6 +421,7 @@ function _isValidDirect(ctx, game, piece, toX, toZ) {
 		const targetChess = pieceAt(toX, toZ);
 		if (targetChess && String(targetChess.player) === String(pieceOwner)) return false;
 		if (targetChess && _isOwnerPaused(game, targetChess.player)) return false;
+		if (targetChess && captureShield.shieldVeto(game, piece.player, targetChess.player)) return false;
 
 		const deltaX = toX - fromX;
 		const deltaZ = toZ - fromZ;

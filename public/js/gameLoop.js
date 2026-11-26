@@ -23,6 +23,7 @@ import { applyDistanceCulling } from './distanceCulling.js';
 import { animateShips } from './viking/shipRenderer.js';
 import { updateVikingTheme } from './viking/theme.js';
 import { adaptNearPlane } from './cameraNear.js';
+import { updateThreatBeacons } from './threatBeacon.js';
 
 // ── Timing state ────────────────────────────────────────────────────────────
 
@@ -620,6 +621,7 @@ function animate(time) {
 			}
 
 			adaptNearPlane(camera, controls);
+			try { updateThreatBeacons(getChessPiecesGroup()); } catch (_e) { /* best-effort */ }
 			try { renderer.render(scene, camera); } catch (renderError) {
 				console.error('Error during render:', renderError);
 			}

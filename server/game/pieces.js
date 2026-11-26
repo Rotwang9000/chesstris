@@ -21,6 +21,8 @@
  * almost certainly want `removePiece(world, …)` instead.
  */
 
+const captureShield = require('../world/captureShield');
+
 const PIECE_TYPE_NAMES = ['king', 'queen', 'rook', 'bishop', 'knight', 'pawn'];
 
 const REMOVAL_REASONS = Object.freeze({
@@ -180,6 +182,13 @@ function removePiece(world, pieceOrId, ctx = {}) {
 
 	const piece = world.chessPieces[idx];
 	const pos = piecePosition(piece);
+
+	// The victim is owed a reply before this captor takes another of
+	// theirs (world/captureShield.js). Before the king-life hook: a king
+	// that spends a life was still taken.
+	if (reason === REMOVAL_REASONS.CAPTURED && ctx.capturedBy?.playerId != null) {
+		captureShield.noteCapture(world, ctx.capturedBy.playerId, piece.player);
+	}
 
 	// Give kings a chance to spend a life instead of dying.  The hook
 	// is opt-in (callers pass `ctx.kingLifeService`) so unit tests and

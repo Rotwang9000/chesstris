@@ -1090,7 +1090,10 @@ function handleChessMoveRejection({
 		ship_to_ship: SHIP_REFUSAL_TEXT.ship_to_ship,
 		path_blocked_by_ship: SHIP_REFUSAL_TEXT.path_blocked_by_ship,
 	};
-	const friendly = reason && reasonToText[reason];
+	// A fair chance to answer (server/world/captureShield.js): the
+	// server's own words carry the seconds left.
+	const shielded = (reason === 'sheltered' || reason === 'reply_turn') && responseData?.error;
+	const friendly = shielded ? responseData.error : (reason && reasonToText[reason]);
 	const errorMessage = friendly
 		|| (responseData?.error ? `Move failed: ${responseData.error}` : 'Move failed. Please try again.');
 	showTemporaryMessage(errorMessage, 'error');
